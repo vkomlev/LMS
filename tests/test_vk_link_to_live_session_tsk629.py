@@ -165,8 +165,13 @@ async def test_no_live_session_behaves_as_before(db):
 
 
 @pytest.mark.asyncio
-async def test_email_overlap_still_forbidden_without_session(db):
-    """Слияние по совпадающей почте по-прежнему запрещено (ADR-0021)."""
+async def test_email_overlap_now_links_without_session(db):
+    """tsk-755 отменил здесь запрет: совпадение почты — привязка, а не 409.
+
+    Правило tsk-629 (живой сеанс = доказательство владения) осталось; к нему
+    добавилось второе основание — подтверждённая ВКонтакте почта (ADR-0054).
+    Живого сеанса тут нет, и вход всё равно ведёт в существующий аккаунт.
+    """
     settings = Settings()
     email = f"overlap-{os.urandom(4).hex()}@example.com"
     owner = await _make_user(db, email=email)
@@ -174,10 +179,13 @@ async def test_email_overlap_still_forbidden_without_session(db):
     await identity_link_service.link_existing_user(db, owner.id, "email", email)
     await db.commit()
 
-    with pytest.raises(IdentityConflictError):
-        await get_or_create_user_by_vk(
-            db, vk_user_id=_new_vk_id(), email=email, full_name=None,
-            access_token="acc", refresh_token=None, expires_at=None,
-            settings=settings, ip=None, user_agent=None,
-            current_user_id=None,
-        )
+    user, created = await get_or_create_user_by_vk(
+        db, vk_user_id=_new_vk_id(), email=email, full_name=None,
+        access_token="acc", refresh_token=None, expires_at=None,
+        settings=settings, ip=None, user_agent=None,
+        current_user_id=None,
+    )
+    await db.commit()
+
+    assert created is False
+    assert user.id == owner.id

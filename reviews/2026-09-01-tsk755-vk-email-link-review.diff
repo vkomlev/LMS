@@ -1,0 +1,613 @@
+diff --git a/app/api/main.py b/app/api/main.py
+index b01b717..a2d86a8 100644
+--- a/app/api/main.py
++++ b/app/api/main.py
+@@ -818,6 +818,12 @@ from app.api.v1.system_settings import router as system_settings_router
+ 
+ app.include_router(system_settings_router, prefix=API_PREFIX)
+ 
++# tsk-755: попытки входа на адреса, которых нет ни у кого. Раньше их видел
++# только тот, кто догадался сходить запросом в базу.
++from app.api.v1.auth_signals import router as auth_signals_router
++
++app.include_router(auth_signals_router, prefix=API_PREFIX)
++
+ 
+ @app.on_event("startup")
+ async def _load_school_settings() -> None:
+diff --git a/app/api/v1/auth/magic_link.py b/app/api/v1/auth/magic_link.py
+index 56a521e..cda57f2 100644
+--- a/app/api/v1/auth/magic_link.py
++++ b/app/api/v1/auth/magic_link.py
+@@ -43,6 +43,11 @@ async def send_magic_link(
+         raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Слишком много запросов")
+ 
+     email = body.email.lower()
++    # tsk-755: известен ли адрес — решается ДО создания ссылки. Ответ человеку от
++    # этого не зависит (иначе форма входа стала бы способом узнать перебором, кто
++    # у нас учится), но оператор должен видеть попытки на ничьи адреса: за неделю
++    # до задачи три ученика ждали письма, которое некому было получить.
++    recipient_known = await magic_link_service.is_known_recipient(db, email)
+     token = await magic_link_service.create_magic_link(db, email)
+     await db.commit()
+ 
+@@ -55,9 +60,19 @@ async def send_magic_link(
+         db,
+         "magic_link_sent",
+         ip=ip,
+-        details={"email": email, "link_mode": body.link_mode},
++        details={
++            "email": email,
++            "link_mode": body.link_mode,
++            "recipient_known": recipient_known,
++        },
+     )
+     await db.commit()
++    if not recipient_known:
++        # Строка стабильна и рассчитана на поиск по логам прода.
++        logger.info(
++            "auth.magic_link unknown_recipient email=%s ip=%s",
++            magic_link_service.mask_email(email), ip,
++        )
+ 
+     return MessageResponse(message="Письмо отправлено")
+ 
+diff --git a/app/services/auth/cookie.py b/app/services/auth/cookie.py
+index b4d6084..e89a15b 100644
+--- a/app/services/auth/cookie.py
++++ b/app/services/auth/cookie.py
+@@ -31,6 +31,23 @@ DEFAULT_REFRESH_MAX_AGE_SECONDS = 30 * 86400  # 30 дней
+ # (в отличие от access-cookie `session`, которая нужна на всех защищённых роутах).
+ REFRESH_COOKIE_PATH = "/api/v1/auth/session/refresh"
+ 
++# tsk-755: метка «у этого браузера была наша сессия». Секрета не несёт и доступа
++# не даёт — только значение "1".
++#
++# Зачем она есть. Access-cookie `session` живёт 24 часа, refresh — 30 дней, но
++# refresh лежит на узком path и на обычную страницу браузером не отправляется.
++# Кабинет (SPW) на входе смотрит именно `session`: нет её — сразу форма входа.
++# Значит человек, вернувшийся через двое суток, видел форму входа при живой ещё
++# цепочке сессий и логинился заново. По замеру прода за 14 дней таких лишних
++# входов 50 из 186 — самая крупная и самая чинимая доля обрывов.
++#
++# Метка позволяет кабинету различить «этот браузер у нас уже был, надо попробовать
++# продлить» и «здесь никто не входил, сразу показываем вход» — не раскрывая ни
++# токена, ни того, кто именно входил. Срок совпадает с refresh: метка без живого
++# refresh-токена бесполезна, а с ним — ровно и нужна.
++SESSION_HINT_COOKIE = "has_session"
++DEFAULT_HINT_MAX_AGE_SECONDS = DEFAULT_REFRESH_MAX_AGE_SECONDS
++
+ 
+ def set_session_cookie(
+     response: Response,
+@@ -80,6 +97,17 @@ def set_refresh_cookie(
+         domain=_settings.cookie_domain,
+         path=REFRESH_COOKIE_PATH,
+     )
++    # tsk-755: метка ставится ровно там же, где refresh-токен, и живёт столько же
++    # — иначе кабинет предлагал бы продлить сессию, которой уже нет.
++    response.set_cookie(
++        SESSION_HINT_COOKIE, "1",
++        httponly=True,
++        secure=secure,
++        samesite="lax",
++        max_age=max_age,
++        domain=_settings.cookie_domain,
++        path="/",
++    )
+ 
+ 
+ def clear_session_cookie(response: Response) -> None:
+@@ -93,3 +121,9 @@ def clear_refresh_cookie(response: Response) -> None:
+     response.delete_cookie(
+         "refresh", domain=_settings.cookie_domain, path=REFRESH_COOKIE_PATH,
+     )
++    # tsk-755: метку снимаем вместе с токеном. Иначе после выхода кабинет на
++    # каждом заходе честно пробовал бы продлить давно отозванную сессию и
++    # показывал бы человеку лишний промежуточный экран.
++    response.delete_cookie(
++        SESSION_HINT_COOKIE, domain=_settings.cookie_domain, path="/",
++    )
+diff --git a/app/services/auth/magic_link_service.py b/app/services/auth/magic_link_service.py
+index 52bfa90..6b9d101 100644
+--- a/app/services/auth/magic_link_service.py
++++ b/app/services/auth/magic_link_service.py
+@@ -54,6 +54,28 @@ async def create_magic_link(
+     return raw.hex()
+ 
+ 
++async def is_known_recipient(db: AsyncSession, email: str) -> bool:
++    """Есть ли на платформе аккаунт с этим адресом (tsk-755).
++
++    Считается известным и полноценный вход по почте (`identity_link kind='email'`),
++    и адрес, стоящий только в карточке ученика (`users.email`) — по нему
++    `verify` попадёт в существующий аккаунт, а не заведёт новый.
++
++    Наружу этот признак НЕ отдаётся: ответ на запрос ссылки остаётся одинаковым
++    для любого адреса, иначе по форме входа можно было бы перебором узнать, кто
++    у нас учится. Признак нужен для журнала — чтобы оператор видел попытки
++    входа на адреса, которых ни у кого нет (живой случай 01.09.2026: ученик
++    неделю не мог войти из-за опечатки в своём же адресе).
++    """
++    normalized = email.lower()
++    if await identity_link_service.find_identity(db, "email", normalized) is not None:
++        return True
++    orphan = (await db.execute(
++        select(Users.id).where(func.lower(Users.email) == normalized)
++    )).first()
++    return orphan is not None
++
++
+ async def send_magic_link_email(
+     token: str,
+     email: str,
+@@ -156,8 +178,12 @@ async def peek_magic_link(
+     return result.scalar_one_or_none()
+ 
+ 
+-def _mask_email(email: str) -> str:
+-    """Маскировать email для audit_event details: первые 3 + *** + домен."""
++def mask_email(email: str) -> str:
++    """Маскировать email для audit_event details: первые 3 + *** + домен.
++
++    Публичная утилита слоя auth: тем же видом почта пишется в журнал из
++    vk_oauth_service (tsk-755), чтобы записи о входе выглядели одинаково.
++    """
+     if "@" not in email:
+         return email[:3] + "***"
+     local, domain = email.split("@", 1)
+@@ -222,7 +248,7 @@ async def get_or_create_user_by_email(
+         user_id=new_user.id,
+         ip=ip,
+         user_agent=user_agent,
+-        details={"identity_kind": "email", "value_masked": _mask_email(email)},
++        details={"identity_kind": "email", "value_masked": mask_email(email)},
+     )
+     logger.info("user.registered.via_magic_link user_id=%d", new_user.id)
+     return new_user, True
+diff --git a/app/services/auth/vk_oauth_service.py b/app/services/auth/vk_oauth_service.py
+index 60cc47e..f6521ff 100644
+--- a/app/services/auth/vk_oauth_service.py
++++ b/app/services/auth/vk_oauth_service.py
+@@ -1,11 +1,15 @@
+ """VK ID 2.0 OAuth flow: обмен code → tokens, извлечение user_id.
+ 
+-Phase Y-1.5: добавлено auto-create user (см. ADR-0021) с защитой
+-от identity-takeover через 409 при VK userinfo.email overlap с
+-существующим email-only user. Race-safety: INSERT в SAVEPOINT
+-(begin_nested) — IntegrityError на UNIQUE(kind,value) откатывает
++Phase Y-1.5: добавлено auto-create user (см. ADR-0021). Race-safety: INSERT в
++SAVEPOINT (begin_nested) — IntegrityError на UNIQUE(kind,value) откатывает
+ только savepoint, основная транзакция (с обменом VK token и атрибуцией
+ guest_session) продолжается.
++
++tsk-755 (ADR-0054): совпадение почты из ВК с существующим аккаунтом больше не
++409, а привязка — ВКонтакте подтверждает почту прежде, чем отдать её приложению,
++поэтому она равна доказательству владения адресом, тому же, что даёт письмо со
++ссылкой. Запрет из ADR-0021 §2 держался ровно на обратном предположении.
++Слияние двух живых аккаунтов автоматом по-прежнему не делается.
+ """
+ import logging
+ from datetime import datetime
+@@ -20,6 +24,7 @@ from app.models.users import Users
+ from app.services.audit_service import log_event
+ from app.services.auth import identity_link_service
+ from app.services.auth.exceptions import IdentityConflictError
++from app.services.auth.magic_link_service import mask_email
+ from app.services.fernet_service import encrypt_token
+ 
+ logger = logging.getLogger(__name__)
+@@ -117,6 +122,105 @@ async def fetch_vk_userinfo(access_token: str) -> dict:
+     return {"user_id": str(uid), "email": email, "full_name": full_name}
+ 
+ 
++async def _link_vk_to_email_owner(
++    db: AsyncSession,
++    owner: Users,
++    vk_user_id: str,
++    email: str,
++    *,
++    enc_access: bytes,
++    enc_refresh: bytes | None,
++    expires_at: datetime | None,
++    ip: str | None,
++    user_agent: str | None,
++    match_source: str,
++) -> tuple[Users, bool]:
++    """Привязать ВК к аккаунту, у которого та же подтверждённая почта (tsk-755).
++
++    Вызывается только когда этот ВК ещё ни за кем не закреплён, а почта пришла
++    от ВК непустой. Возвращает (владелец, False) — аккаунт существующий, новый
++    не заводится.
++
++    Каждая такая привязка записывается в журнал (`auth.vk.auto_linked_by_email`):
++    кто, к какому аккаунту, по какой почте и по какому совпадению. Решение
++    отменяет часть ADR-0021 §2, и разбирать его когда-нибудь придётся по
++    фактическим строкам, а не по памяти.
++
++    `match_source`:
++      * ``identity_link`` — почта была полноценной identity аккаунта;
++      * ``users_email_orphan`` — почта стояла только в карточке (`users.email`),
++        входа по ней не было; недостающая email-identity достраивается здесь же,
++        иначе следующий вход по письму завёл бы человеку второй аккаунт.
++    """
++    await identity_link_service.link_existing_user(
++        db, owner.id, "vk", vk_user_id,
++        vk_access_token_enc=enc_access,
++        vk_refresh_token_enc=enc_refresh,
++        vk_token_expires_at=expires_at,
++    )
++    if match_source == "users_email_orphan":
++        await identity_link_service.upsert_identity(db, owner.id, "email", email)
++
++    await log_event(
++        db,
++        "auth.vk.auto_linked_by_email",
++        user_id=owner.id,
++        ip=ip,
++        user_agent=user_agent,
++        details={
++            "vk_user_id": vk_user_id,
++            "email_masked": mask_email(email),
++            "match_source": match_source,
++        },
++    )
++    logger.info(
++        "auth.vk.auto_linked_by_email user_id=%d vk_user_id=%s email=%s match=%s",
++        owner.id, vk_user_id, mask_email(email), match_source,
++    )
++    return owner, False
++
++
++async def _note_merge_candidate(
++    db: AsyncSession,
++    *,
++    vk_owner: Users,
++    email: str,
++    vk_user_id: str,
++    ip: str | None,
++    user_agent: str | None,
++) -> None:
++    """Отметить для оператора два живых аккаунта одного человека (tsk-755).
++
++    Случай: ВК ведёт в аккаунт А, а почта из того же ВК принадлежит аккаунту Б.
++    Автоматически такое не сливается — на обоих аккаунтах могут быть работы и
++    оценки, и выбор «что чьё» остаётся за человеком. Пишем запись в журнал,
++    вход при этом идёт обычным ходом, в аккаунт А.
++
++    Тишина здесь ничего не стоит и ничего не даёт: без записи пара всплывёт
++    только жалобой ученика «мои курсы пропали».
++    """
++    email_owner = await identity_link_service.get_user_by_identity(db, "email", email)
++    if email_owner is None or email_owner.id == vk_owner.id:
++        return
++    await log_event(
++        db,
++        "auth.vk.merge_candidate",
++        user_id=vk_owner.id,
++        ip=ip,
++        user_agent=user_agent,
++        details={
++            "vk_user_id": vk_user_id,
++            "email_masked": mask_email(email),
++            "vk_account_id": vk_owner.id,
++            "email_account_id": email_owner.id,
++        },
++    )
++    logger.warning(
++        "auth.vk.merge_candidate vk_account_id=%d email_account_id=%d email=%s",
++        vk_owner.id, email_owner.id, mask_email(email),
++    )
++
++
+ async def get_or_create_user_by_vk(
+     db: AsyncSession,
+     vk_user_id: str,
+@@ -135,8 +239,10 @@ async def get_or_create_user_by_vk(
+     Если найден — обновляет VK token поля (ротация при каждом login).
+     Если не найден, но вызывающий уже вошёл (`current_user_id`) — привязывает
+     ВК к его аккаунту вместо заведения нового (tsk-629).
+-    Если не найден и email указан — проверяет на overlap c email-only user;
+-    при overlap кидает IdentityConflictError (auto-merge запрещён ADR-0021).
++    Если не найден и email указан — привязывает ВК к аккаунту с этой же почтой
++    (tsk-755, ADR-0054: почту от ВК провайдер подтверждает, значит она равна
++    доказательству владения адресом). Новый аккаунт заводится только когда почты
++    нет вовсе или такой почты ни у кого нет.
+     Возвращает (user, created_flag).
+ 
+     :param current_user_id: чей сеанс жив в момент входа через ВК, если он есть.
+@@ -152,6 +258,15 @@ async def get_or_create_user_by_vk(
+             vk_refresh_token_enc=enc_refresh,
+             vk_token_expires_at=expires_at,
+         )
++        # tsk-755: ВК уже за этим аккаунтом, но почта из ВК может принадлежать
++        # другому — это два живых аккаунта одного человека. Слить их автоматом
++        # нельзя (там чужие работы и оценки), поэтому просто отмечаем пару для
++        # оператора и пускаем человека туда, куда ведёт его ВК.
++        if email:
++            await _note_merge_candidate(
++                db, vk_owner=user, email=email, vk_user_id=vk_user_id, ip=ip,
++                user_agent=user_agent,
++            )
+         return user, False
+ 
+     # tsk-629: этот ВК ещё ни за кем не закреплён, а человек уже внутри кабинета —
+@@ -185,29 +300,50 @@ async def get_or_create_user_by_vk(
+         return linked_user, False
+ 
+     if email:
++        # tsk-755: почта, пришедшая от ВК, — доказательство владения адресом:
++        # ВКонтакте подтверждает почту прежде, чем отдать её приложению
++        # (решение оператора 01.09.2026, ADR-0054). Поэтому совпадение почты
++        # больше не тупик, а привязка: человек входит в СВОЙ аккаунт, а не
++        # упирается в «сначала войдите по почте, потом привяжите ВК».
++        #
++        # Что здесь уже известно к этому месту и почему привязка безопасна:
++        #   * этот ВК ещё ни за кем не закреплён (ветка выше вернула бы вход);
++        #   * почта непустая, то есть человек дал согласие на неё в ВК
++        #     (без согласия `fetch_vk_userinfo` отдаёт None, см. tsk-363);
++        #   * значит перед нами владелец адреса, у которого на платформе уже
++        #     есть аккаунт с этим же адресом.
++        #
++        # Слияние двух ЖИВЫХ аккаунтов остаётся запрещённым и сюда не попадает:
++        # оно означало бы «ВК уже на аккаунте А, почта на аккаунте Б», а такой
++        # вход обработан выше — человек просто заходит в А. Кандидат на слияние
++        # при этом записывается для оператора (`_note_merge_candidate`).
+         existing_email_user = await identity_link_service.get_user_by_identity(
+             db, "email", email
+         )
+         if existing_email_user is not None:
+-            raise IdentityConflictError(
+-                conflict_kind="email_already_linked",
+-                existing_kinds=["email"],
++            return await _link_vk_to_email_owner(
++                db, existing_email_user, vk_user_id, email,
++                enc_access=enc_access, enc_refresh=enc_refresh,
++                expires_at=expires_at, ip=ip, user_agent=user_agent,
++                match_source="identity_link",
+             )
+-        # S2 hotfix per handoff 2026-04-28 §2: orphan email
+-        # (users.email exists без identity_link kind='email') —
+-        # источник правды UNIQUE — partial index на users.email,
+-        # identity_link это secondary mapping. INSERT users(email=X)
+-        # упадёт на UniqueViolation внутри savepoint и без
+-        # явной проверки приведёт к 500. Возвращаем 409 — защита
+-        # от identity-takeover (VK userinfo.email не верифицирован
+-        # провайдером, ADR-0021 §2).
++
++        # Осиротевшая почта: `users.email` заполнен (карточка ученика заведена
++        # импортом), а identity_link kind='email' нет. Источник правды по
++        # уникальности — partial index на users.email, поэтому INSERT нового
++        # пользователя с этим адресом всё равно упал бы. Раньше здесь стоял 409;
++        # теперь по тому же основанию привязываем ВК к этой карточке и заодно
++        # достраиваем недостающую email-identity — иначе человек завёл бы себе
++        # второй, пустой аккаунт рядом со своим настоящим.
+         orphan = (await db.execute(
+             select(Users).where(func.lower(Users.email) == email.lower())
+         )).scalar_one_or_none()
+         if orphan is not None:
+-            raise IdentityConflictError(
+-                conflict_kind="email_already_linked_to_orphan_user",
+-                existing_kinds=[],
++            return await _link_vk_to_email_owner(
++                db, orphan, vk_user_id, email,
++                enc_access=enc_access, enc_refresh=enc_refresh,
++                expires_at=expires_at, ip=ip, user_agent=user_agent,
++                match_source="users_email_orphan",
+             )
+ 
+     new_user = Users(
+diff --git a/tests/test_auth_cookie_helper.py b/tests/test_auth_cookie_helper.py
+index a6e898d..aa5f166 100644
+--- a/tests/test_auth_cookie_helper.py
++++ b/tests/test_auth_cookie_helper.py
+@@ -18,6 +18,7 @@ if str(project_root) not in sys.path:
+ 
+ from app.services.auth.cookie import (
+     DEFAULT_REFRESH_MAX_AGE_SECONDS,
++    SESSION_HINT_COOKIE,
+     DEFAULT_SESSION_MAX_AGE_SECONDS,
+     REFRESH_COOKIE_PATH,
+     clear_refresh_cookie,
+@@ -128,3 +129,58 @@ def test_clear_refresh_cookie_matches_path(monkeypatch):
+     assert f"Path={REFRESH_COOKIE_PATH}" in raw
+     assert "Domain=victor-komlev.ru" in raw
+     assert "Max-Age=0" in raw or "expires=" in raw.lower()
++
++
++# ---------------------------------------------------------------------------
++# tsk-755: метка «у этого браузера была наша сессия».
++# ---------------------------------------------------------------------------
++
++def _all_set_cookies(response: Response) -> list[str]:
++    """Все Set-Cookie ответа: один вызов теперь ставит две cookie."""
++    return [
++        value.decode()
++        for name, value in response.raw_headers
++        if name.lower() == b"set-cookie"
++    ]
++
++
++def test_hint_cookie_is_set_next_to_refresh(monkeypatch):
++    """Метка ставится тем же ответом, что и refresh-токен, и живёт столько же."""
++    from app.services.auth import cookie as cookie_module
++    monkeypatch.setattr(cookie_module._settings, "cookie_domain", "victor-komlev.ru")
++
++    response = Response()
++    set_refresh_cookie(response, "tok")
++    hint = [c for c in _all_set_cookies(response) if c.startswith(f"{SESSION_HINT_COOKIE}=")]
++
++    assert len(hint) == 1, "метка должна ставиться ровно один раз"
++    raw = hint[0]
++    assert f"{SESSION_HINT_COOKIE}=1" in raw
++    assert f"Max-Age={DEFAULT_REFRESH_MAX_AGE_SECONDS}" in raw
++    assert "Path=/;" in raw or raw.rstrip().endswith("Path=/")
++    assert "HttpOnly" in raw and "Secure" in raw
++
++
++def test_hint_cookie_carries_no_secret(monkeypatch):
++    """В метке нет ни токена, ни идентификатора — только «был вход»."""
++    from app.services.auth import cookie as cookie_module
++    monkeypatch.setattr(cookie_module._settings, "cookie_domain", None)
++
++    response = Response()
++    set_refresh_cookie(response, "super-secret-refresh-token")
++    hint = [c for c in _all_set_cookies(response) if c.startswith(f"{SESSION_HINT_COOKIE}=")][0]
++
++    assert "super-secret-refresh-token" not in hint
++
++
++def test_clear_refresh_cookie_also_clears_hint(monkeypatch):
++    """При выходе метка снимается — иначе кабинет пробовал бы продлить отозванное."""
++    from app.services.auth import cookie as cookie_module
++    monkeypatch.setattr(cookie_module._settings, "cookie_domain", "victor-komlev.ru")
++
++    response = Response()
++    clear_refresh_cookie(response)
++    hint = [c for c in _all_set_cookies(response) if c.startswith(f"{SESSION_HINT_COOKIE}=")]
++
++    assert len(hint) == 1
++    assert "Max-Age=0" in hint[0] or "expires=" in hint[0].lower()
+diff --git a/tests/test_auto_register_vk.py b/tests/test_auto_register_vk.py
+index faed2f0..b6614f9 100644
+--- a/tests/test_auto_register_vk.py
++++ b/tests/test_auto_register_vk.py
+@@ -72,8 +72,13 @@ async def test_first_time_vk_no_email_creates_user_email_null(db):
+ 
+ 
+ @pytest.mark.asyncio
+-async def test_vk_email_conflict_raises_409(db):
+-    """VK userinfo.email overlap c existing email-only user → IdentityConflictError, no auto-merge."""
++async def test_vk_email_match_links_to_existing_account(db):
++    """tsk-755: совпадение почты — привязка к своему аккаунту, а не тупик.
++
++    Было (ADR-0021 §2): 409, «войдите по почте, потом привяжите ВК».
++    Стало (ADR-0054): ВК подтверждает почту, значит человек — владелец адреса,
++    и его ВК привязывается к аккаунту с этим адресом.
++    """
+     settings = Settings()
+     rand = os.urandom(4).hex()
+     email = f"conflict-{rand}@example.com"
+@@ -86,14 +91,20 @@ async def test_vk_email_conflict_raises_409(db):
+     await db.commit()
+ 
+     new_vk_id = _new_vk_id()
+-    with pytest.raises(IdentityConflictError) as exc_info:
+-        await get_or_create_user_by_vk(
+-            db, vk_user_id=new_vk_id, email=email, full_name="Attacker",
+-            access_token="acc", refresh_token=None, expires_at=None,
+-            settings=settings, ip=None, user_agent=None,
+-        )
+-    assert exc_info.value.conflict_kind == "email_already_linked"
+-    assert "email" in exc_info.value.existing_kinds
++    user, created = await get_or_create_user_by_vk(
++        db, vk_user_id=new_vk_id, email=email, full_name="Тот же человек",
++        access_token="acc", refresh_token=None, expires_at=None,
++        settings=settings, ip=None, user_agent=None,
++    )
++    await db.commit()
++
++    assert created is False
++    assert user.id == existing.id
++    assert user.full_name == "Pre-existing", "имя из ВК не перетирает профиль"
++    link = (await db.execute(
++        select(IdentityLink).where(IdentityLink.kind == "vk", IdentityLink.value == new_vk_id)
++    )).scalar_one()
++    assert link.user_id == existing.id
+ 
+ 
+ @pytest.mark.asyncio
+@@ -120,29 +131,39 @@ async def test_vk_access_token_encrypted(db):
+ 
+ 
+ @pytest.mark.asyncio
+-async def test_orphan_email_returns_409(db):
+-    """S2 regression (handoff 2026-04-28 §2): users.email exists без identity_link
+-    kind='email' value=email → IdentityConflictError(email_already_linked_to_orphan_user),
+-    не IntegrityError 500. Защита от identity-takeover (ADR-0021 §2)."""
++async def test_orphan_email_links_to_card_and_repairs_identity(db):
++    """tsk-755: почта только в карточке (`users.email`) — тоже привязка.
++
++    S2 regression (handoff 2026-04-28 §2) остаётся закрытой: INSERT нового
++    пользователя с этим адресом упал бы на partial unique index, 500 быть не
++    должно. Раньше здесь стоял 409; теперь ВК привязывается к самой карточке,
++    а недостающая email-identity достраивается — иначе следующий вход по письму
++    завёл бы человеку второй, пустой аккаунт рядом с настоящим.
++    """
+     settings = Settings()
+     rand = os.urandom(4).hex()
+     email = f"orphan-{rand}@example.com"
+ 
+-    # Создаём orphan user: users.email есть, identity_link kind='email' нет.
++    # users.email есть, identity_link kind='email' нет.
+     orphan_user = Users(email=email, password_hash=None, full_name="Orphan")
+     db.add(orphan_user)
+     await db.flush()
+     await db.commit()
+ 
+     new_vk_id = _new_vk_id()
+-    with pytest.raises(IdentityConflictError) as exc_info:
+-        await get_or_create_user_by_vk(
+-            db, vk_user_id=new_vk_id, email=email, full_name="VK Attacker",
+-            access_token="acc", refresh_token=None, expires_at=None,
+-            settings=settings, ip=None, user_agent=None,
+-        )
+-    assert exc_info.value.conflict_kind == "email_already_linked_to_orphan_user"
+-    assert exc_info.value.existing_kinds == []
++    user, created = await get_or_create_user_by_vk(
++        db, vk_user_id=new_vk_id, email=email, full_name="Из ВК",
++        access_token="acc", refresh_token=None, expires_at=None,
++        settings=settings, ip=None, user_agent=None,
++    )
++    await db.commit()
++
++    assert created is False
++    assert user.id == orphan_user.id
++    kinds = {row[0] for row in (await db.execute(
++        select(IdentityLink.kind).where(IdentityLink.user_id == orphan_user.id)
++    )).all()}
++    assert kinds == {"vk", "email"}, "email-identity достроена, вход по письму ведёт сюда же"
+ 
+ 
+ @pytest.mark.asyncio
+diff --git a/tests/test_vk_link_to_live_session_tsk629.py b/tests/test_vk_link_to_live_session_tsk629.py
+index 53d9444..0390724 100644
+--- a/tests/test_vk_link_to_live_session_tsk629.py
++++ b/tests/test_vk_link_to_live_session_tsk629.py
+@@ -165,8 +165,13 @@ async def test_no_live_session_behaves_as_before(db):
+ 
+ 
+ @pytest.mark.asyncio
+-async def test_email_overlap_still_forbidden_without_session(db):
+-    """Слияние по совпадающей почте по-прежнему запрещено (ADR-0021)."""
++async def test_email_overlap_now_links_without_session(db):
++    """tsk-755 отменил здесь запрет: совпадение почты — привязка, а не 409.
++
++    Правило tsk-629 (живой сеанс = доказательство владения) осталось; к нему
++    добавилось второе основание — подтверждённая ВКонтакте почта (ADR-0054).
++    Живого сеанса тут нет, и вход всё равно ведёт в существующий аккаунт.
++    """
+     settings = Settings()
+     email = f"overlap-{os.urandom(4).hex()}@example.com"
+     owner = await _make_user(db, email=email)
+@@ -174,10 +179,13 @@ async def test_email_overlap_still_forbidden_without_session(db):
+     await identity_link_service.link_existing_user(db, owner.id, "email", email)
+     await db.commit()
+ 
+-    with pytest.raises(IdentityConflictError):
+-        await get_or_create_user_by_vk(
+-            db, vk_user_id=_new_vk_id(), email=email, full_name=None,
+-            access_token="acc", refresh_token=None, expires_at=None,
+-            settings=settings, ip=None, user_agent=None,
+-            current_user_id=None,
+-        )
++    user, created = await get_or_create_user_by_vk(
++        db, vk_user_id=_new_vk_id(), email=email, full_name=None,
++        access_token="acc", refresh_token=None, expires_at=None,
++        settings=settings, ip=None, user_agent=None,
++        current_user_id=None,
++    )
++    await db.commit()
++
++    assert created is False
++    assert user.id == owner.id

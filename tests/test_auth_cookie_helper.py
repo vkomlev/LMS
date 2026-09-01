@@ -18,6 +18,7 @@ if str(project_root) not in sys.path:
 
 from app.services.auth.cookie import (
     DEFAULT_REFRESH_MAX_AGE_SECONDS,
+    SESSION_HINT_COOKIE,
     DEFAULT_SESSION_MAX_AGE_SECONDS,
     REFRESH_COOKIE_PATH,
     clear_refresh_cookie,
@@ -128,3 +129,58 @@ def test_clear_refresh_cookie_matches_path(monkeypatch):
     assert f"Path={REFRESH_COOKIE_PATH}" in raw
     assert "Domain=victor-komlev.ru" in raw
     assert "Max-Age=0" in raw or "expires=" in raw.lower()
+
+
+# ---------------------------------------------------------------------------
+# tsk-755: метка «у этого браузера была наша сессия».
+# ---------------------------------------------------------------------------
+
+def _all_set_cookies(response: Response) -> list[str]:
+    """Все Set-Cookie ответа: один вызов теперь ставит две cookie."""
+    return [
+        value.decode()
+        for name, value in response.raw_headers
+        if name.lower() == b"set-cookie"
+    ]
+
+
+def test_hint_cookie_is_set_next_to_refresh(monkeypatch):
+    """Метка ставится тем же ответом, что и refresh-токен, и живёт столько же."""
+    from app.services.auth import cookie as cookie_module
+    monkeypatch.setattr(cookie_module._settings, "cookie_domain", "victor-komlev.ru")
+
+    response = Response()
+    set_refresh_cookie(response, "tok")
+    hint = [c for c in _all_set_cookies(response) if c.startswith(f"{SESSION_HINT_COOKIE}=")]
+
+    assert len(hint) == 1, "метка должна ставиться ровно один раз"
+    raw = hint[0]
+    assert f"{SESSION_HINT_COOKIE}=1" in raw
+    assert f"Max-Age={DEFAULT_REFRESH_MAX_AGE_SECONDS}" in raw
+    assert "Path=/;" in raw or raw.rstrip().endswith("Path=/")
+    assert "HttpOnly" in raw and "Secure" in raw
+
+
+def test_hint_cookie_carries_no_secret(monkeypatch):
+    """В метке нет ни токена, ни идентификатора — только «был вход»."""
+    from app.services.auth import cookie as cookie_module
+    monkeypatch.setattr(cookie_module._settings, "cookie_domain", None)
+
+    response = Response()
+    set_refresh_cookie(response, "super-secret-refresh-token")
+    hint = [c for c in _all_set_cookies(response) if c.startswith(f"{SESSION_HINT_COOKIE}=")][0]
+
+    assert "super-secret-refresh-token" not in hint
+
+
+def test_clear_refresh_cookie_also_clears_hint(monkeypatch):
+    """При выходе метка снимается — иначе кабинет пробовал бы продлить отозванное."""
+    from app.services.auth import cookie as cookie_module
+    monkeypatch.setattr(cookie_module._settings, "cookie_domain", "victor-komlev.ru")
+
+    response = Response()
+    clear_refresh_cookie(response)
+    hint = [c for c in _all_set_cookies(response) if c.startswith(f"{SESSION_HINT_COOKIE}=")]
+
+    assert len(hint) == 1
+    assert "Max-Age=0" in hint[0] or "expires=" in hint[0].lower()

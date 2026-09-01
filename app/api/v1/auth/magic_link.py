@@ -43,6 +43,11 @@ async def send_magic_link(
         raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Слишком много запросов")
 
     email = body.email.lower()
+    # tsk-755: известен ли адрес — решается ДО создания ссылки. Ответ человеку от
+    # этого не зависит (иначе форма входа стала бы способом узнать перебором, кто
+    # у нас учится), но оператор должен видеть попытки на ничьи адреса: за неделю
+    # до задачи три ученика ждали письма, которое некому было получить.
+    recipient_known = await magic_link_service.is_known_recipient(db, email)
     token = await magic_link_service.create_magic_link(db, email)
     await db.commit()
 
@@ -55,9 +60,19 @@ async def send_magic_link(
         db,
         "magic_link_sent",
         ip=ip,
-        details={"email": email, "link_mode": body.link_mode},
+        details={
+            "email": email,
+            "link_mode": body.link_mode,
+            "recipient_known": recipient_known,
+        },
     )
     await db.commit()
+    if not recipient_known:
+        # Строка стабильна и рассчитана на поиск по логам прода.
+        logger.info(
+            "auth.magic_link unknown_recipient email=%s ip=%s",
+            magic_link_service.mask_email(email), ip,
+        )
 
     return MessageResponse(message="Письмо отправлено")
 

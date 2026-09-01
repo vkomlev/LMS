@@ -818,6 +818,12 @@ from app.api.v1.system_settings import router as system_settings_router
 
 app.include_router(system_settings_router, prefix=API_PREFIX)
 
+# tsk-755: попытки входа на адреса, которых нет ни у кого. Раньше их видел
+# только тот, кто догадался сходить запросом в базу.
+from app.api.v1.auth_signals import router as auth_signals_router
+
+app.include_router(auth_signals_router, prefix=API_PREFIX)
+
 
 @app.on_event("startup")
 async def _load_school_settings() -> None:

@@ -54,6 +54,28 @@ async def create_magic_link(
     return raw.hex()
 
 
+async def is_known_recipient(db: AsyncSession, email: str) -> bool:
+    """Есть ли на платформе аккаунт с этим адресом (tsk-755).
+
+    Считается известным и полноценный вход по почте (`identity_link kind='email'`),
+    и адрес, стоящий только в карточке ученика (`users.email`) — по нему
+    `verify` попадёт в существующий аккаунт, а не заведёт новый.
+
+    Наружу этот признак НЕ отдаётся: ответ на запрос ссылки остаётся одинаковым
+    для любого адреса, иначе по форме входа можно было бы перебором узнать, кто
+    у нас учится. Признак нужен для журнала — чтобы оператор видел попытки
+    входа на адреса, которых ни у кого нет (живой случай 01.09.2026: ученик
+    неделю не мог войти из-за опечатки в своём же адресе).
+    """
+    normalized = email.lower()
+    if await identity_link_service.find_identity(db, "email", normalized) is not None:
+        return True
+    orphan = (await db.execute(
+        select(Users.id).where(func.lower(Users.email) == normalized)
+    )).first()
+    return orphan is not None
+
+
 async def send_magic_link_email(
     token: str,
     email: str,
@@ -156,8 +178,12 @@ async def peek_magic_link(
     return result.scalar_one_or_none()
 
 
-def _mask_email(email: str) -> str:
-    """Маскировать email для audit_event details: первые 3 + *** + домен."""
+def mask_email(email: str) -> str:
+    """Маскировать email для audit_event details: первые 3 + *** + домен.
+
+    Публичная утилита слоя auth: тем же видом почта пишется в журнал из
+    vk_oauth_service (tsk-755), чтобы записи о входе выглядели одинаково.
+    """
     if "@" not in email:
         return email[:3] + "***"
     local, domain = email.split("@", 1)
@@ -222,7 +248,7 @@ async def get_or_create_user_by_email(
         user_id=new_user.id,
         ip=ip,
         user_agent=user_agent,
-        details={"identity_kind": "email", "value_masked": _mask_email(email)},
+        details={"identity_kind": "email", "value_masked": mask_email(email)},
     )
     logger.info("user.registered.via_magic_link user_id=%d", new_user.id)
     return new_user, True

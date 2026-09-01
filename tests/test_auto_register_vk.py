@@ -72,8 +72,13 @@ async def test_first_time_vk_no_email_creates_user_email_null(db):
 
 
 @pytest.mark.asyncio
-async def test_vk_email_conflict_raises_409(db):
-    """VK userinfo.email overlap c existing email-only user → IdentityConflictError, no auto-merge."""
+async def test_vk_email_match_links_to_existing_account(db):
+    """tsk-755: совпадение почты — привязка к своему аккаунту, а не тупик.
+
+    Было (ADR-0021 §2): 409, «войдите по почте, потом привяжите ВК».
+    Стало (ADR-0054): ВК подтверждает почту, значит человек — владелец адреса,
+    и его ВК привязывается к аккаунту с этим адресом.
+    """
     settings = Settings()
     rand = os.urandom(4).hex()
     email = f"conflict-{rand}@example.com"
@@ -86,14 +91,20 @@ async def test_vk_email_conflict_raises_409(db):
     await db.commit()
 
     new_vk_id = _new_vk_id()
-    with pytest.raises(IdentityConflictError) as exc_info:
-        await get_or_create_user_by_vk(
-            db, vk_user_id=new_vk_id, email=email, full_name="Attacker",
-            access_token="acc", refresh_token=None, expires_at=None,
-            settings=settings, ip=None, user_agent=None,
-        )
-    assert exc_info.value.conflict_kind == "email_already_linked"
-    assert "email" in exc_info.value.existing_kinds
+    user, created = await get_or_create_user_by_vk(
+        db, vk_user_id=new_vk_id, email=email, full_name="Тот же человек",
+        access_token="acc", refresh_token=None, expires_at=None,
+        settings=settings, ip=None, user_agent=None,
+    )
+    await db.commit()
+
+    assert created is False
+    assert user.id == existing.id
+    assert user.full_name == "Pre-existing", "имя из ВК не перетирает профиль"
+    link = (await db.execute(
+        select(IdentityLink).where(IdentityLink.kind == "vk", IdentityLink.value == new_vk_id)
+    )).scalar_one()
+    assert link.user_id == existing.id
 
 
 @pytest.mark.asyncio
@@ -120,29 +131,39 @@ async def test_vk_access_token_encrypted(db):
 
 
 @pytest.mark.asyncio
-async def test_orphan_email_returns_409(db):
-    """S2 regression (handoff 2026-04-28 §2): users.email exists без identity_link
-    kind='email' value=email → IdentityConflictError(email_already_linked_to_orphan_user),
-    не IntegrityError 500. Защита от identity-takeover (ADR-0021 §2)."""
+async def test_orphan_email_links_to_card_and_repairs_identity(db):
+    """tsk-755: почта только в карточке (`users.email`) — тоже привязка.
+
+    S2 regression (handoff 2026-04-28 §2) остаётся закрытой: INSERT нового
+    пользователя с этим адресом упал бы на partial unique index, 500 быть не
+    должно. Раньше здесь стоял 409; теперь ВК привязывается к самой карточке,
+    а недостающая email-identity достраивается — иначе следующий вход по письму
+    завёл бы человеку второй, пустой аккаунт рядом с настоящим.
+    """
     settings = Settings()
     rand = os.urandom(4).hex()
     email = f"orphan-{rand}@example.com"
 
-    # Создаём orphan user: users.email есть, identity_link kind='email' нет.
+    # users.email есть, identity_link kind='email' нет.
     orphan_user = Users(email=email, password_hash=None, full_name="Orphan")
     db.add(orphan_user)
     await db.flush()
     await db.commit()
 
     new_vk_id = _new_vk_id()
-    with pytest.raises(IdentityConflictError) as exc_info:
-        await get_or_create_user_by_vk(
-            db, vk_user_id=new_vk_id, email=email, full_name="VK Attacker",
-            access_token="acc", refresh_token=None, expires_at=None,
-            settings=settings, ip=None, user_agent=None,
-        )
-    assert exc_info.value.conflict_kind == "email_already_linked_to_orphan_user"
-    assert exc_info.value.existing_kinds == []
+    user, created = await get_or_create_user_by_vk(
+        db, vk_user_id=new_vk_id, email=email, full_name="Из ВК",
+        access_token="acc", refresh_token=None, expires_at=None,
+        settings=settings, ip=None, user_agent=None,
+    )
+    await db.commit()
+
+    assert created is False
+    assert user.id == orphan_user.id
+    kinds = {row[0] for row in (await db.execute(
+        select(IdentityLink.kind).where(IdentityLink.user_id == orphan_user.id)
+    )).all()}
+    assert kinds == {"vk", "email"}, "email-identity достроена, вход по письму ведёт сюда же"
 
 
 @pytest.mark.asyncio

@@ -1,11 +1,15 @@
 """VK ID 2.0 OAuth flow: обмен code → tokens, извлечение user_id.
 
-Phase Y-1.5: добавлено auto-create user (см. ADR-0021) с защитой
-от identity-takeover через 409 при VK userinfo.email overlap с
-существующим email-only user. Race-safety: INSERT в SAVEPOINT
-(begin_nested) — IntegrityError на UNIQUE(kind,value) откатывает
+Phase Y-1.5: добавлено auto-create user (см. ADR-0021). Race-safety: INSERT в
+SAVEPOINT (begin_nested) — IntegrityError на UNIQUE(kind,value) откатывает
 только savepoint, основная транзакция (с обменом VK token и атрибуцией
 guest_session) продолжается.
+
+tsk-755 (ADR-0054): совпадение почты из ВК с существующим аккаунтом больше не
+409, а привязка — ВКонтакте подтверждает почту прежде, чем отдать её приложению,
+поэтому она равна доказательству владения адресом, тому же, что даёт письмо со
+ссылкой. Запрет из ADR-0021 §2 держался ровно на обратном предположении.
+Слияние двух живых аккаунтов автоматом по-прежнему не делается.
 """
 import logging
 from datetime import datetime
@@ -20,6 +24,7 @@ from app.models.users import Users
 from app.services.audit_service import log_event
 from app.services.auth import identity_link_service
 from app.services.auth.exceptions import IdentityConflictError
+from app.services.auth.magic_link_service import mask_email
 from app.services.fernet_service import encrypt_token
 
 logger = logging.getLogger(__name__)
@@ -117,6 +122,105 @@ async def fetch_vk_userinfo(access_token: str) -> dict:
     return {"user_id": str(uid), "email": email, "full_name": full_name}
 
 
+async def _link_vk_to_email_owner(
+    db: AsyncSession,
+    owner: Users,
+    vk_user_id: str,
+    email: str,
+    *,
+    enc_access: bytes,
+    enc_refresh: bytes | None,
+    expires_at: datetime | None,
+    ip: str | None,
+    user_agent: str | None,
+    match_source: str,
+) -> tuple[Users, bool]:
+    """Привязать ВК к аккаунту, у которого та же подтверждённая почта (tsk-755).
+
+    Вызывается только когда этот ВК ещё ни за кем не закреплён, а почта пришла
+    от ВК непустой. Возвращает (владелец, False) — аккаунт существующий, новый
+    не заводится.
+
+    Каждая такая привязка записывается в журнал (`auth.vk.auto_linked_by_email`):
+    кто, к какому аккаунту, по какой почте и по какому совпадению. Решение
+    отменяет часть ADR-0021 §2, и разбирать его когда-нибудь придётся по
+    фактическим строкам, а не по памяти.
+
+    `match_source`:
+      * ``identity_link`` — почта была полноценной identity аккаунта;
+      * ``users_email_orphan`` — почта стояла только в карточке (`users.email`),
+        входа по ней не было; недостающая email-identity достраивается здесь же,
+        иначе следующий вход по письму завёл бы человеку второй аккаунт.
+    """
+    await identity_link_service.link_existing_user(
+        db, owner.id, "vk", vk_user_id,
+        vk_access_token_enc=enc_access,
+        vk_refresh_token_enc=enc_refresh,
+        vk_token_expires_at=expires_at,
+    )
+    if match_source == "users_email_orphan":
+        await identity_link_service.upsert_identity(db, owner.id, "email", email)
+
+    await log_event(
+        db,
+        "auth.vk.auto_linked_by_email",
+        user_id=owner.id,
+        ip=ip,
+        user_agent=user_agent,
+        details={
+            "vk_user_id": vk_user_id,
+            "email_masked": mask_email(email),
+            "match_source": match_source,
+        },
+    )
+    logger.info(
+        "auth.vk.auto_linked_by_email user_id=%d vk_user_id=%s email=%s match=%s",
+        owner.id, vk_user_id, mask_email(email), match_source,
+    )
+    return owner, False
+
+
+async def _note_merge_candidate(
+    db: AsyncSession,
+    *,
+    vk_owner: Users,
+    email: str,
+    vk_user_id: str,
+    ip: str | None,
+    user_agent: str | None,
+) -> None:
+    """Отметить для оператора два живых аккаунта одного человека (tsk-755).
+
+    Случай: ВК ведёт в аккаунт А, а почта из того же ВК принадлежит аккаунту Б.
+    Автоматически такое не сливается — на обоих аккаунтах могут быть работы и
+    оценки, и выбор «что чьё» остаётся за человеком. Пишем запись в журнал,
+    вход при этом идёт обычным ходом, в аккаунт А.
+
+    Тишина здесь ничего не стоит и ничего не даёт: без записи пара всплывёт
+    только жалобой ученика «мои курсы пропали».
+    """
+    email_owner = await identity_link_service.get_user_by_identity(db, "email", email)
+    if email_owner is None or email_owner.id == vk_owner.id:
+        return
+    await log_event(
+        db,
+        "auth.vk.merge_candidate",
+        user_id=vk_owner.id,
+        ip=ip,
+        user_agent=user_agent,
+        details={
+            "vk_user_id": vk_user_id,
+            "email_masked": mask_email(email),
+            "vk_account_id": vk_owner.id,
+            "email_account_id": email_owner.id,
+        },
+    )
+    logger.warning(
+        "auth.vk.merge_candidate vk_account_id=%d email_account_id=%d email=%s",
+        vk_owner.id, email_owner.id, mask_email(email),
+    )
+
+
 async def get_or_create_user_by_vk(
     db: AsyncSession,
     vk_user_id: str,
@@ -135,8 +239,10 @@ async def get_or_create_user_by_vk(
     Если найден — обновляет VK token поля (ротация при каждом login).
     Если не найден, но вызывающий уже вошёл (`current_user_id`) — привязывает
     ВК к его аккаунту вместо заведения нового (tsk-629).
-    Если не найден и email указан — проверяет на overlap c email-only user;
-    при overlap кидает IdentityConflictError (auto-merge запрещён ADR-0021).
+    Если не найден и email указан — привязывает ВК к аккаунту с этой же почтой
+    (tsk-755, ADR-0054: почту от ВК провайдер подтверждает, значит она равна
+    доказательству владения адресом). Новый аккаунт заводится только когда почты
+    нет вовсе или такой почты ни у кого нет.
     Возвращает (user, created_flag).
 
     :param current_user_id: чей сеанс жив в момент входа через ВК, если он есть.
@@ -152,6 +258,15 @@ async def get_or_create_user_by_vk(
             vk_refresh_token_enc=enc_refresh,
             vk_token_expires_at=expires_at,
         )
+        # tsk-755: ВК уже за этим аккаунтом, но почта из ВК может принадлежать
+        # другому — это два живых аккаунта одного человека. Слить их автоматом
+        # нельзя (там чужие работы и оценки), поэтому просто отмечаем пару для
+        # оператора и пускаем человека туда, куда ведёт его ВК.
+        if email:
+            await _note_merge_candidate(
+                db, vk_owner=user, email=email, vk_user_id=vk_user_id, ip=ip,
+                user_agent=user_agent,
+            )
         return user, False
 
     # tsk-629: этот ВК ещё ни за кем не закреплён, а человек уже внутри кабинета —
@@ -185,29 +300,50 @@ async def get_or_create_user_by_vk(
         return linked_user, False
 
     if email:
+        # tsk-755: почта, пришедшая от ВК, — доказательство владения адресом:
+        # ВКонтакте подтверждает почту прежде, чем отдать её приложению
+        # (решение оператора 01.09.2026, ADR-0054). Поэтому совпадение почты
+        # больше не тупик, а привязка: человек входит в СВОЙ аккаунт, а не
+        # упирается в «сначала войдите по почте, потом привяжите ВК».
+        #
+        # Что здесь уже известно к этому месту и почему привязка безопасна:
+        #   * этот ВК ещё ни за кем не закреплён (ветка выше вернула бы вход);
+        #   * почта непустая, то есть человек дал согласие на неё в ВК
+        #     (без согласия `fetch_vk_userinfo` отдаёт None, см. tsk-363);
+        #   * значит перед нами владелец адреса, у которого на платформе уже
+        #     есть аккаунт с этим же адресом.
+        #
+        # Слияние двух ЖИВЫХ аккаунтов остаётся запрещённым и сюда не попадает:
+        # оно означало бы «ВК уже на аккаунте А, почта на аккаунте Б», а такой
+        # вход обработан выше — человек просто заходит в А. Кандидат на слияние
+        # при этом записывается для оператора (`_note_merge_candidate`).
         existing_email_user = await identity_link_service.get_user_by_identity(
             db, "email", email
         )
         if existing_email_user is not None:
-            raise IdentityConflictError(
-                conflict_kind="email_already_linked",
-                existing_kinds=["email"],
+            return await _link_vk_to_email_owner(
+                db, existing_email_user, vk_user_id, email,
+                enc_access=enc_access, enc_refresh=enc_refresh,
+                expires_at=expires_at, ip=ip, user_agent=user_agent,
+                match_source="identity_link",
             )
-        # S2 hotfix per handoff 2026-04-28 §2: orphan email
-        # (users.email exists без identity_link kind='email') —
-        # источник правды UNIQUE — partial index на users.email,
-        # identity_link это secondary mapping. INSERT users(email=X)
-        # упадёт на UniqueViolation внутри savepoint и без
-        # явной проверки приведёт к 500. Возвращаем 409 — защита
-        # от identity-takeover (VK userinfo.email не верифицирован
-        # провайдером, ADR-0021 §2).
+
+        # Осиротевшая почта: `users.email` заполнен (карточка ученика заведена
+        # импортом), а identity_link kind='email' нет. Источник правды по
+        # уникальности — partial index на users.email, поэтому INSERT нового
+        # пользователя с этим адресом всё равно упал бы. Раньше здесь стоял 409;
+        # теперь по тому же основанию привязываем ВК к этой карточке и заодно
+        # достраиваем недостающую email-identity — иначе человек завёл бы себе
+        # второй, пустой аккаунт рядом со своим настоящим.
         orphan = (await db.execute(
             select(Users).where(func.lower(Users.email) == email.lower())
         )).scalar_one_or_none()
         if orphan is not None:
-            raise IdentityConflictError(
-                conflict_kind="email_already_linked_to_orphan_user",
-                existing_kinds=[],
+            return await _link_vk_to_email_owner(
+                db, orphan, vk_user_id, email,
+                enc_access=enc_access, enc_refresh=enc_refresh,
+                expires_at=expires_at, ip=ip, user_agent=user_agent,
+                match_source="users_email_orphan",
             )
 
     new_user = Users(

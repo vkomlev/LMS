@@ -31,6 +31,23 @@ DEFAULT_REFRESH_MAX_AGE_SECONDS = 30 * 86400  # 30 дней
 # (в отличие от access-cookie `session`, которая нужна на всех защищённых роутах).
 REFRESH_COOKIE_PATH = "/api/v1/auth/session/refresh"
 
+# tsk-755: метка «у этого браузера была наша сессия». Секрета не несёт и доступа
+# не даёт — только значение "1".
+#
+# Зачем она есть. Access-cookie `session` живёт 24 часа, refresh — 30 дней, но
+# refresh лежит на узком path и на обычную страницу браузером не отправляется.
+# Кабинет (SPW) на входе смотрит именно `session`: нет её — сразу форма входа.
+# Значит человек, вернувшийся через двое суток, видел форму входа при живой ещё
+# цепочке сессий и логинился заново. По замеру прода за 14 дней таких лишних
+# входов 50 из 186 — самая крупная и самая чинимая доля обрывов.
+#
+# Метка позволяет кабинету различить «этот браузер у нас уже был, надо попробовать
+# продлить» и «здесь никто не входил, сразу показываем вход» — не раскрывая ни
+# токена, ни того, кто именно входил. Срок совпадает с refresh: метка без живого
+# refresh-токена бесполезна, а с ним — ровно и нужна.
+SESSION_HINT_COOKIE = "has_session"
+DEFAULT_HINT_MAX_AGE_SECONDS = DEFAULT_REFRESH_MAX_AGE_SECONDS
+
 
 def set_session_cookie(
     response: Response,
@@ -80,6 +97,17 @@ def set_refresh_cookie(
         domain=_settings.cookie_domain,
         path=REFRESH_COOKIE_PATH,
     )
+    # tsk-755: метка ставится ровно там же, где refresh-токен, и живёт столько же
+    # — иначе кабинет предлагал бы продлить сессию, которой уже нет.
+    response.set_cookie(
+        SESSION_HINT_COOKIE, "1",
+        httponly=True,
+        secure=secure,
+        samesite="lax",
+        max_age=max_age,
+        domain=_settings.cookie_domain,
+        path="/",
+    )
 
 
 def clear_session_cookie(response: Response) -> None:
@@ -92,4 +120,10 @@ def clear_refresh_cookie(response: Response) -> None:
     иначе браузер не сматчит cookie и не удалит её."""
     response.delete_cookie(
         "refresh", domain=_settings.cookie_domain, path=REFRESH_COOKIE_PATH,
+    )
+    # tsk-755: метку снимаем вместе с токеном. Иначе после выхода кабинет на
+    # каждом заходе честно пробовал бы продлить давно отозванную сессию и
+    # показывал бы человеку лишний промежуточный экран.
+    response.delete_cookie(
+        SESSION_HINT_COOKIE, domain=_settings.cookie_domain, path="/",
     )

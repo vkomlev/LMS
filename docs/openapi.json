@@ -40667,6 +40667,122 @@
           }
         }
       }
+    },
+    "/api/v1/auth/signals/unknown-recipients": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "List Unknown Recipient Attempts",
+        "description": "Ссылки для входа, заказанные на адреса, которых нет ни у кого.\n\nАдрес отдаётся целиком, а не маской: половина смысла раздела — увидеть\nопечатку («arttur1791» вместо «arttur1701») и понять, кто это. Раздел\nзакрыт ролью персонала, поэтому чужих адресов посторонний тут не увидит.\n\nПовторные заказы на один и тот же адрес схлопываются в одну строку с числом\nпопыток и временем последней: человек, который не может войти, жмёт кнопку\nне один раз, и десять одинаковых строк только мешают увидеть остальных.",
+        "operationId": "list_unknown_recipient_attempts_api_v1_auth_signals_unknown_recipients_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "days",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 90,
+              "minimum": 1,
+              "description": "Глубина окна в днях",
+              "default": 14,
+              "title": "Days"
+            },
+            "description": "Глубина окна в днях"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "default": 100,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnknownRecipientAttemptsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -65663,6 +65779,82 @@
         ],
         "title": "TutorSessionRead",
         "description": "Состояние разговора. Плашка о видимости — обязательное поле, не опция."
+      },
+      "UnknownRecipientAttempt": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "title": "Email",
+            "description": "Адрес целиком — по нему и видно опечатку"
+          },
+          "attempts": {
+            "type": "integer",
+            "title": "Attempts",
+            "description": "Сколько раз заказывали ссылку на этот адрес"
+          },
+          "first_attempt_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "First Attempt At",
+            "description": "Первая попытка в окне"
+          },
+          "last_attempt_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Last Attempt At",
+            "description": "Последняя попытка"
+          },
+          "last_ip": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Ip",
+            "description": "Адрес сети последней попытки"
+          }
+        },
+        "type": "object",
+        "required": [
+          "email",
+          "attempts",
+          "first_attempt_at",
+          "last_attempt_at"
+        ],
+        "title": "UnknownRecipientAttempt",
+        "description": "Одна попытка входа на адрес, которого нет ни у кого.\n\nСтроки по одному адресу схлопнуты: `attempts` — сколько раз заказывали\nссылку, `first_attempt_at` — когда человек начал биться в закрытую дверь."
+      },
+      "UnknownRecipientAttemptsResponse": {
+        "properties": {
+          "window_days": {
+            "type": "integer",
+            "title": "Window Days",
+            "description": "Глубина окна в днях"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "Сколько разных адресов нашлось в окне"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/UnknownRecipientAttempt"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "window_days",
+          "total",
+          "items"
+        ],
+        "title": "UnknownRecipientAttemptsResponse",
+        "description": "Список попыток за окно."
       },
       "UnreadBySenderItem": {
         "properties": {
