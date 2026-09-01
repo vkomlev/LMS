@@ -39,7 +39,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core import settings_store
 from app.core.config import Settings
 from app.db.session import async_session_factory
-from app.services import inbox_service
+from app.services import homework_service, inbox_service
 
 logger = logging.getLogger("app.lesson_calendar")
 
@@ -85,14 +85,40 @@ async def _send_reminders(db: AsyncSession, *, lead_minutes: int) -> int:
     )
     rows = res.fetchall()
     sent = 0
+
+    # tsk-741: строка про домашнюю работу едет ВНУТРИ этого напоминания, а не
+    # отдельной рассылкой. Причина простая: `lesson_reminder` — самый читаемый
+    # канал у учеников (309 писем за 30 дней, прочитано 60%; для сравнения
+    # «ученик молчит» — 16%), и заводить рядом второй значило бы делить то же
+    # внимание надвое. Одним запросом на всю выборку, а не на ученика.
+    homework = await homework_service.status_for_students(
+        db, student_ids=[int(r.student_id) for r in rows], now=now_utc
+    )
+
     for _participant_id, student_id, occurrence_id, teacher_id, scheduled_at in rows:
+        # Решение оператора 01.09: строка появляется, ТОЛЬКО если есть
+        # несделанное. Кто всё сделал, лишнего не читает — и похвала, звучащая
+        # в каждом напоминании, не обесценивается.
+        status = homework.get(int(student_id))
+        left = (
+            status["assigned_total"] - status["assigned_done"] if status else 0
+        )
+        # Факт без оценки (решение оператора 01.09): ни похвалы, ни укора, ни
+        # «ты отстаёшь». Число подросток прочтёт спокойно, бодрый тон — нет.
+        homework_line = (
+            f" Домашняя работа: {status['assigned_done']} из "
+            f"{status['assigned_total']}."
+            if status and left > 0
+            else ""
+        )
         await inbox_service.create_for_user(
             db,
             user_id=int(student_id),
             kind="lesson_reminder",
             title="Скоро занятие",
             content=(
-                f"Занятие начинается {_format_lesson_time(scheduled_at)}. "
+                f"Занятие начинается {_format_lesson_time(scheduled_at)}."
+                f"{homework_line} "
                 "Не забудьте подтвердить явку в LMS."
             ),
             payload={
@@ -100,6 +126,10 @@ async def _send_reminders(db: AsyncSession, *, lead_minutes: int) -> int:
                 "teacher_id": int(teacher_id),
                 "scheduled_at": scheduled_at.isoformat(),
                 "role": "student",
+                # Числа отдельно от текста: бот вправе показать их по-своему,
+                # а разбирать строку ему нельзя.
+                "homework_done": status["assigned_done"] if status else None,
+                "homework_total": status["assigned_total"] if status else None,
             },
             created_by=None,
         )

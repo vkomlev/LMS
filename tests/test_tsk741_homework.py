@@ -796,3 +796,125 @@ def test_unknown_grade_follows_the_final_grade_sprint():
     """Класс не указан — считаем как 11, значит и спринт с марта тот же."""
     assert homework_volume_service.target_per_week_for(None, date(2026, 12, 1)) == 20
     assert homework_volume_service.target_per_week_for(None, date(2027, 3, 1)) == 6
+
+
+# ================= Мотивация: напоминание и видимость =================
+
+
+async def _reminder_content(db, *, student_id: int) -> tuple[str, dict]:
+    """Текст и payload последнего напоминания «Скоро занятие» этому ученику."""
+    row = (
+        await db.execute(
+            text(
+                "SELECT content, payload FROM notifications "
+                " WHERE kind = 'lesson_reminder' AND user_id = :u "
+                " ORDER BY id DESC LIMIT 1"
+            ),
+            {"u": student_id},
+        )
+    ).one()
+    return row.content, row.payload
+
+
+@pytest.mark.asyncio
+async def test_reminder_mentions_homework_only_when_something_is_left(
+    db, db_session_factory
+):
+    """Строка про ДЗ едет ВНУТРИ напоминания о занятии и только при несделанном.
+
+    Решение оператора 01.09. Отдельной рассылки нет намеренно: `lesson_reminder`
+    — самый читаемый канал у учеников (60% против 16% у «ученик молчит»), и
+    второй рядом делил бы то же внимание. Кто всё сделал — лишнего не читает,
+    иначе похвала в каждом напоминании обесценивается.
+    """
+    from app.services.lesson_attendance_cron_service import lesson_attendance_cron_tick
+
+    student_id, course_id = await _student_with_program(db, materials=0, tasks=4)
+    teacher_id, _ = await _new_user(db, role="teacher", name="teach")
+    await _create_occurrence(
+        db, student_id=student_id, teacher_id=teacher_id,
+        scheduled_at=datetime.now(UTC) + timedelta(minutes=10),
+    )
+    await db.execute(
+        text(
+            "UPDATE lesson_occurrence_participant SET status = 'scheduled' "
+            " WHERE student_id = :s"
+        ),
+        {"s": student_id},
+    )
+    homework = await homework_service.issue(
+        db, student_id=student_id, due_at=datetime.now(UTC) + timedelta(days=2),
+        source="teacher", volume_override=4,
+    )
+    await db.commit()
+
+    await lesson_attendance_cron_tick(db_session_factory)
+    content, payload = await _reminder_content(db, student_id=student_id)
+    assert "Домашняя работа: 0 из 4" in content
+    # Числа отдельно от текста: бот показывает их по-своему, разбирать строку
+    # ему нельзя.
+    assert payload["homework_done"] == 0 and payload["homework_total"] == 4
+    # Факт без оценки: ни похвалы, ни укора, ни «ты отстаёшь».
+    for forbidden in ("отстаёшь", "успей", "молодец", "!"):
+        assert forbidden not in content, content
+
+
+@pytest.mark.asyncio
+async def test_reminder_stays_silent_when_homework_is_done(db, db_session_factory):
+    """Всё сделано — напоминание прежнее, без строки про ДЗ."""
+    from app.services.lesson_attendance_cron_service import lesson_attendance_cron_tick
+
+    student_id, course_id = await _student_with_program(db, materials=0, tasks=2)
+    teacher_id, _ = await _new_user(db, role="teacher", name="teach")
+    await _create_occurrence(
+        db, student_id=student_id, teacher_id=teacher_id,
+        scheduled_at=datetime.now(UTC) + timedelta(minutes=10),
+    )
+    await db.execute(
+        text(
+            "UPDATE lesson_occurrence_participant SET status = 'scheduled' "
+            " WHERE student_id = :s"
+        ),
+        {"s": student_id},
+    )
+    homework = await homework_service.issue(
+        db, student_id=student_id, due_at=datetime.now(UTC) + timedelta(days=2),
+        source="teacher", volume_override=2,
+    )
+    await db.commit()
+    for item in homework["items"]:
+        await _submit(
+            db, student_id=student_id, task_id=item["item_id"], course_id=course_id,
+            is_correct=True, at=datetime.now(UTC),
+        )
+
+    await lesson_attendance_cron_tick(db_session_factory)
+    content, _ = await _reminder_content(db, student_id=student_id)
+    assert "Домашняя работа" not in content, content
+
+
+@pytest.mark.asyncio
+async def test_reminder_survives_student_without_homework(db, db_session_factory):
+    """Ученику без выдачи напоминание приходит как раньше — и не падает."""
+    from app.services.lesson_attendance_cron_service import lesson_attendance_cron_tick
+
+    student_id, _ = await _new_user(db)
+    teacher_id, _ = await _new_user(db, role="teacher", name="teach")
+    await _create_occurrence(
+        db, student_id=student_id, teacher_id=teacher_id,
+        scheduled_at=datetime.now(UTC) + timedelta(minutes=10),
+    )
+    await db.execute(
+        text(
+            "UPDATE lesson_occurrence_participant SET status = 'scheduled' "
+            " WHERE student_id = :s"
+        ),
+        {"s": student_id},
+    )
+    await db.commit()
+
+    await lesson_attendance_cron_tick(db_session_factory)
+    content, payload = await _reminder_content(db, student_id=student_id)
+    assert "Занятие начинается" in content
+    assert "Домашняя работа" not in content
+    assert payload["homework_total"] is None
