@@ -70,6 +70,7 @@ $plan = @(
     [pscustomobject]@{ Check = 'stale-verdicts';      TaskName = 'LMS stale verdicts weekly';              At = '09:20'; Default = $true;  Why = 'незачёты, устаревшие после правки эталона (tsk-636)' }
     [pscustomobject]@{ Check = 'slow-requests';       TaskName = 'LMS slow requests weekly';               At = '09:25'; Default = $true;  Why = 'запросы, которые ученик ждал дольше порога (tsk-644)' }
     [pscustomobject]@{ Check = 'tutor-outcomes';      TaskName = 'LMS tutor outcomes weekly';              At = '09:28'; Default = $true;  Why = 'чем кончаются разговоры с ИИ-наставником (tsk-661)' }
+    [pscustomobject]@{ Check = 'external-media';      TaskName = 'LMS external media weekly';              At = '09:32'; Default = $true;  Why = 'картинки заданий на чужих адресах — браузер их не покажет (tsk-759)' }
     [pscustomobject]@{ Check = 'missing-attachments'; TaskName = 'LMS missing attachments weekly';         At = '09:30'; Default = $false; Why = 'задания с файловым условием без файла (tsk-369)' }
 )
 

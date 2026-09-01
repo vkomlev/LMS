@@ -1,0 +1,36 @@
+diff --git a/scripts/install_weekly_checks.ps1 b/scripts/install_weekly_checks.ps1
+index 75f97f6..e753103 100644
+--- a/scripts/install_weekly_checks.ps1
++++ b/scripts/install_weekly_checks.ps1
+@@ -70,6 +70,7 @@ $plan = @(
+     [pscustomobject]@{ Check = 'stale-verdicts';      TaskName = 'LMS stale verdicts weekly';              At = '09:20'; Default = $true;  Why = 'незачёты, устаревшие после правки эталона (tsk-636)' }
+     [pscustomobject]@{ Check = 'slow-requests';       TaskName = 'LMS slow requests weekly';               At = '09:25'; Default = $true;  Why = 'запросы, которые ученик ждал дольше порога (tsk-644)' }
+     [pscustomobject]@{ Check = 'tutor-outcomes';      TaskName = 'LMS tutor outcomes weekly';              At = '09:28'; Default = $true;  Why = 'чем кончаются разговоры с ИИ-наставником (tsk-661)' }
++    [pscustomobject]@{ Check = 'external-media';      TaskName = 'LMS external media weekly';              At = '09:32'; Default = $true;  Why = 'картинки заданий на чужих адресах — браузер их не покажет (tsk-759)' }
+     [pscustomobject]@{ Check = 'missing-attachments'; TaskName = 'LMS missing attachments weekly';         At = '09:30'; Default = $false; Why = 'задания с файловым условием без файла (tsk-369)' }
+ )
+ 
+diff --git a/scripts/weekly_checks.py b/scripts/weekly_checks.py
+index b009dbf..c957d0c 100644
+--- a/scripts/weekly_checks.py
++++ b/scripts/weekly_checks.py
+@@ -117,6 +117,19 @@ CHECKS: dict[str, Check] = {
+         hint=r"  Как чинить — tsk-369 в трекере (скрипты scripts\tsk369_*.py).",
+         takes_quiet=True,
+     ),
++    "external-media": Check(
++        module="check_external_stem_media",
++        log="external_media_check.log",
++        needs_dsn=True,
++        ok="OK: все картинки заданий и материалов на разрешённых адресах",
++        found="НАЙДЕНЫ картинки, которые браузер ученика не покажет:",
++        hint=(
++            "  Как чинить — tsk-759 в трекере: перенос в CAS "
++            r"(CB scripts\tsk759_external_images_to_cas.py) и перезапись ссылки "
++            r"(scripts\tsk759_rewrite_external_images.py)."
++        ),
++        takes_quiet=True,
++    ),
+     "slow-requests": Check(
+         module="check_slow_requests",
+         log="slow_requests_check.log",

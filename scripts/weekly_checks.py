@@ -117,6 +117,19 @@ CHECKS: dict[str, Check] = {
         hint=r"  Как чинить — tsk-369 в трекере (скрипты scripts\tsk369_*.py).",
         takes_quiet=True,
     ),
+    "external-media": Check(
+        module="check_external_stem_media",
+        log="external_media_check.log",
+        needs_dsn=True,
+        ok="OK: все картинки заданий и материалов на разрешённых адресах",
+        found="НАЙДЕНЫ картинки, которые браузер ученика не покажет:",
+        hint=(
+            "  Как чинить — tsk-759 в трекере: перенос в CAS "
+            r"(CB scripts\tsk759_external_images_to_cas.py) и перезапись ссылки "
+            r"(scripts\tsk759_rewrite_external_images.py)."
+        ),
+        takes_quiet=True,
+    ),
     "slow-requests": Check(
         module="check_slow_requests",
         log="slow_requests_check.log",
