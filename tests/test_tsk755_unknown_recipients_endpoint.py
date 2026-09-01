@@ -37,9 +37,16 @@ def _logout():
     app.dependency_overrides.pop(get_current_user, None)
 
 
+_LEGACY_EMAIL = f"legacy{_MARK}@example.com"
+
+
 @pytest_asyncio.fixture
 async def journal_rows(db):
-    """Две попытки на ничей адрес и одна на известный."""
+    """Две попытки на ничей адрес, одна на известный и одна старого вида.
+
+    Старая запись — без поля `recipient_known`: такие лежат в журнале за все
+    дни до появления признака, и раздел обязан разбирать их на месте.
+    """
     for known in ("false", "false", "true"):
         email = _KNOWN_EMAIL if known == "true" else _TYPO_EMAIL
         await db.execute(
@@ -51,6 +58,13 @@ async def journal_rows(db):
             {"d": f'{{"email": "{email}", "link_mode": false, '
                    f'"recipient_known": {known}}}'},
         )
+    await db.execute(
+        text(
+            "INSERT INTO audit_event (event_type, ip, details) "
+            "VALUES ('magic_link_sent', '127.0.0.1', CAST(:d AS jsonb))"
+        ),
+        {"d": f'{{"email": "{_LEGACY_EMAIL}", "link_mode": false}}'},
+    )
     await db.commit()
     yield
     # Убирать за собой нечем и не нужно: журнал append-only (UPDATE/DELETE
@@ -79,6 +93,9 @@ async def test_персонал_видит_адрес_целиком_и_числ
     assert _TYPO_EMAIL in items, "попытка на ничей адрес должна быть видна"
     assert items[_TYPO_EMAIL]["attempts"] == 2, "повторы схлопнуты в одну строку"
     assert _KNOWN_EMAIL not in items, "свой ученик в этот список не попадает"
+    assert _LEGACY_EMAIL in items, (
+        "запись без признака разбирается на месте — иначе первые дни раздел пуст"
+    )
 
 
 async def test_окно_ограничивает_выборку(client, journal_rows):

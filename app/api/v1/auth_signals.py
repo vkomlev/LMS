@@ -29,6 +29,7 @@ from app.schemas.auth_signals import (
     UnknownRecipientAttempt,
     UnknownRecipientAttemptsResponse,
 )
+from app.services.auth import magic_link_service
 
 router = APIRouter(prefix="/auth/signals", tags=["auth"])
 
@@ -60,15 +61,32 @@ async def list_unknown_recipient_attempts(
         .where(
             AuditEvent.event_type == "magic_link_sent",
             AuditEvent.ts >= since,
-            AuditEvent.details["recipient_known"].astext == "false",
         )
         .order_by(AuditEvent.ts.desc())
     )).all()
+
+    # Записи, сделанные до появления признака, разбираем на месте: иначе первые
+    # дни раздел стоял бы пустым — ровно тогда, когда оператору нужны случаи,
+    # из-за которых он и появился. Адрес, заведённый позже, здесь уже не всплывёт,
+    # и это верно: человек вошёл, проблемы больше нет.
+    legacy_emails = {
+        (d or {}).get("email")
+        for d, _, _ in rows
+        if d and d.get("email") and "recipient_known" not in d
+    }
+    resolved: dict[str, bool] = {}
+    for email in legacy_emails:
+        resolved[email] = await magic_link_service.is_known_recipient(db, email)
 
     grouped: dict[str, UnknownRecipientAttempt] = {}
     for details, ts, ip in rows:
         email = (details or {}).get("email")
         if not email:
+            continue
+        known = (details or {}).get("recipient_known")
+        if known is None:
+            known = resolved.get(email, True)
+        if known:
             continue
         seen = grouped.get(email)
         if seen is None:
