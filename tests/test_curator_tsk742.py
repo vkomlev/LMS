@@ -675,6 +675,75 @@ async def test_merge_moves_roster_of_a_merged_teacher(db, graph):
     assert graph["st_pair"] in roster
 
 
+# ─── Список «за них никто не отвечает» ───────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_unassigned_list_tells_the_reasons_apart(db, graph):
+    """С каждой причиной владелец школы делает РАЗНОЕ — значит их надо различать.
+
+    Три сорта «ничьих»: у одного двое ведущих (выбирать человеку), у второго
+    занятия ведёт сам владелец школы (правило его не подхватит НИКОГДА), у
+    третьего просто нет расписания (закрепится сам, когда оно появится).
+    Слитые в одно число, они превращаются в наблюдение, с которым нечего делать.
+    """
+    # Ученик, которого ведёт ТОЛЬКО владелец школы — случай Комарова.
+    owned = await _new_user(db, "student", "st_owned")
+    await _new_occurrence(
+        db, owner_id=graph["operator"], teachers=[graph["operator"]],
+        student_id=owned, days_ago=3,
+    )
+    await db.commit()
+
+    rows = await curator_service.unassigned_students(db)
+    by_id = {int(r["student_id"]): r for r in rows}
+
+    assert by_id[owned]["reason"] == curator_service.NOBODY_OWNER_ONLY
+    assert by_id[owned]["owner_teaches"] is True
+    # Ничья между двумя преподавателями.
+    assert by_id[graph["st_tie"]]["reason"] == curator_service.NOBODY_AMBIGUOUS
+    # Расписания нет вовсе.
+    assert by_id[graph["st_lonely"]]["reason"] == curator_service.NOBODY_NO_SCHEDULE
+    # Правило знает ответ, раскладку просто не применяли.
+    assert by_id[graph["st_slot_solo"]]["reason"] == curator_service.NOBODY_DERIVABLE
+    # У каждого есть человеческая подпись — её читает владелец школы.
+    assert all(r["reason_label"] for r in rows)
+
+
+@pytest.mark.asyncio
+async def test_assigned_student_leaves_the_list(db, graph):
+    """Закреплённый ученик из списка уходит.
+
+    Это то, чем список отличается от `unresolved` в предпросмотре: тот
+    показывает «что даёт правило» и держит там ученика даже после ручного
+    закрепления, а здесь — сегодняшнее положение дел.
+    """
+    before = {int(r["student_id"]) for r in await curator_service.unassigned_students(db)}
+    assert graph["st_tie"] in before
+
+    await curator_service.assign(
+        db, student_id=graph["st_tie"], curator_id=graph["teacher_a"],
+        reason="разобрал руками", commit=False)
+    await db.commit()
+
+    after = {int(r["student_id"]) for r in await curator_service.unassigned_students(db)}
+    assert graph["st_tie"] not in after
+
+    preview = await curator_service.derive_from_schedule(db)
+    assert graph["st_tie"] in {int(r["student_id"]) for r in preview["unresolved"]}, (
+        "предпросмотр правила и список «ничьих» — разные вопросы"
+    )
+
+
+@pytest.mark.asyncio
+async def test_report_text_names_the_orphans_by_reason(db, graph):
+    """В отчёте они приходят поимённо и сгруппированы по причине."""
+    report = await curator_activity_service.weekly_report(db)
+    body = curator_activity_service.render_report_text(report)
+    assert "Без куратора:" in body
+    assert f"{_TAG}-st_lonely" in body, "ученик без расписания не назван по имени"
+    assert curator_service.NOBODY_LABELS[curator_service.NOBODY_NO_SCHEDULE] in body
+
+
 # ─── Сигнал молчащему куратору ───────────────────────────────────────────────
 
 @pytest.mark.asyncio

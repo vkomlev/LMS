@@ -229,6 +229,23 @@ class CuratorWeekRow(BaseModel):
     reviews_overdue: int
 
 
+class UnassignedStudent(BaseModel):
+    """Ученик, за которого сейчас не отвечает никто, и почему так вышло."""
+
+    student_id: int
+    student_name: Optional[str] = None
+    registered_on: Optional[date] = None
+    teachers: int = Field(
+        0, description="Сколько преподавателей ведёт его по расписанию (без владельца школы)"
+    )
+    teacher_names: Optional[str] = None
+    owner_teaches: bool = Field(
+        False, description="Занятия ведёт владелец школы"
+    )
+    reason: Literal["ambiguous", "owner_only", "no_schedule", "derivable"]
+    reason_label: str = Field(..., description="Та же причина словами, для человека")
+
+
 class CuratorWeeklyReportResponse(BaseModel):
     """Недельный отчёт по активности кураторов."""
 
@@ -236,5 +253,11 @@ class CuratorWeeklyReportResponse(BaseModel):
     week_end: date
     curators: List[CuratorWeekRow]
     students_without_curator: int
+    students_without_curator_list: List[UnassignedStudent] = Field(
+        default_factory=list,
+        description=(
+            "Поимённо, с причиной: числа мало — с каждой причиной делают разное"
+        ),
+    )
     thresholds: CuratorThresholds
     text: str = Field(..., description="Тот же отчёт словами — как в уведомлении")

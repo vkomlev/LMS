@@ -48285,6 +48285,14 @@
             "type": "integer",
             "title": "Students Without Curator"
           },
+          "students_without_curator_list": {
+            "items": {
+              "$ref": "#/components/schemas/UnassignedStudent"
+            },
+            "type": "array",
+            "title": "Students Without Curator List",
+            "description": "Поимённо, с причиной: числа мало — с каждой причиной делают разное"
+          },
           "thresholds": {
             "$ref": "#/components/schemas/CuratorThresholds"
           },
@@ -68768,6 +68776,83 @@
         ],
         "title": "TutorSessionRead",
         "description": "Состояние разговора. Плашка о видимости — обязательное поле, не опция."
+      },
+      "UnassignedStudent": {
+        "properties": {
+          "student_id": {
+            "type": "integer",
+            "title": "Student Id"
+          },
+          "student_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Student Name"
+          },
+          "registered_on": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Registered On"
+          },
+          "teachers": {
+            "type": "integer",
+            "title": "Teachers",
+            "description": "Сколько преподавателей ведёт его по расписанию (без владельца школы)",
+            "default": 0
+          },
+          "teacher_names": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teacher Names"
+          },
+          "owner_teaches": {
+            "type": "boolean",
+            "title": "Owner Teaches",
+            "description": "Занятия ведёт владелец школы",
+            "default": false
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "ambiguous",
+              "owner_only",
+              "no_schedule",
+              "derivable"
+            ],
+            "title": "Reason"
+          },
+          "reason_label": {
+            "type": "string",
+            "title": "Reason Label",
+            "description": "Та же причина словами, для человека"
+          }
+        },
+        "type": "object",
+        "required": [
+          "student_id",
+          "reason",
+          "reason_label"
+        ],
+        "title": "UnassignedStudent",
+        "description": "Ученик, за которого сейчас не отвечает никто, и почему так вышло."
       },
       "UnknownRecipientAttempt": {
         "properties": {

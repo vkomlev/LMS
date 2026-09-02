@@ -483,6 +483,143 @@ async def apply_derived(
     }
 
 
+#: Почему ученик фактически остался без куратора. Отличается от
+#: `UNRESOLVED_*` тем, что говорит о СЕГОДНЯШНЕМ положении, а не о том, что
+#: думает правило: ученик может быть в «ничьих» у правила и при этом давно
+#: закреплён руками.
+NOBODY_AMBIGUOUS = "ambiguous"       # преподавателей несколько, выбирать человеку
+NOBODY_OWNER_ONLY = "owner_only"     # занятия ведёт только владелец школы
+NOBODY_NO_SCHEDULE = "no_schedule"   # расписания нет вовсе
+NOBODY_DERIVABLE = "derivable"       # правило знает ответ, раскладку не применяли
+
+#: Ярлыки для человека — их читает владелец школы в отчёте, поэтому по-русски
+#: и с готовым продолжением фразы «…, закрепите руками».
+NOBODY_LABELS = {
+    NOBODY_AMBIGUOUS: "несколько преподавателей — выбор за вами",
+    NOBODY_OWNER_ONLY: "занятия ведёте вы сами",
+    NOBODY_NO_SCHEDULE: "расписания ещё нет",
+    NOBODY_DERIVABLE: "правило знает ответ — примените раскладку",
+}
+
+_UNASSIGNED_SQL = """
+WITH owners AS (
+    SELECT DISTINCT ur.user_id AS id
+    FROM user_roles ur JOIN roles r ON r.id = ur.role_id
+    WHERE r.name = 'admin'
+),
+candidates AS (
+    SELECT DISTINCT u.id
+    FROM users u
+    JOIN user_roles ur ON ur.user_id = u.id
+    JOIN roles r ON r.id = ur.role_id AND r.name = 'teacher'
+    WHERE u.is_active AND u.merged_into_user_id IS NULL AND u.blocked_at IS NULL
+      AND u.id NOT IN (SELECT id FROM owners)
+),
+orphans AS (
+    SELECT u.id, u.full_name, u.created_at
+    FROM users u
+    JOIN user_roles ur ON ur.user_id = u.id
+    JOIN roles r ON r.id = ur.role_id AND r.name = 'student'
+    WHERE u.is_active AND u.merged_into_user_id IS NULL AND u.blocked_at IS NULL
+      AND NOT EXISTS (
+          SELECT 1 FROM student_curator sc
+          WHERE sc.student_id = u.id AND sc.ended_at IS NULL
+      )
+      AND {active_student}
+),
+-- Преподаватели ученика по расписанию: и постоянному, и разовому, и в двух
+-- местах сразу (колонка + таблица совместного ведения). Будущие занятия здесь
+-- УЧИТЫВАЮТСЯ, в отличие от правила раскладки: у нового ученика проведённых
+-- занятий ещё нет, а сказать оператору, кто его ведёт, надо уже сегодня.
+pairs AS (
+    SELECT o.id AS student_id, t.teacher_id
+    FROM orphans o
+    JOIN lesson_slot_student lss ON lss.student_id = o.id AND lss.is_active
+    JOIN lesson_slot s ON s.id = lss.slot_id AND s.is_active
+        AND (s.active_until IS NULL OR s.active_until >= CURRENT_DATE)
+    JOIN LATERAL (
+        SELECT lst.teacher_id FROM lesson_slot_teacher lst
+        WHERE lst.slot_id = s.id AND lst.is_active
+        UNION SELECT s.teacher_id WHERE s.teacher_id IS NOT NULL
+    ) t ON TRUE
+    UNION
+    SELECT o.id, t.teacher_id
+    FROM orphans o
+    JOIN lesson_occurrence_participant lop ON lop.student_id = o.id
+        AND lop.status NOT IN ('cancelled', 'declined', 'rescheduled')
+    JOIN lesson_occurrence oc ON oc.id = lop.occurrence_id
+        AND oc.scheduled_at >= now() - make_interval(days => :window_days)
+    JOIN LATERAL (
+        SELECT lot.teacher_id FROM lesson_occurrence_teacher lot
+        WHERE lot.occurrence_id = oc.id AND lot.is_active
+        UNION SELECT oc.teacher_id WHERE oc.teacher_id IS NOT NULL
+    ) t ON TRUE
+)
+SELECT o.id AS student_id,
+       o.full_name AS student_name,
+       o.created_at::date AS registered_on,
+       (SELECT count(*) FROM pairs p JOIN candidates c ON c.id = p.teacher_id
+         WHERE p.student_id = o.id) AS teachers,
+       (SELECT count(*) FROM pairs p JOIN owners w ON w.id = p.teacher_id
+         WHERE p.student_id = o.id) > 0 AS owner_teaches,
+       (SELECT string_agg(DISTINCT u2.full_name, ', ')
+          FROM pairs p JOIN candidates c ON c.id = p.teacher_id
+          JOIN users u2 ON u2.id = p.teacher_id
+         WHERE p.student_id = o.id) AS teacher_names
+FROM orphans o
+ORDER BY o.full_name
+LIMIT :limit
+"""
+
+
+async def unassigned_students(
+    db: AsyncSession, *, limit: int = 200
+) -> List[dict]:
+    """Ученики, у которых СЕЙЧАС нет куратора, с причиной по каждому.
+
+    Не то же самое, что `unresolved` в предпросмотре раскладки, и путать их
+    дорого. Предпросмотр отвечает на вопрос «что даёт правило» и держит там
+    ученика даже после того, как его закрепили руками. Здесь — сегодняшнее
+    положение: за этих людей не отвечает никто.
+
+    **Зачем причина.** «Ничей» бывает трёх разных сортов, и делать с ними надо
+    разное: у одного двое ведущих поровну (выбирать человеку), у другого
+    занятия ведёт сам владелец школы — и такого ученика правило не подхватит
+    НИКОГДА, потому что владелец из кураторства вышел, — у третьего просто ещё
+    нет расписания, и он закрепится сам, как только оно появится.
+
+    Четвёртый сорт, `derivable`, означает «правило знает ответ, но раскладку с
+    тех пор не применяли»: одно нажатие, и ученик уйдёт из списка.
+
+    Будущие занятия здесь считаются, в отличие от правила раскладки: у ученика,
+    записанного вчера, проведённых занятий ещё нет, а сказать, кто его ведёт,
+    надо уже сегодня.
+    """
+    sql = _UNASSIGNED_SQL.format(  # nosec B608 — литерал из закрытого набора
+        active_student=active_student_sql("u.id")
+    )
+    rows = (await db.execute(text(sql), {
+        "window_days": SCHEDULE_WINDOW_DAYS, "limit": limit,
+    })).mappings().all()
+
+    out: List[dict] = []
+    for r in rows:
+        item = dict(r)
+        teachers = int(item["teachers"] or 0)
+        if teachers > 1:
+            reason = NOBODY_AMBIGUOUS
+        elif teachers == 1:
+            reason = NOBODY_DERIVABLE
+        elif item["owner_teaches"]:
+            reason = NOBODY_OWNER_ONLY
+        else:
+            reason = NOBODY_NO_SCHEDULE
+        item["reason"] = reason
+        item["reason_label"] = NOBODY_LABELS[reason]
+        out.append(item)
+    return out
+
+
 async def coverage(db: AsyncSession) -> Dict[str, Any]:
     """Сводка раскладки: у кого сколько учеников и сколько осталось без куратора.
 

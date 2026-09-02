@@ -364,15 +364,21 @@ async def weekly_report(
     # То же определение «ученик, а не сотрудник», что у раскладки: иначе
     # отчёт и предпросмотр называют разные числа ничьих, и оба выглядят
     # правдой.
-    from app.services.curator_service import coverage
+    from app.services.curator_service import coverage, unassigned_students
 
     orphans = (await coverage(db))["students_without_curator"]
+    # Поимённо, а не числом (решение оператора 02.09). «Без куратора: 24»
+    # ничего не говорит о том, что с ними делать: у одного двое ведущих, у
+    # другого занятия ведёт сам владелец школы, третьему просто не завели
+    # расписание. Список с причиной превращает наблюдение в список дел.
+    orphan_list = await unassigned_students(db)
 
     return {
         "week_start": since.date().isoformat(),
         "week_end": (until.date()).isoformat(),
         "curators": curators,
         "students_without_curator": int(orphans),
+        "students_without_curator_list": orphan_list,
         "thresholds": {
             "signal_response_days": signal_response_days(),
             "urgent_response_hours": urgent_response_hours(),
@@ -440,8 +446,10 @@ def render_report_text(report: Dict[str, Any]) -> str:
     """
     lines = [f"Кураторство, неделя {report['week_start']} — {report['week_end']}"]
     if not report["curators"]:
+        # Раньше здесь был выход — и отчёт молчал о том, за кого никто не
+        # отвечает, ровно в тот момент, когда без куратора ВСЕ. Список ничьих
+        # ниже нужен тем сильнее, чем меньше кураторов.
         lines.append("Кураторов нет: раскладка ещё не применена.")
-        return "\n".join(lines)
 
     for c in report["curators"]:
         untouched = c["students_untouched"]
@@ -476,8 +484,19 @@ def render_report_text(report: Dict[str, Any]) -> str:
             parts.append("действий за неделю нет")
         lines.append("  " + "; ".join(parts))
 
+    orphans = report.get("students_without_curator_list") or []
     if report["students_without_curator"]:
+        lines.append("")
         lines.append(
             f"Без куратора: {report['students_without_curator']} — за них отвечаете вы."
         )
+        # Сгруппировано по причине: с каждой группой делают РАЗНОЕ, и вперемешку
+        # список читается как один длинный упрёк, а не как список дел.
+        by_reason: Dict[str, List[str]] = {}
+        for o in orphans:
+            by_reason.setdefault(str(o["reason_label"]), []).append(
+                str(o["student_name"] or f"ученик {o['student_id']}")
+            )
+        for label, names in by_reason.items():
+            lines.append(f"  {label}: " + ", ".join(sorted(names)))
     return "\n".join(lines)
