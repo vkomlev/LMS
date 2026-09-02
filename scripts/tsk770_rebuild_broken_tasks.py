@@ -208,9 +208,16 @@ REBUILDS: list[Rebuild] = [
 
 
 def apply_edits(stem: str, edits: list[tuple[str, str]], task_id: int) -> str:
-    """Точечные замены. Подстрока обязана встречаться ровно один раз."""
+    """Точечные замены. Подстрока обязана встречаться ровно один раз.
+
+    Идемпотентно: если исходной подстроки уже нет, а результат правки на месте,
+    считаем её применённой ранее. Без этого повторный прогон падал и скриптом
+    нельзя было воспользоваться для КОНТРОЛЯ уже исправленного состояния.
+    """
     for old, new in edits:
         found = stem.count(old)
+        if found == 0 and stem.count(new) >= 1:
+            continue
         if found != 1:
             raise RuntimeError(
                 f"[{task_id}] подстрока {old!r} встречается {found} раз, ожидался ровно 1"
@@ -264,6 +271,12 @@ def main() -> int:
         current = (((row["solution_rules"] or {}).get("short_answer") or {})
                    .get("accepted_answers") or [{}])[0].get("value")
 
+        if new_stem == content["stem"] and (
+            not rb.new_title or content.get("title") == rb.new_title
+        ):
+            logger.info("[%s] уже переделано ранее, решатель даёт %r — пропуск",
+                        rb.task_id, rb.expected)
+            continue
         content["stem"] = new_stem
         if rb.new_title:
             content["title"] = rb.new_title
@@ -286,6 +299,11 @@ def main() -> int:
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     backup_path = Path(args.backup_dir) / f"{stamp}-tsk770-rebuilt-tasks-backup.json"
     backup_path.parent.mkdir(parents=True, exist_ok=True)
+    # Дозапись, а не перезапись: снимок — единственный путь отката.
+    if backup_path.exists():
+        previous = json.loads(backup_path.read_text(encoding="utf-8"))
+        already = {row["id"] for row in previous}
+        backup = previous + [row for row in backup if row["id"] not in already]
     backup_path.write_text(json.dumps(backup, ensure_ascii=False, indent=2),
                            encoding="utf-8")
     logger.info("Снимок условий и правил до правки: %s", backup_path)
