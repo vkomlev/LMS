@@ -1,0 +1,72 @@
+[
+  {
+    "id": 6711,
+    "external_uid": "oge:reshu:t7:6294",
+    "title": "Адрес почтового ящика Plotnikov_11klass",
+    "solution_rules": {
+      "quiz": null,
+      "max_score": 1,
+      "penalties": {
+        "wrong_answer": 0,
+        "extra_wrong_mc": 0,
+        "missing_answer": 0
+      },
+      "auto_check": true,
+      "text_answer": null,
+      "scoring_mode": "all_or_nothing",
+      "short_answer": {
+        "regex": null,
+        "use_regex": false,
+        "normalization": [
+          "trim",
+          "lower"
+        ],
+        "accepted_answers": [
+          {
+            "score": 1,
+            "value": "ДБГЕАВ"
+          }
+        ]
+      },
+      "partial_rules": [],
+      "correct_options": [],
+      "custom_scoring_config": null,
+      "manual_review_required": false
+    }
+  },
+  {
+    "id": 6724,
+    "external_uid": "oge:reshu:t7:4536",
+    "title": "Адрес файла edu.txt на htm.ru",
+    "solution_rules": {
+      "quiz": null,
+      "max_score": 1,
+      "penalties": {
+        "wrong_answer": 0,
+        "extra_wrong_mc": 0,
+        "missing_answer": 0
+      },
+      "auto_check": true,
+      "text_answer": null,
+      "scoring_mode": "all_or_nothing",
+      "short_answer": {
+        "regex": null,
+        "use_regex": false,
+        "normalization": [
+          "trim",
+          "lower"
+        ],
+        "accepted_answers": [
+          {
+            "score": 1,
+            "value": "4213576"
+          }
+        ]
+      },
+      "partial_rules": [],
+      "correct_options": [],
+      "custom_scoring_config": null,
+      "manual_review_required": false
+    }
+  }
+]

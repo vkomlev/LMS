@@ -1,0 +1,422 @@
+[
+  {
+    "id": 6551,
+    "external_uid": "oge:reshu:t4:143",
+    "title": "Кратчайший путь длиной 3 км при B-C=3",
+    "solution_rules": {
+      "quiz": null,
+      "max_score": 1,
+      "penalties": {
+        "wrong_answer": 0,
+        "extra_wrong_mc": 0,
+        "missing_answer": 0
+      },
+      "auto_check": true,
+      "text_answer": null,
+      "scoring_mode": "all_or_nothing",
+      "short_answer": {
+        "regex": null,
+        "use_regex": false,
+        "normalization": [
+          "trim",
+          "lower"
+        ],
+        "accepted_answers": [
+          {
+            "score": 1,
+            "value": "6"
+          }
+        ]
+      },
+      "partial_rules": [],
+      "correct_options": [],
+      "custom_scoring_config": null,
+      "manual_review_required": false
+    }
+  },
+  {
+    "id": 6552,
+    "external_uid": "oge:reshu:t4:163",
+    "title": "Кратчайший путь А—Е: 4 км",
+    "solution_rules": {
+      "quiz": null,
+      "max_score": 1,
+      "penalties": {
+        "wrong_answer": 0,
+        "extra_wrong_mc": 0,
+        "missing_answer": 0
+      },
+      "auto_check": true,
+      "text_answer": null,
+      "scoring_mode": "all_or_nothing",
+      "short_answer": {
+        "regex": null,
+        "use_regex": false,
+        "normalization": [
+          "trim",
+          "lower"
+        ],
+        "accepted_answers": [
+          {
+            "score": 1,
+            "value": "6"
+          }
+        ]
+      },
+      "partial_rules": [],
+      "correct_options": [],
+      "custom_scoring_config": null,
+      "manual_review_required": false
+    }
+  },
+  {
+    "id": 6553,
+    "external_uid": "oge:reshu:t4:203",
+    "title": "Кратчайший путь длиной 6 км",
+    "solution_rules": {
+      "quiz": null,
+      "max_score": 1,
+      "penalties": {
+        "wrong_answer": 0,
+        "extra_wrong_mc": 0,
+        "missing_answer": 0
+      },
+      "auto_check": true,
+      "text_answer": null,
+      "scoring_mode": "all_or_nothing",
+      "short_answer": {
+        "regex": null,
+        "use_regex": false,
+        "normalization": [
+          "trim",
+          "lower"
+        ],
+        "accepted_answers": [
+          {
+            "score": 1,
+            "value": "7"
+          }
+        ]
+      },
+      "partial_rules": [],
+      "correct_options": [],
+      "custom_scoring_config": null,
+      "manual_review_required": false
+    }
+  },
+  {
+    "id": 6554,
+    "external_uid": "oge:reshu:t4:223",
+    "title": "Кратчайший путь А—Е: 5 км",
+    "solution_rules": {
+      "quiz": null,
+      "max_score": 1,
+      "penalties": {
+        "wrong_answer": 0,
+        "extra_wrong_mc": 0,
+        "missing_answer": 0
+      },
+      "auto_check": true,
+      "text_answer": null,
+      "scoring_mode": "all_or_nothing",
+      "short_answer": {
+        "regex": null,
+        "use_regex": false,
+        "normalization": [
+          "trim",
+          "lower"
+        ],
+        "accepted_answers": [
+          {
+            "score": 1,
+            "value": "8"
+          }
+        ]
+      },
+      "partial_rules": [],
+      "correct_options": [],
+      "custom_scoring_config": null,
+      "manual_review_required": false
+    }
+  },
+  {
+    "id": 6555,
+    "external_uid": "oge:reshu:t4:263",
+    "title": "Кратчайший путь длиной 3 км при B-C=1",
+    "solution_rules": {
+      "quiz": null,
+      "max_score": 1,
+      "penalties": {
+        "wrong_answer": 0,
+        "extra_wrong_mc": 0,
+        "missing_answer": 0
+      },
+      "auto_check": true,
+      "text_answer": null,
+      "scoring_mode": "all_or_nothing",
+      "short_answer": {
+        "regex": null,
+        "use_regex": false,
+        "normalization": [
+          "trim",
+          "lower"
+        ],
+        "accepted_answers": [
+          {
+            "score": 1,
+            "value": "5"
+          }
+        ]
+      },
+      "partial_rules": [],
+      "correct_options": [],
+      "custom_scoring_config": null,
+      "manual_review_required": false
+    }
+  },
+  {
+    "id": 6563,
+    "external_uid": "oge:reshu:t4:384",
+    "title": "Путь А—F через D длиной 5",
+    "solution_rules": {
+      "quiz": null,
+      "max_score": 1,
+      "penalties": {
+        "wrong_answer": 0,
+        "extra_wrong_mc": 0,
+        "missing_answer": 0
+      },
+      "auto_check": true,
+      "text_answer": null,
+      "scoring_mode": "all_or_nothing",
+      "short_answer": {
+        "regex": null,
+        "use_regex": false,
+        "normalization": [
+          "trim",
+          "lower"
+        ],
+        "accepted_answers": [
+          {
+            "score": 1,
+            "value": "6"
+          }
+        ]
+      },
+      "partial_rules": [],
+      "correct_options": [],
+      "custom_scoring_config": null,
+      "manual_review_required": false
+    }
+  },
+  {
+    "id": 6564,
+    "external_uid": "oge:reshu:t4:404",
+    "title": "Путь А—F через D длиной 6",
+    "solution_rules": {
+      "quiz": null,
+      "max_score": 1,
+      "penalties": {
+        "wrong_answer": 0,
+        "extra_wrong_mc": 0,
+        "missing_answer": 0
+      },
+      "auto_check": true,
+      "text_answer": null,
+      "scoring_mode": "all_or_nothing",
+      "short_answer": {
+        "regex": null,
+        "use_regex": false,
+        "normalization": [
+          "trim",
+          "lower"
+        ],
+        "accepted_answers": [
+          {
+            "score": 1,
+            "value": "7"
+          }
+        ]
+      },
+      "partial_rules": [],
+      "correct_options": [],
+      "custom_scoring_config": null,
+      "manual_review_required": false
+    }
+  },
+  {
+    "id": 6565,
+    "external_uid": "oge:reshu:t4:424",
+    "title": "Кратчайший путь А—F через D и E",
+    "solution_rules": {
+      "quiz": null,
+      "max_score": 1,
+      "penalties": {
+        "wrong_answer": 0,
+        "extra_wrong_mc": 0,
+        "missing_answer": 0
+      },
+      "auto_check": true,
+      "text_answer": null,
+      "scoring_mode": "all_or_nothing",
+      "short_answer": {
+        "regex": null,
+        "use_regex": false,
+        "normalization": [
+          "trim",
+          "lower"
+        ],
+        "accepted_answers": [
+          {
+            "score": 1,
+            "value": "6"
+          }
+        ]
+      },
+      "partial_rules": [],
+      "correct_options": [],
+      "custom_scoring_config": null,
+      "manual_review_required": false
+    }
+  },
+  {
+    "id": 6566,
+    "external_uid": "oge:reshu:t4:444",
+    "title": "Путь А—F через B, D и E",
+    "solution_rules": {
+      "quiz": null,
+      "max_score": 1,
+      "penalties": {
+        "wrong_answer": 0,
+        "extra_wrong_mc": 0,
+        "missing_answer": 0
+      },
+      "auto_check": true,
+      "text_answer": null,
+      "scoring_mode": "all_or_nothing",
+      "short_answer": {
+        "regex": null,
+        "use_regex": false,
+        "normalization": [
+          "trim",
+          "lower"
+        ],
+        "accepted_answers": [
+          {
+            "score": 1,
+            "value": "7"
+          }
+        ]
+      },
+      "partial_rules": [],
+      "correct_options": [],
+      "custom_scoring_config": null,
+      "manual_review_required": false
+    }
+  },
+  {
+    "id": 6569,
+    "external_uid": "oge:reshu:t4:504",
+    "title": "Кратчайший путь от А до F",
+    "solution_rules": {
+      "quiz": null,
+      "max_score": 1,
+      "penalties": {
+        "wrong_answer": 0,
+        "extra_wrong_mc": 0,
+        "missing_answer": 0
+      },
+      "auto_check": true,
+      "text_answer": null,
+      "scoring_mode": "all_or_nothing",
+      "short_answer": {
+        "regex": null,
+        "use_regex": false,
+        "normalization": [
+          "trim",
+          "lower"
+        ],
+        "accepted_answers": [
+          {
+            "score": 1,
+            "value": "5"
+          }
+        ]
+      },
+      "partial_rules": [],
+      "correct_options": [],
+      "custom_scoring_config": null,
+      "manual_review_required": false
+    }
+  },
+  {
+    "id": 6570,
+    "external_uid": "oge:reshu:t4:524",
+    "title": "Кратчайший путь А—F через B напрямую",
+    "solution_rules": {
+      "quiz": null,
+      "max_score": 1,
+      "penalties": {
+        "wrong_answer": 0,
+        "extra_wrong_mc": 0,
+        "missing_answer": 0
+      },
+      "auto_check": true,
+      "text_answer": null,
+      "scoring_mode": "all_or_nothing",
+      "short_answer": {
+        "regex": null,
+        "use_regex": false,
+        "normalization": [
+          "trim",
+          "lower"
+        ],
+        "accepted_answers": [
+          {
+            "score": 1,
+            "value": "6"
+          }
+        ]
+      },
+      "partial_rules": [],
+      "correct_options": [],
+      "custom_scoring_config": null,
+      "manual_review_required": false
+    }
+  },
+  {
+    "id": 6573,
+    "external_uid": "oge:reshu:t4:624",
+    "title": "Кратчайший путь между станциями",
+    "solution_rules": {
+      "quiz": null,
+      "max_score": 1,
+      "penalties": {
+        "wrong_answer": 0,
+        "extra_wrong_mc": 0,
+        "missing_answer": 0
+      },
+      "auto_check": true,
+      "text_answer": null,
+      "scoring_mode": "all_or_nothing",
+      "short_answer": {
+        "regex": null,
+        "use_regex": false,
+        "normalization": [
+          "trim",
+          "lower"
+        ],
+        "accepted_answers": [
+          {
+            "score": 1,
+            "value": "4"
+          }
+        ]
+      },
+      "partial_rules": [],
+      "correct_options": [],
+      "custom_scoring_config": null,
+      "manual_review_required": false
+    }
+  }
+]
