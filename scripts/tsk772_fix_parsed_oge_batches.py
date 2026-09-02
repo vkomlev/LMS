@@ -93,7 +93,20 @@ def solve_logic(stem: str) -> list[str]:
     return [str(hits[0])] if len(hits) == 1 else []
 
 
-SOLVERS = {"text_size": solve_text_size, "logic": solve_logic}
+def solve_sentence_size(stem: str) -> list[str]:
+    """Размер предложения: число символов цитаты × байт на символ."""
+    bits = re.search(r"(\d+)\s*бит", stem)
+    quote = re.search(r"«([^»]+)»", stem)
+    if not (bits and quote):
+        return []
+    per_char = int(bits.group(1)) // 8
+    if per_char <= 0:
+        return []
+    return [str(len(quote.group(1).strip()) * per_char)]
+
+
+SOLVERS = {"text_size": solve_text_size, "logic": solve_logic,
+           "sentence_size": solve_sentence_size}
 
 
 # ----------------------------------------------------------------------- правки
@@ -135,6 +148,11 @@ FIXES: list[Fix] = [
         why="пересказ переврал название животного: «бабиросса» вместо «бабирусса»",
         stem_edits=[("бабиросса", "бабирусса")],
     ),
+    Fix(
+        task_id=6375, solver="sentence_size", expected="84",
+        why="точка предложения выпала за кавычку: 41 символ вместо 42, ответ 82 вместо 84",
+        stem_edits=[("Руси великой». Ответ", "Руси великой.» Ответ")],
+    ),
     # 2. Перевёрнутый вопрос
     Fix(
         task_id=6486, solver="logic", expected="8",
@@ -154,9 +172,15 @@ FIXES: list[Fix] = [
 
 
 def apply_edits(stem: str, edits: list[tuple[str, str]], task_id: int) -> str:
-    """Точечные замены; подстрока обязана встречаться ровно один раз."""
+    """Точечные замены; подстрока обязана встречаться ровно один раз.
+
+    Идемпотентно: если исходной подстроки уже нет, а результат правки на месте,
+    считаем её применённой ранее и идём дальше — повторный прогон не падает.
+    """
     for old, new in edits:
         found = stem.count(old)
+        if found == 0 and stem.count(new) >= 1:
+            continue
         if found != 1:
             raise RuntimeError(
                 f"[{task_id}] подстрока {old!r} встречается {found} раз, ожидался 1"
@@ -209,10 +233,16 @@ def main() -> int:
                     f"ожидался единственный ответ {fix.expected!r} — правка отклонена"
                 )
             before = SOLVERS[fix.solver](content["stem"]) if fix.solver else []
-            content["stem"] = new_stem
-            logger.info("[%s] %s", fix.task_id, fix.why)
-            logger.info("      было:  решатель -> %s", before or "ответа нет")
-            logger.info("      стало: решатель -> %s", solved)
+            if new_stem == content["stem"]:
+                # правка уже в базе — не переписываем строку впустую
+                content = None
+                logger.info("[%s] уже исправлено ранее, пропуск", fix.task_id)
+            else:
+                content["stem"] = new_stem
+            if content is not None:
+                logger.info("[%s] %s", fix.task_id, fix.why)
+                logger.info("      было:  решатель -> %s", before or "ответа нет")
+                logger.info("      стало: решатель -> %s", solved)
 
         if fix.add_answers:
             rules = row["solution_rules"] or {}
