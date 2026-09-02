@@ -745,13 +745,47 @@ async def test_api_derive_apply_is_dry_by_default(db, graph, client):
 
 
 @pytest.mark.asyncio
-async def test_api_report_is_closed_to_teachers(db, graph, client):
-    """Отчёт по работе кураторов — владельцу школы и методисту, не коллегам."""
+async def test_api_report_is_closed_to_everyone_but_the_owner(db, graph, client):
+    """Отчёт по работе кураторов — только владельцу школы.
+
+    Методист сюда не допущен намеренно: у нас методист — тот же преподаватель,
+    и сводка «кто сколько не тронул» стала бы для него характеристикой на
+    коллег. Про себя куратор узнаёт персональным сигналом, без чужих чисел.
+    """
+    methodist = await _new_user(db, "methodist", "methodist_reader")
     await db.commit()
-    resp = await client.get(
-        "/api/v1/curator/weekly-report", headers=_auth(graph["teacher_a"])
+
+    for uid in (graph["teacher_a"], methodist):
+        resp = await client.get(
+            "/api/v1/curator/weekly-report", headers=_auth(uid)
+        )
+        assert resp.status_code == 403, f"отчёт открылся пользователю {uid}"
+
+    ok = await client.get(
+        "/api/v1/curator/weekly-report", headers=_auth(graph["operator"])
     )
-    assert resp.status_code == 403
+    assert ok.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_weekly_report_goes_only_to_the_owner(db, graph):
+    """Рассылка не кладёт сводку методистам — тот же список, что у гейта."""
+    from app.services import curator_report_cron_service as cron
+
+    methodist = await _new_user(db, "methodist", "methodist_recipient")
+    await curator_service.assign(
+        db, student_id=graph["st_pair"], curator_id=graph["teacher_a"], commit=False)
+    await db.commit()
+
+    await cron.send_weekly_report(db, force=True)
+    got = (await db.execute(text("""
+        SELECT count(*) FROM notifications WHERE kind = :k AND user_id = :u
+    """), {"k": cron.NOTIFICATION_KIND, "u": methodist})).scalar()
+    assert got == 0, "методист получил сводку по работе коллег"
+    mine = (await db.execute(text("""
+        SELECT count(*) FROM notifications WHERE kind = :k AND user_id = :u
+    """), {"k": cron.NOTIFICATION_KIND, "u": graph["operator"]})).scalar()
+    assert mine == 1
 
 
 @pytest.mark.asyncio

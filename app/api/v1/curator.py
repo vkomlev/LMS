@@ -48,9 +48,13 @@ router = APIRouter(tags=["curator"])
 _BOARD_GATE = require_role("teacher", "methodist", "admin")
 #: Раскладку правит тот, кто и так распределяет людей (см. student_teacher_links).
 _ASSIGN_GATE = require_role("methodist", "admin")
-#: Отчёт — владельцу школы. Методист допущен намеренно: он второй человек,
-#: который видит, что сигналы никто не разбирает.
-_REPORT_GATE = require_role("methodist", "admin")
+#: Отчёт — владельцу школы, и только ему.
+#:
+#: Методист сюда НЕ допущен намеренно (исправлено 02.09 по живым данным): у нас
+#: методист — тот же преподаватель, и он получил бы сводку с оценкой работы
+#: своих коллег. Куратор про себя узнаёт персональным сигналом, где чужих чисел
+#: нет. Тот же список получателей у рассылки — `curator_report_cron_service`.
+_REPORT_GATE = require_role("admin")
 
 
 async def _is_elevated(db: AsyncSession, current_user: CurrentUser) -> bool:
