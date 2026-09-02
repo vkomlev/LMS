@@ -213,6 +213,69 @@ async def _mark_no_show(db: AsyncSession, *, threshold_minutes: int) -> int:
     return marked
 
 
+#: Насколько назад смотрим закончившиеся занятия. ДЗ за позавчерашний урок
+#: выдавать поздно: ученик уже живёт следующим занятием, а список ему покажут
+#: так, будто задали сегодня. Окно с запасом переживает и перезапуск службы.
+_HOMEWORK_LOOKBACK_HOURS = 6
+
+
+async def _issue_homework_after_lessons(db: AsyncSession) -> int:
+    """Выдать ДЗ тем, кто БЫЛ на закончившемся занятии (tsk-741, 02.09).
+
+    Автовыдача висела только на действии преподавателя «Пришёл». Если явку
+    поставил сам ученик (кнопкой в кабинете) или она отметилась автоматически,
+    когда он сел за работу (tsk-439), домашняя работа не появлялась вовсе —
+    преподавателю приходилось открывать карточку ради этого. Решение оператора
+    02.09: вешать автовыдачу и на явку ученика.
+
+    Момент — КОНЕЦ занятия, а не отметка явки. Ученик подтверждает явку и
+    накануне: выдай в тот момент — и он получит домашнюю работу до урока, из
+    того самого материала, который на уроке и будут разбирать.
+
+    Молчит там же, где и прямая автовыдача: выключенный переключатель, уже
+    выданное по этому занятию, уже выданное преподавателем после его начала,
+    пройденная программа. Ошибки внутрь тика не пускаем: занятия и явка важнее
+    домашней работы.
+    """
+    now_utc = datetime.now(timezone.utc)
+    rows = (
+        await db.execute(
+            text(
+                """
+                SELECT lop.student_id, lo.id AS occurrence_id, lo.scheduled_at
+                  FROM lesson_occurrence_participant lop
+                  JOIN lesson_occurrence lo ON lo.id = lop.occurrence_id
+                 WHERE lop.status = 'confirmed'
+                   AND lo.scheduled_at + (lo.duration_minutes || ' minutes')::interval
+                       <= :now
+                   AND lo.scheduled_at >= :since
+                """
+            ),
+            {"now": now_utc, "since": now_utc - timedelta(hours=_HOMEWORK_LOOKBACK_HOURS)},
+        )
+    ).fetchall()
+
+    issued = 0
+    for student_id, occurrence_id, scheduled_at in rows:
+        try:
+            result = await homework_service.auto_issue_after_lesson(
+                db,
+                student_id=int(student_id),
+                occurrence_id=int(occurrence_id),
+                occurrence_at=scheduled_at,
+                now=now_utc,
+            )
+        except Exception:
+            logger.exception(
+                "tsk-741: автовыдача ДЗ после занятия %s ученику %s не удалась",
+                occurrence_id, student_id,
+            )
+            continue
+        if result is not None:
+            issued += 1
+    return issued
+
+
 async def lesson_attendance_cron_tick(
     session_factory: Optional[async_sessionmaker[AsyncSession]] = None,
 ) -> dict:
@@ -222,7 +285,12 @@ async def lesson_attendance_cron_tick(
     lead_minutes = settings_store.get_int("lesson_reminder_lead_minutes")
     threshold_minutes = settings_store.get_int("lesson_no_show_threshold_minutes")
 
-    summary = {"locked": False, "reminders_sent": 0, "no_show_marked": 0}
+    summary = {
+        "locked": False,
+        "reminders_sent": 0,
+        "no_show_marked": 0,
+        "homework_issued": 0,
+    }
 
     async with factory() as db:
         got_row = await db.execute(
@@ -239,12 +307,17 @@ async def lesson_attendance_cron_tick(
         summary["no_show_marked"] = await _mark_no_show(
             db, threshold_minutes=threshold_minutes
         )
+        # После явки и пропусков: выдаём ДЗ тем, кто был на закончившемся
+        # занятии, независимо от того, кто отметил явку.
+        summary["homework_issued"] = await _issue_homework_after_lessons(db)
 
         await db.commit()
         logger.info(
-            "lesson_attendance_cron_tick done reminders_sent=%s no_show_marked=%s",
+            "lesson_attendance_cron_tick done reminders_sent=%s no_show_marked=%s "
+            "homework_issued=%s",
             summary["reminders_sent"],
             summary["no_show_marked"],
+            summary["homework_issued"],
         )
 
     return summary

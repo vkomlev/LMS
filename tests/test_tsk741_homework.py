@@ -1187,3 +1187,146 @@ async def test_auto_issue_respects_what_the_teacher_assigned_himself(db, monkeyp
     current = await homework_service.get_current(db, student_id=student_id)
     assert current["id"] == manual["id"]
     assert current["source"] == "teacher"
+
+
+# ======== Автовыдача после занятия, кто бы ни отметил явку ========
+
+
+async def _finished_lesson(db, *, student_id: int, teacher_id: int, status: str,
+                           ended_minutes_ago: int = 30) -> int:
+    """Занятие, которое уже закончилось, с нужным статусом участия."""
+    scheduled_at = datetime.now(UTC) - timedelta(minutes=60 + ended_minutes_ago)
+    occurrence_id = await _create_occurrence(
+        db, student_id=student_id, teacher_id=teacher_id, scheduled_at=scheduled_at,
+    )
+    await db.execute(
+        text(
+            "UPDATE lesson_occurrence_participant SET status = :st "
+            " WHERE occurrence_id = :oid AND student_id = :sid"
+        ),
+        {"st": status, "oid": occurrence_id, "sid": student_id},
+    )
+    await db.commit()
+    return occurrence_id
+
+
+@pytest.mark.asyncio
+async def test_homework_appears_when_student_marked_attendance_himself(
+    db, db_session_factory, monkeypatch
+):
+    """Явку поставил ученик, а не преподаватель — ДЗ всё равно появляется.
+
+    Решение оператора 02.09. Раньше автовыдача висела только на действии
+    преподавателя «Пришёл»: подтвердил ученик сам или сработала автоотметка
+    «сел за работу» (tsk-439) — домашней работы не было вовсе.
+    """
+    from app.core import settings_store
+    from app.services.lesson_attendance_cron_service import lesson_attendance_cron_tick
+
+    student_id, _ = await _student_with_program(db, materials=0, tasks=10)
+    teacher_id, _ = await _new_user(db, role="teacher", name="teach")
+    await _finished_lesson(
+        db, student_id=student_id, teacher_id=teacher_id, status="confirmed",
+    )
+    monkeypatch.setattr(settings_store, "get_bool", lambda key: True)
+
+    summary = await lesson_attendance_cron_tick(db_session_factory)
+    assert summary["homework_issued"] >= 1
+
+    homework = await homework_service.get_current(db, student_id=student_id)
+    assert homework is not None and homework["source"] == "auto"
+
+
+@pytest.mark.asyncio
+async def test_no_homework_while_the_lesson_is_still_running(
+    db, db_session_factory, monkeypatch
+):
+    """Занятие ещё идёт — ДЗ не выдаём.
+
+    Ученик подтверждает явку и накануне; выдай в тот момент — и он получит
+    домашнюю работу до урока, из того самого материала, который на уроке и
+    будут разбирать. Момент выдачи — конец занятия, а не отметка явки.
+    """
+    from app.core import settings_store
+    from app.services.lesson_attendance_cron_service import lesson_attendance_cron_tick
+
+    student_id, _ = await _student_with_program(db, materials=0, tasks=10)
+    teacher_id, _ = await _new_user(db, role="teacher", name="teach")
+    occurrence_id = await _create_occurrence(
+        db, student_id=student_id, teacher_id=teacher_id,
+        scheduled_at=datetime.now(UTC) - timedelta(minutes=20),
+    )
+    await db.execute(
+        text(
+            "UPDATE lesson_occurrence_participant SET status = 'confirmed' "
+            " WHERE occurrence_id = :oid"
+        ),
+        {"oid": occurrence_id},
+    )
+    await db.commit()
+    monkeypatch.setattr(settings_store, "get_bool", lambda key: True)
+
+    await lesson_attendance_cron_tick(db_session_factory)
+    assert await homework_service.get_current(db, student_id=student_id) is None
+
+
+@pytest.mark.asyncio
+async def test_no_homework_for_the_one_who_did_not_come(
+    db, db_session_factory, monkeypatch
+):
+    """Не пришёл — ДЗ по этому занятию не выдаём: нагонять он будет по формуле."""
+    from app.core import settings_store
+    from app.services.lesson_attendance_cron_service import lesson_attendance_cron_tick
+
+    student_id, _ = await _student_with_program(db, materials=0, tasks=10)
+    teacher_id, _ = await _new_user(db, role="teacher", name="teach")
+    await _finished_lesson(
+        db, student_id=student_id, teacher_id=teacher_id, status="no_show",
+    )
+    monkeypatch.setattr(settings_store, "get_bool", lambda key: True)
+
+    await lesson_attendance_cron_tick(db_session_factory)
+    assert await homework_service.get_current(db, student_id=student_id) is None
+
+
+@pytest.mark.asyncio
+async def test_cron_does_not_reissue_homework_on_every_tick(
+    db, db_session_factory, monkeypatch
+):
+    """Второй проход не перевыдаёт: иначе ученик каждые пару минут получал бы
+    новый список вместо того, что начал делать."""
+    from app.core import settings_store
+    from app.services.lesson_attendance_cron_service import lesson_attendance_cron_tick
+
+    student_id, _ = await _student_with_program(db, materials=0, tasks=10)
+    teacher_id, _ = await _new_user(db, role="teacher", name="teach")
+    await _finished_lesson(
+        db, student_id=student_id, teacher_id=teacher_id, status="confirmed",
+    )
+    monkeypatch.setattr(settings_store, "get_bool", lambda key: True)
+
+    await lesson_attendance_cron_tick(db_session_factory)
+    first = await homework_service.get_current(db, student_id=student_id)
+    await lesson_attendance_cron_tick(db_session_factory)
+    second = await homework_service.get_current(db, student_id=student_id)
+    assert first["id"] == second["id"]
+
+
+@pytest.mark.asyncio
+async def test_cron_is_silent_when_auto_issue_is_off(
+    db, db_session_factory, monkeypatch
+):
+    """Рубильник выключен — фоновый проход тоже молчит."""
+    from app.core import settings_store
+    from app.services.lesson_attendance_cron_service import lesson_attendance_cron_tick
+
+    student_id, _ = await _student_with_program(db, materials=0, tasks=10)
+    teacher_id, _ = await _new_user(db, role="teacher", name="teach")
+    await _finished_lesson(
+        db, student_id=student_id, teacher_id=teacher_id, status="confirmed",
+    )
+    monkeypatch.setattr(settings_store, "get_bool", lambda key: False)
+
+    summary = await lesson_attendance_cron_tick(db_session_factory)
+    assert summary["homework_issued"] == 0
+    assert await homework_service.get_current(db, student_id=student_id) is None
