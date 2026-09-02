@@ -1,0 +1,93 @@
+[
+  {
+    "id": 21453,
+    "user_id": 4533,
+    "task_id": 6551,
+    "external_uid": "oge:reshu:t4:143",
+    "submitted_at": "2026-09-02T11:22:51.315449+00:00",
+    "ans": "3",
+    "etalon": "3",
+    "score": 0,
+    "max_score": 1,
+    "is_correct": false,
+    "source_system": "spw_web"
+  },
+  {
+    "id": 21457,
+    "user_id": 4533,
+    "task_id": 6551,
+    "external_uid": "oge:reshu:t4:143",
+    "submitted_at": "2026-09-02T11:24:02.222628+00:00",
+    "ans": "3",
+    "etalon": "3",
+    "score": 0,
+    "max_score": 1,
+    "is_correct": false,
+    "source_system": "spw_web"
+  },
+  {
+    "id": 21523,
+    "user_id": 4533,
+    "task_id": 6553,
+    "external_uid": "oge:reshu:t4:203",
+    "submitted_at": "2026-09-02T11:43:43.300284+00:00",
+    "ans": "6",
+    "etalon": "6",
+    "score": 0,
+    "max_score": 1,
+    "is_correct": false,
+    "source_system": "spw_web"
+  },
+  {
+    "id": 21527,
+    "user_id": 4533,
+    "task_id": 6553,
+    "external_uid": "oge:reshu:t4:203",
+    "submitted_at": "2026-09-02T11:45:29.365223+00:00",
+    "ans": "6",
+    "etalon": "6",
+    "score": 0,
+    "max_score": 1,
+    "is_correct": false,
+    "source_system": "spw_web"
+  },
+  {
+    "id": 21515,
+    "user_id": 4533,
+    "task_id": 6555,
+    "external_uid": "oge:reshu:t4:263",
+    "submitted_at": "2026-09-02T11:40:59.602420+00:00",
+    "ans": "3",
+    "etalon": "3",
+    "score": 0,
+    "max_score": 1,
+    "is_correct": false,
+    "source_system": "spw_web"
+  },
+  {
+    "id": 19967,
+    "user_id": 4552,
+    "task_id": 6408,
+    "external_uid": "oge:reshu:t2:708",
+    "submitted_at": "2026-08-30T11:58:26.325594+00:00",
+    "ans": "АДЖТДТАТ",
+    "etalon": "АДЖТДТАТ",
+    "score": 0,
+    "max_score": 1,
+    "is_correct": false,
+    "source_system": "spw_web"
+  },
+  {
+    "id": 19968,
+    "user_id": 4552,
+    "task_id": 6408,
+    "external_uid": "oge:reshu:t2:708",
+    "submitted_at": "2026-08-30T12:00:48.573266+00:00",
+    "ans": "АДЖТДТАТ",
+    "etalon": "АДЖТДТАТ",
+    "score": 0,
+    "max_score": 1,
+    "is_correct": false,
+    "source_system": "spw_web"
+  }
+]
