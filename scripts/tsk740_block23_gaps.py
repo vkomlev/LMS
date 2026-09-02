@@ -88,8 +88,15 @@ def sc(uid, kurs, title, stem, varianty, verniy, slozhnost=2, hint=None):
     }
 
 
-def sa(uid, kurs, title, stem, otvety, slozhnost=2, hint=None):
-    """Задание с коротким ответом. `otvety` — все равнозначные формы."""
+def sa(uid, kurs, title, stem, otvety, slozhnost=2, hint=None,
+       normalization=("trim", "lower", "strip_punctuation", "collapse_spaces")):
+    """Задание с коротким ответом. `otvety` — все равнозначные формы.
+
+    `strip_punctuation` в нормализации стоит по умолчанию намеренно: без него
+    естественный ответ ученика `float()` со скобками не совпал бы с эталоном
+    `float` и верное решение получило бы ноль (класс tsk-187 — эталон отвергает
+    закономерную форму ответа).
+    """
     return {
         "uid": uid, "kurs": kurs, "slozhnost": slozhnost,
         "content": {
@@ -103,7 +110,7 @@ def sa(uid, kurs, title, stem, otvety, slozhnost=2, hint=None):
             "auto_check": True, "text_answer": None, "scoring_mode": "all_or_nothing",
             "short_answer": {
                 "regex": None, "use_regex": False,
-                "normalization": ["trim", "lower", "collapse_spaces"],
+                "normalization": list(normalization),
                 "accepted_answers": [{"score": 1, "value": v} for v in otvety],
             },
             "partial_rules": [], "correct_options": [],
@@ -171,7 +178,8 @@ ZADANIYA = [
        "<code>372ccd2454e1e4b64f4eade63994d8c830c7ff9444ba01635fd97cd35c5a4129.txt</code>. "
        "Это ошибка платформы или ожидаемое поведение? Впишите одно слово: "
        "<b>ошибка</b> или <b>ожидаемое</b>.</p>",
-       ["ожидаемое", "ожидаемо"],
+       ["ожидаемое", "ожидаемо", "ожидаемое поведение", "это ожидаемое поведение",
+        "это ожидаемо", "не ошибка"],
        hint="Вспомните, как хранилище называет файлы и почему у каждого задания это имя "
             "своё."),
 
