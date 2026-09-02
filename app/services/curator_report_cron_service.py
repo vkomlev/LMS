@@ -30,7 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import settings_store
 from app.db.session import async_session_factory
-from app.services import curator_activity_service, inbox_service
+from app.services import curator_activity_service, inbox_service  # noqa: F401
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +38,12 @@ _scheduler: Optional[AsyncIOScheduler] = None
 
 #: Вид записи в `notifications` — по нему же проверяется, что отчёт уже ушёл.
 NOTIFICATION_KIND = "curator_weekly_report"
+
+#: Сигнал куратору о нём самом (решение оператора 2026-09-02): отчёт не
+#: заканчивается наблюдением. Отдельный вид, а не строка в общем отчёте:
+#: адресат другой, и смешивать их значит либо показать куратору чужие цифры,
+#: либо утопить его собственный сигнал в сводке по школе.
+INACTIVITY_KIND = "curator_inactivity"
 
 #: Во сколько по Москве отправлять. Утро понедельника: отчёт должен лечь на стол
 #: до того, как начнётся неделя, а не после неё.
@@ -103,14 +109,54 @@ async def send_weekly_report(db: AsyncSession, *, force: bool = False) -> dict:
             },
             created_by=None,
         )
+    nudged = await _nudge_silent_curators(db, week_start=week_start)
     await db.commit()
     logger.info(
         "кураторство: отчёт за %s разослан — получателей %s, кураторов в отчёте %s, "
-        "без куратора учеников %s",
+        "без куратора учеников %s, сигналов молчащим кураторам %s",
         week_start, len(recipients), len(report["curators"]),
-        report["students_without_curator"],
+        report["students_without_curator"], nudged,
     )
-    return {"sent": len(recipients), "week_start": week_start}
+    return {"sent": len(recipients), "week_start": week_start, "nudged": nudged}
+
+
+async def _nudge_silent_curators(db: AsyncSession, *, week_start: str) -> int:
+    """Сигнал куратору, который несколько недель подряд не тронул никого.
+
+    Решение оператора 2026-09-02: отчёт заканчивается не наблюдением. Владелец
+    школы в этом разговоре не участвует — он начинается без него.
+
+    Текст обращён к человеку и называет, что именно от него ждут: сигнал
+    «у тебя плохие показатели» ничего не меняет, а «зайди к своим ученикам»
+    меняет. Повтор за ту же неделю не отправляется — тем же ключом, что и сам
+    отчёт.
+    """
+    silent = await curator_activity_service.curators_without_coverage(db)
+    sent = 0
+    for c in silent:
+        exists = (await db.execute(text("""
+            SELECT 1 FROM notifications
+            WHERE kind = :kind AND user_id = :uid AND payload->>'week_start' = :ws
+            LIMIT 1
+        """), {"kind": INACTIVITY_KIND, "uid": c["curator_id"], "ws": week_start})).first()
+        if exists:
+            continue
+        weeks = int(c["weeks"])
+        await inbox_service.create_for_user(
+            db,
+            user_id=int(c["curator_id"]),
+            kind=INACTIVITY_KIND,
+            title="Ваши ученики остались без внимания",
+            content=(
+                f"Уже {weeks} недели подряд по вашим ученикам не было ни одного "
+                "действия: ни просмотра, ни ответа, ни проверки. Откройте раздел "
+                "«Кураторство» — там видно, к кому идти первым."
+            ),
+            payload={"week_start": week_start, "weeks": weeks},
+            created_by=None,
+        )
+        sent += 1
+    return sent
 
 
 async def curator_report_tick() -> None:

@@ -620,6 +620,80 @@ async def test_merge_moves_roster_of_a_merged_teacher(db, graph):
     assert graph["st_pair"] in roster
 
 
+# ─── Сигнал молчащему куратору ───────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_silent_curator_is_flagged_after_two_weeks(db, graph):
+    """Куратор, не тронувший НИКОГО две недели подряд, попадает в список."""
+    await curator_service.assign(
+        db, student_id=graph["st_pair"], curator_id=graph["teacher_a"], commit=False)
+    await db.commit()
+
+    silent = await curator_activity_service.curators_without_coverage(db, weeks=2)
+    assert graph["teacher_a"] in {int(c["curator_id"]) for c in silent}
+
+
+@pytest.mark.asyncio
+async def test_one_touch_in_either_week_clears_the_flag(db, graph):
+    """Одно касание в любой из недель снимает сигнал.
+
+    Недели считаются ПОДРЯД: человек, молчавший в июле и работавший вчера,
+    предупреждения получить не должен — иначе сигнал наказывает за прошлое.
+    """
+    await curator_service.assign(
+        db, student_id=graph["st_pair"], curator_id=graph["teacher_a"], commit=False)
+    since, _ = curator_activity_service.week_bounds()
+    await db.execute(text("""
+        INSERT INTO audit_event (user_id, event_type, ts, details)
+        VALUES (:u, :e, :ts, CAST(:d AS jsonb))
+    """), {"u": graph["teacher_a"], "e": curator_activity_service.CURATOR_STUDENT_VIEWED,
+           "ts": since + timedelta(days=1),
+           "d": json.dumps({"student_id": graph["st_pair"]})})
+    await db.commit()
+
+    silent = await curator_activity_service.curators_without_coverage(db, weeks=2)
+    assert graph["teacher_a"] not in {int(c["curator_id"]) for c in silent}
+
+
+@pytest.mark.asyncio
+async def test_weekly_run_delivers_report_and_nudge_without_repeats(db, graph):
+    """Прогон кладёт отчёт владельцу школы и сигнал молчащему куратору.
+
+    И не делает этого дважды: планировщик просыпается каждый час, и без защиты
+    от повтора в понедельник пришло бы двадцать четыре одинаковых сводки.
+    """
+    from app.services import curator_report_cron_service as cron
+
+    await curator_service.assign(
+        db, student_id=graph["st_pair"], curator_id=graph["teacher_a"], commit=False)
+    await db.commit()
+
+    first = await cron.send_weekly_report(db, force=True)
+    assert first["sent"] >= 1
+    assert first["nudged"] >= 1
+
+    got = (await db.execute(text("""
+        SELECT count(*) FROM notifications
+        WHERE kind = :k AND user_id = :u
+    """), {"k": cron.INACTIVITY_KIND, "u": graph["teacher_a"]})).scalar()
+    assert got == 1
+
+    second = await cron.send_weekly_report(db)
+    assert second.get("skipped"), "повторная отправка за ту же неделю не заблокирована"
+    got_again = (await db.execute(text("""
+        SELECT count(*) FROM notifications
+        WHERE kind = :k AND user_id = :u
+    """), {"k": cron.INACTIVITY_KIND, "u": graph["teacher_a"]})).scalar()
+    assert got_again == 1
+
+
+@pytest.mark.asyncio
+async def test_curator_without_students_is_not_flagged(db, graph):
+    """У кого нет учеников — тому и молчать не о чем."""
+    silent = await curator_activity_service.curators_without_coverage(db, weeks=2)
+    assert graph["teacher_c"] not in {int(c["curator_id"]) for c in silent}
+
+
 # ─── API ─────────────────────────────────────────────────────────────────────
 
 def _auth(user_id: int) -> dict[str, str]:

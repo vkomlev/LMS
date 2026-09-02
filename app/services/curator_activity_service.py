@@ -376,6 +376,56 @@ async def weekly_report(
     }
 
 
+#: Сколько недель подряд куратор должен не тронуть НИКОГО, прежде чем сигнал
+#: уйдёт ему самому. Запасное значение; фактическое — из настроек школы.
+INACTIVITY_WEEKS = 2
+
+
+def inactivity_weeks() -> int:
+    """Через сколько недель молчания куратор получает сигнал о себе."""
+    return _setting_int("curator_inactivity_weeks", INACTIVITY_WEEKS)
+
+
+async def curators_without_coverage(
+    db: AsyncSession, *, weeks: Optional[int] = None
+) -> List[dict]:
+    """Кураторы, не тронувшие НИ ОДНОГО своего ученика N недель подряд.
+
+    Решение оператора 2026-09-02: отчёт не заканчивается наблюдением. На второй
+    неделе полного молчания сигнал уходит самому куратору — тем же контуром,
+    что и сигналы об учениках. Владелец школы в этом не участвует: разговор
+    начинается без него, в этом и смысл делегирования.
+
+    **Порог намеренно строгий — ноль касаний, а не «мало».** «Мало» у куратора
+    с тридцатью учениками и у куратора с двенадцатью — разные числа, и любой
+    процент здесь был бы выдуман. Ноль означает одно и то же для всех: человек
+    за неделю не сделал по своей группе ничего. Ослаблять порог можно замером
+    на живых неделях, а не ощущением.
+
+    Недели считаются подряд и заканчиваются последней полной: куратор,
+    молчавший в июле и работавший вчера, сигнала не получит.
+    """
+    if weeks is None:
+        weeks = inactivity_weeks()
+    silent: Optional[set] = None
+    names: Dict[int, Optional[str]] = {}
+    for back in range(weeks):
+        start = (week_bounds()[0] - timedelta(weeks=back)).date()
+        report = await weekly_report(db, week_start=start)
+        week_silent = set()
+        for c in report["curators"]:
+            if int(c["students"] or 0) > 0 and int(c["students_touched"] or 0) == 0:
+                week_silent.add(int(c["curator_id"]))
+                names[int(c["curator_id"])] = c["curator_name"]
+        silent = week_silent if silent is None else (silent & week_silent)
+        if not silent:
+            break
+    return [
+        {"curator_id": cid, "curator_name": names.get(cid), "weeks": weeks}
+        for cid in sorted(silent or ())
+    ]
+
+
 def render_report_text(report: Dict[str, Any]) -> str:
     """Отчёт словами — то, что оператор читает в уведомлении.
 
