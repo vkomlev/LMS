@@ -1,4 +1,9 @@
-"""Гостевая ЕГЭ-диагностика: короткая проверка тем без регистрации (tsk-053, фаза 2).
+"""Гостевые диагностики-зонды: короткая проверка тем без регистрации (tsk-053, фазы 2-3).
+
+На этом механизме живут два лид-магнита: «ЕГЭ за 15 минут» (фаза 2) и «Готов ли ты к
+Backend?» (фаза 3). Общее у них всё, кроме зондов и текстов: набор задач лежит в базе,
+разговор с человеком — в реестре ``MAGNETS`` ниже.
+
 
 Отличие от квиза подбора (фаза 1) — в природе задач. Там вопросы о предпочтениях, где
 верного ответа нет вовсе, и итог считается баллами по шкалам. Здесь у каждой задачи есть
@@ -22,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 from uuid import UUID
 
@@ -53,8 +59,96 @@ logger = logging.getLogger(__name__)
 _settings = Settings()
 _checking_service = CheckingService()
 
-#: Курс, куда ведём подготовиться целиком, если тем с провалами много.
-EGE_COURSE_UID = "wp:ege-informatika"
+@dataclass(frozen=True)
+class MagnetCopy:
+    """Что у диагностики своё, кроме самих зондов (tsk-053, фаза 3).
+
+    Механизм зондов один на все лид-магниты, а вот куда вести человека и какими
+    словами с ним говорить — у каждого своё: «подтянуть темы к ЕГЭ» и «дорасти до
+    Backend» это разные разговоры.
+
+    **Почему реестр в коде, а не колонка в базе.** Новый лид-магнит и так требует
+    своего артефакта в коде — скрипта наполнения зондами (`scripts/tsk053_seed_*`).
+    Строка здесь рядом с ним не добавляет работы, зато оставляет тексты, которые
+    читает посетитель, там, где их видно на ревью, и не заводит в схеме колонку с
+    мини-шаблонизатором ради трёх магнитов.
+    """
+
+    #: Программа, которую предлагаем целиком. None — если подходящей программы нет.
+    recommendation_course_uid: Optional[str]
+    #: Заготовка сообщения в Telegram. Плейсхолдеры: {solved}, {total}, {themes}.
+    contact_weak: str
+    #: То же, когда провалов нет (тогда {themes} недоступен).
+    contact_strong: str
+    #: Что написать, когда решено всё: куда расти дальше.
+    perfect_note: str
+    #: Подпись у формы контакта — чем именно поможем.
+    lead_note: str
+
+
+#: Диагностика ЕГЭ (фаза 2) и «Готов ли ты к Backend?» (фаза 3).
+MAGNETS: Dict[str, MagnetCopy] = {
+    "wp:ege-diagnostika": MagnetCopy(
+        recommendation_course_uid="wp:ege-informatika",
+        contact_weak=(
+            "Здравствуйте! Прошёл диагностику по информатике: {solved} из {total}. "
+            "Просели темы: {themes}. Хочу подготовиться к ЕГЭ."
+        ),
+        contact_strong=(
+            "Здравствуйте! Прошёл диагностику по информатике: {solved} из {total}. "
+            "Хочу готовиться к ЕГЭ дальше."
+        ),
+        perfect_note=(
+            "Все темы диагностики решены верно. Дальше имеет смысл идти вглубь — к "
+            "заданиям второй части, где решают баллы."
+        ),
+        lead_note="Разберём ваш результат и подскажем план подготовки к экзамену.",
+    ),
+    "wp:backend-gotovnost": MagnetCopy(
+        # Курса «Backend разработчик» в LMS нет: ближайшая настоящая программа —
+        # «Создание чат-ботов», где как раз Python, работа с API, база и GitHub.
+        # Вести на лендинг курса, за которым нет программы, значило бы пообещать
+        # человеку то, на что его нельзя записать.
+        recommendation_course_uid="wp:chat-boty-tg-vk-max",
+        contact_weak=(
+            "Здравствуйте! Прошёл проверку готовности к Backend: {solved} из {total}. "
+            "Просели темы: {themes}. Хочу разобраться и дойти до первой работы."
+        ),
+        contact_strong=(
+            "Здравствуйте! Прошёл проверку готовности к Backend: {solved} из {total}. "
+            "Хочу двигаться дальше — к своим проектам."
+        ),
+        perfect_note=(
+            "База под backend есть: язык, протокол, данные и git на месте. Дальше "
+            "решает не теория, а свой работающий проект — с ним и разговаривают на "
+            "собеседовании."
+        ),
+        lead_note="Разберём ваш результат и подскажем, с какого проекта начинать.",
+    ),
+}
+
+#: Для магнита, которого нет в реестре: нейтрально, без обещаний, которых мы не знаем.
+DEFAULT_MAGNET = MagnetCopy(
+    recommendation_course_uid=None,
+    contact_weak=(
+        "Здравствуйте! Прошёл диагностику: {solved} из {total}. "
+        "Просели темы: {themes}. Хочу разобраться."
+    ),
+    contact_strong="Здравствуйте! Прошёл диагностику: {solved} из {total}. Хочу учиться дальше.",
+    perfect_note="Все темы решены верно. Дальше имеет смысл идти вглубь.",
+    lead_note="Разберём ваш результат и подскажем, с чего начать.",
+)
+
+
+def _magnet_copy(course_uid: str) -> MagnetCopy:
+    """Тексты и рекомендация этого лид-магнита."""
+    copy = MAGNETS.get(course_uid)
+    if copy is None:
+        # Не роняем страницу: зонды и разбор по темам работают и без своих текстов,
+        # но это точно недосмотр — магнит завели, а сказать ему нечего.
+        logger.warning("diagnostic: у магнита %s нет своих текстов, берём общие", course_uid)
+        return DEFAULT_MAGNET
+    return copy
 
 
 def _topic_of(content: TaskContent) -> Optional[Dict[str, str]]:
@@ -298,19 +392,15 @@ def _reference_answer(rules: SolutionRules) -> Optional[str]:
     return top.value
 
 
-def _contact_url(solved: int, total: int, weak: List[DiagnosticTopicResult]) -> str:
+def _contact_url(
+    copy: MagnetCopy, solved: int, total: int, weak: List[DiagnosticTopicResult]
+) -> str:
     """Ссылка на переписку с заранее заполненным сообщением от лица человека."""
     if weak:
         themes = ", ".join(t.topic_title.split(".")[0] for t in weak[:3])
-        message = (
-            f"Здравствуйте! Прошёл диагностику по информатике: {solved} из {total}. "
-            f"Просели темы: {themes}. Хочу подготовиться к ЕГЭ."
-        )
+        message = copy.contact_weak.format(solved=solved, total=total, themes=themes)
     else:
-        message = (
-            f"Здравствуйте! Прошёл диагностику по информатике: {solved} из {total}. "
-            "Хочу готовиться к ЕГЭ дальше."
-        )
+        message = copy.contact_strong.format(solved=solved, total=total)
     return f"https://t.me/{_settings.quiz_contact_tg}?text={quote(message)}"
 
 
@@ -363,9 +453,20 @@ async def get_result(
     # «просело задание 14» означало бы всего лишь «до него ещё не дошли».
     weak = [t for t in topics if not t.is_correct] if is_complete else []
 
-    ege_course = (
-        await db.execute(select(Courses).where(Courses.course_uid == EGE_COURSE_UID))
-    ).scalar_one_or_none()
+    copy = _magnet_copy(course.course_uid or course_uid)
+    target = None
+    if copy.recommendation_course_uid:
+        target = (
+            await db.execute(
+                select(Courses).where(Courses.course_uid == copy.recommendation_course_uid)
+            )
+        ).scalar_one_or_none()
+        if target is None:
+            # Курс переименовали или сняли — называть программу, которой нет, нельзя.
+            logger.warning(
+                "diagnostic: магнит %s рекомендует несуществующий курс %s",
+                course_uid, copy.recommendation_course_uid,
+            )
 
     lead_submitted = False
     if guest_session_id is not None:
@@ -381,9 +482,11 @@ async def get_result(
         total=len(probes),
         topics=topics,
         weak_topics=weak,
-        recommendation_course_uid=ege_course.course_uid if ege_course else None,
-        recommendation_title=ege_course.title if ege_course else None,
-        contact_url=_contact_url(solved, len(probes), weak),
+        recommendation_course_uid=target.course_uid if target else None,
+        recommendation_title=target.title if target else None,
+        contact_url=_contact_url(copy, solved, len(probes), weak),
+        perfect_note=copy.perfect_note,
+        lead_note=copy.lead_note,
         lead_submitted=lead_submitted,
     )
 

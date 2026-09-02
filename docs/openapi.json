@@ -48539,7 +48539,7 @@
           "topic_code": {
             "type": "string",
             "title": "Topic Code",
-            "description": "Код темы ЕГЭ, например z14"
+            "description": "Код темы магнита, например z14 или b3"
           },
           "topic_title": {
             "type": "string",
@@ -48681,7 +48681,7 @@
               }
             ],
             "title": "Recommendation Course Uid",
-            "description": "Общий курс подготовки к ЕГЭ"
+            "description": "Программа, которую предлагаем целиком"
           },
           "recommendation_title": {
             "anyOf": [
@@ -48698,6 +48698,16 @@
             "type": "string",
             "title": "Contact Url"
           },
+          "perfect_note": {
+            "type": "string",
+            "title": "Perfect Note",
+            "description": "Что написать человеку, решившему все задачи: куда расти дальше"
+          },
+          "lead_note": {
+            "type": "string",
+            "title": "Lead Note",
+            "description": "Подпись у формы контакта: чем именно поможем"
+          },
           "lead_submitted": {
             "type": "boolean",
             "title": "Lead Submitted"
@@ -48712,6 +48722,8 @@
           "total",
           "topics",
           "contact_url",
+          "perfect_note",
+          "lead_note",
           "lead_submitted"
         ],
         "title": "DiagnosticResultResponse",

@@ -1,4 +1,4 @@
-"""Схемы гостевой ЕГЭ-диагностики (tsk-053, фаза 2).
+"""Схемы гостевой диагностики-зондов (tsk-053, фазы 2-3).
 
 Отдельный контракт от квиза (`guest_quiz`), хотя поверхность похожа. Разница
 принципиальная: в квизе верного ответа нет вовсе и подбор идёт по шкалам
@@ -17,7 +17,7 @@ class DiagnosticQuestion(BaseModel):
 
     task_id: int
     order: int = Field(..., description="Порядковый номер, начиная с 1")
-    topic_code: str = Field(..., description="Код темы ЕГЭ, например z14")
+    topic_code: str = Field(..., description="Код темы магнита, например z14 или b3")
     topic_title: str = Field(..., description="Название темы для экрана")
     stem: str
     answered: bool = Field(..., description="Отвечал ли уже на неё этот посетитель")
@@ -89,10 +89,14 @@ class DiagnosticResultResponse(BaseModel):
         default_factory=list, description="Темы, которые стоит подтянуть в первую очередь"
     )
     recommendation_course_uid: Optional[str] = Field(
-        default=None, description="Общий курс подготовки к ЕГЭ"
+        default=None, description="Программа, которую предлагаем целиком"
     )
     recommendation_title: Optional[str] = None
     contact_url: str
+    perfect_note: str = Field(
+        ..., description="Что написать человеку, решившему все задачи: куда расти дальше"
+    )
+    lead_note: str = Field(..., description="Подпись у формы контакта: чем именно поможем")
     lead_submitted: bool
 
     model_config = ConfigDict(from_attributes=True)
