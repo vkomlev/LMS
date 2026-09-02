@@ -222,6 +222,12 @@ async def issue(
     return result
 
 
+#: Перерыв, до которого соседнее занятие считается той же парой. Сдвоенный
+#: час — это один учебный блок: между его половинами домашней работы не бывает,
+#: и срок «до второй пары» ученик выполнить физически не может. На проде такие
+#: блоки у 22 учеников, 52 пары (замер 02.09).
+PAIRED_LESSON_GAP_MINUTES = 20
+
 #: Сколько дней даём на работу, если следующего занятия в расписании нет.
 #: Неделя — шаг сетки школы: у большинства занятия раз в неделю, и «до
 #: следующего» для них ровно столько.
@@ -242,21 +248,42 @@ async def next_due_for(
     бы, что преподаватель и система задают ДЗ на разные сроки.
     """
     moment = now or datetime.now(timezone.utc)
-    next_at = (
+    gap = timedelta(minutes=PAIRED_LESSON_GAP_MINUTES)
+
+    # Берём занятия, ЗАКАНЧИВАЮЩИЕСЯ после `after`, — то есть вместе с тем,
+    # которое в этот момент идёт. Без него не собрать блок: сдвоенный час
+    # склеивается по «конец предыдущего — начало следующего».
+    rows = (
         await db.execute(
             text(
-                "SELECT lo.scheduled_at "
+                "SELECT lo.scheduled_at, lo.duration_minutes "
                 "  FROM lesson_occurrence lo "
                 "  JOIN lesson_occurrence_participant lop "
                 "    ON lop.occurrence_id = lo.id AND lop.student_id = :sid "
-                " WHERE lo.scheduled_at > :after AND lop.status <> 'rescheduled' "
-                " ORDER BY lo.scheduled_at ASC LIMIT 1"
+                " WHERE lop.status <> 'rescheduled' "
+                "   AND lo.scheduled_at + (lo.duration_minutes || ' minutes')::interval "
+                "       > :after "
+                " ORDER BY lo.scheduled_at ASC LIMIT 20"
             ),
             {"sid": student_id, "after": after},
         )
-    ).scalar()
-    if next_at is not None and next_at > moment:
-        return next_at
+    ).fetchall()
+
+    block_end = after
+    for scheduled_at, duration_minutes in rows:
+        if scheduled_at <= block_end + gap:
+            # То же занятие или вторая половина сдвоенного часа — срока здесь
+            # нет: ученик всё это время сидит на уроке.
+            block_end = max(
+                block_end, scheduled_at + timedelta(minutes=int(duration_minutes))
+            )
+            continue
+        if scheduled_at > moment:
+            return scheduled_at
+        # Занятие уже прошло (отмечают задним числом) — двигаем блок дальше.
+        block_end = max(
+            block_end, scheduled_at + timedelta(minutes=int(duration_minutes))
+        )
     return moment + timedelta(days=_FALLBACK_DUE_DAYS)
 
 
@@ -312,6 +339,38 @@ async def auto_issue_after_lesson(
         )
     ).first()
     if already is not None:
+        return None
+
+    # Сдвоенный час: после первой пары домашней работы не бывает — ученик
+    # сразу идёт на вторую. Выдать здесь значит дать задание со сроком «через
+    # перемену» и через час погасить его следующей выдачей (вопрос оператора
+    # 02.09). Ждём конца блока.
+    paired_ahead = (
+        await db.execute(
+            text(
+                # Перерыв подставлен константой проекта, а не параметром:
+                # `(:gap || ' minutes')` требует строки и падает на int.
+                "SELECT 1 "
+                "  FROM lesson_occurrence cur "
+                "  JOIN lesson_occurrence nxt ON nxt.scheduled_at > cur.scheduled_at "
+                "  JOIN lesson_occurrence_participant lop "
+                "    ON lop.occurrence_id = nxt.id AND lop.student_id = :sid "
+                "   AND lop.status <> 'rescheduled' "
+                " WHERE cur.id = :oid "
+                "   AND nxt.scheduled_at <= cur.scheduled_at "
+                "       + (cur.duration_minutes || ' minutes')::interval "
+                f"       + interval '{PAIRED_LESSON_GAP_MINUTES} minutes' "
+                " LIMIT 1"
+            ),
+            {"sid": student_id, "oid": occurrence_id},
+        )
+    ).first()
+    if paired_ahead is not None:
+        logger.info(
+            "tsk-741: ДЗ ученику %s не выдаём после занятия %s — сдвоенный час, "
+            "ждём конца блока",
+            student_id, occurrence_id,
+        )
         return None
 
     due_at = await next_due_for(

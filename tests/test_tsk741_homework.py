@@ -1330,3 +1330,104 @@ async def test_cron_is_silent_when_auto_issue_is_off(
     summary = await lesson_attendance_cron_tick(db_session_factory)
     assert summary["homework_issued"] == 0
     assert await homework_service.get_current(db, student_id=student_id) is None
+
+
+# ============== Сдвоенный час: ДЗ после последней пары ==============
+
+
+@pytest.mark.asyncio
+async def test_no_homework_between_two_lessons_in_a_row(db, monkeypatch):
+    """Сдвоенный час: после первой пары ДЗ не выдаём.
+
+    Вопрос оператора 02.09. Срок берётся по следующему занятию ученика — а у
+    сдвоенного часа следующее начинается сразу, через перемену. Ученик получил
+    бы домашнюю работу со сроком «через пять минут», сидя на второй паре, и
+    выполнить её не мог бы физически. На проде сдвоенные часы у 22 учеников,
+    52 пары.
+    """
+    from app.core import settings_store
+
+    student_id, _ = await _student_with_program(db, materials=0, tasks=12)
+    teacher_id, _ = await _new_user(db, role="teacher", name="teach")
+    monkeypatch.setattr(settings_store, "get_bool", lambda key: True)
+
+    first_at = datetime.now(UTC) - timedelta(minutes=61)
+    first_id = await _create_occurrence(
+        db, student_id=student_id, teacher_id=teacher_id, scheduled_at=first_at,
+    )
+    # Вторая пара начинается сразу за первой.
+    await _create_occurrence(
+        db, student_id=student_id, teacher_id=teacher_id,
+        scheduled_at=first_at + timedelta(minutes=60),
+    )
+
+    result = await homework_service.auto_issue_after_lesson(
+        db, student_id=student_id, occurrence_id=first_id, occurrence_at=first_at,
+    )
+    await db.commit()
+    assert result is None, "ДЗ выдали между парами сдвоенного часа"
+    assert await homework_service.get_current(db, student_id=student_id) is None
+
+
+@pytest.mark.asyncio
+async def test_homework_after_the_last_lesson_of_the_block(db, monkeypatch):
+    """После ВТОРОЙ пары ДЗ выдаётся, и срок — не через пять минут."""
+    from app.core import settings_store
+
+    student_id, _ = await _student_with_program(db, materials=0, tasks=12)
+    teacher_id, _ = await _new_user(db, role="teacher", name="teach")
+    monkeypatch.setattr(settings_store, "get_bool", lambda key: True)
+
+    first_at = datetime.now(UTC) - timedelta(minutes=121)
+    second_at = first_at + timedelta(minutes=60)
+    await _create_occurrence(
+        db, student_id=student_id, teacher_id=teacher_id, scheduled_at=first_at,
+    )
+    second_id = await _create_occurrence(
+        db, student_id=student_id, teacher_id=teacher_id, scheduled_at=second_at,
+    )
+    # Следующий учебный день.
+    await _create_occurrence(
+        db, student_id=student_id, teacher_id=teacher_id,
+        scheduled_at=second_at + timedelta(days=3),
+    )
+
+    result = await homework_service.auto_issue_after_lesson(
+        db, student_id=student_id, occurrence_id=second_id, occurrence_at=second_at,
+    )
+    await db.commit()
+    assert result is not None
+    assert result["due_at"] >= datetime.now(UTC) + timedelta(days=2), (
+        "срок ДЗ пришёлся на соседнюю пару"
+    )
+
+
+@pytest.mark.asyncio
+async def test_due_date_skips_the_paired_lesson(db):
+    """Срок ручной выдачи тоже перепрыгивает сдвоенную пару.
+
+    Преподаватель может задать ДЗ между парами — из карточки ученика. Срок
+    «через пять минут» ошибочен независимо от того, кто его поставил.
+    """
+    student_id, _ = await _student_with_program(db, materials=0, tasks=8)
+    teacher_id, _ = await _new_user(db, role="teacher", name="teach")
+
+    now = datetime.now(UTC)
+    # Идущая сейчас пара и сразу за ней вторая.
+    await _create_occurrence(
+        db, student_id=student_id, teacher_id=teacher_id,
+        scheduled_at=now - timedelta(minutes=30),
+    )
+    await _create_occurrence(
+        db, student_id=student_id, teacher_id=teacher_id,
+        scheduled_at=now + timedelta(minutes=30),
+    )
+    far = now + timedelta(days=4)
+    await _create_occurrence(
+        db, student_id=student_id, teacher_id=teacher_id, scheduled_at=far,
+    )
+
+    due = await homework_service.next_due_for(
+        db, student_id=student_id, after=now - timedelta(minutes=30), now=now,
+    )
+    assert due == far, "срок пришёлся на вторую пару того же блока"
