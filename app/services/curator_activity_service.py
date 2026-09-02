@@ -263,12 +263,21 @@ overdue AS (
     GROUP BY r.curator_id
 ),
 -- Работы своих учеников, лежащие на проверке дольше срока.
+--
+-- Предикат обязательной ручной проверки — ТОТ ЖЕ, что у очереди преподавателя
+-- (`mandatory_review_sql`), и это не формальность. Без него условие
+-- вырождается в «любая непроверенная строка `task_results`», а таких строк —
+-- вся история авто-проверенных сдач: живой прогон на проде 02.09 дал 2201
+-- «просроченную работу» у куратора, у которого очередь честно пуста. Число,
+-- которое человек читает первым, обязано означать то, что написано рядом.
 stale_reviews AS (
     SELECT r.curator_id, count(*) AS stale_reviews
     FROM task_results tr
+    JOIN tasks t ON t.id = tr.task_id
     JOIN roster r ON r.student_id = tr.user_id
     WHERE tr.checked_at IS NULL
       AND tr.submitted_at < now() - make_interval(days => :review_days)
+      AND {mandatory}
     GROUP BY r.curator_id
 )
 SELECT c.id AS curator_id,
@@ -312,8 +321,12 @@ async def weekly_report(
     `week_start` — понедельник отчётной недели; по умолчанию прошлая полная
     неделя (отчёт приходит в понедельник о том, что было).
     """
+    from app.services.teacher_queue_service import mandatory_review_sql
+
     since, until = week_bounds(week_start)
-    sql = _REPORT_SQL.format(touches=touches_sql())
+    sql = _REPORT_SQL.format(
+        touches=touches_sql(), mandatory=mandatory_review_sql("t", "tr"),
+    )
     curator_ids = [
         int(r[0]) for r in (await db.execute(text(
             "SELECT DISTINCT curator_id FROM student_curator WHERE ended_at IS NULL"
@@ -343,17 +356,12 @@ async def weekly_report(
 
     # Ученики без куратора — часть отчёта, а не отдельная справка. Пока они
     # есть, делегирование неполное: за них по-прежнему отвечает оператор.
-    orphans = (await db.execute(text("""
-        SELECT count(*)
-        FROM users u
-        JOIN user_roles ur ON ur.user_id = u.id
-        JOIN roles r ON r.id = ur.role_id AND r.name = 'student'
-        WHERE u.is_active AND u.merged_into_user_id IS NULL AND u.blocked_at IS NULL
-          AND NOT EXISTS (SELECT 1 FROM student_curator sc
-                          WHERE sc.student_id = u.id AND sc.ended_at IS NULL)
-          AND NOT EXISTS (SELECT 1 FROM user_roles ur2 JOIN roles r2 ON r2.id = ur2.role_id
-                          WHERE ur2.user_id = u.id AND r2.name IN ('teacher','methodist','admin'))
-    """))).scalar() or 0
+    # То же определение «ученик, а не сотрудник», что у раскладки: иначе
+    # отчёт и предпросмотр называют разные числа ничьих, и оба выглядят
+    # правдой.
+    from app.services.curator_service import coverage
+
+    orphans = (await coverage(db))["students_without_curator"]
 
     return {
         "week_start": since.date().isoformat(),

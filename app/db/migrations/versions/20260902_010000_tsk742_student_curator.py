@@ -96,7 +96,10 @@ def upgrade() -> None:
             sa.Integer(),
             sa.ForeignKey("users.id", ondelete="SET NULL"),
             nullable=True,
-            comment="Кто закрепил; NULL — вывод из расписания, руки человека не было",
+            comment=(
+                "Кто закрепил: запустивший раскладку или закрепивший вручную; "
+                "NULL — сервисный ключ"
+            ),
         ),
         sa.Column(
             "ended_reason",

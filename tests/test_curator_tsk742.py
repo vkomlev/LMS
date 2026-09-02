@@ -490,6 +490,67 @@ async def test_report_counts_overdue_signals_outside_the_week(db, graph):
     assert row["oldest_open_signal_days"] >= 39
 
 
+@pytest.mark.asyncio
+async def test_staff_are_not_counted_as_students_anywhere(db, graph):
+    """Сотрудник не ученик — ни в раскладке, ни в сводке «без куратора».
+
+    Преподаватели, методисты и владелец школы заведены и как `student`, иначе
+    они не открыли бы кабинет ученика. Живой прогон 02.09 показал цену
+    расхождения: сам оператор стоял в собственном списке «ничьих», и числа
+    раскладки и отчёта не сходились на единицу.
+    """
+    res = await curator_service.derive_from_schedule(db)
+    listed = {int(r["student_id"]) for r in res["resolved"] + res["unresolved"]}
+    for key in ("operator", "teacher_a", "teacher_b", "teacher_c"):
+        assert graph[key] not in listed, f"{key} попал в список учеников"
+
+
+@pytest.mark.asyncio
+async def test_report_counts_only_works_that_wait_for_a_human(db, graph):
+    """«Работ на проверке дольше срока» — только те, что ждут человека.
+
+    Без предиката обязательной ручной проверки условие вырождается в «любая
+    непроверенная строка `task_results`»: живой прогон на проде дал 2201
+    просроченную работу у куратора, у которого очередь честно пуста. Число,
+    которое человек читает первым, обязано означать написанное рядом.
+    """
+    await curator_service.assign(
+        db, student_id=graph["st_pair"], curator_id=graph["teacher_a"], commit=False)
+
+    difficulty_id = (await db.execute(
+        text("SELECT id FROM difficulties ORDER BY id LIMIT 1"))).scalar()
+    # Задание с АВТОМАТИЧЕСКОЙ проверкой: человека оно не ждёт никогда.
+    task_id = (await db.execute(text("""
+        INSERT INTO tasks (task_content, solution_rules, course_id, difficulty_id,
+                           external_uid, max_score, order_position)
+        VALUES (CAST(:tc AS jsonb), CAST(:sr AS jsonb), :cid, :did, :uid, 10, 1)
+        RETURNING id
+    """), {
+        "tc": json.dumps({"type": "SA", "stem": f"{_TAG} авто", "title": ""}),
+        "sr": json.dumps({"max_score": 10, "manual_review_required": False}),
+        "cid": graph["course"], "did": difficulty_id,
+        "uid": f"{_TAG}-auto-{random.randint(10**8, 10**10)}",
+    })).scalar()
+    attempt_id = (await db.execute(text(
+        "INSERT INTO attempts (user_id, course_id, root_course_id, source_system) "
+        "VALUES (:u, :c, :c, 'test') RETURNING id"
+    ), {"u": graph["st_pair"], "c": graph["course"]})).scalar()
+    await db.execute(text("""
+        INSERT INTO task_results (user_id, task_id, attempt_id, score, max_score,
+                                  is_correct, submitted_at, received_at, count_retry,
+                                  source_system)
+        VALUES (:u, :t, :a, 0, 10, false, now() - interval '30 days',
+                now() - interval '30 days', 0, 'spw_web')
+    """), {"u": graph["st_pair"], "t": task_id, "a": attempt_id})
+    await db.commit()
+
+    report = await curator_activity_service.weekly_report(db)
+    row = next(r for r in report["curators"] if int(r["curator_id"]) == graph["teacher_a"])
+    assert row["reviews_overdue"] == 0, (
+        "авто-проверенная работа не ждёт человека и в просроченные идти не должна"
+    )
+
+
 # ─── Слияние учёток ──────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio

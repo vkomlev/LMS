@@ -54,7 +54,10 @@ class StudentCurator(Base):
     )
     assigned_by: Mapped[Optional[int]] = mapped_column(
         Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True,
-        comment="Кто закрепил; NULL — вывод из расписания",
+        # Даже у `source='derived'` здесь стоит человек: раскладку запускает
+        # методист или админ кнопкой, а не фоновый проход. NULL остаётся для
+        # запуска сервисным ключом — тогда называть автора было бы неправдой.
+        comment="Кто закрепил: запустивший раскладку или закрепивший вручную; NULL — сервисный ключ",
     )
     ended_reason: Mapped[Optional[str]] = mapped_column(
         Text, nullable=True,

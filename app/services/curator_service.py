@@ -42,6 +42,35 @@ SOURCE_MANUAL = "manual"
 UNRESOLVED_AMBIGUOUS = "ambiguous"
 UNRESOLVED_NO_TEACHER = "no_teacher"
 
+#: Роли, из-за которых человек не считается учеником школы.
+#:
+#: Преподаватели, методисты и владелец школы заведены и как `student` — иначе
+#: они не могли бы открыть кабинет ученика. Считать их учениками нельзя нигде:
+#: в раскладке они дают строки «без куратора», в отчёте раздувают число тех, за
+#: кого владелец школы якобы отвечает сам. Живой прогон 02.09 показал это в
+#: расхождении на единицу — сам оператор стоял в собственном списке «ничьих».
+STAFF_ROLES = ("teacher", "methodist", "admin")
+
+
+def not_staff_sql(user_col: str) -> str:
+    """SQL-условие «это ученик школы, а не сотрудник».
+
+    Функция, а не скопированный `NOT EXISTS`: правило зовут и раскладка, и
+    сводка, и недельный отчёт. Разошедшись, они начинают спорить о том, сколько
+    в школе учеников.
+
+    :param user_col: ссылка на колонку с идентификатором человека. Только
+        литералы из закрытого набора call-sites.
+    """
+    roles = ", ".join(f"'{r}'" for r in STAFF_ROLES)
+    return f"""
+        NOT EXISTS (
+            SELECT 1 FROM user_roles ur_s
+            JOIN roles r_s ON r_s.id = ur_s.role_id
+            WHERE ur_s.user_id = {user_col} AND r_s.name IN ({roles})
+        )
+    """  # nosec B608 — user_col из закрытого набора литералов модуля
+
 # Ведущий занятия хранится В ДВУХ МЕСТАХ: колонкой (`lesson_slot.teacher_id`,
 # `lesson_occurrence.teacher_id`) и строками таблиц совместного ведения
 # (tsk-443). Отбор по одному из них пропускает занятия, заведённые другим
@@ -72,9 +101,10 @@ students AS (
     WHERE u.is_active
       AND u.merged_into_user_id IS NULL
       AND u.blocked_at IS NULL
-      -- Преподаватель заведён и как ученик: сам себе куратором он быть не
-      -- может, а в списке «без куратора» он был бы шумом.
-      AND NOT EXISTS (SELECT 1 FROM candidates c WHERE c.id = u.id)
+      -- Сотрудники заведены и как ученики. Проверять «нет среди кандидатов»
+      -- недостаточно: владелец школы из кандидатов исключён и потому
+      -- проваливался в собственный список «ничьих» (живой прогон 02.09).
+      AND {not_staff}
 ),
 -- Уровень 1: постоянное расписание.
 slot_pairs AS (
@@ -199,7 +229,8 @@ async def derive_from_schedule(
     """
     if excluded is None:
         excluded = await excluded_curator_ids(db)
-    rows = (await db.execute(text(_DERIVE_SQL), {
+    sql = _DERIVE_SQL.format(not_staff=not_staff_sql("u.id"))  # nosec B608
+    rows = (await db.execute(text(sql), {
         "excluded": list(excluded),
         "window_days": window_days,
         "reason_slot": REASON_PERMANENT_SLOT,
@@ -430,7 +461,7 @@ async def coverage(db: AsyncSession) -> Dict[str, Any]:
         GROUP BY u.id, u.full_name
         ORDER BY count(*) DESC
     """))).mappings().all()
-    without = (await db.execute(text("""
+    without = (await db.execute(text(f"""
         SELECT count(*)
         FROM users u
         JOIN user_roles ur ON ur.user_id = u.id
@@ -440,9 +471,6 @@ async def coverage(db: AsyncSession) -> Dict[str, Any]:
               SELECT 1 FROM student_curator sc
               WHERE sc.student_id = u.id AND sc.ended_at IS NULL
           )
-          AND NOT EXISTS (
-              SELECT 1 FROM user_roles ur2 JOIN roles r2 ON r2.id = ur2.role_id
-              WHERE ur2.user_id = u.id AND r2.name IN ('teacher', 'methodist', 'admin')
-          )
-    """))).scalar() or 0
+          AND {not_staff_sql("u.id")}
+    """))).scalar() or 0  # nosec B608 — фрагмент собран из литералов модуля
     return {"curators": [dict(r) for r in rows], "students_without_curator": int(without)}
