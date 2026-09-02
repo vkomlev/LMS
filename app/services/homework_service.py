@@ -446,7 +446,15 @@ WITH current AS (
     SELECT DISTINCT ON (ha.student_id)
            ha.id, ha.student_id, ha.due_at, ha.planned_volume, ha.issued_at
       FROM homework_assignment ha
-     WHERE ha.student_id = ANY(:student_ids) AND ha.cancelled_at IS NULL
+     WHERE ha.student_id = ANY(:student_ids)
+       -- Состояние НА МОМЕНТ `as_of`, а не «сейчас» (tsk-741, дефект 02.09).
+       -- Выдача существовала к этому моменту и не была к нему отменена.
+       -- `cancelled_at IS NULL` в чистом виде здесь неверен: каждая новая
+       -- выдача гасит предыдущую, поэтому у прошедшего занятия «неотменённой»
+       -- оказывалась та, что выдали ПОСЛЕ него, — и преподаватель видел на
+       -- прошедшем занятии домашнюю работу к следующему.
+       AND ha.issued_at <= :as_of
+       AND (ha.cancelled_at IS NULL OR ha.cancelled_at > :as_of)
      ORDER BY ha.student_id, ha.issued_at DESC, ha.id DESC
 ),
 counted AS (
@@ -473,9 +481,23 @@ SELECT * FROM counted
 
 
 async def status_for_students(
-    db: AsyncSession, *, student_ids: list[int], now: Optional[datetime] = None
+    db: AsyncSession,
+    *,
+    student_ids: list[int],
+    now: Optional[datetime] = None,
+    as_of: Optional[datetime] = None,
 ) -> dict[int, dict[str, Any]]:
-    """Состояние действующего ДЗ для каждого ученика группы.
+    """Состояние ДЗ каждого ученика группы НА МОМЕНТ `as_of`.
+
+    `as_of` — «какую домашнюю работу человек должен был принести к этому
+    моменту». Для сводки занятия это ВРЕМЯ ЗАНЯТИЯ, а не «сейчас»: иначе у
+    прошедшего занятия показывается выдача, сделанная по его итогам, то есть
+    домашняя работа к СЛЕДУЮЩЕМУ занятию (дефект, замеченный оператором
+    02.09). По умолчанию — «сейчас», прежнее поведение.
+
+    `now` отвечает на другой вопрос — просрочена ли выдача. Для прошедшего
+    занятия это по-прежнему настоящее время: срок либо прошёл, либо нет,
+    независимо от того, какое занятие мы разглядываем.
 
     Ученик без выдачи в ответе отсутствует — это не то же самое, что «выдача
     пустая»: первое значит «ещё не задавали», второе невозможно (пустую выдачу
@@ -485,7 +507,10 @@ async def status_for_students(
         return {}
     moment = now or datetime.now(timezone.utc)
     rows = (
-        await db.execute(text(_SUMMARY_SQL), {"student_ids": student_ids})
+        await db.execute(
+            text(_SUMMARY_SQL),
+            {"student_ids": student_ids, "as_of": as_of or moment},
+        )
     ).mappings().fetchall()
     result: dict[int, dict[str, Any]] = {}
     for row in rows:

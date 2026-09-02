@@ -1054,3 +1054,94 @@ async def test_attended_lesson_changes_nothing(db):
     after = await homework_volume_service.compute(db, student_id=student_id)
     assert after.missed_lessons == 0
     assert after.volume_per_week == before.volume_per_week
+
+
+# ============ Сводка занятия: ДЗ на момент ЭТОГО занятия ============
+
+
+@pytest.mark.asyncio
+async def test_summary_shows_homework_the_student_had_to_bring(db):
+    """У прошедшего занятия видно ДЗ, которое к нему задавали, а не итог урока.
+
+    Дефект, замеченный оператором 02.09: после занятия автовыдача создаёт новую
+    домашнюю работу — к СЛЕДУЮЩЕМУ занятию. Сводка брала «текущую действующую»
+    и показывала на прошедшем занятии именно её, хотя на нём проверяли совсем
+    другое.
+    """
+    student_id, _ = await _student_with_program(db, materials=0, tasks=12)
+    lesson_at = datetime.now(UTC) - timedelta(hours=2)
+
+    # Задано ДО занятия — это ученик и должен был принести.
+    before_lesson = await homework_service.issue(
+        db, student_id=student_id, due_at=lesson_at, source="teacher",
+        volume_override=3, now=lesson_at - timedelta(days=3),
+    )
+    await db.commit()
+    # Задано ПОСЛЕ занятия — это уже к следующему.
+    after_lesson = await homework_service.issue(
+        db, student_id=student_id, due_at=datetime.now(UTC) + timedelta(days=5),
+        source="auto", volume_override=4, now=lesson_at + timedelta(minutes=61),
+    )
+    await db.commit()
+
+    at_lesson = await homework_service.status_for_students(
+        db, student_ids=[student_id], as_of=lesson_at,
+    )
+    assert at_lesson[student_id]["homework_id"] == before_lesson["id"]
+    assert at_lesson[student_id]["assigned_total"] == 3
+
+    # А «сейчас» — по-прежнему свежая выдача: экран ученика не меняется.
+    now_status = await homework_service.status_for_students(
+        db, student_ids=[student_id],
+    )
+    assert now_status[student_id]["homework_id"] == after_lesson["id"]
+    assert now_status[student_id]["assigned_total"] == 4
+
+
+@pytest.mark.asyncio
+async def test_summary_silent_when_nothing_was_assigned_before_the_lesson(db):
+    """На занятии, к которому ничего не задавали, полей плана нет.
+
+    «Не задавали» и «не сделал» — разные утверждения; появившаяся позже выдача
+    не должна задним числом превращаться в долг к прошедшему занятию.
+    """
+    student_id, _ = await _student_with_program(db, materials=0, tasks=6)
+    lesson_at = datetime.now(UTC) - timedelta(hours=2)
+
+    await homework_service.issue(
+        db, student_id=student_id, due_at=datetime.now(UTC) + timedelta(days=5),
+        source="auto", volume_override=3, now=lesson_at + timedelta(minutes=61),
+    )
+    await db.commit()
+
+    at_lesson = await homework_service.status_for_students(
+        db, student_ids=[student_id], as_of=lesson_at,
+    )
+    assert student_id not in at_lesson
+
+
+@pytest.mark.asyncio
+async def test_manual_cancel_before_the_lesson_hides_the_assignment(db):
+    """Отменённое ДО занятия на нём не показывается.
+
+    Отличать «погашено следующей выдачей» от «преподаватель передумал» нечем,
+    поэтому смотрим на момент: если к началу занятия выдача уже была отменена,
+    ученик её не нёс.
+    """
+    student_id, _ = await _student_with_program(db, materials=0, tasks=6)
+    lesson_at = datetime.now(UTC) - timedelta(hours=2)
+
+    homework = await homework_service.issue(
+        db, student_id=student_id, due_at=lesson_at, source="teacher",
+        volume_override=2, now=lesson_at - timedelta(days=2),
+    )
+    await db.commit()
+    await homework_service.cancel(
+        db, homework_id=homework["id"], now=lesson_at - timedelta(hours=1),
+    )
+    await db.commit()
+
+    at_lesson = await homework_service.status_for_students(
+        db, student_ids=[student_id], as_of=lesson_at,
+    )
+    assert student_id not in at_lesson

@@ -19,7 +19,7 @@ teacher_id`, сервисный токен — bypass).
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, status
@@ -91,9 +91,25 @@ async def list_teacher_occurrences(
         limit=limit,
         no_show_threshold_minutes=threshold_minutes,
     )
+    # tsk-741 (дефект 02.09): раньше кнопка превращалась в «Подвести итоги»
+    # ровно в час начала занятия, и сводку по ученикам было уже не открыть —
+    # хотя именно в начале урока преподаватель и смотрит, кто что сделал дома.
+    summary_minutes = settings_store.get_int("lesson_summary_after_start_minutes")
+    wrapup_minutes = settings_store.get_int("lesson_wrapup_before_end_minutes")
+
     result: list[TeacherLessonOccurrenceRead] = []
     for occurrence, participant_pairs in pairs:
         data = LessonOccurrenceRead.model_validate(occurrence).model_dump()
+        ends_at = occurrence.scheduled_at + timedelta(
+            minutes=int(occurrence.duration_minutes)
+        )
+        # Нижняя граница держит сводку доступной даже там, где занятие короче
+        # суммы двух окон: иначе на 30-минутном уроке итоги предлагались бы
+        # с первой минуты — ровно тот дефект, который чиним.
+        data["wrapup_from"] = max(
+            ends_at - timedelta(minutes=wrapup_minutes),
+            occurrence.scheduled_at + timedelta(minutes=summary_minutes),
+        )
         data["participants"] = [
             TeacherParticipantRead(
                 **ParticipantRead.model_validate(p).model_dump(),

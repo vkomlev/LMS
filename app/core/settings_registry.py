@@ -219,6 +219,37 @@ SETTINGS: Tuple[SettingDef, ...] = (
         max_value=240,
     ),
     SettingDef(
+        key="lesson_summary_after_start_minutes",
+        group=GROUP_LESSONS,
+        title="Сколько минут после начала занятия держать сводку по ученикам",
+        description=(
+            "В начале урока преподаватель смотрит, кто что сделал дома. Раньше "
+            "кнопка превращалась в «Подвести итоги» ровно в час начала — "
+            "сводку было уже не открыть."
+        ),
+        kind="int",
+        default=15,
+        env_var="LESSON_SUMMARY_AFTER_START_MINUTES",
+        unit="минуты",
+        min_value=0,
+        max_value=120,
+    ),
+    SettingDef(
+        key="lesson_wrapup_before_end_minutes",
+        group=GROUP_LESSONS,
+        title="За сколько минут до конца занятия предлагать подвести итоги",
+        description=(
+            "Итоги подводят в конце урока, а не в начале. До этого срока "
+            "кнопка остаётся сводкой по ученикам."
+        ),
+        kind="int",
+        default=15,
+        env_var="LESSON_WRAPUP_BEFORE_END_MINUTES",
+        unit="минуты",
+        min_value=0,
+        max_value=120,
+    ),
+    SettingDef(
         key="lesson_auto_confirm_early_grace_minutes",
         group=GROUP_LESSONS,
         title="Насколько раньше начала засчитывать приход",

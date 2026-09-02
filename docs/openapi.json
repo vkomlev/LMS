@@ -67730,6 +67730,12 @@
             },
             "type": "array",
             "title": "Participants"
+          },
+          "wrapup_from": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Wrapup From",
+            "description": "С этого момента кнопка предлагает подвести итоги, до него — сводку по ученикам. Это конец занятия минус `lesson_wrapup_before_end_minutes`, но не раньше чем начало плюс `lesson_summary_after_start_minutes`: на коротком занятии сводку всё равно успевают открыть"
           }
         },
         "type": "object",
@@ -67739,7 +67745,8 @@
           "scheduled_at",
           "duration_minutes",
           "created_at",
-          "updated_at"
+          "updated_at",
+          "wrapup_from"
         ],
         "title": "TeacherLessonOccurrenceRead",
         "description": "Occurrence в панели преподавателя — с полным списком участников."

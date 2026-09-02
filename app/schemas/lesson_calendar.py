@@ -244,6 +244,20 @@ class TeacherLessonOccurrenceRead(LessonOccurrenceRead):
     """Occurrence в панели преподавателя — с полным списком участников."""
 
     participants: list[TeacherParticipantRead] = Field(default_factory=list)
+    # tsk-741 (дефект 02.09): момент, с которого занятие пора подводить, а не
+    # разглядывать. Отдаём ВРЕМЯ, а не готовый признак: панель открыта весь
+    # урок, и признак, посчитанный на сервере при загрузке, к середине занятия
+    # успел бы устареть. Считается из двух настроек школы, поэтому правило
+    # живёт на сервере, а клиент только сравнивает с часами.
+    wrapup_from: datetime = Field(
+        description=(
+            "С этого момента кнопка предлагает подвести итоги, до него — "
+            "сводку по ученикам. Это конец занятия минус "
+            "`lesson_wrapup_before_end_minutes`, но не раньше чем начало плюс "
+            "`lesson_summary_after_start_minutes`: на коротком занятии сводку "
+            "всё равно успевают открыть"
+        )
+    )
 
 
 class AttendanceActionRequest(BaseModel):
