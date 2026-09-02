@@ -52,6 +52,45 @@ UNRESOLVED_NO_TEACHER = "no_teacher"
 STAFF_ROLES = ("teacher", "methodist", "admin")
 
 
+#: Тарифы, на которых кураторство не нужно (решение оператора 2026-09-02).
+#:
+#: `test` — служебные учётки; `demo` — человек смотрит курс, а не учится;
+#: `alumni` — выпускник, обучение закончено. Общего признака в колонках у них
+#: нет (`billing_exempt` только у test, `course_work=false` только у alumni),
+#: поэтому список кодов, а не условие по свойствам. Появится четвёртый такой
+#: тариф — строка сюда.
+#:
+#: Смысл не в экономии строк, а в честности отчёта: пятеро выпускников,
+#: закреплённых первой раскладкой, попали бы кураторам в «не тронул ни разу» —
+#: и были бы правы, потому что трогать там нечего.
+NON_CURATED_PLAN_CODES = ("test", "demo", "alumni")
+
+
+def active_student_sql(user_col: str) -> str:
+    """SQL-условие «за этого человека имеет смысл отвечать».
+
+    Ученик школы (не сотрудник) И его действующий тариф не из числа тех, где
+    обучения нет. Отсутствие подписки исключением НЕ считается: ученик без
+    строки тарифа — это обычный человек до перевода на тарифы
+    (`starts_on` — дата переезда, а не прихода), и куратор ему нужен.
+
+    Одна функция на все места: раскладка, сводка, доска и отчёт обязаны
+    считать одно и то же множество, иначе они начнут спорить о том, сколько в
+    школе учеников.
+    """
+    codes = ", ".join(f"'{c}'" for c in NON_CURATED_PLAN_CODES)
+    return f"""
+        {not_staff_sql(user_col)}
+        AND NOT EXISTS (
+            SELECT 1 FROM student_subscription ss_a
+            JOIN subscription_plan sp_a ON sp_a.id = ss_a.plan_id
+            WHERE ss_a.student_id = {user_col}
+              AND ss_a.ends_on IS NULL
+              AND sp_a.code IN ({codes})
+        )
+    """  # nosec B608 — user_col и коды из закрытого набора литералов модуля
+
+
 def not_staff_sql(user_col: str) -> str:
     """SQL-условие «это ученик школы, а не сотрудник».
 
@@ -104,6 +143,7 @@ students AS (
       -- Сотрудники заведены и как ученики. Проверять «нет среди кандидатов»
       -- недостаточно: владелец школы из кандидатов исключён и потому
       -- проваливался в собственный список «ничьих» (живой прогон 02.09).
+      -- Здесь же отсекаются тарифы без обучения (тест, демо, выпускник).
       AND {not_staff}
 ),
 -- Уровень 1: постоянное расписание.
@@ -229,7 +269,7 @@ async def derive_from_schedule(
     """
     if excluded is None:
         excluded = await excluded_curator_ids(db)
-    sql = _DERIVE_SQL.format(not_staff=not_staff_sql("u.id"))  # nosec B608
+    sql = _DERIVE_SQL.format(not_staff=active_student_sql("u.id"))  # nosec B608
     rows = (await db.execute(text(sql), {
         "excluded": list(excluded),
         "window_days": window_days,
@@ -471,6 +511,6 @@ async def coverage(db: AsyncSession) -> Dict[str, Any]:
               SELECT 1 FROM student_curator sc
               WHERE sc.student_id = u.id AND sc.ended_at IS NULL
           )
-          AND {not_staff_sql("u.id")}
+          AND {active_student_sql("u.id")}
     """))).scalar() or 0  # nosec B608 — фрагмент собран из литералов модуля
     return {"curators": [dict(r) for r in rows], "students_without_curator": int(without)}

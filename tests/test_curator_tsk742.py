@@ -505,6 +505,61 @@ async def test_staff_are_not_counted_as_students_anywhere(db, graph):
         assert graph[key] not in listed, f"{key} попал в список учеников"
 
 
+async def _set_plan(db, student_id: int, code: str) -> None:
+    """Перевести ученика на тариф по коду."""
+    await db.execute(text(
+        "INSERT INTO student_subscription (student_id, plan_id, starts_on) "
+        "SELECT :s, p.id, CURRENT_DATE FROM subscription_plan p WHERE p.code = :c"
+    ), {"s": student_id, "c": code})
+
+
+@pytest.mark.asyncio
+async def test_alumni_and_demo_are_out_of_curation(db, graph):
+    """Выпускник, демо и служебный тариф кураторства не получают.
+
+    Решение оператора 02.09. Попав в список, они считались бы у куратора как
+    «не тронул ни разу» — и он был бы прав: трогать там нечего.
+    """
+    await _set_plan(db, graph["st_slot_solo"], "alumni")
+    await _set_plan(db, graph["st_pair"], "demo")
+    await _set_plan(db, graph["st_tie"], "test")
+    await db.commit()
+
+    res = await curator_service.derive_from_schedule(db)
+    listed = {int(r["student_id"]) for r in res["resolved"] + res["unresolved"]}
+    for key in ("st_slot_solo", "st_pair", "st_tie"):
+        assert graph[key] not in listed, f"{key} остался в раскладке"
+
+
+@pytest.mark.asyncio
+async def test_active_plan_keeps_curation(db, graph):
+    """Действующий тариф с занятиями кураторство не отменяет."""
+    await _set_plan(db, graph["st_slot_solo"], "base")
+    await db.commit()
+    res = await curator_service.derive_from_schedule(db)
+    assert graph["st_slot_solo"] in {int(r["student_id"]) for r in res["resolved"]}
+
+
+@pytest.mark.asyncio
+async def test_alumni_drops_off_the_board_and_the_report(db, graph):
+    """Уже закреплённый выпускник исчезает и с доски, и из счёта отчёта."""
+    await curator_service.assign(
+        db, student_id=graph["st_pair"], curator_id=graph["teacher_a"], commit=False)
+    await curator_service.assign(
+        db, student_id=graph["st_slot_solo"], curator_id=graph["teacher_a"], commit=False)
+    await _set_plan(db, graph["st_pair"], "alumni")
+    await db.commit()
+
+    board = await curator_board_service.get_board(db, curator_id=graph["teacher_a"])
+    seen = {int(s["student_id"]) for s in board["students"]}
+    assert graph["st_pair"] not in seen
+    assert graph["st_slot_solo"] in seen
+
+    report = await curator_activity_service.weekly_report(db)
+    row = next(r for r in report["curators"] if int(r["curator_id"]) == graph["teacher_a"])
+    assert row["students"] == 1, "выпускник посчитан в группе куратора"
+
+
 @pytest.mark.asyncio
 async def test_report_counts_only_works_that_wait_for_a_human(db, graph):
     """«Работ на проверке дольше срока» — только те, что ждут человека.
@@ -745,21 +800,18 @@ async def test_api_derive_apply_is_dry_by_default(db, graph, client):
 
 
 @pytest.mark.asyncio
-async def test_api_report_is_closed_to_everyone_but_the_owner(db, graph, client):
-    """Отчёт по работе кураторов — только владельцу школы.
+async def test_report_is_closed_to_a_plain_teacher(db, graph, client):
+    """Преподаватель без роли методиста сводку по коллегам не видит.
 
-    Методист сюда не допущен намеренно: у нас методист — тот же преподаватель,
-    и сводка «кто сколько не тронул» стала бы для него характеристикой на
-    коллег. Про себя куратор узнаёт персональным сигналом, без чужих чисел.
+    Решение оператора 02.09: доступ решается РОЛЬЮ, а не гейтом. Роль методиста
+    в этой школе означает доступ к работе кураторов; у кого её нет — тот видит
+    только свою доску.
     """
-    methodist = await _new_user(db, "methodist", "methodist_reader")
     await db.commit()
-
-    for uid in (graph["teacher_a"], methodist):
-        resp = await client.get(
-            "/api/v1/curator/weekly-report", headers=_auth(uid)
-        )
-        assert resp.status_code == 403, f"отчёт открылся пользователю {uid}"
+    resp = await client.get(
+        "/api/v1/curator/weekly-report", headers=_auth(graph["teacher_a"])
+    )
+    assert resp.status_code == 403
 
     ok = await client.get(
         "/api/v1/curator/weekly-report", headers=_auth(graph["operator"])
@@ -768,8 +820,12 @@ async def test_api_report_is_closed_to_everyone_but_the_owner(db, graph, client)
 
 
 @pytest.mark.asyncio
-async def test_weekly_report_goes_only_to_the_owner(db, graph):
-    """Рассылка не кладёт сводку методистам — тот же список, что у гейта."""
+async def test_report_recipients_match_the_gate(db, graph):
+    """Кому ручка открыта — тому и рассылка. Разойтись им нельзя.
+
+    Иначе получается тихий перекос: на экране человек отчёт видит, а письмо
+    ему не приходит (или наоборот — приходит тому, кто открыть не может).
+    """
     from app.services import curator_report_cron_service as cron
 
     methodist = await _new_user(db, "methodist", "methodist_recipient")
@@ -778,14 +834,16 @@ async def test_weekly_report_goes_only_to_the_owner(db, graph):
     await db.commit()
 
     await cron.send_weekly_report(db, force=True)
-    got = (await db.execute(text("""
+    for uid, who in ((methodist, "методист"), (graph["operator"], "владелец школы")):
+        got = (await db.execute(text("""
+            SELECT count(*) FROM notifications WHERE kind = :k AND user_id = :u
+        """), {"k": cron.NOTIFICATION_KIND, "u": uid})).scalar()
+        assert got == 1, f"{who} не получил сводку"
+    # А преподаватель без роли — не получил.
+    none = (await db.execute(text("""
         SELECT count(*) FROM notifications WHERE kind = :k AND user_id = :u
-    """), {"k": cron.NOTIFICATION_KIND, "u": methodist})).scalar()
-    assert got == 0, "методист получил сводку по работе коллег"
-    mine = (await db.execute(text("""
-        SELECT count(*) FROM notifications WHERE kind = :k AND user_id = :u
-    """), {"k": cron.NOTIFICATION_KIND, "u": graph["operator"]})).scalar()
-    assert mine == 1
+    """), {"k": cron.NOTIFICATION_KIND, "u": graph["teacher_a"]})).scalar()
+    assert none == 0
 
 
 @pytest.mark.asyncio

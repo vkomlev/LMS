@@ -23,6 +23,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services import curator_activity_service as activity
+from app.services.curator_service import active_student_sql
 from app.services.help_requests_service import awaiting_teacher_sql
 from app.services.learning_gaps_service import real_student_results_filter
 from app.services.teacher_queue_service import mandatory_review_sql
@@ -53,6 +54,9 @@ WITH roster AS (
     WHERE sc.curator_id = :curator_id
       AND sc.ended_at IS NULL
       AND s.is_active AND s.merged_into_user_id IS NULL AND s.blocked_at IS NULL
+      -- Выпускники, демо и служебные учётки на доску не идут: трогать там
+      -- нечего, а в списке они выглядели бы как забытые люди.
+      AND {active_student}
 )
 SELECT u.id AS student_id,
        u.full_name AS student_name,
@@ -150,6 +154,7 @@ async def get_board(db: AsyncSession, *, curator_id: int) -> Dict[str, Any]:
         mandatory=mandatory_review_sql("t", "tr"),
         real_student=real_student_results_filter("tr"),
         awaiting_teacher=awaiting_teacher_sql("hr"),
+        active_student=active_student_sql("s.id"),
     )
     rows = (await db.execute(text(sql), {
         "curator_id": curator_id,

@@ -218,6 +218,9 @@ roster AS (
     JOIN users s ON s.id = sc.student_id
     WHERE sc.ended_at IS NULL
       AND s.is_active AND s.merged_into_user_id IS NULL AND s.blocked_at IS NULL
+      -- Выпускники, демо и служебные учётки в счёт кураторства не идут: они
+      -- попали бы в «не тронул ни разу», и куратор был бы прав, что не трогал.
+      AND {active_student}
 ),
 touch AS (
     SELECT curator_id, student_id, kind
@@ -321,11 +324,13 @@ async def weekly_report(
     `week_start` — понедельник отчётной недели; по умолчанию прошлая полная
     неделя (отчёт приходит в понедельник о том, что было).
     """
+    from app.services.curator_service import active_student_sql
     from app.services.teacher_queue_service import mandatory_review_sql
 
     since, until = week_bounds(week_start)
     sql = _REPORT_SQL.format(
         touches=touches_sql(), mandatory=mandatory_review_sql("t", "tr"),
+        active_student=active_student_sql("s.id"),
     )
     curator_ids = [
         int(r[0]) for r in (await db.execute(text(
