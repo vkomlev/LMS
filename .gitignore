@@ -24,6 +24,7 @@ docs/*
 !docs/assignments-and-results-api.md
 !docs/frontend-contract-sa-com.md
 !docs/learning-engine-next-item.md
+!docs/curator-charter.md
 !docs/roles-and-api-contract.md
 !docs/API_STUDENTS_QUICK_REFERENCE.md
 !docs/openapi.json

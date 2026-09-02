@@ -63,6 +63,12 @@ SIMPLE_MOVES = [
     ("guest_session", "attributed_user_id"),
     ("guest_attempt", "attributed_user_id"),
     ("lesson_slot_student", "added_by"),
+    # tsk-742: кто закрепил и кто снял куратора. Уникальности на этих колонках
+    # нет, поэтому обычный перенос; сами периоды ответственности переезжают
+    # отдельно (`_move_curator_periods`) — там мешает частичный уникальный
+    # индекс «один действующий куратор на ученика».
+    ("student_curator", "assigned_by"),
+    ("student_curator", "ended_by"),
 ]
 
 # (таблица, колонка_с_user_id, остальные_колонки_составной_уникальности) —
@@ -229,6 +235,78 @@ async def _move_subscription(db: AsyncSession, source_id: int, target_id: int) -
     )
 
 
+async def _move_curator_periods(db: AsyncSession, source_id: int, target_id: int) -> None:
+    """Кураторство переезжает к живой учётке (tsk-742).
+
+    **Почему отдельным шагом.** Общий механизм `CONFLICT_MOVES` разводит строки
+    по составной уникальности «колонка + соседняя колонка», а у `student_curator`
+    уникальность частичная и одноколоночная: один ДЕЙСТВУЮЩИЙ куратор на
+    ученика. Прогнать её через общий механизм нельзя — он снял бы не то.
+
+    **Почему это вообще нужно.** Оставшись у слитой учётки, закрепление молча
+    пропадает: живой ученик становится «ничей» между занятиями, то есть
+    возвращается ровно в то состояние, из которого задача выводит. У слитого
+    преподавателя так же молча исчезает вся его группа. Тот же класс, что
+    перерыв в tsk-610 и ручная цена в tsk-548.
+
+    Две стороны, и правило у них разное:
+
+    * **ученик** — история переезжает целиком, но если у живой учётки уже есть
+      действующий куратор, открытый период слитой закрывается: двух
+      ответственных быть не может, и решает тот, кто закреплён за живым
+      человеком;
+    * **преподаватель** — его ученики переходят к целевой учётке; ученик, у
+      которого действующий куратор уже целевая учётка, у слитой закрывается,
+      иначе на нём столкнулись бы два открытых периода.
+    """
+    # Ученик: гасим открытый период слитой учётки, если у живой он уже есть.
+    await db.execute(
+        text(
+            "UPDATE student_curator sc "
+            "   SET ended_at = now(), "
+            "       ended_reason = COALESCE(sc.ended_reason, 'учётная запись слита') "
+            " WHERE sc.student_id = :source AND sc.ended_at IS NULL "
+            "   AND EXISTS (SELECT 1 FROM student_curator t "
+            "                WHERE t.student_id = :target AND t.ended_at IS NULL)"
+        ),
+        {"source": source_id, "target": target_id},
+    )
+    # Преподаватель: если у ученика действующий куратор — уже целевая учётка,
+    # открытый период слитой закрываем, иначе после переноса их станет два.
+    await db.execute(
+        text(
+            "UPDATE student_curator sc "
+            "   SET ended_at = now(), "
+            "       ended_reason = COALESCE(sc.ended_reason, 'учётная запись слита') "
+            " WHERE sc.curator_id = :source AND sc.ended_at IS NULL "
+            "   AND EXISTS (SELECT 1 FROM student_curator t "
+            "                WHERE t.student_id = sc.student_id "
+            "                  AND t.curator_id = :target AND t.ended_at IS NULL)"
+        ),
+        {"source": source_id, "target": target_id},
+    )
+    # Строки, которые после переноса схлопнулись бы в «куратор самому себе»:
+    # это бывает, когда сливают ученика в его же преподавателя. Ограничение
+    # `curator_id <> student_id` уронило бы всё слияние на UPDATE, поэтому
+    # убираем такие строки заранее и ТОЛЬКО у сливаемой пары.
+    await db.execute(
+        text(
+            "DELETE FROM student_curator "
+            " WHERE (student_id = :source AND curator_id = :target) "
+            "    OR (student_id = :target AND curator_id = :source)"
+        ),
+        {"source": source_id, "target": target_id},
+    )
+    for column in ("student_id", "curator_id"):
+        await db.execute(
+            text(
+                f"UPDATE student_curator SET {column} = :target "  # nosec B608
+                f" WHERE {column} = :source"
+            ),
+            {"target": target_id, "source": source_id},
+        )
+
+
 async def apply_merge(db: AsyncSession, source_id: int, target_id: int) -> None:
     # tsk-626: слияние — тоже писатель кеша `student_course_state` (строки
     # source удаляются списком DELETE_ON_MERGE). Правило кеша одно для всех
@@ -292,6 +370,8 @@ async def apply_merge(db: AsyncSession, source_id: int, target_id: int) -> None:
         ),
         {"source": source_id},
     )
+
+    await _move_curator_periods(db, source_id, target_id)
 
     await _move_subscription(db, source_id, target_id)
 

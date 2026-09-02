@@ -286,6 +286,35 @@ async def get_or_create_blocked_limit_help_request(
     return (int(new_id), True, False)
 
 
+def awaiting_teacher_sql(alias: str = "hr") -> str:
+    """SQL-условие «заявка ждёт ответа УЧИТЕЛЯ», без привязки к преподавателю.
+
+    tsk-742: правило вынесено из счётчика ниже, потому что читать его стало
+    нужно и другому экрану (доска куратора). Скопированный вариант неизбежно
+    выродился бы в `status = 'open'` — а это, как объяснено в
+    `get_help_requests_pending_count`, СОВСЕМ другое множество: заявка остаётся
+    открытой, пока её не закроет ученик, в том числе после ответа учителя.
+    Тогда у куратора на экране вечно висели бы «просроченные» заявки, на
+    которые он уже ответил, — верный способ отучить смотреть на экран.
+
+    :param alias: алиас `help_requests` в вызывающем запросе. Только литералы
+        из закрытого набора call-sites, user-input сюда не попадает.
+    """
+    return f"""
+        {alias}.status = 'open'
+        AND (
+            {alias}.thread_id IS NULL
+            OR (
+                SELECT m.sender_id
+                FROM messages m
+                WHERE m.thread_id = {alias}.thread_id
+                ORDER BY m.sent_at DESC, m.id DESC
+                LIMIT 1
+            ) = {alias}.student_id
+        )
+    """  # nosec B608 — alias из закрытого набора литералов
+
+
 async def get_help_requests_pending_count(
     db: AsyncSession,
     teacher_id: int,
@@ -309,22 +338,12 @@ async def get_help_requests_pending_count(
     в счётчик не попадает (но остаётся open в списке заявок).
     """
     r = await db.execute(
-        text("""
+        text(f"""
             SELECT COUNT(*) AS cnt, MIN(hr.created_at) AS oldest
             FROM help_requests hr
-            WHERE hr.status = 'open'
-              AND hr.assigned_teacher_id = :teacher_id
-              AND (
-                  hr.thread_id IS NULL
-                  OR (
-                      SELECT m.sender_id
-                      FROM messages m
-                      WHERE m.thread_id = hr.thread_id
-                      ORDER BY m.sent_at DESC, m.id DESC
-                      LIMIT 1
-                  ) = hr.student_id
-              )
-        """),
+            WHERE hr.assigned_teacher_id = :teacher_id
+              AND {awaiting_teacher_sql('hr')}
+        """),  # nosec B608 — фрагмент собран из литералов модуля
         {"teacher_id": teacher_id},
     )
     row = r.fetchone()

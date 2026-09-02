@@ -44,6 +44,10 @@ _HUMAN_LABELS: dict[tuple[str, str], str] = {
     ("lesson_occurrence_participant", "student_id"): "занятия",
     ("teacher_courses", "teacher_id"): "курсы преподавателя",
     ("user_session", "user_id"): "открытые сеансы (будут закрыты)",
+    ("student_curator", "student_id"): "кураторство над этим учеником",
+    ("student_curator", "curator_id"): "ученики, за которых он отвечает",
+    ("student_curator", "assigned_by"): "закрепления кураторов, сделанные им",
+    ("student_curator", "ended_by"): "снятия кураторов, сделанные им",
 }
 
 
@@ -103,6 +107,11 @@ async def preview_merge(db: AsyncSession, *, source_id: int, target_id: int) -> 
     # Сеансы не переезжают, а закрываются — человек будет вынужден войти
     # заново. Показываем это отдельной строкой, чтобы не выглядело потерей.
     pairs += [(t, c) for t, c in user_merge_service.DELETE_ON_MERGE]
+    # tsk-742: периоды кураторства переносятся отдельным шагом (частичная
+    # уникальность «один действующий куратор»), в общие списки они не входят —
+    # и потому не попали бы в предпросмотр. А это ровно то, о чём человек за
+    # экраном обязан знать заранее: кто за кого отвечает.
+    pairs += [("student_curator", "student_id"), ("student_curator", "curator_id")]
 
     lines: list[MergeLine] = []
     seen: set[tuple[str, str]] = set()

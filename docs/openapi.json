@@ -22857,6 +22857,935 @@
         }
       }
     },
+    "/api/v1/curator/board": {
+      "get": {
+        "tags": [
+          "curator"
+        ],
+        "summary": "Доска куратора: мои ученики и что требует действия",
+        "description": "Ученики куратора, отсортированные по срочности повода.\n\nНичего не пишет: пролистать список — не то же самое, что посмотреть\nчеловека, и засчитывать открытие доски за внимание к каждому ученику\nзначило бы обесценить главную цифру недельного отчёта.",
+        "operationId": "get_curator_board_api_v1_curator_board_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "curator_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Чужая доска — только методисту и админу. Преподаватель видит свою",
+              "title": "Curator Id"
+            },
+            "description": "Чужая доска — только методисту и админу. Преподаватель видит свою"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CuratorBoardResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/curator/students/{student_id}/view": {
+      "post": {
+        "tags": [
+          "curator"
+        ],
+        "summary": "Отметить, что куратор открыл карточку своего ученика",
+        "description": "Записать просмотр карточки — подтверждение обязанности «знать, как дела».\n\nПишется, ТОЛЬКО если ученик действительно закреплён за вызывающим. Иначе\nотвечаем `recorded: false`, а не ошибкой: карточку ученика открывают и\nметодист, и преподаватель, ведущий у него занятие, — для них это обычный\nпросмотр, а не кураторская работа, и падать здесь нечему.\n\nМолчаливо засчитывать такой просмотр за кураторский нельзя: тогда охват в\nотчёте показывал бы работу, которой не было.",
+        "operationId": "record_curator_view_api_v1_curator_students__student_id__view_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "student_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Student Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Record Curator View Api V1 Curator Students  Student Id  View Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/curator/derive-preview": {
+      "get": {
+        "tags": [
+          "curator"
+        ],
+        "summary": "Предпросмотр раскладки, выведенной из расписания",
+        "description": "Кого правило закрепит и кого оставит оператору. В базу не пишет.",
+        "operationId": "derive_preview_api_v1_curator_derive_preview_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DerivePreviewResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/curator/derive-apply": {
+      "post": {
+        "tags": [
+          "curator"
+        ],
+        "summary": "Применить раскладку из расписания",
+        "description": "Закрепить учеников по правилу.\n\nПо умолчанию сухой прогон: `dry_run=false` нужно указать явно. Запись,\nкоторую видят живые люди, не должна происходить от нажатия по инерции.",
+        "operationId": "derive_apply_api_v1_curator_derive_apply_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApplyDerivedRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplyDerivedResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/curator/coverage": {
+      "get": {
+        "tags": [
+          "curator"
+        ],
+        "summary": "Сводка раскладки: у кого сколько учеников и сколько без куратора",
+        "description": "Кто сколько ведёт. Ученики без куратора — отдельным числом.",
+        "operationId": "coverage_api_v1_curator_coverage_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CuratorCoverageResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/curator/students/{student_id}": {
+      "put": {
+        "tags": [
+          "curator"
+        ],
+        "summary": "Закрепить ученика за куратором вручную",
+        "description": "Сменить или назначить куратора с причиной.\n\nУченику и преподавателю система об этом НЕ сообщает: смена куратора —\nсобытие для живых людей, и объявляет о нём человек (устав § 7).",
+        "operationId": "assign_curator_api_v1_curator_students__student_id__put",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "student_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Student Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssignCuratorRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Assign Curator Api V1 Curator Students  Student Id  Put"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "curator"
+        ],
+        "summary": "Снять куратора с ученика",
+        "description": "Ученик уходит в список «без куратора» — то есть обратно к оператору.",
+        "operationId": "unassign_curator_api_v1_curator_students__student_id__delete",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "student_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Student Id"
+            }
+          },
+          {
+            "name": "reason",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 500
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Почему сняли",
+              "title": "Reason"
+            },
+            "description": "Почему сняли"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Unassign Curator Api V1 Curator Students  Student Id  Delete"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/curator/students/{student_id}/history": {
+      "get": {
+        "tags": [
+          "curator"
+        ],
+        "summary": "История кураторства по ученику",
+        "description": "Кто и когда отвечал за этого ученика — ради этого закрепление хранится\nотрезками, а не колонкой.",
+        "operationId": "curator_history_api_v1_curator_students__student_id__history_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "student_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Student Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/CuratorPeriod"
+                  },
+                  "title": "Response Curator History Api V1 Curator Students  Student Id  History Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/curator/weekly-report": {
+      "get": {
+        "tags": [
+          "curator"
+        ],
+        "summary": "Недельный отчёт по активности кураторов",
+        "description": "Что делали кураторы за неделю — не как учились ученики.\n\nГлавная строка по каждому — сколько учеников осталось без единого касания.",
+        "operationId": "weekly_report_api_v1_curator_weekly_report_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "week_start",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Понедельник отчётной недели; по умолчанию прошлая полная",
+              "title": "Week Start"
+            },
+            "description": "Понедельник отчётной недели; по умолчанию прошлая полная"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CuratorWeeklyReportResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/assignment-rules/bulk-upsert": {
       "post": {
         "tags": [
@@ -41974,6 +42903,68 @@
         "title": "AddStudentRequest",
         "description": "Преподаватель добавляет ученика на занятие вручную (создаёт ad-hoc occurrence)."
       },
+      "ApplyDerivedRequest": {
+        "properties": {
+          "dry_run": {
+            "type": "boolean",
+            "title": "Dry Run",
+            "description": "true — только посчитать; false — записать в базу",
+            "default": true
+          },
+          "overwrite": {
+            "type": "boolean",
+            "title": "Overwrite",
+            "description": "false — трогать только учеников без куратора; true — переразметить и уже закреплённых, оставив след в истории",
+            "default": false
+          }
+        },
+        "type": "object",
+        "title": "ApplyDerivedRequest",
+        "description": "Применение раскладки."
+      },
+      "ApplyDerivedResponse": {
+        "properties": {
+          "dry_run": {
+            "type": "boolean",
+            "title": "Dry Run"
+          },
+          "planned": {
+            "items": {
+              "$ref": "#/components/schemas/DerivedAssignment"
+            },
+            "type": "array",
+            "title": "Planned"
+          },
+          "applied": {
+            "type": "integer",
+            "title": "Applied"
+          },
+          "skipped_existing": {
+            "items": {
+              "$ref": "#/components/schemas/DerivedAssignment"
+            },
+            "type": "array",
+            "title": "Skipped Existing"
+          },
+          "unresolved": {
+            "items": {
+              "$ref": "#/components/schemas/DerivedAssignment"
+            },
+            "type": "array",
+            "title": "Unresolved"
+          }
+        },
+        "type": "object",
+        "required": [
+          "dry_run",
+          "planned",
+          "applied",
+          "skipped_existing",
+          "unresolved"
+        ],
+        "title": "ApplyDerivedResponse",
+        "description": "Итог применения раскладки."
+      },
       "ApplyLessonChange": {
         "properties": {
           "student_id": {
@@ -42074,6 +43065,46 @@
         ],
         "title": "ApplySlotOutcome",
         "description": "Что произошло с одним часом плана."
+      },
+      "AssignCuratorRequest": {
+        "properties": {
+          "curator_id": {
+            "type": "integer",
+            "title": "Curator Id"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason",
+            "description": "Почему именно этот куратор — видно в истории навсегда"
+          },
+          "ended_reason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ended Reason",
+            "description": "Почему снят прежний куратор (если он был)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "curator_id"
+        ],
+        "title": "AssignCuratorRequest",
+        "description": "Ручное закрепление ученика за куратором."
       },
       "AssignmentRuleUpsertItem": {
         "properties": {
@@ -46672,6 +47703,777 @@
         ],
         "title": "CriteriaWriteResponse",
         "description": "Итог записи по одному заданию."
+      },
+      "CuratorBoardResponse": {
+        "properties": {
+          "curator_id": {
+            "type": "integer",
+            "title": "Curator Id"
+          },
+          "students": {
+            "items": {
+              "$ref": "#/components/schemas/CuratorBoardStudent"
+            },
+            "type": "array",
+            "title": "Students"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/CuratorBoardSummary"
+          },
+          "thresholds": {
+            "$ref": "#/components/schemas/CuratorThresholds"
+          }
+        },
+        "type": "object",
+        "required": [
+          "curator_id",
+          "students",
+          "summary",
+          "thresholds"
+        ],
+        "title": "CuratorBoardResponse",
+        "description": "Доска куратора целиком."
+      },
+      "CuratorBoardStudent": {
+        "properties": {
+          "student_id": {
+            "type": "integer",
+            "title": "Student Id"
+          },
+          "student_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Student Name"
+          },
+          "assigned_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Assigned At"
+          },
+          "assignment_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assignment Reason",
+            "description": "Почему закреплён именно за этим куратором"
+          },
+          "assignment_source": {
+            "type": "string",
+            "enum": [
+              "derived",
+              "manual"
+            ],
+            "title": "Assignment Source"
+          },
+          "priority": {
+            "type": "integer",
+            "title": "Priority",
+            "description": "3 — срочно (риск ухода), 2 — просрочено, 1 — есть открытый повод, 0 — ничего не требует действия. Порядок списка уже учитывает его"
+          },
+          "reasons_to_act": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Reasons To Act",
+            "description": "Что именно требует действия, словами"
+          },
+          "open_signals": {
+            "type": "integer",
+            "title": "Open Signals",
+            "default": 0
+          },
+          "has_urgent": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Has Urgent"
+          },
+          "oldest_signal_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oldest Signal At"
+          },
+          "signal_reasons": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Signal Reasons",
+            "description": "Поводы открытых сигналов через запятую"
+          },
+          "pending_reviews": {
+            "type": "integer",
+            "title": "Pending Reviews",
+            "default": 0
+          },
+          "oldest_submitted_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oldest Submitted At"
+          },
+          "open_help_requests": {
+            "type": "integer",
+            "title": "Open Help Requests",
+            "default": 0
+          },
+          "oldest_help_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oldest Help At"
+          },
+          "last_own_work": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Own Work"
+          },
+          "silence_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Silence Days",
+            "description": "Дней с последней СВОЕЙ работы ученика; null — не работал ни разу"
+          },
+          "missed_lessons": {
+            "type": "integer",
+            "title": "Missed Lessons",
+            "default": 0
+          },
+          "lessons_in_window": {
+            "type": "integer",
+            "title": "Lessons In Window",
+            "default": 0
+          },
+          "last_touch_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Touch At",
+            "description": "Когда куратор последний раз касался этого ученика"
+          },
+          "untouched_this_week": {
+            "type": "boolean",
+            "title": "Untouched This Week",
+            "description": "За неделю куратор не сделал по нему ничего"
+          }
+        },
+        "type": "object",
+        "required": [
+          "student_id",
+          "assigned_at",
+          "assignment_source",
+          "priority",
+          "untouched_this_week"
+        ],
+        "title": "CuratorBoardStudent",
+        "description": "Ученик на доске куратора со всеми поводами к действию."
+      },
+      "CuratorBoardSummary": {
+        "properties": {
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "need_action": {
+            "type": "integer",
+            "title": "Need Action"
+          },
+          "urgent": {
+            "type": "integer",
+            "title": "Urgent"
+          },
+          "untouched_this_week": {
+            "type": "integer",
+            "title": "Untouched This Week"
+          }
+        },
+        "type": "object",
+        "required": [
+          "total",
+          "need_action",
+          "urgent",
+          "untouched_this_week"
+        ],
+        "title": "CuratorBoardSummary",
+        "description": "Шапка доски: сколько всего и сколько требует действия."
+      },
+      "CuratorCoverageResponse": {
+        "properties": {
+          "curators": {
+            "items": {
+              "$ref": "#/components/schemas/CuratorCoverageRow"
+            },
+            "type": "array",
+            "title": "Curators"
+          },
+          "students_without_curator": {
+            "type": "integer",
+            "title": "Students Without Curator"
+          }
+        },
+        "type": "object",
+        "required": [
+          "curators",
+          "students_without_curator"
+        ],
+        "title": "CuratorCoverageResponse",
+        "description": "Сводка раскладки."
+      },
+      "CuratorCoverageRow": {
+        "properties": {
+          "curator_id": {
+            "type": "integer",
+            "title": "Curator Id"
+          },
+          "curator_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Curator Name"
+          },
+          "students": {
+            "type": "integer",
+            "title": "Students"
+          },
+          "manual": {
+            "type": "integer",
+            "title": "Manual",
+            "description": "Из них закреплены руками, а не правилом"
+          }
+        },
+        "type": "object",
+        "required": [
+          "curator_id",
+          "students",
+          "manual"
+        ],
+        "title": "CuratorCoverageRow",
+        "description": "Сколько учеников у одного куратора."
+      },
+      "CuratorPeriod": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "curator_id": {
+            "type": "integer",
+            "title": "Curator Id"
+          },
+          "curator_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Curator Name"
+          },
+          "assigned_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Assigned At"
+          },
+          "ended_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ended At"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "derived",
+              "manual"
+            ],
+            "title": "Source"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "ended_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ended Reason"
+          },
+          "assigned_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assigned By Name"
+          },
+          "ended_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ended By Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "curator_id",
+          "assigned_at",
+          "source"
+        ],
+        "title": "CuratorPeriod",
+        "description": "Один период ответственности в истории ученика."
+      },
+      "CuratorThresholds": {
+        "properties": {
+          "signal_response_days": {
+            "type": "integer",
+            "title": "Signal Response Days"
+          },
+          "urgent_response_hours": {
+            "type": "integer",
+            "title": "Urgent Response Hours"
+          },
+          "review_response_days": {
+            "type": "integer",
+            "title": "Review Response Days"
+          },
+          "touch_window_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Touch Window Days"
+          }
+        },
+        "type": "object",
+        "required": [
+          "signal_response_days",
+          "urgent_response_hours",
+          "review_response_days"
+        ],
+        "title": "CuratorThresholds",
+        "description": "Сроки из устава — показываются рядом, чтобы «просрочено» читалось."
+      },
+      "CuratorWeekRow": {
+        "properties": {
+          "curator_id": {
+            "type": "integer",
+            "title": "Curator Id"
+          },
+          "curator_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Curator Name"
+          },
+          "students": {
+            "type": "integer",
+            "title": "Students"
+          },
+          "students_touched": {
+            "type": "integer",
+            "title": "Students Touched",
+            "description": "Скольких тронул хоть как-то"
+          },
+          "students_acted_on": {
+            "type": "integer",
+            "title": "Students Acted On",
+            "description": "Скольких не просто посмотрел, а что-то сделал"
+          },
+          "students_untouched": {
+            "type": "integer",
+            "title": "Students Untouched",
+            "description": "Главная цифра отчёта: скольких не тронул ни разу"
+          },
+          "coverage": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coverage",
+            "description": "Доля учеников с хотя бы одним касанием"
+          },
+          "touches_total": {
+            "type": "integer",
+            "title": "Touches Total"
+          },
+          "reviews": {
+            "type": "integer",
+            "title": "Reviews"
+          },
+          "help_replies": {
+            "type": "integer",
+            "title": "Help Replies"
+          },
+          "messages": {
+            "type": "integer",
+            "title": "Messages"
+          },
+          "signals_raised": {
+            "type": "integer",
+            "title": "Signals Raised"
+          },
+          "signals_handled": {
+            "type": "integer",
+            "title": "Signals Handled"
+          },
+          "signals_overdue": {
+            "type": "integer",
+            "title": "Signals Overdue",
+            "description": "Открыты дольше срока — считаются на момент отчёта"
+          },
+          "oldest_open_signal_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oldest Open Signal Days"
+          },
+          "reviews_overdue": {
+            "type": "integer",
+            "title": "Reviews Overdue"
+          }
+        },
+        "type": "object",
+        "required": [
+          "curator_id",
+          "students",
+          "students_touched",
+          "students_acted_on",
+          "students_untouched",
+          "touches_total",
+          "reviews",
+          "help_replies",
+          "messages",
+          "signals_raised",
+          "signals_handled",
+          "signals_overdue",
+          "reviews_overdue"
+        ],
+        "title": "CuratorWeekRow",
+        "description": "Строка отчёта по одному куратору за неделю."
+      },
+      "CuratorWeeklyReportResponse": {
+        "properties": {
+          "week_start": {
+            "type": "string",
+            "format": "date",
+            "title": "Week Start"
+          },
+          "week_end": {
+            "type": "string",
+            "format": "date",
+            "title": "Week End"
+          },
+          "curators": {
+            "items": {
+              "$ref": "#/components/schemas/CuratorWeekRow"
+            },
+            "type": "array",
+            "title": "Curators"
+          },
+          "students_without_curator": {
+            "type": "integer",
+            "title": "Students Without Curator"
+          },
+          "thresholds": {
+            "$ref": "#/components/schemas/CuratorThresholds"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text",
+            "description": "Тот же отчёт словами — как в уведомлении"
+          }
+        },
+        "type": "object",
+        "required": [
+          "week_start",
+          "week_end",
+          "curators",
+          "students_without_curator",
+          "thresholds",
+          "text"
+        ],
+        "title": "CuratorWeeklyReportResponse",
+        "description": "Недельный отчёт по активности кураторов."
+      },
+      "DerivePreviewResponse": {
+        "properties": {
+          "resolved": {
+            "items": {
+              "$ref": "#/components/schemas/DerivedAssignment"
+            },
+            "type": "array",
+            "title": "Resolved"
+          },
+          "unresolved": {
+            "items": {
+              "$ref": "#/components/schemas/DerivedAssignment"
+            },
+            "type": "array",
+            "title": "Unresolved",
+            "description": "Ученики, которых закрепляет оператор руками"
+          }
+        },
+        "type": "object",
+        "required": [
+          "resolved",
+          "unresolved"
+        ],
+        "title": "DerivePreviewResponse",
+        "description": "Что даст раскладка, если её применить. Ничего не меняет."
+      },
+      "DerivedAssignment": {
+        "properties": {
+          "student_id": {
+            "type": "integer",
+            "title": "Student Id"
+          },
+          "student_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Student Name"
+          },
+          "curator_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Curator Id"
+          },
+          "curator_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Curator Name"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "lessons_in_window": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lessons In Window"
+          },
+          "slot_teachers": {
+            "type": "integer",
+            "title": "Slot Teachers",
+            "default": 0
+          },
+          "lesson_teachers": {
+            "type": "integer",
+            "title": "Lesson Teachers",
+            "default": 0
+          },
+          "lesson_teacher_names": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lesson Teacher Names"
+          },
+          "current_curator_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Curator Id"
+          },
+          "current_curator_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Curator Name"
+          },
+          "current_source": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "derived",
+                  "manual"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Source"
+          },
+          "unresolved_reason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "ambiguous",
+                  "no_teacher"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unresolved Reason",
+            "description": "ambiguous — преподавателей несколько, выбирать человеку; no_teacher — по расписанию нет никого"
+          }
+        },
+        "type": "object",
+        "required": [
+          "student_id"
+        ],
+        "title": "DerivedAssignment",
+        "description": "Предложение раскладки по одному ученику."
       },
       "DiagnosticAnswerRequest": {
         "properties": {

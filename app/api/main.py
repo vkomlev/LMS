@@ -390,6 +390,10 @@ app.include_router(teacher_task_search_router, prefix=API_PREFIX)
 from app.api.v1.teacher_activity_feed import router as teacher_activity_feed_router
 app.include_router(teacher_activity_feed_router, prefix=API_PREFIX)
 
+# tsk-742: кураторство — доска куратора, раскладка, недельный отчёт.
+from app.api.v1.curator import router as curator_router
+app.include_router(curator_router, prefix=API_PREFIX)
+
 # Upsert правил назначения из публикатора (tsk-120, ADR-0042)
 from app.api.v1.assignment_rules_admin import router as assignment_rules_admin_router
 app.include_router(assignment_rules_admin_router, prefix=API_PREFIX)
@@ -743,6 +747,28 @@ async def _stop_retention_achievements_scheduler() -> None:
         _retention_cron.stop_scheduler()
     except Exception:
         logger.exception("tsk-032: failed to stop retention_achievements scheduler")
+
+
+# tsk-742: недельный отчёт по активности кураторов. Планировщик просыпается
+# каждый час, отправляет только в понедельник утром и только при включённом
+# рубильнике `curator_weekly_report_enabled` (по умолчанию выключен).
+from app.services import curator_report_cron_service as _curator_report_cron
+
+
+@app.on_event("startup")
+async def _start_curator_report_scheduler() -> None:
+    try:
+        _curator_report_cron.start_scheduler()
+    except Exception:
+        logger.exception("tsk-742: не удалось поднять планировщик отчёта кураторства")
+
+
+@app.on_event("shutdown")
+async def _stop_curator_report_scheduler() -> None:
+    try:
+        _curator_report_cron.stop_scheduler()
+    except Exception:
+        logger.exception("tsk-742: не удалось остановить планировщик отчёта кураторства")
 
 
 # tsk-302 этап 3: фоновая оценка кода ученика (чистота + признак ИИ-авторства).
