@@ -1,0 +1,352 @@
+[
+  {
+    "id": 6404,
+    "external_uid": "oge:reshu:t2:548",
+    "task_content": {
+      "code": null,
+      "stem": "Агент 007 закодировал сообщение. В сообщении только буквы из таблицы: Р=€?, Ы=?€?, Б=??, К=?€, А=?€? . Определите сообщение, закодированное в строке: ????€?€ . Впиши последовательность букв без пробелов.\n\nИсточник: РешуОГЭ, задача 548",
+      "tags": null,
+      "type": "SA",
+      "media": null,
+      "title": "Расшифровка кодов Р, Ы, Б, К, А",
+      "prompt": null,
+      "scales": null,
+      "options": null,
+      "has_hints": false,
+      "course_uid": null,
+      "hints_text": [],
+      "hints_video": [],
+      "difficulty_code": null
+    },
+    "solution_rules": {
+      "quiz": null,
+      "max_score": 1,
+      "penalties": {
+        "wrong_answer": 0,
+        "extra_wrong_mc": 0,
+        "missing_answer": 0
+      },
+      "auto_check": true,
+      "text_answer": null,
+      "scoring_mode": "all_or_nothing",
+      "short_answer": {
+        "regex": null,
+        "use_regex": false,
+        "normalization": [
+          "trim",
+          "lower"
+        ],
+        "accepted_answers": [
+          {
+            "score": 1,
+            "value": "БЫК"
+          }
+        ]
+      },
+      "partial_rules": [],
+      "correct_options": [],
+      "custom_scoring_config": null,
+      "manual_review_required": false
+    }
+  },
+  {
+    "id": 6409,
+    "external_uid": "oge:reshu:t2:751",
+    "task_content": {
+      "code": null,
+      "stem": "Сообщение передаётся шифром. В нём только буквы из фрагмента таблицы: К=!!?, И=!!, С=!?, Л=???, О=?! . Определите, какое сообщение закодировано в строке !!???!?? . Впиши последовательность букв без знаков препинания.\n\nИсточник: РешуОГЭ, задача 751",
+      "tags": null,
+      "type": "SA",
+      "media": null,
+      "title": "Расшифровка строки по таблице кодов",
+      "prompt": null,
+      "scales": null,
+      "options": null,
+      "has_hints": false,
+      "course_uid": null,
+      "hints_text": [],
+      "hints_video": [],
+      "difficulty_code": null
+    },
+    "solution_rules": {
+      "quiz": null,
+      "max_score": 1,
+      "penalties": {
+        "wrong_answer": 0,
+        "extra_wrong_mc": 0,
+        "missing_answer": 0
+      },
+      "auto_check": true,
+      "text_answer": null,
+      "scoring_mode": "all_or_nothing",
+      "short_answer": {
+        "regex": null,
+        "use_regex": false,
+        "normalization": [
+          "trim",
+          "lower"
+        ],
+        "accepted_answers": [
+          {
+            "score": 1,
+            "value": "КОЛ"
+          }
+        ]
+      },
+      "partial_rules": [],
+      "correct_options": [],
+      "custom_scoring_config": null,
+      "manual_review_required": false
+    }
+  },
+  {
+    "id": 6410,
+    "external_uid": "oge:reshu:t2:771",
+    "task_content": {
+      "code": null,
+      "stem": "Сообщение передаётся шифром. В нём только буквы из фрагмента таблицы: Р=!!!?, Е=!!, Д=!?, И=???, С=?! . Определите, какое сообщение закодировано в строке ?!!!!? . Впиши последовательность букв без знаков препинания.\n\nИсточник: РешуОГЭ, задача 771",
+      "tags": null,
+      "type": "SA",
+      "media": null,
+      "title": "Расшифровка строки по таблице Фано",
+      "prompt": null,
+      "scales": null,
+      "options": null,
+      "has_hints": false,
+      "course_uid": null,
+      "hints_text": [],
+      "hints_video": [],
+      "difficulty_code": null
+    },
+    "solution_rules": {
+      "quiz": null,
+      "max_score": 1,
+      "penalties": {
+        "wrong_answer": 0,
+        "extra_wrong_mc": 0,
+        "missing_answer": 0
+      },
+      "auto_check": true,
+      "text_answer": null,
+      "scoring_mode": "all_or_nothing",
+      "short_answer": {
+        "regex": null,
+        "use_regex": false,
+        "normalization": [
+          "trim",
+          "lower"
+        ],
+        "accepted_answers": [
+          {
+            "score": 1,
+            "value": "СЕД"
+          }
+        ]
+      },
+      "partial_rules": [],
+      "correct_options": [],
+      "custom_scoring_config": null,
+      "manual_review_required": false
+    }
+  },
+  {
+    "id": 6419,
+    "external_uid": "oge:reshu:t2:348",
+    "task_content": {
+      "code": null,
+      "stem": "Вася шифрует русские слова номерами букв в алфавите (без пробелов): А=1 … Я=33 (А=1, Б=2, В=3, Г=4, Д=5, Е=6, Ё=7, Ж=8, З=9, И=10, Й=11, К=12, Л=13, М=14, Н=15, О=16, П=17, Р=18, С=19, Т=20, У=21, Ф=22, Х=23, Ц=24, Ч=25, Ш=26, Щ=27, Ъ=28, Ы=29, Ь=30, Э=31, Ю=32, Я=33). Даны четыре шифровки: 20335, 21120, 31321, 51201. Найдите единственную, расшифровываемую одним способом, и расшифруйте её.\n\nИсточник: РешуОГЭ, задача 348",
+      "tags": null,
+      "type": "SA",
+      "media": null,
+      "title": "Однозначная расшифровка шифровки 20335",
+      "prompt": null,
+      "scales": null,
+      "options": null,
+      "has_hints": false,
+      "course_uid": null,
+      "hints_text": [],
+      "hints_video": [],
+      "difficulty_code": null
+    },
+    "solution_rules": {
+      "quiz": null,
+      "max_score": 1,
+      "penalties": {
+        "wrong_answer": 0,
+        "extra_wrong_mc": 0,
+        "missing_answer": 0
+      },
+      "auto_check": true,
+      "text_answer": null,
+      "scoring_mode": "all_or_nothing",
+      "short_answer": {
+        "regex": null,
+        "use_regex": false,
+        "normalization": [
+          "trim",
+          "lower"
+        ],
+        "accepted_answers": [
+          {
+            "score": 1,
+            "value": "ДАТА"
+          }
+        ]
+      },
+      "partial_rules": [],
+      "correct_options": [],
+      "custom_scoring_config": null,
+      "manual_review_required": false
+    }
+  },
+  {
+    "id": 6568,
+    "external_uid": "oge:reshu:t4:484",
+    "task_content": {
+      "code": null,
+      "stem": "Между пунктами А, В, С, D, Е, F дороги (в км): A-B=7, A-C=2, A-D=2, A-E=5, A-F=5, B-C=2, C-D=1, D-E=2, E-F=2. Определите длину кратчайшего пути между А и F. Ответ запишите числом.\n\nИсточник: РешуОГЭ, задача 484",
+      "tags": null,
+      "type": "SA",
+      "media": null,
+      "title": "Путь А—F через E длиной 6",
+      "prompt": null,
+      "scales": null,
+      "options": null,
+      "has_hints": false,
+      "course_uid": null,
+      "hints_text": [],
+      "hints_video": [],
+      "difficulty_code": null
+    },
+    "solution_rules": {
+      "quiz": null,
+      "max_score": 1,
+      "penalties": {
+        "wrong_answer": 0,
+        "extra_wrong_mc": 0,
+        "missing_answer": 0
+      },
+      "auto_check": true,
+      "text_answer": null,
+      "scoring_mode": "all_or_nothing",
+      "short_answer": {
+        "regex": null,
+        "use_regex": false,
+        "normalization": [
+          "trim",
+          "lower"
+        ],
+        "accepted_answers": [
+          {
+            "score": 1,
+            "value": "5"
+          }
+        ]
+      },
+      "partial_rules": [],
+      "correct_options": [],
+      "custom_scoring_config": null,
+      "manual_review_required": false
+    }
+  },
+  {
+    "id": 6569,
+    "external_uid": "oge:reshu:t4:504",
+    "task_content": {
+      "code": null,
+      "stem": "Между пунктами А, В, С, D, Е, F дороги (в км): A-C=2, A-D=1, B-C=1, B-F=3, C-D=4, D-E=1, D-F=1, E-F=4. Определите длину кратчайшего пути между А и F. Ответ запишите числом.\n\nИсточник: РешуОГЭ, задача 504",
+      "tags": null,
+      "type": "SA",
+      "media": null,
+      "title": "Кратчайший путь от А до F",
+      "prompt": null,
+      "scales": null,
+      "options": null,
+      "has_hints": false,
+      "course_uid": null,
+      "hints_text": [],
+      "hints_video": [],
+      "difficulty_code": null
+    },
+    "solution_rules": {
+      "quiz": null,
+      "max_score": 1,
+      "penalties": {
+        "wrong_answer": 0,
+        "extra_wrong_mc": 0,
+        "missing_answer": 0
+      },
+      "auto_check": true,
+      "text_answer": null,
+      "scoring_mode": "all_or_nothing",
+      "short_answer": {
+        "regex": null,
+        "use_regex": false,
+        "normalization": [
+          "trim",
+          "lower"
+        ],
+        "accepted_answers": [
+          {
+            "score": 1,
+            "value": "2"
+          }
+        ]
+      },
+      "partial_rules": [],
+      "correct_options": [],
+      "custom_scoring_config": null,
+      "manual_review_required": false
+    }
+  },
+  {
+    "id": 6570,
+    "external_uid": "oge:reshu:t4:524",
+    "task_content": {
+      "code": null,
+      "stem": "Между пунктами А, В, С, D, Е, F дороги (в км): A-B=1, A-C=2, B-C=3, B-F=1, C-D=1, C-F=6, D-E=1, D-F=6, E-F=5. Определите длину кратчайшего пути между А и F. Ответ запишите числом.\n\nИсточник: РешуОГЭ, задача 524",
+      "tags": null,
+      "type": "SA",
+      "media": null,
+      "title": "Кратчайший путь А—F через B напрямую",
+      "prompt": null,
+      "scales": null,
+      "options": null,
+      "has_hints": false,
+      "course_uid": null,
+      "hints_text": [],
+      "hints_video": [],
+      "difficulty_code": null
+    },
+    "solution_rules": {
+      "quiz": null,
+      "max_score": 1,
+      "penalties": {
+        "wrong_answer": 0,
+        "extra_wrong_mc": 0,
+        "missing_answer": 0
+      },
+      "auto_check": true,
+      "text_answer": null,
+      "scoring_mode": "all_or_nothing",
+      "short_answer": {
+        "regex": null,
+        "use_regex": false,
+        "normalization": [
+          "trim",
+          "lower"
+        ],
+        "accepted_answers": [
+          {
+            "score": 1,
+            "value": "2"
+          }
+        ]
+      },
+      "partial_rules": [],
+      "correct_options": [],
+      "custom_scoring_config": null,
+      "manual_review_required": false
+    }
+  }
+]

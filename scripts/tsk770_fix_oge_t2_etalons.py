@@ -61,8 +61,14 @@ def extract_message(stem: str, table: dict[str, str]) -> str | None:
     return max(candidates, key=len) if candidates else None
 
 
-def decode_all(msg: str, table: dict[str, str], limit: int = 500) -> list[str]:
-    """Все разборы строки по кодовой таблице."""
+def decode_all(msg: str, table: dict[str, str], no_repeat: bool = False,
+               limit: int = 500) -> list[str]:
+    """Все разборы строки по кодовой таблице.
+
+    ``no_repeat`` — оговорка условия «буквы в сообщении не повторяются». Без её
+    учёта разбор выглядит неоднозначным там, где однозначен: у 6396–6399 вторые
+    варианты (ОИОИМП, ЛЕСАСА и т. п.) как раз содержат повторы и запрещены.
+    """
     out: list[str] = []
 
     def walk(pos: int, acc: list[str]) -> None:
@@ -72,6 +78,8 @@ def decode_all(msg: str, table: dict[str, str], limit: int = 500) -> list[str]:
             out.append("".join(acc))
             return
         for letter, code in table.items():
+            if no_repeat and letter in acc:
+                continue
             if code and msg.startswith(code, pos):
                 acc.append(letter)
                 walk(pos + len(code), acc)
@@ -124,7 +132,7 @@ def main() -> int:
         msg = extract_message(row["stem"], table) if table else None
         if not msg:
             continue
-        variants = sorted(set(decode_all(msg, table)))
+        variants = sorted(set(decode_all(msg, table, "не повторяются" in row["stem"])))
         rules = row["solution_rules"] or {}
         accepted = (rules.get("short_answer") or {}).get("accepted_answers") or []
         if len(accepted) != 1:
