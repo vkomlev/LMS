@@ -21,6 +21,7 @@ from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, Field
 
 from app.schemas.code_review import CodeReviewReport
+from app.schemas.teacher_help_requests import HelpRequestStatus, HelpRequestType
 
 
 class TaskHistoryAttempt(BaseModel):
@@ -80,8 +81,15 @@ class TaskHistoryHelpRequest(BaseModel):
     """Обращение ученика за помощью по заданию + диалог ответов преподавателя."""
 
     request_id: int
-    status: Literal["open", "closed"]
-    request_type: Literal["manual_help", "blocked_limit"]
+    # tsk-771: статус и тип берутся ОБЩИМИ псевдонимами из `teacher_help_requests`,
+    # а не своими копиями литерала. Своя копия отстала от базы: тип
+    # `individual_review` завели в tsk-303, расширили список заявок и карточку,
+    # а здесь литерал остался на двух значениях — и история задания у ученика с
+    # такой заявкой отдавала 500 на сериализации ответа (прод, 02.09: пары
+    # 4543/4129 и 2/43). Дописывать третье значение руками нельзя: четвёртый вид
+    # сломает это место тем же способом.
+    status: HelpRequestStatus
+    request_type: HelpRequestType
     message: Optional[str] = Field(
         default=None, description="Текст обращения ученика (у авто-заявок blocked_limit — null)"
     )

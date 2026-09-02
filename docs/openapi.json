@@ -58305,7 +58305,8 @@
                 "type": "string",
                 "enum": [
                   "manual_help",
-                  "blocked_limit"
+                  "blocked_limit",
+                  "individual_review"
                 ]
               },
               {
@@ -65292,7 +65293,8 @@
             "type": "string",
             "enum": [
               "manual_help",
-              "blocked_limit"
+              "blocked_limit",
+              "individual_review"
             ],
             "title": "Request Type"
           },

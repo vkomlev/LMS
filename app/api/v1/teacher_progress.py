@@ -31,6 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_bare_db, require_role
 from app.auth.current_user import CurrentUser
 from app.schemas.code_review import CodeReviewBadge
+from app.schemas.teacher_help_requests import HelpRequestType
 from app.services import manual_progress_service
 
 logger = logging.getLogger("api.teacher_progress")
@@ -141,8 +142,9 @@ class ProgressTreeItem(BaseModel):
         default=None,
         description="ID открытой заявки help_requests по заданию (последняя по created_at); null — заявок нет",
     )
-    open_help_request_type: Optional[Literal["manual_help", "blocked_limit"]] = Field(
-        default=None, description="Тип открытой заявки; null — заявок нет"
+    open_help_request_type: Optional[HelpRequestType] = Field(
+        default=None,
+        description="Тип открытой заявки; null — заявок нет",
     )
     pending_review: bool = Field(
         default=False,
