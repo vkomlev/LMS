@@ -1145,3 +1145,45 @@ async def test_manual_cancel_before_the_lesson_hides_the_assignment(db):
         db, student_ids=[student_id], as_of=lesson_at,
     )
     assert student_id not in at_lesson
+
+
+@pytest.mark.asyncio
+async def test_auto_issue_respects_what_the_teacher_assigned_himself(db, monkeypatch):
+    """Преподаватель задал ДЗ сам — отметка явки его выдачу НЕ перезаписывает.
+
+    Вопрос оператора 02.09: «если кнопку не нажмёт, задание назначится
+    автоматом?». Ответ «да» верен только когда преподаватель ничего не задавал.
+    А если задал — автовыдача не должна затирать его работу: ученик увидел бы
+    один список, а преподаватель задавал другой. Ручная выдача идёт без
+    `occurrence_id`, поэтому проверка «уже выдавали по этому занятию» её не
+    видела.
+    """
+    from app.core import settings_store
+
+    student_id, _ = await _student_with_program(db, materials=0, tasks=12)
+    teacher_id, _ = await _new_user(db, role="teacher", name="teach")
+    monkeypatch.setattr(settings_store, "get_bool", lambda key: True)
+
+    occurrence_at = datetime.now(UTC) - timedelta(minutes=30)
+    occurrence_id = await _create_occurrence(
+        db, student_id=student_id, teacher_id=teacher_id, scheduled_at=occurrence_at,
+    )
+
+    # Преподаватель задал сам, из карточки ученика: занятие в выдаче не указано.
+    manual = await homework_service.issue(
+        db, student_id=student_id, due_at=datetime.now(UTC) + timedelta(days=5),
+        source="teacher", issued_by=teacher_id, volume_override=2,
+    )
+    await db.commit()
+
+    # И только потом отметил явку.
+    result = await homework_service.auto_issue_after_lesson(
+        db, student_id=student_id, occurrence_id=occurrence_id,
+        occurrence_at=occurrence_at,
+    )
+    await db.commit()
+
+    assert result is None, "автовыдача перезаписала то, что задал преподаватель"
+    current = await homework_service.get_current(db, student_id=student_id)
+    assert current["id"] == manual["id"]
+    assert current["source"] == "teacher"

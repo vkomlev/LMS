@@ -278,6 +278,9 @@ async def auto_issue_after_lesson(
     - по этому занятию уже выдавали (преподаватель поправляет статус задним
       числом — а каждая новая выдача гасит прежнюю, и ученик потерял бы то,
       что уже начал делать);
+    - после начала занятия ученику уже что-то выдали — обычно это сам
+      преподаватель нажал «Задать домашнюю работу» в карточке. Его выдача идёт
+      без `occurrence_id`, и без этой ветки отметка явки затирала бы её своей;
     - задавать нечего (программа пройдена) или срок не собрался.
 
     Срок — начало СЛЕДУЮЩЕГО занятия ученика; нет такого в расписании —
@@ -290,13 +293,22 @@ async def auto_issue_after_lesson(
         return None
 
     moment = now or datetime.now(timezone.utc)
+    # «Уже задавали» — это не только «мы сами по этому занятию», но и «после
+    # начала занятия ученику что-то выдали». Второе — про преподавателя: он
+    # задаёт из карточки ученика, и та выдача идёт БЕЗ `occurrence_id`, потому
+    # что кнопка живёт не в занятии. Проверка только по `occurrence_id` её не
+    # видела, и отметка явки затирала работу преподавателя своей: ученик
+    # получал один список, а задавали ему другой (вопрос оператора 02.09).
     already = (
         await db.execute(
             text(
                 "SELECT 1 FROM homework_assignment "
-                " WHERE student_id = :sid AND occurrence_id = :oid LIMIT 1"
+                " WHERE student_id = :sid "
+                "   AND (occurrence_id = :oid "
+                "        OR (cancelled_at IS NULL AND issued_at >= :since)) "
+                " LIMIT 1"
             ),
-            {"sid": student_id, "oid": occurrence_id},
+            {"sid": student_id, "oid": occurrence_id, "since": occurrence_at},
         )
     ).first()
     if already is not None:
