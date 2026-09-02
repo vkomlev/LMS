@@ -279,6 +279,12 @@ def main() -> int:
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     backup_path = Path(args.backup_dir) / f"{stamp}-tsk772-parsed-batches-backup.json"
     backup_path.parent.mkdir(parents=True, exist_ok=True)
+    # Дозапись, а не перезапись: повторный прогон с новой правкой иначе затирает
+    # снимок предыдущих — а он и есть единственный путь отката.
+    if backup_path.exists():
+        previous = json.loads(backup_path.read_text(encoding="utf-8"))
+        already = {row["id"] for row in previous}
+        backup = previous + [row for row in backup if row["id"] not in already]
     backup_path.write_text(json.dumps(backup, ensure_ascii=False, indent=2),
                            encoding="utf-8")
     logger.info("Снимок условий и правил до правки: %s", backup_path)
