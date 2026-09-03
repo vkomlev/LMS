@@ -1,0 +1,1186 @@
+[
+  {
+    "id": 2211,
+    "external_uid": "ext:d4:sdamgia:20260602:60251",
+    "title": "Строки с двумя парами чисел",
+    "solution_rules": {
+      "quiz": null,
+      "max_score": 1,
+      "penalties": {
+        "wrong_answer": 0,
+        "extra_wrong_mc": 0,
+        "missing_answer": 0
+      },
+      "auto_check": true,
+      "text_answer": null,
+      "scoring_mode": "all_or_nothing",
+      "short_answer": {
+        "regex": null,
+        "use_regex": false,
+        "normalization": [
+          "trim",
+          "lower",
+          "strip_punctuation",
+          "collapse_spaces"
+        ],
+        "accepted_answers": [
+          {
+            "score": 1,
+            "value": "— 83"
+          }
+        ]
+      },
+      "partial_rules": [],
+      "correct_options": [],
+      "custom_scoring_config": null,
+      "manual_review_required": false
+    }
+  },
+  {
+    "id": 2212,
+    "external_uid": "ext:d4:sdamgia:20260602:56537",
+    "title": "Повторы и средние в строке",
+    "solution_rules": {
+      "quiz": null,
+      "max_score": 1,
+      "penalties": {
+        "wrong_answer": 0,
+        "extra_wrong_mc": 0,
+        "missing_answer": 0
+      },
+      "auto_check": true,
+      "text_answer": null,
+      "scoring_mode": "all_or_nothing",
+      "short_answer": {
+        "regex": null,
+        "use_regex": false,
+        "normalization": [
+          "trim",
+          "lower",
+          "strip_punctuation",
+          "collapse_spaces"
+        ],
+        "accepted_answers": [
+          {
+            "score": 1,
+            "value": "— 1770"
+          }
+        ]
+      },
+      "partial_rules": [],
+      "correct_options": [],
+      "custom_scoring_config": null,
+      "manual_review_required": false
+    }
+  },
+  {
+    "id": 2213,
+    "external_uid": "ext:d4:sdamgia:20260602:58517",
+    "title": "Строки с уникальным минимумом",
+    "solution_rules": {
+      "quiz": null,
+      "max_score": 1,
+      "penalties": {
+        "wrong_answer": 0,
+        "extra_wrong_mc": 0,
+        "missing_answer": 0
+      },
+      "auto_check": true,
+      "text_answer": null,
+      "scoring_mode": "all_or_nothing",
+      "short_answer": {
+        "regex": null,
+        "use_regex": false,
+        "normalization": [
+          "trim",
+          "lower",
+          "strip_punctuation",
+          "collapse_spaces"
+        ],
+        "accepted_answers": [
+          {
+            "score": 1,
+            "value": "— 49"
+          }
+        ]
+      },
+      "partial_rules": [],
+      "correct_options": [],
+      "custom_scoring_config": null,
+      "manual_review_required": false
+    }
+  },
+  {
+    "id": 2214,
+    "external_uid": "ext:d4:sdamgia:20260602:38588",
+    "title": "Треугольник по трем натуральным числам",
+    "solution_rules": {
+      "quiz": null,
+      "max_score": 1,
+      "penalties": {
+        "wrong_answer": 0,
+        "extra_wrong_mc": 0,
+        "missing_answer": 0
+      },
+      "auto_check": true,
+      "text_answer": null,
+      "scoring_mode": "all_or_nothing",
+      "short_answer": {
+        "regex": null,
+        "use_regex": false,
+        "normalization": [
+          "trim",
+          "lower",
+          "strip_punctuation",
+          "collapse_spaces"
+        ],
+        "accepted_answers": [
+          {
+            "score": 1,
+            "value": "— 2453"
+          }
+        ]
+      },
+      "partial_rules": [],
+      "correct_options": [],
+      "custom_scoring_config": null,
+      "manual_review_required": false
+    }
+  },
+  {
+    "id": 2215,
+    "external_uid": "ext:d4:sdamgia:20260602:70536",
+    "title": "Строки с тремя повторениями",
+    "solution_rules": {
+      "quiz": null,
+      "max_score": 1,
+      "penalties": {
+        "wrong_answer": 0,
+        "extra_wrong_mc": 0,
+        "missing_answer": 0
+      },
+      "auto_check": true,
+      "text_answer": null,
+      "scoring_mode": "all_or_nothing",
+      "short_answer": {
+        "regex": null,
+        "use_regex": false,
+        "normalization": [
+          "trim",
+          "lower",
+          "strip_punctuation",
+          "collapse_spaces"
+        ],
+        "accepted_answers": [
+          {
+            "score": 1,
+            "value": "— 273"
+          }
+        ]
+      },
+      "partial_rules": [],
+      "correct_options": [],
+      "custom_scoring_config": null,
+      "manual_review_required": false
+    }
+  },
+  {
+    "id": 2216,
+    "external_uid": "ext:d4:sdamgia:20260602:52180",
+    "title": "Четные и нечетные числа строки",
+    "solution_rules": {
+      "quiz": null,
+      "max_score": 1,
+      "penalties": {
+        "wrong_answer": 0,
+        "extra_wrong_mc": 0,
+        "missing_answer": 0
+      },
+      "auto_check": true,
+      "text_answer": null,
+      "scoring_mode": "all_or_nothing",
+      "short_answer": {
+        "regex": null,
+        "use_regex": false,
+        "normalization": [
+          "trim",
+          "lower",
+          "strip_punctuation",
+          "collapse_spaces"
+        ],
+        "accepted_answers": [
+          {
+            "score": 1,
+            "value": "— 241"
+          }
+        ]
+      },
+      "partial_rules": [],
+      "correct_options": [],
+      "custom_scoring_config": null,
+      "manual_review_required": false
+    }
+  },
+  {
+    "id": 2218,
+    "external_uid": "ext:d4:sdamgia:20260602:46967",
+    "title": "Четвёрки без треугольника",
+    "solution_rules": {
+      "quiz": null,
+      "max_score": 1,
+      "penalties": {
+        "wrong_answer": 0,
+        "extra_wrong_mc": 0,
+        "missing_answer": 0
+      },
+      "auto_check": true,
+      "text_answer": null,
+      "scoring_mode": "all_or_nothing",
+      "short_answer": {
+        "regex": null,
+        "use_regex": false,
+        "normalization": [
+          "trim",
+          "lower",
+          "strip_punctuation",
+          "collapse_spaces"
+        ],
+        "accepted_answers": [
+          {
+            "score": 1,
+            "value": "— 3094"
+          }
+        ]
+      },
+      "partial_rules": [],
+      "correct_options": [],
+      "custom_scoring_config": null,
+      "manual_review_required": false
+    }
+  },
+  {
+    "id": 2219,
+    "external_uid": "ext:d4:sdamgia:20260602:72567",
+    "title": "Строки с повторяющимися и разными числами",
+    "solution_rules": {
+      "quiz": null,
+      "max_score": 1,
+      "penalties": {
+        "wrong_answer": 0,
+        "extra_wrong_mc": 0,
+        "missing_answer": 0
+      },
+      "auto_check": true,
+      "text_answer": null,
+      "scoring_mode": "all_or_nothing",
+      "short_answer": {
+        "regex": null,
+        "use_regex": false,
+        "normalization": [
+          "trim",
+          "lower",
+          "strip_punctuation",
+          "collapse_spaces"
+        ],
+        "accepted_answers": [
+          {
+            "score": 1,
+            "value": "— 34"
+          }
+        ]
+      },
+      "partial_rules": [],
+      "correct_options": [],
+      "custom_scoring_config": null,
+      "manual_review_required": false
+    }
+  },
+  {
+    "id": 2220,
+    "external_uid": "ext:d4:sdamgia:20260602:58322",
+    "title": "Квадрат максимума и прогрессия",
+    "solution_rules": {
+      "quiz": null,
+      "max_score": 1,
+      "penalties": {
+        "wrong_answer": 0,
+        "extra_wrong_mc": 0,
+        "missing_answer": 0
+      },
+      "auto_check": true,
+      "text_answer": null,
+      "scoring_mode": "all_or_nothing",
+      "short_answer": {
+        "regex": null,
+        "use_regex": false,
+        "normalization": [
+          "trim",
+          "lower",
+          "strip_punctuation",
+          "collapse_spaces"
+        ],
+        "accepted_answers": [
+          {
+            "score": 1,
+            "value": "— 61"
+          }
+        ]
+      },
+      "partial_rules": [],
+      "correct_options": [],
+      "custom_scoring_config": null,
+      "manual_review_required": false
+    }
+  },
+  {
+    "id": 2222,
+    "external_uid": "ext:d4:sdamgia:20260602:38943",
+    "title": "Тройки чисел остроугольного треугольника",
+    "solution_rules": {
+      "quiz": null,
+      "max_score": 1,
+      "penalties": {
+        "wrong_answer": 0,
+        "extra_wrong_mc": 0,
+        "missing_answer": 0
+      },
+      "auto_check": true,
+      "text_answer": null,
+      "scoring_mode": "all_or_nothing",
+      "short_answer": {
+        "regex": null,
+        "use_regex": false,
+        "normalization": [
+          "trim",
+          "lower",
+          "strip_punctuation",
+          "collapse_spaces"
+        ],
+        "accepted_answers": [
+          {
+            "score": 1,
+            "value": "— 1074"
+          }
+        ]
+      },
+      "partial_rules": [],
+      "correct_options": [],
+      "custom_scoring_config": null,
+      "manual_review_required": false
+    }
+  },
+  {
+    "id": 2223,
+    "external_uid": "ext:d4:sdamgia:20260602:45243",
+    "title": "Квадрат суммы максимума и минимума",
+    "solution_rules": {
+      "quiz": null,
+      "max_score": 1,
+      "penalties": {
+        "wrong_answer": 0,
+        "extra_wrong_mc": 0,
+        "missing_answer": 0
+      },
+      "auto_check": true,
+      "text_answer": null,
+      "scoring_mode": "all_or_nothing",
+      "short_answer": {
+        "regex": null,
+        "use_regex": false,
+        "normalization": [
+          "trim",
+          "lower",
+          "strip_punctuation",
+          "collapse_spaces"
+        ],
+        "accepted_answers": [
+          {
+            "score": 1,
+            "value": "— 2640"
+          }
+        ]
+      },
+      "partial_rules": [],
+      "correct_options": [],
+      "custom_scoring_config": null,
+      "manual_review_required": false
+    }
+  },
+  {
+    "id": 2224,
+    "external_uid": "ext:d4:sdamgia:20260602:69915",
+    "title": "Тройное число и квадраты сумм",
+    "solution_rules": {
+      "quiz": null,
+      "max_score": 1,
+      "penalties": {
+        "wrong_answer": 0,
+        "extra_wrong_mc": 0,
+        "missing_answer": 0
+      },
+      "auto_check": true,
+      "text_answer": null,
+      "scoring_mode": "all_or_nothing",
+      "short_answer": {
+        "regex": null,
+        "use_regex": false,
+        "normalization": [
+          "trim",
+          "lower",
+          "strip_punctuation",
+          "collapse_spaces"
+        ],
+        "accepted_answers": [
+          {
+            "score": 1,
+            "value": "— 40"
+          }
+        ]
+      },
+      "partial_rules": [],
+      "correct_options": [],
+      "custom_scoring_config": null,
+      "manual_review_required": false
+    }
+  },
+  {
+    "id": 2225,
+    "external_uid": "ext:d4:sdamgia:20260602:51978",
+    "title": "Нечетных больше четных и сумма",
+    "solution_rules": {
+      "quiz": null,
+      "max_score": 1,
+      "penalties": {
+        "wrong_answer": 0,
+        "extra_wrong_mc": 0,
+        "missing_answer": 0
+      },
+      "auto_check": true,
+      "text_answer": null,
+      "scoring_mode": "all_or_nothing",
+      "short_answer": {
+        "regex": null,
+        "use_regex": false,
+        "normalization": [
+          "trim",
+          "lower",
+          "strip_punctuation",
+          "collapse_spaces"
+        ],
+        "accepted_answers": [
+          {
+            "score": 1,
+            "value": "— 303"
+          }
+        ]
+      },
+      "partial_rules": [],
+      "correct_options": [],
+      "custom_scoring_config": null,
+      "manual_review_required": false
+    }
+  },
+  {
+    "id": 2226,
+    "external_uid": "ext:d4:sdamgia:20260602:73835",
+    "title": "Интересные ячейки в таблице",
+    "solution_rules": {
+      "quiz": null,
+      "max_score": 1,
+      "penalties": {
+        "wrong_answer": 0,
+        "extra_wrong_mc": 0,
+        "missing_answer": 0
+      },
+      "auto_check": true,
+      "text_answer": null,
+      "scoring_mode": "all_or_nothing",
+      "short_answer": {
+        "regex": null,
+        "use_regex": false,
+        "normalization": [
+          "trim",
+          "lower",
+          "strip_punctuation",
+          "collapse_spaces"
+        ],
+        "accepted_answers": [
+          {
+            "score": 1,
+            "value": "— 4175"
+          }
+        ]
+      },
+      "partial_rules": [],
+      "correct_options": [],
+      "custom_scoring_config": null,
+      "manual_review_required": false
+    }
+  },
+  {
+    "id": 2227,
+    "external_uid": "ext:d4:sdamgia:20260602:72594",
+    "title": "Тройные повторы и средние значения",
+    "solution_rules": {
+      "quiz": null,
+      "max_score": 1,
+      "penalties": {
+        "wrong_answer": 0,
+        "extra_wrong_mc": 0,
+        "missing_answer": 0
+      },
+      "auto_check": true,
+      "text_answer": null,
+      "scoring_mode": "all_or_nothing",
+      "short_answer": {
+        "regex": null,
+        "use_regex": false,
+        "normalization": [
+          "trim",
+          "lower",
+          "strip_punctuation",
+          "collapse_spaces"
+        ],
+        "accepted_answers": [
+          {
+            "score": 1,
+            "value": "— 17"
+          }
+        ]
+      },
+      "partial_rules": [],
+      "correct_options": [],
+      "custom_scoring_config": null,
+      "manual_review_required": false
+    }
+  },
+  {
+    "id": 2228,
+    "external_uid": "ext:d4:sdamgia:20260602:47006",
+    "title": "Любые три числа для треугольника",
+    "solution_rules": {
+      "quiz": null,
+      "max_score": 1,
+      "penalties": {
+        "wrong_answer": 0,
+        "extra_wrong_mc": 0,
+        "missing_answer": 0
+      },
+      "auto_check": true,
+      "text_answer": null,
+      "scoring_mode": "all_or_nothing",
+      "short_answer": {
+        "regex": null,
+        "use_regex": false,
+        "normalization": [
+          "trim",
+          "lower",
+          "strip_punctuation",
+          "collapse_spaces"
+        ],
+        "accepted_answers": [
+          {
+            "score": 1,
+            "value": "— 1842"
+          }
+        ]
+      },
+      "partial_rules": [],
+      "correct_options": [],
+      "custom_scoring_config": null,
+      "manual_review_required": false
+    }
+  },
+  {
+    "id": 2229,
+    "external_uid": "ext:d4:sdamgia:20260602:63025",
+    "title": "Повторы без максимума в строке",
+    "solution_rules": {
+      "quiz": null,
+      "max_score": 1,
+      "penalties": {
+        "wrong_answer": 0,
+        "extra_wrong_mc": 0,
+        "missing_answer": 0
+      },
+      "auto_check": true,
+      "text_answer": null,
+      "scoring_mode": "all_or_nothing",
+      "short_answer": {
+        "regex": null,
+        "use_regex": false,
+        "normalization": [
+          "trim",
+          "lower",
+          "strip_punctuation",
+          "collapse_spaces"
+        ],
+        "accepted_answers": [
+          {
+            "score": 1,
+            "value": "— 941"
+          }
+        ]
+      },
+      "partial_rules": [],
+      "correct_options": [],
+      "custom_scoring_config": null,
+      "manual_review_required": false
+    }
+  },
+  {
+    "id": 2230,
+    "external_uid": "ext:d4:sdamgia:20260602:68510",
+    "title": "Строки с равными суммами пар",
+    "solution_rules": {
+      "quiz": null,
+      "max_score": 1,
+      "penalties": {
+        "wrong_answer": 0,
+        "extra_wrong_mc": 0,
+        "missing_answer": 0
+      },
+      "auto_check": true,
+      "text_answer": null,
+      "scoring_mode": "all_or_nothing",
+      "short_answer": {
+        "regex": null,
+        "use_regex": false,
+        "normalization": [
+          "trim",
+          "lower",
+          "strip_punctuation",
+          "collapse_spaces"
+        ],
+        "accepted_answers": [
+          {
+            "score": 1,
+            "value": "— 118"
+          }
+        ]
+      },
+      "partial_rules": [],
+      "correct_options": [],
+      "custom_scoring_config": null,
+      "manual_review_required": false
+    }
+  },
+  {
+    "id": 2232,
+    "external_uid": "ext:d4:sdamgia:20260602:55596",
+    "title": "Хорошие ячейки по строкам и столбцам",
+    "solution_rules": {
+      "quiz": null,
+      "max_score": 1,
+      "penalties": {
+        "wrong_answer": 0,
+        "extra_wrong_mc": 0,
+        "missing_answer": 0
+      },
+      "auto_check": true,
+      "text_answer": null,
+      "scoring_mode": "all_or_nothing",
+      "short_answer": {
+        "regex": null,
+        "use_regex": false,
+        "normalization": [
+          "trim",
+          "lower",
+          "strip_punctuation",
+          "collapse_spaces"
+        ],
+        "accepted_answers": [
+          {
+            "score": 1,
+            "value": "— 445"
+          }
+        ]
+      },
+      "partial_rules": [],
+      "correct_options": [],
+      "custom_scoring_config": null,
+      "manual_review_required": false
+    }
+  },
+  {
+    "id": 2233,
+    "external_uid": "ext:d4:sdamgia:20260602:56509",
+    "title": "Средние повторяющихся и неповторяющихся чисел",
+    "solution_rules": {
+      "quiz": null,
+      "max_score": 1,
+      "penalties": {
+        "wrong_answer": 0,
+        "extra_wrong_mc": 0,
+        "missing_answer": 0
+      },
+      "auto_check": true,
+      "text_answer": null,
+      "scoring_mode": "all_or_nothing",
+      "short_answer": {
+        "regex": null,
+        "use_regex": false,
+        "normalization": [
+          "trim",
+          "lower",
+          "strip_punctuation",
+          "collapse_spaces"
+        ],
+        "accepted_answers": [
+          {
+            "score": 1,
+            "value": "— 2102"
+          }
+        ]
+      },
+      "partial_rules": [],
+      "correct_options": [],
+      "custom_scoring_config": null,
+      "manual_review_required": false
+    }
+  },
+  {
+    "id": 2282,
+    "external_uid": "ext:d4:sdamgia:20260602:33475",
+    "title": "Минимальное число с дописанными битами",
+    "solution_rules": {
+      "quiz": null,
+      "max_score": 1,
+      "penalties": {
+        "wrong_answer": 0,
+        "extra_wrong_mc": 0,
+        "missing_answer": 0
+      },
+      "auto_check": true,
+      "text_answer": null,
+      "scoring_mode": "all_or_nothing",
+      "short_answer": {
+        "regex": null,
+        "use_regex": false,
+        "normalization": [
+          "trim",
+          "lower",
+          "strip_punctuation",
+          "collapse_spaces"
+        ],
+        "accepted_answers": [
+          {
+            "score": 1,
+            "value": "— 46"
+          }
+        ]
+      },
+      "partial_rules": [],
+      "correct_options": [],
+      "custom_scoring_config": null,
+      "manual_review_required": false
+    }
+  },
+  {
+    "id": 2314,
+    "external_uid": "ext:d4:sdamgia:20260602:29666",
+    "title": "Максимальная сумма убывающего отрезка",
+    "solution_rules": {
+      "quiz": null,
+      "max_score": 1,
+      "penalties": {
+        "wrong_answer": 0,
+        "extra_wrong_mc": 0,
+        "missing_answer": 0
+      },
+      "auto_check": true,
+      "text_answer": null,
+      "scoring_mode": "all_or_nothing",
+      "short_answer": {
+        "regex": null,
+        "use_regex": false,
+        "normalization": [
+          "trim",
+          "lower",
+          "strip_punctuation",
+          "collapse_spaces"
+        ],
+        "accepted_answers": [
+          {
+            "score": 1,
+            "value": "— 358"
+          }
+        ]
+      },
+      "partial_rules": [],
+      "correct_options": [],
+      "custom_scoring_config": null,
+      "manual_review_required": false
+    }
+  },
+  {
+    "id": 2329,
+    "external_uid": "ext:d4:sdamgia:20260602:68239",
+    "title": "Минимальное значение x для площади",
+    "solution_rules": {
+      "quiz": null,
+      "max_score": 1,
+      "penalties": {
+        "wrong_answer": 0,
+        "extra_wrong_mc": 0,
+        "missing_answer": 0
+      },
+      "auto_check": true,
+      "text_answer": null,
+      "scoring_mode": "all_or_nothing",
+      "short_answer": {
+        "regex": null,
+        "use_regex": false,
+        "normalization": [
+          "trim",
+          "lower",
+          "strip_punctuation",
+          "collapse_spaces"
+        ],
+        "accepted_answers": [
+          {
+            "score": 1,
+            "value": "— 14"
+          }
+        ]
+      },
+      "partial_rules": [],
+      "correct_options": [],
+      "custom_scoring_config": null,
+      "manual_review_required": false
+    }
+  },
+  {
+    "id": 2331,
+    "external_uid": "ext:d4:sdamgia:20260602:37492",
+    "title": "Закупка яиц в Первомайском районе",
+    "solution_rules": {
+      "quiz": null,
+      "max_score": 1,
+      "penalties": {
+        "wrong_answer": 0,
+        "extra_wrong_mc": 0,
+        "missing_answer": 0
+      },
+      "auto_check": true,
+      "text_answer": null,
+      "scoring_mode": "all_or_nothing",
+      "short_answer": {
+        "regex": null,
+        "use_regex": false,
+        "normalization": [
+          "trim",
+          "lower",
+          "strip_punctuation",
+          "collapse_spaces"
+        ],
+        "accepted_answers": [
+          {
+            "score": 1,
+            "value": "— 174300"
+          }
+        ]
+      },
+      "partial_rules": [],
+      "correct_options": [],
+      "custom_scoring_config": null,
+      "manual_review_required": false
+    }
+  },
+  {
+    "id": 2334,
+    "external_uid": "ext:d4:sdamgia:20260602:52174",
+    "title": "Выручка магазина от мясной гастрономии",
+    "solution_rules": {
+      "quiz": null,
+      "max_score": 1,
+      "penalties": {
+        "wrong_answer": 0,
+        "extra_wrong_mc": 0,
+        "missing_answer": 0
+      },
+      "auto_check": true,
+      "text_answer": null,
+      "scoring_mode": "all_or_nothing",
+      "short_answer": {
+        "regex": null,
+        "use_regex": false,
+        "normalization": [
+          "trim",
+          "lower",
+          "strip_punctuation",
+          "collapse_spaces"
+        ],
+        "accepted_answers": [
+          {
+            "score": 1,
+            "value": "— 813425"
+          }
+        ]
+      },
+      "partial_rules": [],
+      "correct_options": [],
+      "custom_scoring_config": null,
+      "manual_review_required": false
+    }
+  },
+  {
+    "id": 2345,
+    "external_uid": "ext:d4:sdamgia:20260602:27584",
+    "title": "Подсчёт слова «его» в «Евгении Онегине»",
+    "solution_rules": {
+      "quiz": null,
+      "max_score": 1,
+      "penalties": {
+        "wrong_answer": 0,
+        "extra_wrong_mc": 0,
+        "missing_answer": 0
+      },
+      "auto_check": true,
+      "text_answer": null,
+      "scoring_mode": "all_or_nothing",
+      "short_answer": {
+        "regex": null,
+        "use_regex": false,
+        "normalization": [
+          "trim",
+          "lower",
+          "strip_punctuation",
+          "collapse_spaces"
+        ],
+        "accepted_answers": [
+          {
+            "score": 1,
+            "value": "— 21"
+          }
+        ]
+      },
+      "partial_rules": [],
+      "correct_options": [],
+      "custom_scoring_config": null,
+      "manual_review_required": false
+    }
+  },
+  {
+    "id": 2346,
+    "external_uid": "ext:d4:sdamgia:20260602:57417",
+    "title": "Подсчёт «вечер» внутри слов в «Поединке»",
+    "solution_rules": {
+      "quiz": null,
+      "max_score": 1,
+      "penalties": {
+        "wrong_answer": 0,
+        "extra_wrong_mc": 0,
+        "missing_answer": 0
+      },
+      "auto_check": true,
+      "text_answer": null,
+      "scoring_mode": "all_or_nothing",
+      "short_answer": {
+        "regex": null,
+        "use_regex": false,
+        "normalization": [
+          "trim",
+          "lower",
+          "strip_punctuation",
+          "collapse_spaces"
+        ],
+        "accepted_answers": [
+          {
+            "score": 1,
+            "value": "— 42"
+          }
+        ]
+      },
+      "partial_rules": [],
+      "correct_options": [],
+      "custom_scoring_config": null,
+      "manual_review_required": false
+    }
+  },
+  {
+    "id": 2356,
+    "external_uid": "ext:d4:sdamgia:20260602:35998",
+    "title": "Максимум расстояния между буквами",
+    "solution_rules": {
+      "quiz": null,
+      "max_score": 1,
+      "penalties": {
+        "wrong_answer": 0,
+        "extra_wrong_mc": 0,
+        "missing_answer": 0
+      },
+      "auto_check": true,
+      "text_answer": null,
+      "scoring_mode": "all_or_nothing",
+      "short_answer": {
+        "regex": null,
+        "use_regex": false,
+        "normalization": [
+          "trim",
+          "lower",
+          "strip_punctuation",
+          "collapse_spaces"
+        ],
+        "accepted_answers": [
+          {
+            "score": 1,
+            "value": "— 1004"
+          }
+        ]
+      },
+      "partial_rules": [],
+      "correct_options": [],
+      "custom_scoring_config": null,
+      "manual_review_required": false
+    }
+  },
+  {
+    "id": 2357,
+    "external_uid": "ext:d4:sdamgia:20260602:27689",
+    "title": "Длина цепочки из фрагментов XYZ",
+    "solution_rules": {
+      "quiz": null,
+      "max_score": 1,
+      "penalties": {
+        "wrong_answer": 0,
+        "extra_wrong_mc": 0,
+        "missing_answer": 0
+      },
+      "auto_check": true,
+      "text_answer": null,
+      "scoring_mode": "all_or_nothing",
+      "short_answer": {
+        "regex": null,
+        "use_regex": false,
+        "normalization": [
+          "trim",
+          "lower",
+          "strip_punctuation",
+          "collapse_spaces"
+        ],
+        "accepted_answers": [
+          {
+            "score": 1,
+            "value": "— 13"
+          }
+        ]
+      },
+      "partial_rules": [],
+      "correct_options": [],
+      "custom_scoring_config": null,
+      "manual_review_required": false
+    }
+  },
+  {
+    "id": 2359,
+    "external_uid": "ext:d4:sdamgia:20260602:59847",
+    "title": "Максимальная подпоследовательность с 100 W",
+    "solution_rules": {
+      "quiz": null,
+      "max_score": 1,
+      "penalties": {
+        "wrong_answer": 0,
+        "extra_wrong_mc": 0,
+        "missing_answer": 0
+      },
+      "auto_check": true,
+      "text_answer": null,
+      "scoring_mode": "all_or_nothing",
+      "short_answer": {
+        "regex": null,
+        "use_regex": false,
+        "normalization": [
+          "trim",
+          "lower",
+          "strip_punctuation",
+          "collapse_spaces"
+        ],
+        "accepted_answers": [
+          {
+            "score": 1,
+            "value": "— 82167"
+          }
+        ]
+      },
+      "partial_rules": [],
+      "correct_options": [],
+      "custom_scoring_config": null,
+      "manual_review_required": false
+    }
+  },
+  {
+    "id": 2377,
+    "external_uid": "ext:d4:sdamgia:20260602:37359",
+    "title": "Пары с суммой кратной 117",
+    "solution_rules": {
+      "quiz": null,
+      "max_score": 1,
+      "penalties": {
+        "wrong_answer": 0,
+        "extra_wrong_mc": 0,
+        "missing_answer": 0
+      },
+      "auto_check": true,
+      "text_answer": null,
+      "scoring_mode": "all_or_nothing",
+      "short_answer": {
+        "regex": null,
+        "use_regex": false,
+        "normalization": [
+          "trim",
+          "lower",
+          "strip_punctuation",
+          "collapse_spaces"
+        ],
+        "accepted_answers": [
+          {
+            "score": 1,
+            "value": "— 427120 19890"
+          }
+        ]
+      },
+      "partial_rules": [],
+      "correct_options": [],
+      "custom_scoring_config": null,
+      "manual_review_required": false
+    }
+  },
+  {
+    "id": 2378,
+    "external_uid": "ext:d4:sdamgia:20260602:47221",
+    "title": "Пары с одним числом на три",
+    "solution_rules": {
+      "quiz": null,
+      "max_score": 1,
+      "penalties": {
+        "wrong_answer": 0,
+        "extra_wrong_mc": 0,
+        "missing_answer": 0
+      },
+      "auto_check": true,
+      "text_answer": null,
+      "scoring_mode": "all_or_nothing",
+      "short_answer": {
+        "regex": null,
+        "use_regex": false,
+        "normalization": [
+          "trim",
+          "lower",
+          "strip_punctuation",
+          "collapse_spaces"
+        ],
+        "accepted_answers": [
+          {
+            "score": 1,
+            "value": "— 180 190360573"
+          }
+        ]
+      },
+      "partial_rules": [],
+      "correct_options": [],
+      "custom_scoring_config": null,
+      "manual_review_required": false
+    }
+  }
+]

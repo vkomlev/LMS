@@ -175,6 +175,24 @@ CHECKS: dict[str, Check] = {
         # потому что никто не видел его цифр.
         report_on_zero=True,
     ),
+    "etalon-punctuation": Check(
+        module="check_etalon_punctuation",
+        log="etalon_punctuation_check.log",
+        needs_dsn=True,
+        ok="OK: эталонов с мусорным ведущим знаком нет",
+        found="НАЙДЕНЫ эталоны с мусорным ведущим знаком:",
+        hint=(
+            "  Как чинить — tsk-787 в трекере "
+            r"(scripts\tsk787_strip_leading_dash_etalons.py). Приёму ответа такой "
+            "эталон не мешает, поэтому тесты его не видят: цена в том, что "
+            "преподаватель принимает бессмыслицу за битый эталон и засчитывает "
+            "неверный ответ."
+        ),
+        takes_quiet=True,
+        # Молчание при нуле: класс редкий (41 эталон за всю историю базы), и подшивать
+        # «OK» каждую неделю значит утопить настоящую находку. Фон здесь не нужен —
+        # в отличие от медленных запросов, цифра «сколько мусора» не растёт постепенно.
+    ),
     "stale-verdicts": Check(
         module="audit_stale_false_verdicts_tsk602",
         log="stale_verdicts_check.log",
