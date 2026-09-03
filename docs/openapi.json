@@ -60187,6 +60187,14 @@
             },
             "type": "array",
             "title": "Open Hours"
+          },
+          "full_hours": {
+            "items": {
+              "type": "string",
+              "format": "time"
+            },
+            "type": "array",
+            "title": "Full Hours"
           }
         },
         "type": "object",

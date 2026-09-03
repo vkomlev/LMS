@@ -98,27 +98,41 @@ class SchedulePreferenceError(ValueError):
     """Пожелание нельзя принять: сообщение уже написано для человека."""
 
 
-async def _open_hours(db: AsyncSession, student_id: int) -> set[tuple[int, time]] | None:
-    """Часы, где ученику есть куда встать; `None` — расписания ещё нет вовсе.
+async def _open_hours(
+    db: AsyncSession, student_id: int
+) -> tuple[set[tuple[int, time]] | None, set[tuple[int, time]]]:
+    """Часы, где ученику есть куда встать (`None` — расписания ещё нет вовсе),
+    и отдельно — часы, где группа есть, но набрана под потолок (tsk-786).
 
     Импорт локальный: `schedule_booking_service` сам зовёт этот модуль, и на
     верхнем уровне вышел бы круг.
     """
     from app.services import schedule_booking_service
 
-    hours = await schedule_booking_service.open_hours(db, student_id)
-    # Слотов нет совсем — значит расписание ещё не составлено, и опрос работает
-    # по всей сетке, как и задумывался (фаза 1).
-    return hours or None
+    open_hours, full_hours = await schedule_booking_service.open_hours(db, student_id)
+    # Слотов нет совсем (ни открытых, ни набранных) — значит расписание ещё не
+    # составлено, и опрос работает по всей сетке, как и задумывался (фаза 1).
+    # tsk-786: раньше на пустой `open_hours` смотрели в одиночку — а группа
+    # существует, но набранная, тоже даёт пустой `open_hours`, и опрос
+    # ошибочно открывался бы целиком вместо того, чтобы закрыть только этот час.
+    schedule_built = bool(open_hours or full_hours)
+    return (open_hours if schedule_built else None), full_hours
 
 
-def grid_as_days(open_hours: set[tuple[int, time]] | None = None) -> list[dict[str, Any]]:
+def grid_as_days(
+    open_hours: set[tuple[int, time]] | None = None,
+    full_hours: set[tuple[int, time]] | None = None,
+) -> list[dict[str, Any]]:
     """Сетка для клиента: список дней с допустимыми часами начала.
 
     tsk-746: рядом с каждым днём едут `open_hours` — часы, где занятие
     действительно есть. Пустой набор (сетку спрашивают до вёрстки) означает
     «открыты все»: иначе опрос перед составлением расписания стал бы невозможен.
+
+    tsk-786: и `full_hours` — подмножество закрытых, где группа существует, но
+    набрана. Экрану методиста (вёрстка) оно не нужно и не передаётся вовсе.
     """
+    full_hours = full_hours or set()
     return [
         {
             "weekday": weekday,
@@ -127,6 +141,9 @@ def grid_as_days(open_hours: set[tuple[int, time]] | None = None) -> list[dict[s
                 time(hour=h)
                 for h in hours
                 if open_hours is None or (weekday, time(hour=h)) in open_hours
+            ],
+            "full_hours": [
+                time(hour=h) for h in hours if (weekday, time(hour=h)) in full_hours
             ],
         }
         for weekday, hours in sorted(SCHEDULE_GRID.items())
@@ -289,7 +306,7 @@ async def get_preference(db: AsyncSession, student_id: int) -> dict[str, Any]:
         "comment": head[2] if head is not None else None,
         "updated_at": head[3] if head is not None else None,
         "is_audience": await is_audience(db, student_id),
-        "grid": grid_as_days(await _open_hours(db, student_id)),
+        "grid": grid_as_days(*await _open_hours(db, student_id)),
         # tsk-679: когда заканчивается нынешнее расписание. Кабинет ученика по
         # этой дате объясняет пустой календарь вместо того, чтобы молчать.
         "schedule_ends_on": await schedule_ends_on(db, student_id),
@@ -312,7 +329,8 @@ async def save_preference(
     # tsk-746: принимаем только часы, где занятие есть. Проверка на сервере, а
     # не только на экране: пожелание уходит обычным PUT, и «серая» кнопка на
     # клиенте от повторной отправки не спасает.
-    hours = validate(body, await _open_hours(db, student_id))
+    open_hours, _full_hours = await _open_hours(db, student_id)
+    hours = validate(body, open_hours)
 
     pref_id = (
         await db.execute(

@@ -70,6 +70,12 @@ class ScheduleGridDay(BaseModel):
     #: котором группы нет, оставляет человека без занятия — так 31.08 новичок
     #: выбрал четверг 17:00 и получил одно занятие вместо двух.
     open_hours: list[time] = Field(default_factory=list)
+    #: tsk-786: часы, где группа ЕСТЬ, но набрана под потолок (`BOOKING_MAX`) —
+    #: в `open_hours` они не попадают (выбрать нельзя), но для человека это не
+    #: то же самое, что «занятий тут вообще не будет»: ученик читал пустой вид
+    #: обеих закрытых ячеек одинаково и жал и в те, и в другие. Пересечения с
+    #: `open_hours` нет.
+    full_hours: list[time] = Field(default_factory=list)
 
 
 class SchedulePreferenceRead(BaseModel):

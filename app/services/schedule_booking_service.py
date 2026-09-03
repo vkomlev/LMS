@@ -101,30 +101,49 @@ def _hour_label(weekday: int, start_time: time) -> str:
     return f"{day} {start_time:%H:%M}"
 
 
-async def open_hours(db: AsyncSession, student_id: int) -> set[tuple[int, time]]:
-    """Часы, в которых ученику вообще есть куда встать (tsk-746).
+async def open_hours(
+    db: AsyncSession, student_id: int
+) -> tuple[set[tuple[int, time]], set[tuple[int, time]]]:
+    """Часы, в которых ученику есть куда встать, — и отдельно часы, где группа
+    ЕСТЬ, но набрана под потолок (tsk-746, tsk-786).
 
     Расписание уже составлено, и опрос «когда вам удобно» перестал быть опросом:
     выбирая час, где слота нет, человек не получает занятия вовсе. Так и вышло
     31.08 у новичка — он отметил четверг 17:00, которого в сетке нет, и остался
     с одним занятием вместо двух.
 
-    Свои часы included всегда: человек уже занимается в этом слоте, и запретить
-    ему назвать своё же время было бы странно, даже если группа полна.
+    Свои часы included в открытых всегда: человек уже занимается в этом слоте,
+    и запретить ему назвать своё же время было бы странно, даже если группа
+    полна.
+
+    Второе множество (`full`) — не для проверки «можно ли выбрать» (для неё
+    по-прежнему хватает первого), а для экрана: пожелания ученик читал одинаково
+    пустыми что в час без единой группы, что в час с набранной, — и щёлкал оба
+    вида одинаково (tsk-786, живая заявка 03.09).
     """
-    hours: set[tuple[int, time]] = set()
+    open_h: set[tuple[int, time]] = set()
+    full_h: set[tuple[int, time]] = set()
     today = _today_moscow()
     for row in await _load_slots(db, student_id):
         key = (row["weekday"], row["start_time"])
         if row["is_mine"]:
-            hours.add(key)
+            open_h.add(key)
             continue
         if not slot_is_alive(row["weekday"], row["active_until"], today):
             continue
-        if not in_grid(key) or not is_bookable_count(row["student_count"]):
+        if not in_grid(key):
             continue
-        hours.add(key)
-    return hours
+        if is_bookable_count(row["student_count"]):
+            open_h.add(key)
+        else:
+            full_h.add(key)
+    # Один час может держать группы разных преподавателей: если хотя бы одна
+    # из них открыта, час открыт для ученика целиком (он выбирает час, не
+    # преподавателя) — даже если другая группа в тот же час уже набрана.
+    # Без вычитания `full_h` получил бы тот же ключ вторым проходом цикла, и
+    # экран показал бы один час одновременно «набрана» и доступным для клика.
+    full_h -= open_h
+    return open_h, full_h
 
 
 async def _load_slots(db: AsyncSession, student_id: int) -> list[dict[str, Any]]:
