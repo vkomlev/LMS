@@ -1,0 +1,36 @@
+{
+  "id": 2310,
+  "title": "Минимальный запас энергии для финальных клеток",
+  "solution_rules": {
+    "quiz": null,
+    "max_score": 1,
+    "penalties": {
+      "wrong_answer": 0,
+      "extra_wrong_mc": 0,
+      "missing_answer": 0
+    },
+    "auto_check": true,
+    "text_answer": null,
+    "scoring_mode": "all_or_nothing",
+    "short_answer": {
+      "regex": null,
+      "use_regex": false,
+      "normalization": [
+        "trim",
+        "lower",
+        "strip_punctuation",
+        "collapse_spaces"
+      ],
+      "accepted_answers": [
+        {
+          "score": 1,
+          "value": "1150 2652"
+        }
+      ]
+    },
+    "partial_rules": [],
+    "correct_options": [],
+    "custom_scoring_config": null,
+    "manual_review_required": false
+  }
+}
