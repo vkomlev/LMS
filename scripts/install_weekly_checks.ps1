@@ -26,6 +26,12 @@
     Время разнесено по десять минут: три-четыре прогона не должны лезть в боевую базу
     разом. Пропущенный понедельник (машина была выключена) догоняется.
 
+    Сводка (tsk-778). Отдельная задача `LMS weekly checks digest` в 09:45 читает итоги
+    сегодняшних прогонов из logs\weekly_checks.log и шлёт оператору одно сообщение в
+    Telegram — но только если есть находки, сбой чека или молчащий чек. Чистая неделя
+    проходит молча: сводка «всё хорошо» каждый понедельник за месяц стала бы таким же
+    непрочитанным фоном, как сами журналы.
+
     Как читать результат задачи (tsk-777). `LastTaskResult = 0` — чек отработал; находки
     при этом могли быть, их надо смотреть в журнале. Ненулевой результат означает ровно
     одно: чек не дошёл до конца. Раньше находки возвращались кодом 1, и четыре задачи из
@@ -39,8 +45,9 @@
 
 .PARAMETER Only
     Завести только одну задачу — по имени чека (ungradable, section-order,
-    missing-attachments, stale-verdicts, slow-requests, tutor-outcomes). По умолчанию
-    заводятся все, кроме missing-attachments (см. -WithMissingAttachments).
+    missing-attachments, stale-verdicts, slow-requests, tutor-outcomes, external-media)
+    либо `digest` — сводку в Telegram. По умолчанию заводятся все, кроме
+    missing-attachments (см. -WithMissingAttachments).
 
 .PARAMETER WithMissingAttachments
     Добавить чек файлов-приложений. Отдельным флагом, потому что раньше он в
@@ -61,7 +68,7 @@
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('ungradable', 'section-order', 'missing-attachments', 'stale-verdicts', 'slow-requests', 'tutor-outcomes')]
+    [ValidateSet('ungradable', 'section-order', 'missing-attachments', 'stale-verdicts', 'slow-requests', 'tutor-outcomes', 'external-media', 'digest')]
     [string]$Only,
     [switch]$WithMissingAttachments,
     [switch]$Uninstall
@@ -79,6 +86,10 @@ $plan = @(
     [pscustomobject]@{ Check = 'tutor-outcomes';      TaskName = 'LMS tutor outcomes weekly';              At = '09:28'; Default = $true;  Why = 'чем кончаются разговоры с ИИ-наставником (tsk-661)' }
     [pscustomobject]@{ Check = 'external-media';      TaskName = 'LMS external media weekly';              At = '09:32'; Default = $true;  Why = 'картинки заданий на чужих адресах — браузер их не покажет (tsk-759)' }
     [pscustomobject]@{ Check = 'missing-attachments'; TaskName = 'LMS missing attachments weekly';         At = '09:30'; Default = $false; Why = 'задания с файловым условием без файла (tsk-369)' }
+    # Сводка идёт последней и с запасом по времени: она читает итоги сегодняшних
+    # прогонов, а самый долгий чек (stale-verdicts) занимает минуты. Аргумент у неё
+    # другой — не имя чека, а флаг.
+    [pscustomobject]@{ Check = 'digest';              TaskName = 'LMS weekly checks digest';               At = '09:45'; Default = $true;  Why = 'сводка оператору в Telegram, только при находках (tsk-778)'; Arguments = '--digest' }
 )
 
 if ($Only) {
@@ -129,9 +140,10 @@ $settings = New-ScheduledTaskSettingsSet `
     -Hidden
 
 foreach ($item in $plan) {
+    $argument = if ($item.PSObject.Properties['Arguments']) { $item.Arguments } else { $item.Check }
     $action = New-ScheduledTaskAction `
         -Execute $pythonw `
-        -Argument "`"$runner`" $($item.Check)" `
+        -Argument "`"$runner`" $argument" `
         -WorkingDirectory $repo
 
     $trigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday -At $item.At

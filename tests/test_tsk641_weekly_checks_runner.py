@@ -252,3 +252,111 @@ class TestExitCodes:
 
         assert код == 2
         assert "СБОЙ" in сводка
+
+
+class TestDigest:
+    """tsk-778: недельная сводка оператору в Telegram.
+
+    Смысл — не в самой отправке, а в её избирательности. Журналы месяцами лежали
+    непрочитанными; сводка, приходящая каждую неделю «всё хорошо», стала бы такими же
+    журналами за месяц. Поэтому молчание при чистой неделе закреплено тестом наравне
+    с доставкой при находках.
+    """
+
+    ПОЛНЫЙ_ДЕНЬ = [
+        "2026-09-07 09:00  section-order      чисто [h:5432/learn]",
+        "2026-09-07 09:10  ungradable         чисто [h:5432/learn]",
+        "2026-09-07 09:20  stale-verdicts     чисто",
+        "2026-09-07 09:25  slow-requests      чисто [h:5432/learn]",
+        "2026-09-07 09:28  tutor-outcomes     чисто [h:5432/learn]",
+    ]
+
+    def test_чистая_неделя_сводки_не_рождает(self):
+        assert weekly_checks.build_digest("2026-09-07", self.ПОЛНЫЙ_ДЕНЬ) is None
+
+    def test_находка_доходит_до_сводки(self):
+        строки = self.ПОЛНЫЙ_ДЕНЬ[:-1] + [
+            "2026-09-07 09:28  tutor-outcomes     ЕСТЬ НАХОДКИ — logs/tutor_outcomes_check.log",
+        ]
+        текст = weekly_checks.build_digest("2026-09-07", строки)
+
+        assert текст is not None
+        assert "Есть находки" in текст
+        assert "tutor-outcomes" in текст
+        assert "section-order" not in текст  # чистые чеки оператора не занимают
+
+    def test_молчащий_чек_это_тревога(self):
+        """Отказ, выглядящий как тишина: задача не отработала, строки просто нет."""
+        текст = weekly_checks.build_digest("2026-09-07", self.ПОЛНЫЙ_ДЕНЬ[:-1])
+
+        assert текст is not None
+        assert "МОЛЧАТ" in текст
+        assert "tutor-outcomes" in текст
+
+    def test_день_без_единой_записи_это_тревога(self):
+        """Машина спала весь понедельник — узнать об этом надо от сводки, а не случайно."""
+        текст = weekly_checks.build_digest("2026-09-07", [])
+
+        assert текст is not None
+        assert "МОЛЧАТ" in текст
+
+    def test_сбой_чека_отделён_от_находок(self):
+        строки = self.ПОЛНЫЙ_ДЕНЬ[:-1] + [
+            "2026-09-07 09:28  tutor-outcomes     СБОЙ — подробности в logs/tutor_outcomes_check.log",
+        ]
+        текст = weekly_checks.build_digest("2026-09-07", строки)
+
+        assert "НЕ ОТРАБОТАЛИ:" in текст
+        assert "Есть находки" not in текст
+
+    def test_ручная_пометка_в_журнале_не_становится_тревогой(self):
+        """Человек дописывает в журнал свободные строки — и в них попадаются те же слова.
+
+        Принять такую строку за состояние чека — значит слать оператору тревогу о том,
+        что он сам же и написал.
+        """
+        строки = self.ПОЛНЫЙ_ДЕНЬ + [
+            "2026-09-07 09:40  ^^^ СБОЙ выше — учебный прогон, настоящего сбоя не было",
+        ]
+
+        assert weekly_checks.build_digest("2026-09-07", строки) is None
+
+    def test_повторный_прогон_перекрывает_прежнюю_запись(self):
+        """Чек перезапустили руками и он стал чистым — в сводке важно последнее состояние."""
+        строки = self.ПОЛНЫЙ_ДЕНЬ + [
+            "2026-09-07 10:00  tutor-outcomes     ЕСТЬ НАХОДКИ — logs/tutor_outcomes_check.log",
+            "2026-09-07 10:30  tutor-outcomes     чисто [h:5432/learn]",
+        ]
+
+        assert weekly_checks.build_digest("2026-09-07", строки) is None
+
+    def test_недоставленная_сводка_это_ненулевой_код(self, monkeypatch, tmp_path):
+        """Молча потерянная сводка вернула бы ровно ту слепоту, ради которой она заведена."""
+        monkeypatch.setattr(weekly_checks, "LOG_DIR", tmp_path)
+        monkeypatch.setattr(
+            weekly_checks, "summary_lines_for", lambda day: self.ПОЛНЫЙ_ДЕНЬ[:-1]
+        )
+
+        def не_дошло(text):
+            raise RuntimeError("Telegram ответил 502")
+
+        monkeypatch.setattr(weekly_checks, "send_telegram", не_дошло)
+        код = weekly_checks.run_digest("2026-09-07")
+        сводка = (tmp_path / weekly_checks.SUMMARY_LOG).read_text(encoding="utf-8")
+
+        assert код == 2
+        assert "НЕ ОТПРАВЛЕНА" in сводка
+
+    def test_токен_ищется_в_переменных_окружения_раньше_чужой_папки(self, monkeypatch):
+        monkeypatch.setenv("WEEKLY_CHECKS_TG_TOKEN", "123:abc")
+        monkeypatch.setenv("WEEKLY_CHECKS_TG_CHAT_ID", "777")
+
+        assert weekly_checks.tg_credentials() == ("123:abc", "777")
+
+    def test_без_токена_это_ошибка_а_не_тихий_пропуск(self, monkeypatch, tmp_path):
+        """Пропажа чужого файла не должна выглядеть как «сводки не было о чём слать»."""
+        monkeypatch.delenv("WEEKLY_CHECKS_TG_TOKEN", raising=False)
+        monkeypatch.setattr(weekly_checks, "TG_ENV", tmp_path / "нет-такого.env")
+
+        with pytest.raises(RuntimeError, match="нет токена бота"):
+            weekly_checks.tg_credentials()

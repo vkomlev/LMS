@@ -286,6 +286,166 @@ def soften_stdout() -> None:
         pass
 
 
+# --- Сводка в Telegram (tsk-778) -------------------------------------------------
+#
+# Журналы месяцами лежали непрочитанными: чек про наставника четвёртую неделю подряд
+# писал «охват 5% при пороге 20%», и это никуда не попадало. Раз в неделю одно
+# сообщение оператору — и только когда есть что сказать: молчание тоже сигнал, иначе
+# сводка через месяц станет фоном, как журналы.
+
+# Кого ждём в понедельник — ровно те пять задач, что стоят в планировщике (сверено
+# 03.09.2026 через Get-ScheduledTask). missing-attachments и external-media туда не
+# заводили: их молчание — норма, и «тревога» о нём каждую неделю обесценила бы сводку
+# быстрее, чем любая другая ошибка. Заведёшь задачу — впиши чек сюда.
+# Смысл списка обратный перечислению: чек, который НЕ отчитался, опаснее любой находки —
+# он выглядит как «всё хорошо».
+DIGEST_EXPECTED = ("section-order", "ungradable", "stale-verdicts", "slow-requests",
+                   "tutor-outcomes")
+
+# Канал оператора — тот же бот, которым Claude пишет ему в Telegram (ADR-0001 Root).
+# Заводить второго бота ради шести строк в неделю незачем.
+TG_ENV = Path.home() / ".claude" / "channels" / "telegram" / ".env"
+TG_CHAT_ID_DEFAULT = "344276500"  # оператор; ср. Root tools/scripts/digest.ps1
+
+
+def tg_credentials() -> tuple[str, str]:
+    """Токен бота и чат оператора.
+
+    Порядок: переменные окружения проекта (их можно положить в ``.env`` LMS), иначе —
+    ``.env`` телеграм-канала Claude. Второй источник — чужая папка, и в tsk-641 от таких
+    зависимостей уходили; здесь она допустима только потому, что её пропажа не может
+    пройти молча: без токена сводка не уйдёт, а вызывающий получит ``RuntimeError`` и
+    ненулевой код задачи.
+
+    :raises RuntimeError: токена нет ни там, ни там.
+    """
+    token = os.getenv("WEEKLY_CHECKS_TG_TOKEN", "").strip()
+    chat = os.getenv("WEEKLY_CHECKS_TG_CHAT_ID", "").strip() or TG_CHAT_ID_DEFAULT
+    if token:
+        return token, chat
+
+    if not TG_ENV.exists():
+        raise RuntimeError(
+            f"нет токена бота: переменная WEEKLY_CHECKS_TG_TOKEN пуста и файла {TG_ENV} нет"
+        )
+    for line in TG_ENV.read_text(encoding="utf-8").splitlines():
+        name, _, value = line.partition("=")
+        if name.strip() == "TELEGRAM_BOT_TOKEN" and value.strip():
+            return value.strip(), chat
+    raise RuntimeError(f"в {TG_ENV} нет непустого TELEGRAM_BOT_TOKEN")
+
+
+def summary_lines_for(day: str) -> list[str]:
+    """Строки сводного журнала за указанный день (``ГГГГ-ММ-ДД``).
+
+    Продолжения многострочных записей (трейсбек «ОШИБКИ обёртки») отбрасываются: в
+    сводку идёт факт и адрес журнала, а не стек.
+    """
+    path = LOG_DIR / SUMMARY_LOG
+    if not path.exists():
+        return []
+    return [
+        line.rstrip()
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.startswith(day)
+    ]
+
+
+def parse_summary(lines: list[str]) -> dict[str, str]:
+    """Итог каждого чека за день: ``{имя чека: что записано}``.
+
+    Разбор намеренно строгий — берутся только строки вида «дата время имя-чека текст»,
+    где имя есть в реестре. Свободные пометки, которые человек дописывает в журнал
+    рукой, содержат и слово «СБОЙ», и что угодно ещё; принимать их за состояние чека —
+    значит слать оператору тревогу о том, что он сам же и написал.
+
+    Повтор за день (чек прогнали руками после планировщика) перекрывает прежнюю
+    запись: в сводке важно последнее известное состояние, а не история дня.
+    """
+    known = set(CHECKS)
+    result: dict[str, str] = {}
+    for line in lines:
+        parts = line.split(maxsplit=3)
+        if len(parts) < 4 or parts[2] not in known:
+            continue
+        result[parts[2]] = parts[3].strip()
+    return result
+
+
+def build_digest(day: str, lines: list[str]) -> Optional[str]:
+    """Текст сообщения — или ``None``, если тревожить оператора нечем.
+
+    Тревога — это находки, сбой чека и молчание чека. Последнее особенно: раз в неделю
+    задача может не отработать вовсе (машина спала, задача снята, интерпретатор переехал),
+    и тогда в журнале просто не появится строки — отказ, который выглядит как тишина.
+    """
+    state = parse_summary(lines)
+    missing = [name for name in DIGEST_EXPECTED if name not in state]
+    findings = {n: t for n, t in state.items() if "ЕСТЬ НАХОДКИ" in t}
+    failures = {n: t for n, t in state.items() if n not in findings and "СБОЙ" in t}
+    if not findings and not failures and not missing:
+        return None
+
+    stamp = datetime.strptime(day, "%Y-%m-%d").strftime("%d.%m.%Y")
+    parts = [f"LMS, еженедельные чеки за {stamp}", ""]
+
+    if failures:
+        parts.append("НЕ ОТРАБОТАЛИ:")
+        parts += [f"  - {name}: {text}" for name, text in failures.items()]
+        parts.append("")
+    if missing:
+        parts.append("МОЛЧАТ (сегодня не отчитались вовсе):")
+        parts += [f"  - {name}" for name in missing]
+        parts.append("")
+    if findings:
+        parts.append("Есть находки:")
+        parts += [f"  - {name}: {text}" for name, text in findings.items()]
+        parts.append("")
+
+    parts.append(f"Подробности: {LOG_DIR / SUMMARY_LOG}")
+    return "\n".join(parts)
+
+
+def send_telegram(text: str) -> None:
+    """Отправить сообщение оператору.
+
+    :raises RuntimeError: Telegram не принял сообщение. Отказ доставки обязан быть
+        ненулевым кодом задачи — молча потерянная сводка вернула бы ровно ту слепоту,
+        ради которой она заведена.
+    """
+    import httpx
+
+    token, chat = tg_credentials()
+    response = httpx.post(
+        f"https://api.telegram.org/bot{token}/sendMessage",
+        json={"chat_id": chat, "text": text, "disable_web_page_preview": True},
+        timeout=20.0,
+    )
+    if response.status_code != 200 or not response.json().get("ok"):
+        # Токен в текст ошибки не попадает: она уходит в журнал.
+        raise RuntimeError(f"Telegram ответил {response.status_code}: {response.text[:200]}")
+
+
+def run_digest(day: Optional[str] = None) -> int:
+    """Собрать сводку за день и отправить, если есть о чём.
+
+    :returns: 0 — отправлено либо тревожить не о чем; 2 — сводку не удалось доставить.
+    """
+    day = day or datetime.now().strftime("%Y-%m-%d")
+    stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+    text = build_digest(day, summary_lines_for(day))
+    if text is None:
+        write_log(SUMMARY_LOG, f"{stamp}  сводка          не нужна: находок и пропусков нет")
+        return 0
+    try:
+        send_telegram(text)
+    except Exception as err:  # noqa: BLE001 — под pythonw показать некому
+        write_log(SUMMARY_LOG, f"{stamp}  сводка          НЕ ОТПРАВЛЕНА: {err}")
+        return 2
+    write_log(SUMMARY_LOG, f"{stamp}  сводка          отправлена оператору в Telegram")
+    return 0
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     """Разобрать аргументы, выполнить чек, записать журнал."""
     parser = argparse.ArgumentParser(
@@ -302,7 +462,23 @@ def main(argv: Optional[list[str]] = None) -> int:
             "только сбой (tsk-777)"
         ),
     )
+    parser.add_argument(
+        "--digest",
+        action="store_true",
+        help=(
+            "не выполнять чек, а собрать итоги сегодняшних прогонов и отправить сводку "
+            "оператору в Telegram — только если есть находки, сбой или молчащий чек "
+            "(tsk-778)"
+        ),
+    )
+    parser.add_argument(
+        "--day",
+        help="день для --digest в формате ГГГГ-ММ-ДД (по умолчанию сегодня)",
+    )
     args = parser.parse_args(argv)
+
+    if args.digest:
+        return run_digest(args.day)
 
     if args.list or not args.check:
         soften_stdout()
