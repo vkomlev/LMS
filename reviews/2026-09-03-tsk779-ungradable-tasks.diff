@@ -1,0 +1,94 @@
+diff --git a/scripts/check_ungradable_tasks.py b/scripts/check_ungradable_tasks.py
+index ee4bc42..3de630a 100644
+--- a/scripts/check_ungradable_tasks.py
++++ b/scripts/check_ungradable_tasks.py
+@@ -16,8 +16,22 @@
+ 
+ Третья форма — правило-объект, но пустое: `auto_check=true`, ни accepted_answers, ни
+ correct_options, при этом `manual_review_required=false`. Структурно правило есть,
+-проверить ответ нечем и в ручную оно не уйдёт. Тот же дефект, другая маскировка, и
+-на момент написания чека таких заданий 231 (SA_COM/SC_Qw в 28 курсах).
++проверить ответ нечем. Тот же дефект, другая маскировка, и на момент написания чека
++таких заданий 231 (SA_COM/SC_Qw в 28 курсах).
++
++Чем эта форма оборачивается для ученика — зависит от типа задания, и до tsk-779 чек
++описывал её неверно («в ручную не уйдёт»):
++  * `SA_COM`/`TBL_COM` — сдача получает ОПТИМИСТИЧНЫЙ зачёт (`attempts.py`, ветка
++    2.3d): эталона нет, значит балл ставится авансом под будущую проверку человеком.
++    Засчитывается ЛЮБОЙ ответ, включая пустой, а работа попадает лишь в
++    НЕОБЯЗАТЕЛЬНУЮ очередь преподавателя — ось обязательности это
++    `manual_review_required`, а он здесь false. Проверки может не случиться вовсе.
++  * `SA` и прочие типы без комментария — оптимистичный зачёт не положен, вердикта
++    нет (`is_correct=None`), и в обязательную очередь работа тоже не идёт: ответ
++    зависает «на проверке» насовсем.
++Обе ветки одинаково означают «вердикт не зависит от того, что написал ученик», но
++чинятся по-разному: первой нужен эталон ИЛИ `manual_review_required=true` в
++`solution_rules`, второй — то же самое, но она ещё и блокирует учебный поток.
+ 
+ Обе формы ищутся БЕЗ привязки к типу задания, поэтому пустой `TBL_COM` (табличный
+ ответ, tsk-366) ловится теми же запросами, что и пустой `SA_COM`: эталон таблицы
+@@ -88,7 +102,18 @@ WHERE t.is_active
+ ORDER BY t.course_id, t.id
+ """
+ 
+-# Форма 2: правило-объект есть, но проверить им нечего и в ручную задание не уйдёт.
++# Форма 2: правило-объект есть, но проверить им нечего.
++#
++# tsk-779: условие ниже обязано повторять предикат СЕРВИСА
++# `SolutionRules.has_reference_answer()` (`app/schemas/solution_rules.py`), а не
++# пересказывать его своими словами. Пересказ разъехался: сервис считает эталоном
++# ещё и `turtle_sim` (исполнение кода ученика в песочнице и сверка трассы,
++# tsk-412) и regex, а этот запрос знал только про `accepted_answers`. Итог —
++# 10 заданий курса 165 («Черепашья графика») месяц лежали в отчёте как
++# непроверяемые, хотя проверяются симулятором и живые сдачи это подтверждают
++# (10029: 4 веб-сдачи, 1 верная, 3 неверных). Ровно тот класс, ради которого
++# предикат сделан общей функцией; SQL позвать её не может, поэтому здесь —
++# построчное зеркало с явной ссылкой на источник.
+ SQL_HOLLOW_RULES = """
+ SELECT t.id, t.course_id, t.task_content->>'type' AS task_type,
+        left(coalesce(t.task_content->>'stem', ''), 70) AS stem
+@@ -97,6 +122,10 @@ WHERE t.is_active
+   AND jsonb_typeof(t.solution_rules) = 'object'
+   AND (t.solution_rules->>'manual_review_required')::bool IS NOT TRUE
+   AND coalesce(jsonb_array_length(t.solution_rules#>'{short_answer,accepted_answers}'), 0) = 0
++  -- зеркало `has_reference_answer()`: regex-эталон и turtle_sim — тоже эталон
++  AND NOT (coalesce((t.solution_rules#>>'{short_answer,use_regex}')::bool, false)
++           AND coalesce(t.solution_rules#>>'{short_answer,regex}', '') <> '')
++  AND jsonb_typeof(t.solution_rules->'turtle_sim') IS DISTINCT FROM 'object'
+   AND coalesce(jsonb_array_length(t.solution_rules->'correct_options'), 0) = 0
+   AND coalesce(t.solution_rules->>'text_answer', '') = ''
+   AND t.solution_rules->'custom_scoring_config' IS NOT DISTINCT FROM 'null'::jsonb
+@@ -165,13 +194,32 @@ async def main(quiet: bool) -> int:
+         print("\nБЕЗ ПРАВИЛА ПРОВЕРКИ: 0 — OK")
+ 
+     if hollow:
+-        print(f"\nПРАВИЛО ЕСТЬ, НО ПУСТОЕ (нечем проверить, в ручную не уйдёт): {len(hollow)}")
++        print(
++            f"\nПРАВИЛО ЕСТЬ, НО ПУСТОЕ (эталона нет — вердикт не зависит от ответа "
++            f"ученика): {len(hollow)}"
++        )
+         by_course: dict[int, int] = {}
+         for r in hollow:
+             by_course[r["course_id"]] = by_course.get(r["course_id"], 0) + 1
+         for course_id, n in sorted(by_course.items(), key=lambda kv: -kv[1]):
+             print(f"  курс {course_id}: {n}")
+         print("  примеры: " + ", ".join(str(r["id"]) for r in hollow[:15]))
++        # Разные типы ломаются по-разному, и лечатся тоже по-разному (см. докстроку).
++        commented = sum(1 for r in hollow if r["task_type"] in ("SA_COM", "TBL_COM"))
++        if commented:
++            print(
++                f"  из них {commented} с комментарием (SA_COM/TBL_COM): засчитывается "
++                f"ЛЮБОЙ ответ, включая пустой; проверка только в необязательной очереди"
++            )
++        if len(hollow) - commented:
++            print(
++                f"  из них {len(hollow) - commented} без комментария: вердикта нет вовсе, "
++                f"ответ зависает «на проверке» и в обязательную очередь не попадает"
++            )
++        print(
++            "  Чинить: завести эталон ИЛИ поставить solution_rules.manual_review_required "
++            "= true (tsk-361, tsk-779)."
++        )
+     elif not quiet:
+         print("\nПРАВИЛО ЕСТЬ, НО ПУСТОЕ: 0 — OK")
+ 
