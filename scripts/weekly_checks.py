@@ -26,7 +26,17 @@
 
 Задачи планировщика ставит `scripts/install_weekly_checks.ps1`.
 
-Коды выхода: 0 — чисто; 1 — есть находки; 2 — ошибка выполнения.
+Коды выхода: 0 — чек отработал (находки есть или их нет — оба исхода штатные);
+2 — чек не отработал. Флаг ``--fail-on-findings`` возвращает 1 при находках: он для
+обвязки, которой нужен машинный признак, а не для планировщика.
+
+Почему находки больше не дают 1 (tsk-777). Планировщик Windows семантики кода не знает
+и красит любой ненулевой результат как ошибку: `LastTaskResult = 1`. Четыре задачи из
+пяти находят что-то каждую неделю, поэтому месяцами стояли «с ошибкой», отрабатывая
+штатно. Настоящий сбой в этом ряду было бы не отличить — а ради его заметности чеки и
+заведены. Теперь ненулевой результат в планировщике означает ровно одно: чек не дошёл
+до конца. Сами находки живут в журналах: подробности — в журнале чека, одна строка
+итога на каждый прогон — в общем ``logs/weekly_checks.log``.
 """
 
 from __future__ import annotations
@@ -52,6 +62,12 @@ sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
 
 LOG_DIR = PROJECT_ROOT / "logs"
 MCP_CONFIG = PROJECT_ROOT / ".mcp.json"
+
+# Сводный журнал: по строке на каждый прогон любого чека. Журнал чека отвечает на вопрос
+# «что именно нашли», этот — на вопрос «отработали ли чеки на этой неделе и у кого есть
+# что смотреть». Раньше такого места не было: пять журналов, и чтобы понять картину,
+# надо было открыть все пять и сверить даты.
+SUMMARY_LOG = "weekly_checks.log"
 
 
 @dataclass(frozen=True)
@@ -249,6 +265,27 @@ def run_check(check: Check) -> tuple[int, str]:
     return code, buffer.getvalue().strip()
 
 
+def soften_stdout() -> None:
+    """Разрешить выводу терять символы, которых нет в кодировке консоли.
+
+    ``python scripts/weekly_checks.py --list`` падал с ``UnicodeEncodeError`` на стрелке
+    ``→``: консоль Windows под русской локалью — cp1251, такого символа там нет (журнал
+    26.08 и 01.09). Справка о чеках не работала ровно там, где к ней и обращаются — в
+    обычном окне терминала. Сама стрелка заменена на ASCII, но чинить символ по одному
+    каждый раз — значит ждать следующего: испорченный знак в выводе лучше, чем оборванный
+    чек.
+
+    Под ``pythonw`` потока нет вовсе (``sys.stdout is None``) — тогда делать нечего.
+    """
+    stream = sys.stdout
+    if stream is None or not hasattr(stream, "reconfigure"):
+        return
+    try:
+        stream.reconfigure(errors="replace")
+    except (ValueError, OSError):  # поток уже подменён или закрыт — не повод падать
+        pass
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     """Разобрать аргументы, выполнить чек, записать журнал."""
     parser = argparse.ArgumentParser(
@@ -256,11 +293,21 @@ def main(argv: Optional[list[str]] = None) -> int:
     )
     parser.add_argument("check", nargs="?", choices=sorted(CHECKS), help="какой чек выполнить")
     parser.add_argument("--list", action="store_true", help="перечислить доступные чеки")
+    parser.add_argument(
+        "--fail-on-findings",
+        action="store_true",
+        help=(
+            "вернуть код 1, если чек что-то нашёл. Для обвязки, которой нужен машинный "
+            "признак. Планировщику этот флаг не ставят: там ненулевой код должен означать "
+            "только сбой (tsk-777)"
+        ),
+    )
     args = parser.parse_args(argv)
 
     if args.list or not args.check:
+        soften_stdout()
         for name, check in sorted(CHECKS.items()):
-            print(f"{name:22} {check.module}  →  logs/{check.log}")
+            print(f"{name:22} {check.module}  ->  logs/{check.log}")
         return 0 if args.list else 2
 
     check = CHECKS[args.check]
@@ -285,23 +332,33 @@ def main(argv: Optional[list[str]] = None) -> int:
         code, output = run_check(check)
     except Exception:  # noqa: BLE001 — под pythonw traceback показать некому
         write_log(check.log, f"{stamp}  ОШИБКА чека:\n{traceback.format_exc()}")
+        write_log(SUMMARY_LOG, f"{stamp}  {args.check:18} СБОЙ — подробности в logs/{check.log}")
         return 2
 
     if code == 0 and (not output or not check.report_on_zero):
         write_log(check.log, f"{stamp}  {check.ok}{where}")
+        summary = "чисто"
     elif code == 0:
         # Находок нет, но чек что-то напечатал — например, смежные сигналы сверки
         # незачётов (сменённый тип задания, работа, не прошедшая валидацию схемой).
         write_log(check.log, f"{stamp}  Находок нет, но есть что посмотреть{where}:\n{output}")
+        summary = f"находок нет, но есть что посмотреть — logs/{check.log}"
     elif code == 1:
         block = f"{stamp}  {check.found}{where}\n{output}"
         if check.hint:
             block += f"\n{check.hint}"
         write_log(check.log, block)
+        summary = f"ЕСТЬ НАХОДКИ — logs/{check.log}"
     else:
         write_log(check.log, f"{stamp}  ОШИБКА чека (код {code}){where}:\n{output}")
+        write_log(SUMMARY_LOG, f"{stamp}  {args.check:18} СБОЙ (код {code}) — logs/{check.log}")
+        return 2
 
-    return code
+    write_log(SUMMARY_LOG, f"{stamp}  {args.check:18} {summary}{where}")
+
+    # Находки — штатный исход, а не отказ: планировщику они возвращаются нулём, иначе
+    # задача годами стоит «с ошибкой» и настоящий сбой в этом ряду теряется (tsk-777).
+    return 1 if (code == 1 and args.fail_on_findings) else 0
 
 
 if __name__ == "__main__":
@@ -311,7 +368,7 @@ if __name__ == "__main__":
         raise
     except Exception:  # noqa: BLE001 — последняя сетка: журнал важнее аккуратного стека
         write_log(
-            "weekly_checks.log",
+            SUMMARY_LOG,
             f"{datetime.now().strftime('%Y-%m-%d %H:%M')}  ОШИБКА обёртки:\n"
             f"{traceback.format_exc()}",
         )

@@ -164,6 +164,20 @@ class TestLogBranches:
 
         assert "h:5432/learn" in текст
 
+    def test_сводка_получает_строку_на_каждый_прогон(self, monkeypatch, tmp_path):
+        """tsk-777: одно место, где видно всю неделю разом.
+
+        Журнал чека отвечает «что нашли», сводка — «отработали ли чеки и у кого есть
+        что смотреть». Без неё картину приходилось собирать, открывая пять журналов и
+        сверяя в них даты.
+        """
+        self._run(monkeypatch, tmp_path, "ungradable", 1, "задание 42 без правила")
+        сводка = (tmp_path / weekly_checks.SUMMARY_LOG).read_text(encoding="utf-8")
+
+        assert "ungradable" in сводка
+        assert "ЕСТЬ НАХОДКИ" in сводка
+        assert "logs/ungradable_tasks_check.log" in сводка
+
     def test_флаг_без_консоли_выставлен_до_запуска_чека(self, monkeypatch, tmp_path):
         """Из-за этой строки чек не зовёт os.system("chcp") — и окно не моргает.
 
@@ -183,3 +197,58 @@ class TestLogBranches:
         weekly_checks.main(["ungradable"])
 
         assert увиденное["флаг"] == "1"
+
+
+class TestExitCodes:
+    """tsk-777: что именно планировщик считает ошибкой.
+
+    Планировщик Windows семантики кода не знает: любой ненулевой результат он
+    показывает как `LastTaskResult` со значком ошибки. Пока находки возвращались
+    единицей, четыре задачи из пяти месяцами стояли «с ошибкой», отрабатывая штатно, —
+    и на этом фоне настоящий сбой было не отличить. Ненулевой код теперь означает ровно
+    одно: чек не дошёл до конца.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _no_db(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(weekly_checks, "LOG_DIR", tmp_path)
+        monkeypatch.setattr(weekly_checks, "prod_dsn", lambda: "postgresql+asyncpg://u:p@h:5432/learn")
+        monkeypatch.chdir(tmp_path)
+
+    def test_находки_это_не_ошибка_задачи(self, monkeypatch):
+        monkeypatch.setattr(weekly_checks, "run_check", lambda check: (1, "задание 42 без правила"))
+
+        assert weekly_checks.main(["ungradable"]) == 0
+
+    def test_чисто_тоже_ноль(self, monkeypatch):
+        monkeypatch.setattr(weekly_checks, "run_check", lambda check: (0, ""))
+
+        assert weekly_checks.main(["section-order"]) == 0
+
+    def test_флагом_находки_снова_дают_единицу(self, monkeypatch):
+        """Машинный признак никуда не делся — он просто больше не идёт планировщику."""
+        monkeypatch.setattr(weekly_checks, "run_check", lambda check: (1, "задание 42 без правила"))
+
+        assert weekly_checks.main(["ungradable", "--fail-on-findings"]) == 1
+
+    def test_флаг_не_превращает_чистый_прогон_в_ошибку(self, monkeypatch):
+        monkeypatch.setattr(weekly_checks, "run_check", lambda check: (0, ""))
+
+        assert weekly_checks.main(["section-order", "--fail-on-findings"]) == 0
+
+    def test_сбой_чека_остаётся_ненулевым(self, monkeypatch):
+        """Ради этого исхода задачи и заведены: он обязан быть виден в планировщике."""
+        monkeypatch.setattr(weekly_checks, "run_check", lambda check: (2, "не задан DATABASE_URL"))
+
+        assert weekly_checks.main(["ungradable"]) == 2
+
+    def test_сбой_виден_и_в_сводке(self, monkeypatch, tmp_path):
+        def взорвать(check):
+            raise RuntimeError("соединение отвалилось")
+
+        monkeypatch.setattr(weekly_checks, "run_check", взорвать)
+        код = weekly_checks.main(["ungradable"])
+        сводка = (tmp_path / weekly_checks.SUMMARY_LOG).read_text(encoding="utf-8")
+
+        assert код == 2
+        assert "СБОЙ" in сводка
