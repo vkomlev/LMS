@@ -12,6 +12,16 @@
    «ученик + задание», по которой в окне была хотя бы одна неверная сдача
    (повторные попытки по тому же заданию повод не удваивают: разговор тоже
    заводится один на пару).
+
+   **Знаменатель — поводы, где ученик ЗАСТРЯЛ** (2+ неверных попытки), а не все
+   подряд (tsk-779, решение оператора 03.09). Замер на боевых данных: из 254
+   поводов 182, то есть 72%, — ученик ошибся один раз и тут же сдал верно сам.
+   Наставник там не нужен, звать его никто и не станет, а в знаменателе он топил
+   долю втрое: чек показывал 6% при пороге 20% и звал разбирать провал там, где
+   среди застрявших охват 21%, то есть цель уже достигнута. Доля «промахнулся
+   один раз» держится около 70% из недели в неделю — свойство, а не случайность
+   окна. Общая доля по всем поводам осталась справочной строкой: смена
+   знаменателя не должна выглядеть подгонкой под порог.
 2. **Исход** — какая доля состоявшихся разговоров кончилась тем, что ученик сам
    сдал задание верно.
 
@@ -84,6 +94,7 @@ import re
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from collections.abc import Mapping, Sequence, Set as AbstractSet
 from typing import Any, Optional
 
 # tsk-641: LMS_CHECK_NO_CONSOLE ставит `scripts/weekly_checks.py`, когда чек идёт под
@@ -257,6 +268,28 @@ def looks_copied(
     return False
 
 
+def split_by_struggle(
+    gated: Sequence[Mapping[str, Any]],
+    covered: AbstractSet[tuple[int, int]],
+) -> tuple[list[Mapping[str, Any]], list[Mapping[str, Any]], set[tuple[int, int]]]:
+    """Разделить поводы на «ученик застрял» и «промахнулся один раз» (tsk-779).
+
+    Вынесено отдельной функцией, потому что именно этот раздел задаёт знаменатель
+    охвата, а значит и вердикт чека. Ошибка здесь тихо сдвинет продуктовую меру,
+    по которой принимают решения о наставнике.
+
+    :param gated: поводы (пары «ученик + задание») у учеников с правом на
+        наставника; у каждого ожидается ``user_id``, ``task_id``, ``wrong_tries``.
+    :param covered: пары, по которым наставник заговорил после неверной сдачи.
+    :returns: тройка «застрявшие поводы, поводы с одной ошибкой, застрявшие из
+        числа закрытых наставником».
+    """
+    struggled = [r for r in gated if int(r["wrong_tries"]) > 1]
+    one_off = [r for r in gated if int(r["wrong_tries"]) <= 1]
+    struggled_keys = {(int(r["user_id"]), int(r["task_id"])) for r in struggled}
+    return struggled, one_off, {k for k in covered if k in struggled_keys}
+
+
 def _pct(part: int, whole: int) -> str:
     """Доля в процентах либо прочерк, если делить не на что."""
     return f"{part / whole * 100:.0f}%" if whole else "—"
@@ -352,10 +385,35 @@ async def main(quiet: bool = False, days: int = 7) -> int:
     reason_keys = {(r["user_id"], r["task_id"]) for r in gated}
     talked_without_reason = set(talked) - reason_keys
 
+    # tsk-779: главный охват считается по поводам, где ученик РЕАЛЬНО застрял.
+    #
+    # Замер 03.09 на боевых данных: из 254 поводов 182 (72%) — ученик ошибся один
+    # раз и тут же сам сдал верно. Наставник там не нужен и звать его никто не
+    # будет, а в знаменателе он топил долю втрое. Из-за этого чек каждую неделю
+    # показывал провал (6% при пороге 20%) там, где цель уже достигнута: среди
+    # застрявших охват 15 из 72, то есть 21%. Доля «промахнулся один раз» держится
+    # около 70% из недели в неделю — это устойчивое свойство, а не случайность
+    # окна, поэтому знаменатель и разведён.
+    #
+    # Общая доля не убрана: она остаётся справочной строкой, чтобы смена
+    # знаменателя не выглядела подгонкой под порог и чтобы был виден обе картины.
+    struggled, one_off, covered_struggled = split_by_struggle(gated, covered)
+
     print(f"\nПОВОДЫ (пары «ученик + задание» с неверной сдачей): {len(gated)}")
     if ungated:
         print(f"  ещё {len(ungated)} — у учеников без права на наставника (тариф), в долю не идут")
-    print(f"ДОШЛИ ДО НАСТАВНИКА: {len(covered)}  →  охват {_pct(len(covered), len(gated))}")
+    print(
+        f"  из них ученик застрял (2+ неверных попытки): {len(struggled)}; "
+        f"промахнулся один раз: {len(one_off)}"
+    )
+    print(
+        f"ЗАСТРЯЛ И ПОЗВАЛ НАСТАВНИКА: {len(covered_struggled)} из {len(struggled)}"
+        f"  →  охват {_pct(len(covered_struggled), len(struggled))}"
+    )
+    print(
+        f"  справочно, по всем поводам: {len(covered)} из {len(gated)} "
+        f"→ {_pct(len(covered), len(gated))} (сюда входят и те, кто справился сам)"
+    )
     if talked_without_reason:
         print(f"  плюс {len(talked_without_reason)} разговоров без неверной сдачи (спросил заранее)")
 
@@ -420,15 +478,18 @@ async def main(quiet: bool = False, days: int = 7) -> int:
 
     # --- вердикт -----------------------------------------------------------
     findings: list[str] = []
-    if len(gated) < MIN_SAMPLE:
+    # tsk-779: тревога — по застрявшим (см. пояснение у расчёта охвата выше).
+    if len(struggled) < MIN_SAMPLE:
         print(
-            f"\nДАННЫХ МАЛО ДЛЯ ВЫВОДА: поводов {len(gated)} при пороге {MIN_SAMPLE}. "
-            "Доли выше приведены как есть, но выводом о работе наставника они не являются."
+            f"\nДАННЫХ МАЛО ДЛЯ ВЫВОДА: поводов с застреванием {len(struggled)} "
+            f"при пороге {MIN_SAMPLE}. Доли выше приведены как есть, но выводом о "
+            "работе наставника они не являются."
         )
-    elif len(covered) / len(gated) < COVERAGE_ALARM:
+    elif len(covered_struggled) / len(struggled) < COVERAGE_ALARM:
         findings.append(
-            f"охват {_pct(len(covered), len(gated))} — ниже порога "
-            f"{COVERAGE_ALARM * 100:.0f}%: поводов {len(gated)}, разговоров {len(covered)}"
+            f"охват среди застрявших {_pct(len(covered_struggled), len(struggled))} — "
+            f"ниже порога {COVERAGE_ALARM * 100:.0f}%: поводов с застреванием "
+            f"{len(struggled)}, разговоров {len(covered_struggled)}"
         )
 
     if total_turns >= MIN_TURNS_SAMPLE and silent_turns / total_turns >= MODEL_FAILURE_ALARM:
