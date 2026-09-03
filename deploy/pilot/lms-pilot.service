@@ -1,0 +1,18 @@
+[Unit]
+Description=LMS Pilot — экземпляр для школы коллег (tsk-764)
+After=network.target
+
+[Service]
+Type=simple
+User=app
+Group=app
+WorkingDirectory=/opt/lms-pilot
+EnvironmentFile=/opt/lms-pilot/.env
+ExecStart=/opt/lms-pilot/venv/bin/uvicorn app.api.main:app --host 127.0.0.1 --port 8020
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:/var/log/lms-pilot/app.log
+StandardError=append:/var/log/lms-pilot/app.log
+
+[Install]
+WantedBy=multi-user.target
