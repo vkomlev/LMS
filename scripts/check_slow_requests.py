@@ -24,6 +24,13 @@
 `SLOW_ALERT_SECONDS` (по умолчанию 30 с) ЛИБО пачка от `SLOW_ALERT_BURST`
 (20) запросов в пределах одного часа — признак того самого общего затора.
 
+**Красным — только по свежим суткам** (`SLOW_ALERT_FRESH_DAYS`, по умолчанию 2),
+а не по всему недельному окну (tsk-779). Иначе один вылеченный затор поднимает
+тревогу ещё неделю, пока не выпадет из окна: затор 29.08 починили в тот же день,
+а сводка звала на разбор до 03.09 — и он ушёл в работу вторично, как живая
+проблема. Старые находки не прячутся: они остаются в отчёте разбивкой по дням
+с пометкой «затор был, но прошёл», просто не выглядят пожаром.
+
 Read-only: ни одного UPDATE.
 
 Куда смотрит. В базу из `DATABASE_URL`; по умолчанию это dev (прод от скриптов
@@ -61,6 +68,9 @@ load_dotenv(dotenv_path=project_root / ".env", encoding="utf-8-sig")
 WINDOW_DAYS = int(os.getenv("SLOW_CHECK_WINDOW_DAYS", "7"))
 ALERT_SECONDS = float(os.getenv("SLOW_ALERT_SECONDS", "30"))
 ALERT_BURST = int(os.getenv("SLOW_ALERT_BURST", "20"))
+# tsk-779: сколько последних суток считать «сейчас». Тревога поднимается только по
+# ним — см. пояснение у SQL_BY_DAY.
+FRESH_DAYS = int(os.getenv("SLOW_ALERT_FRESH_DAYS", "2"))
 
 SQL_TOTALS = """
 SELECT count(*)                                   AS n,
@@ -98,6 +108,69 @@ GROUP BY 1
 ORDER BY count(*) DESC
 LIMIT 1
 """
+
+# tsk-779: разбивка по дням и отдельный счёт по свежим суткам.
+#
+# Зачем. Окно чека — неделя, и до этой правки вердикт считался по всему окну
+# сразу. Значит один разобранный и ВЫЛЕЧЕННЫЙ затор кричал «ЭТО ЗАТОР» ещё семь
+# дней подряд, пока не выпадет из окна. Ровно это и случилось: затор 29.08
+# (движок ходил в файловое хранилище на каждом узле дерева) вылечили в тот же
+# день, а сводка повторяла его до 03.09 — и он ушёл на разбор во второй раз,
+# как живая проблема. Разбор занял часы и кончился выводом «уже починено».
+#
+# Поэтому теперь: тревога (код 1) — только если признаки затора есть в СВЕЖИХ
+# сутках; всё, что старше, показывается историей и код выхода не поднимает.
+# Сигнал при этом не теряется — старая находка остаётся на виду, просто перестаёт
+# выглядеть пожаром.
+SQL_BY_DAY = """
+SELECT (ts AT TIME ZONE 'UTC')::date AS day,
+       count(*) AS n,
+       max(duration_ms) AS worst_ms
+FROM slow_request
+WHERE ts >= now() - make_interval(days => :days)
+GROUP BY 1
+ORDER BY 1
+"""
+
+SQL_FRESH = """
+SELECT count(*) AS n,
+       coalesce(max(duration_ms), 0) AS worst_ms,
+       (SELECT coalesce(max(cnt), 0) FROM (
+            SELECT count(*) AS cnt FROM slow_request
+            WHERE ts >= now() - make_interval(days => :fresh_days)
+            GROUP BY date_trunc('hour', ts)
+        ) h) AS worst_hour_n
+FROM slow_request
+WHERE ts >= now() - make_interval(days => :fresh_days)
+"""
+
+
+def verdict(
+    worst_sec: float,
+    burst_n: int,
+    fresh_worst_sec: float,
+    fresh_hour_n: int,
+) -> str:
+    """Что за находка: пожар, отголосок вылеченного или обычный фон (tsk-779).
+
+    Вынесено из ``main`` отдельной функцией не ради красоты: именно это решение
+    определяет, поднимет ли чек тревогу в понедельничной сводке, и до tsk-779
+    оно было неверным целую неделю подряд. Проверять его тестом дешевле, чем
+    ждать следующего заторного утра.
+
+    :param worst_sec: худшая задержка за всё окно чека, секунды.
+    :param burst_n: размер самой плотной пачки за всё окно (запросов в час).
+    :param fresh_worst_sec: худшая задержка за свежие сутки, секунды.
+    :param fresh_hour_n: самая плотная пачка за свежие сутки.
+    :returns: ``"active"`` — затор идёт сейчас (красный свет);
+        ``"resolved"`` — затор в окне был, но свежие сутки чистые;
+        ``"background"`` — порог не превышен нигде.
+    """
+    if fresh_worst_sec >= ALERT_SECONDS or fresh_hour_n >= ALERT_BURST:
+        return "active"
+    if worst_sec >= ALERT_SECONDS or burst_n >= ALERT_BURST:
+        return "resolved"
+    return "background"
 
 
 async def main(quiet: bool = False) -> int:
@@ -139,6 +212,10 @@ async def main(quiet: bool = False) -> int:
             by_path = (await conn.execute(text(SQL_BY_PATH), params)).mappings().all()
             worst = (await conn.execute(text(SQL_WORST), params)).mappings().all()
             burst = (await conn.execute(text(SQL_BURST), params)).mappings().first()
+            by_day = (await conn.execute(text(SQL_BY_DAY), params)).mappings().all()
+            fresh = (await conn.execute(
+                text(SQL_FRESH), {"fresh_days": FRESH_DAYS}
+            )).mappings().first()
     finally:
         await engine.dispose()
 
@@ -150,7 +227,16 @@ async def main(quiet: bool = False) -> int:
 
     worst_sec = (totals["worst_ms"] or 0) / 1000
     burst_n = int(burst["n"] or 0) if burst else 0
-    alarming = worst_sec >= ALERT_SECONDS or burst_n >= ALERT_BURST
+
+    # tsk-779: вердикт — по свежим суткам, а не по всему окну (см. SQL_BY_DAY).
+    fresh_n = int(fresh["n"] or 0) if fresh else 0
+    fresh_worst_sec = (fresh["worst_ms"] or 0) / 1000 if fresh else 0.0
+    fresh_hour_n = int(fresh["worst_hour_n"] or 0) if fresh else 0
+    kind = verdict(worst_sec, burst_n, fresh_worst_sec, fresh_hour_n)
+    alarming = kind == "active"
+    # «Было и прошло» отличается от «медленных вообще не было» — формулировка
+    # ниже у них разная.
+    was_alarming = kind == "resolved"
 
     print(
         f"\nМЕДЛЕННЫЕ ЗАПРОСЫ за {WINDOW_DAYS} дн.: {n} шт. "
@@ -161,6 +247,16 @@ async def main(quiet: bool = False) -> int:
             f"  Самый плотный час: {burst['hour']:%d.%m %H:%M} — "
             f"{burst_n} шт., худший {(burst['worst_ms'] or 0) / 1000:.1f} с"
         )
+
+    # По дням: одна строка отвечает на вопрос «это сейчас или уже прошло?»,
+    # ради которого иначе лезут в базу руками.
+    if by_day:
+        print("\n  По дням (всего / худший):")
+        for r in by_day:
+            print(f"    {r['day']:%d.%m}  {r['n']:>4} шт.  {(r['worst_ms'] or 0) / 1000:6.1f} с")
+    print(
+        f"  Последние {FRESH_DAYS} сут.: {fresh_n} шт., худший {fresh_worst_sec:.1f} с"
+    )
 
     print("\n  Обработчики (худшая задержка сверху):")
     for r in by_path:
@@ -178,20 +274,36 @@ async def main(quiet: bool = False) -> int:
         )
 
     if not alarming:
-        print(
-            f"\n  Порог тревоги не превышен (худший < {ALERT_SECONDS:.0f} с и "
-            f"плотность < {ALERT_BURST} за час) — это фон, а не затор."
-        )
+        if was_alarming:
+            # Затор в окне был, но свежие сутки чистые. Почти наверняка его уже
+            # разобрали и починили — код выхода не поднимаем, иначе сводка будет
+            # звать на разбор вылеченного всю неделю (tsk-779).
+            print(
+                f"\n  ЗАТОР БЫЛ, НО ПРОШЁЛ: за последние {FRESH_DAYS} сут. худший "
+                f"{fresh_worst_sec:.1f} с и ни одной пачки. Похоже, причина уже "
+                f"устранена — ПЕРЕД разбором проверить закрытые задачи трекера "
+                f"(`D:\\Work\\Root\\tasks`, grep по 'затор', 'next-item', "
+                f"'медленн'), иначе разберёте починенное во второй раз. Находка "
+                f"останется в сводке, пока не выйдет из окна в {WINDOW_DAYS} дн."
+            )
+        else:
+            print(
+                f"\n  Порог тревоги не превышен (худший < {ALERT_SECONDS:.0f} с и "
+                f"плотность < {ALERT_BURST} за час) — это фон, а не затор."
+            )
         return 0
 
     print(
-        "\n  ЭТО ЗАТОР, А НЕ ФОН. Что делать: взять request_id худшего запроса и "
-        "найти его в логе на боевой машине "
-        "(`grep '\"request_id\":\"…\"' /opt/lms/logs/app.log*` — со звёздочкой, "
-        "лог ротируется по 5 МБ); рядом по времени смотреть "
-        "строки `tsk-593: ошибка соединения с S3` (хранилище) и "
-        "`code_review: модель недоступна` (провайдер модели) — 18.08.2026 затор "
-        "дало именно молчащее внешнее хранилище, tsk-644."
+        "\n  ЭТО ЗАТОР, И ОН СВЕЖИЙ. Что делать: сперва убедиться, что это не "
+        "уже разобранный случай (закрытые задачи трекера по 'затор'/'next-item'); "
+        "затем взять request_id худшего запроса и найти его в логе на боевой "
+        "машине (`grep '\"request_id\":\"…\"' /opt/lms/logs/app.log*` — со "
+        "звёздочкой, лог ротируется по 5 МБ и держит примерно неделю); рядом по "
+        "времени смотреть строки `tsk-593: ошибка соединения с S3` (хранилище) и "
+        "`code_review: модель недоступна` (провайдер модели). 18.08.2026 затор "
+        "дало молчащее внешнее хранилище (tsk-644), 29.08 — хождение движка в то "
+        "же хранилище на каждом узле дерева курса (tsk-735). Оба раза база "
+        "простаивала: смотреть сеть в обработчике, а не запросы."
     )
     return 1
 
