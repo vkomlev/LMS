@@ -12,6 +12,27 @@ ROOT=/opt/lms-pilot
 SERVICE=lms-pilot
 PORT=8020
 
+# Ожидание готовности после рестарта — тот же приём, что у SPW (tsk-640).
+# Одиночный `curl` через `sleep 2` попадает в момент, когда uvicorn ещё не занял
+# порт: получаем «Connection refused» на живом выкате. Хуже другое: запись вида
+# `curl … && echo` под `set -e` провал НЕ роняет (левый операнд `&&` из-под
+# `set -e` выведен), и скрипт печатал «Deployed» даже когда служба не поднялась.
+# Успех = сервер ОТВЕТИЛ; код ответа не проверяем, важен сам факт соединения.
+wait_for_http() {
+  local url=$1 attempts=${2:-30} i code
+  for ((i = 1; i <= attempts; i++)); do
+    code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 "$url" 2>/dev/null || true)
+    if [[ -n "$code" && "$code" != "000" ]]; then
+      echo "HTTP $code (готов с попытки $i из $attempts)"
+      return 0
+    fi
+    sleep 1
+  done
+  echo "ОШИБКА: $url не ответил за $attempts попыток — служба не поднялась." >&2
+  echo "Смотреть: systemctl status $SERVICE; /var/log/lms-pilot/app.log" >&2
+  return 1
+}
+
 # Тело — внутри функции: `git reset --hard` переписывает и сам этот файл на
 # диске, без обёртки команды после reset читались бы рассинхронизированно
 # (тот же приём, что в deploy/vps/deploy.sh боевого LMS).
@@ -89,8 +110,8 @@ main() {
   sleep 2
   systemctl is-active "$SERVICE"
 
-  echo "== smoke: /health =="
-  curl -fsS "http://127.0.0.1:${PORT}/health" && echo
+  echo "== smoke: /health (ждём готовности, tsk-640) =="
+  wait_for_http "http://127.0.0.1:${PORT}/health" 30
 
   echo "== боевой экземпляр не тронут =="
   systemctl is-active lms
