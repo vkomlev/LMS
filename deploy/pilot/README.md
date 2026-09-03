@@ -68,7 +68,12 @@ printf '%s\n' \
 sudo visudo -c -f /etc/sudoers.d/app-deploy   # обязательно: битый файл ломает sudo целиком
 
 # --- LMS ---
-sudo -u app git clone --branch main https://github.com/vkomlev/LMS.git /opt/lms-pilot
+# Каталог создаёт root и сразу отдаёт app — иначе git clone упрётся в права.
+sudo mkdir -p /opt/lms-pilot /opt/spw-pilot
+sudo chown app:app /opt/lms-pilot /opt/spw-pilot
+
+# Клонировать по SSH-ключу (репозиторий SPW закрытый; у LMS так же ходит боевой чекаут).
+sudo -u app git clone --branch main git@github.com:vkomlev/LMS.git /opt/lms-pilot
 cd /opt/lms-pilot
 sudo -u app python3.11 -m venv venv
 sudo -u app ./venv/bin/pip install --upgrade -r requirements.txt
@@ -86,7 +91,7 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now lms-pilot
 
 # --- SPW ---
-sudo -u app git clone --branch master https://github.com/vkomlev/spw.git /opt/spw-pilot
+sudo -u app git clone --branch master git@github.com:vkomlev/spw.git /opt/spw-pilot
 cd /opt/spw-pilot
 sudo -u app cp deploy/pilot/.env.spw.pilot.example /opt/spw-pilot/.env
 sudo -u app nano /opt/spw-pilot/.env          # BRAND_NAME и остальное
