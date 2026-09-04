@@ -66,6 +66,12 @@ async def main() -> int:
     import os
     from datetime import timedelta, timezone
 
+    # Локальный .env нужен только чтобы поднялись импорты приложения (ключи
+    # API, хранилище вложений). Подключение к базе после него перебивается на
+    # ПРОД — иначе скрипт молча посмотрит dev-данные и ничего не докажет.
+    from dotenv import load_dotenv
+
+    load_dotenv(PROJECT_ROOT / ".env", override=True)
     os.environ["DATABASE_URL"] = load_prod_dsn_asyncpg_style()
     sys.path.insert(0, str(PROJECT_ROOT))
 
