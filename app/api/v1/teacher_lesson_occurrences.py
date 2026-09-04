@@ -12,6 +12,10 @@
 - `GET /teacher/lesson-occurrences/{id}/summary` — сводка по каждому
   участнику (tsk-022 «до занятия» / tsk-410 «после занятия», кнопка
   «Подвести итоги» — общий эндпоинт для обеих точек входа фронта).
+- `GET /teacher/lesson-occurrences/{id}/plan` — план занятия (tsk-743):
+  шаги текущей фазы (начало / ход / конец) с именами учеников.
+- `POST /teacher/lesson-occurrences/{id}/absence-followup` — отметка «про
+  пропуск уже спросили», чтобы список пропустивших схлопывался.
 
 Гейт — тот же паттерн, что `teacher_workload.py`: явный `teacher_id` +
 `get_current_user` + ручная ownership-проверка (`current_user.id ==
@@ -30,16 +34,23 @@ from app.auth.current_user import CurrentUser
 from app.core import settings_store
 from app.core.config import Settings
 from app.schemas.lesson_calendar import (
+    AbsenceFollowupRequest,
+    AbsenceFollowupResponse,
     AddParticipantRequest,
     AddStudentRequest,
     LessonOccurrenceRead,
+    LessonPlanRead,
     ParticipantRead,
     TeacherAttendanceActionRequest,
     TeacherLessonOccurrenceRead,
     TeacherLessonOccurrenceSummaryRead,
     TeacherParticipantRead,
 )
-from app.services import lesson_occurrence_service, teacher_lesson_summary_service
+from app.services import (
+    lesson_occurrence_service,
+    lesson_plan_service,
+    teacher_lesson_summary_service,
+)
 
 router = APIRouter(prefix="/teacher", tags=["teacher_lesson_occurrences"])
 
@@ -169,6 +180,73 @@ async def get_teacher_lesson_summary(
         student_id=student_id,
     )
     return TeacherLessonOccurrenceSummaryRead(**data)
+
+
+@router.get("/lesson-occurrences/{occurrence_id}/plan", response_model=LessonPlanRead)
+async def get_lesson_plan(
+    occurrence_id: int,
+    teacher_id: int = Query(..., description="ID преподавателя"),
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> LessonPlanRead:
+    """План занятия (tsk-743): шаги ТЕКУЩЕЙ фазы — начало, ход, конец.
+
+    Отдаёт только то, по чему есть что сделать: шаг без учеников не приходит
+    вовсе, шаги чужих фаз не считаются. Это не второй экран поверх сводки
+    (tsk-473), а указатель — «кому именно и что сказать прямо сейчас».
+    """
+    await _ensure_self_or_service(db, current_user, teacher_id)
+    data = await lesson_plan_service.get_lesson_plan(
+        db, occurrence_id=occurrence_id, teacher_id=teacher_id,
+    )
+    return LessonPlanRead(**data)
+
+
+@router.post(
+    "/lesson-occurrences/{occurrence_id}/absence-followup",
+    response_model=AbsenceFollowupResponse,
+    responses={
+        422: {
+            "description": (
+                "Неизвестный код причины пропуска либо ученик не участвует "
+                "в этом занятии"
+            )
+        }
+    },
+)
+async def post_absence_followup(
+    occurrence_id: int,
+    teacher_id: int = Query(..., description="ID преподавателя"),
+    body: AbsenceFollowupRequest = Body(...),
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> AbsenceFollowupResponse:
+    """Отметить, что про пропуски ученика спросили (tsk-743).
+
+    `occurrence_id` в пути — ТЕКУЩЕЕ занятие (на нём идёт разговор), оно же
+    держит ownership-гейт; отмечаются пропущенные занятия из тела запроса.
+    Разом, потому что разговор один: «почему тебя не было?» — а не по одному
+    вопросу на каждое пропущенное занятие.
+    """
+    await _ensure_self_or_service(db, current_user, teacher_id)
+    # Ownership: занятие принадлежит этому преподавателю. Проверяем ДО записи —
+    # иначе отметку можно было бы поставить на чужого ученика, подобрав id.
+    await lesson_occurrence_service.get_occurrence_for_teacher(
+        db, occurrence_id=occurrence_id, teacher_id=teacher_id,
+    )
+    try:
+        marked = await lesson_plan_service.mark_absence_asked(
+            db,
+            student_id=body.student_id,
+            occurrence_ids=body.occurrence_ids,
+            current_occurrence_id=occurrence_id,
+            teacher_id=None if current_user.is_service else current_user.id,
+            reason=body.reason,
+            note=body.note,
+        )
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+    return AbsenceFollowupResponse(marked=marked)
 
 
 @router.post(

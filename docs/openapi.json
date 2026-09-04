@@ -31139,6 +31139,229 @@
         }
       }
     },
+    "/api/v1/teacher/lesson-occurrences/{occurrence_id}/plan": {
+      "get": {
+        "tags": [
+          "teacher_lesson_occurrences"
+        ],
+        "summary": "Get Lesson Plan",
+        "description": "План занятия (tsk-743): шаги ТЕКУЩЕЙ фазы — начало, ход, конец.\n\nОтдаёт только то, по чему есть что сделать: шаг без учеников не приходит\nвовсе, шаги чужих фаз не считаются. Это не второй экран поверх сводки\n(tsk-473), а указатель — «кому именно и что сказать прямо сейчас».",
+        "operationId": "get_lesson_plan_api_v1_teacher_lesson_occurrences__occurrence_id__plan_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "occurrence_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Occurrence Id"
+            }
+          },
+          {
+            "name": "teacher_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "description": "ID преподавателя",
+              "title": "Teacher Id"
+            },
+            "description": "ID преподавателя"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LessonPlanRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/teacher/lesson-occurrences/{occurrence_id}/absence-followup": {
+      "post": {
+        "tags": [
+          "teacher_lesson_occurrences"
+        ],
+        "summary": "Post Absence Followup",
+        "description": "Отметить, что про пропуски ученика спросили (tsk-743).\n\n`occurrence_id` в пути — ТЕКУЩЕЕ занятие (на нём идёт разговор), оно же\nдержит ownership-гейт; отмечаются пропущенные занятия из тела запроса.\nРазом, потому что разговор один: «почему тебя не было?» — а не по одному\nвопросу на каждое пропущенное занятие.",
+        "operationId": "post_absence_followup_api_v1_teacher_lesson_occurrences__occurrence_id__absence_followup_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "occurrence_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Occurrence Id"
+            }
+          },
+          {
+            "name": "teacher_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "description": "ID преподавателя",
+              "title": "Teacher Id"
+            },
+            "description": "ID преподавателя"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AbsenceFollowupRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AbsenceFollowupResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Неизвестный код причины пропуска либо ученик не участвует в этом занятии"
+          }
+        }
+      }
+    },
     "/api/v1/teacher/lesson-occurrences/{occurrence_id}/attendance": {
       "post": {
         "tags": [
@@ -42340,6 +42563,66 @@
   },
   "components": {
     "schemas": {
+      "AbsenceFollowupRequest": {
+        "properties": {
+          "student_id": {
+            "type": "integer",
+            "title": "Student Id"
+          },
+          "occurrence_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Occurrence Ids",
+            "description": "Пропущенные занятия из шага `absences` — закрываются разом, разговор один"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason",
+            "description": "illness | forgot | busy | no_answer | other; None — спросил, причину не записал"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note",
+            "description": "Свободный текст, если кода мало"
+          }
+        },
+        "type": "object",
+        "required": [
+          "student_id",
+          "occurrence_ids"
+        ],
+        "title": "AbsenceFollowupRequest"
+      },
+      "AbsenceFollowupResponse": {
+        "properties": {
+          "marked": {
+            "type": "integer",
+            "title": "Marked",
+            "description": "Сколько пропусков отмечено (повтор ничего не добавляет)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "marked"
+        ],
+        "title": "AbsenceFollowupResponse"
+      },
       "AccessLevel": {
         "type": "string",
         "enum": [
@@ -52995,6 +53278,159 @@
           "updated_at"
         ],
         "title": "LessonOccurrenceRead"
+      },
+      "LessonPlanRead": {
+        "properties": {
+          "occurrence_id": {
+            "type": "integer",
+            "title": "Occurrence Id"
+          },
+          "scheduled_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Scheduled At"
+          },
+          "ends_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Ends At"
+          },
+          "wrapup_from": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Wrapup From",
+            "description": "Момент, с которого занятие считается идущим к концу (общий с кнопкой «Подвести итоги»)"
+          },
+          "phase": {
+            "type": "string",
+            "title": "Phase",
+            "description": "before — занятие ещё не скоро · start — четверть часа до и после начала · during · wrapup · after — уже кончилось. У before и after шагов нет: они и не считаются"
+          },
+          "phase_until": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phase Until",
+            "description": "Когда фаза сменится; None — фаза последняя"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/LessonPlanStep"
+            },
+            "type": "array",
+            "title": "Steps"
+          }
+        },
+        "type": "object",
+        "required": [
+          "occurrence_id",
+          "scheduled_at",
+          "ends_at",
+          "wrapup_from",
+          "phase"
+        ],
+        "title": "LessonPlanRead"
+      },
+      "LessonPlanStep": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "title": "Key",
+            "description": "homework | absences | wins | difficulties (начало) · idle | stuck (ход) · review | homework_next (конец)"
+          },
+          "phase": {
+            "type": "string",
+            "title": "Phase",
+            "description": "start | during | wrapup"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title",
+            "description": "Заголовок с числами: «Не сделана домашняя работа у 3 из 5»"
+          },
+          "action": {
+            "type": "string",
+            "title": "Action",
+            "description": "Что сделать словами: «Спросите, что не получилось»"
+          },
+          "students": {
+            "items": {
+              "$ref": "#/components/schemas/LessonPlanStudent"
+            },
+            "type": "array",
+            "title": "Students"
+          },
+          "more_count": {
+            "type": "integer",
+            "title": "More Count",
+            "description": "Сколько учеников не поместилось в шаг (список ограничен)",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "key",
+          "phase",
+          "title",
+          "action"
+        ],
+        "title": "LessonPlanStep"
+      },
+      "LessonPlanStudent": {
+        "properties": {
+          "student_id": {
+            "type": "integer",
+            "title": "Student Id"
+          },
+          "full_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Full Name"
+          },
+          "detail": {
+            "type": "string",
+            "title": "Detail",
+            "description": "Готовая подпись под именем — то, что и делает напоминание полезным: «ДЗ 1 из 4, просрочено», «молчит 12 мин», «пропустил 2 занятия, последнее — 01.09»"
+          },
+          "missed_occurrence_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Missed Occurrence Ids",
+            "description": "Шаг `absences`: занятия, про которые ещё не спрашивали. Возвращаются обратно в отметку разговора — она закрывает их разом"
+          },
+          "task_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Id",
+            "description": "Задание, о котором речь (шаги трудностей)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "student_id",
+          "detail"
+        ],
+        "title": "LessonPlanStudent"
       },
       "LessonSlotCreate": {
         "properties": {

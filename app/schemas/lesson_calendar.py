@@ -471,3 +471,84 @@ class TeacherLessonOccurrenceSummaryRead(BaseModel):
     is_ad_hoc: bool = Field(description="Occurrence вне регулярного расписания (slot_id IS NULL)")
     window_to: datetime = Field(description="Конец окна ДЗ — момент запроса сводки, общий для всех")
     participants: list[TeacherSummaryParticipant] = Field(default_factory=list)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# tsk-743: план занятия — что делать в начале, по ходу и в конце.
+#
+# Один вид строки на любой шаг: у преподавателя на уроке нет времени осваивать
+# разные карточки под каждый повод. Шаг без учеников не приходит вовсе.
+
+
+class LessonPlanStudent(BaseModel):
+    student_id: int
+    full_name: Optional[str] = None
+    detail: str = Field(
+        description=(
+            "Готовая подпись под именем — то, что и делает напоминание "
+            "полезным: «ДЗ 1 из 4, просрочено», «молчит 12 мин», "
+            "«пропустил 2 занятия, последнее — 01.09»"
+        )
+    )
+    missed_occurrence_ids: list[int] = Field(
+        default_factory=list,
+        description=(
+            "Шаг `absences`: занятия, про которые ещё не спрашивали. "
+            "Возвращаются обратно в отметку разговора — она закрывает их разом"
+        ),
+    )
+    task_id: Optional[int] = Field(
+        default=None, description="Задание, о котором речь (шаги трудностей)"
+    )
+
+
+class LessonPlanStep(BaseModel):
+    key: str = Field(
+        description=(
+            "homework | absences | wins | difficulties (начало) · "
+            "idle | stuck (ход) · review | homework_next (конец)"
+        )
+    )
+    phase: str = Field(description="start | during | wrapup")
+    title: str = Field(description="Заголовок с числами: «Не сделана домашняя работа у 3 из 5»")
+    action: str = Field(description="Что сделать словами: «Спросите, что не получилось»")
+    students: list[LessonPlanStudent] = Field(default_factory=list)
+    more_count: int = Field(
+        default=0, description="Сколько учеников не поместилось в шаг (список ограничен)"
+    )
+
+
+class LessonPlanRead(BaseModel):
+    occurrence_id: int
+    scheduled_at: datetime
+    ends_at: datetime
+    wrapup_from: datetime = Field(
+        description="Момент, с которого занятие считается идущим к концу (общий с кнопкой «Подвести итоги»)"
+    )
+    phase: str = Field(
+        description=(
+            "before — занятие ещё не скоро · start — четверть часа до и после "
+            "начала · during · wrapup · after — уже кончилось. У before и after "
+            "шагов нет: они и не считаются"
+        )
+    )
+    phase_until: Optional[datetime] = Field(
+        default=None, description="Когда фаза сменится; None — фаза последняя"
+    )
+    steps: list[LessonPlanStep] = Field(default_factory=list)
+
+
+class AbsenceFollowupRequest(BaseModel):
+    student_id: int
+    occurrence_ids: list[int] = Field(
+        description="Пропущенные занятия из шага `absences` — закрываются разом, разговор один"
+    )
+    reason: Optional[str] = Field(
+        default=None,
+        description="illness | forgot | busy | no_answer | other; None — спросил, причину не записал",
+    )
+    note: Optional[str] = Field(default=None, description="Свободный текст, если кода мало")
+
+
+class AbsenceFollowupResponse(BaseModel):
+    marked: int = Field(description="Сколько пропусков отмечено (повтор ничего не добавляет)")

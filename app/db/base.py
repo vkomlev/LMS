@@ -55,4 +55,5 @@ import app.models.lesson_idle_episode  # простои на занятии (tsk
 import app.models.system_setting       # настройки школы из кабинета админа (tsk-721)
 import app.models.homework             # домашняя работа: выдача и состав (tsk-741)
 import app.models.student_curator      # закрепление ученика за куратором (tsk-742)
+import app.models.lesson_absence_followup  # «про пропуск уже спросили» (tsk-743)
 
