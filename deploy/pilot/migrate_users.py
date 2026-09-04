@@ -5,7 +5,15 @@
 на корень курса он не увидит в кабинете ничего. Сделать это руками — значит
 однажды забыть половину.
 
-Что переносится: адрес почты, имя, роли, зачисление на указанные курсы.
+Что переносится: адрес почты, **привязка личности**, имя, роли, зачисление
+на указанные курсы.
+
+Привязка (`identity_link` вида `email`) — не деталь, а условие входа. Вход по
+ссылке из письма ищет человека ИМЕННО по ней, а не по полю `users.email`;
+учётку с почтой, но без привязки, платформа считает осиротевшей и отказывает
+словами «Email уже привязан к другому аккаунту в нестандартном состоянии»
+(ADR-0021 §2). Первая версия этого скрипта привязку не создавала — вход не
+работал, хотя в базе всё выглядело на месте.
 Что НЕ переносится: учебная история, сессии, платежи, заявки. Это тестовые
 учётки для прогона, а не перевоз ученика вместе с его работой.
 
@@ -118,6 +126,15 @@ async def main() -> int:
                     )
                     print(f"  обновлён {p['email']} -> id={uid}")
 
+                # Привязка личности: без неё вход по ссылке из письма
+                # отказывает, хотя учётка в базе есть.
+                await dst.execute(
+                    "INSERT INTO identity_link (user_id, kind, value) "
+                    "VALUES ($1, 'email', lower($2)) ON CONFLICT DO NOTHING",
+                    uid,
+                    p["email"],
+                )
+
                 if args.all_roles:
                     for r in roles:
                         await dst.execute(
@@ -138,12 +155,15 @@ async def main() -> int:
         rows = await dst.fetch(
             "SELECT u.id, u.email, u.full_name, u.is_active, "
             "  (SELECT count(*) FROM user_roles ur WHERE ur.user_id = u.id) AS roles, "
-            "  (SELECT count(*) FROM user_courses uc WHERE uc.user_id = u.id) AS courses "
+            "  (SELECT count(*) FROM user_courses uc WHERE uc.user_id = u.id) AS courses, "
+            "  (SELECT count(*) FROM identity_link il WHERE il.user_id = u.id "
+            "     AND il.kind = 'email') AS email_link "
             "FROM users u ORDER BY u.id"
         )
         for r in rows:
+            mark = "вход настроен" if r["email_link"] else "ВХОД НЕ РАБОТАЕТ (нет привязки)"
             print(f"  id={r['id']} {r['full_name']} <{r['email']}> "
-                  f"активен={r['is_active']} ролей={r['roles']} курсов={r['courses']}")
+                  f"активен={r['is_active']} ролей={r['roles']} курсов={r['courses']} — {mark}")
         return 0
     finally:
         await dst.close()
