@@ -264,6 +264,7 @@ class TestDigest:
     """
 
     ПОЛНЫЙ_ДЕНЬ = [
+        "2026-09-07 08:40  cb-drift           чисто [h:5432/learn]",
         "2026-09-07 09:00  section-order      чисто [h:5432/learn]",
         "2026-09-07 09:10  ungradable         чисто [h:5432/learn]",
         "2026-09-07 09:20  stale-verdicts     чисто",

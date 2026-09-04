@@ -68,7 +68,7 @@
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('ungradable', 'section-order', 'missing-attachments', 'stale-verdicts', 'slow-requests', 'tutor-outcomes', 'external-media', 'digest')]
+    [ValidateSet('ungradable', 'section-order', 'missing-attachments', 'stale-verdicts', 'slow-requests', 'tutor-outcomes', 'external-media', 'cb-drift', 'digest')]
     [string]$Only,
     [switch]$WithMissingAttachments,
     [switch]$Uninstall
@@ -79,6 +79,11 @@ $ErrorActionPreference = 'Stop'
 
 # Чек → имя задачи и время в понедельник. Имена — те же, что стояли до tsk-641.
 $plan = @(
+    # Сверка с ContentBackbone идёт РАНЬШЕ всех и с большим запасом: она опрашивает
+    # кабинет по одному заданию (около полутора тысяч запросов, примерно двадцать
+    # минут). Поставить её рядом с остальными значило бы, что сводка в 09:45 уйдёт
+    # без её строки — то есть чек будет числиться молчащим каждую неделю (tsk-760).
+    [pscustomobject]@{ Check = 'cb-drift';            TaskName = 'LMS cb drift weekly';                    At = '08:40'; Default = $true;  Why = 'правки без пометки — их затрёт переиздание курса (tsk-760)'; LimitMinutes = 90 }
     [pscustomobject]@{ Check = 'section-order';       TaskName = 'LMS - chek poryadka razdelov (tsk-237)'; At = '09:00'; Default = $true;  Why = 'порядок разделов курсов (tsk-237)' }
     [pscustomobject]@{ Check = 'ungradable';          TaskName = 'LMS ungradable tasks weekly';            At = '09:10'; Default = $true;  Why = 'задания, которые невозможно проверить (tsk-361)' }
     [pscustomobject]@{ Check = 'stale-verdicts';      TaskName = 'LMS stale verdicts weekly';              At = '09:20'; Default = $true;  Why = 'незачёты, устаревшие после правки эталона (tsk-636)' }
@@ -131,15 +136,26 @@ $principal = New-ScheduledTaskPrincipal `
 
 # StartWhenAvailable: пропущенный понедельник догоняется, иначе неделя молча выпадает
 # — а «никто не заметил» и есть та беда, ради которой чеки заведены.
-$settings = New-ScheduledTaskSettingsSet `
-    -AllowStartIfOnBatteries `
-    -DontStopIfGoingOnBatteries `
-    -StartWhenAvailable `
-    -MultipleInstances IgnoreNew `
-    -ExecutionTimeLimit (New-TimeSpan -Minutes 30) `
-    -Hidden
+function New-CheckSettings([int]$LimitMinutes) {
+    New-ScheduledTaskSettingsSet `
+        -AllowStartIfOnBatteries `
+        -DontStopIfGoingOnBatteries `
+        -StartWhenAvailable `
+        -MultipleInstances IgnoreNew `
+        -ExecutionTimeLimit (New-TimeSpan -Minutes $LimitMinutes) `
+        -Hidden
+}
+
+# Полчаса хватает всем чекам, кроме сверки с ContentBackbone: она опрашивает кабинет
+# по одному заданию и идёт около двадцати минут — впритык к общему лимиту, а убитая
+# на полуслове задача выглядит как сбой чека, которого не было. Свой лимит задаётся
+# полем LimitMinutes в плане.
+$defaultSettings = New-CheckSettings 30
 
 foreach ($item in $plan) {
+    $settings = if ($item.PSObject.Properties['LimitMinutes']) {
+        New-CheckSettings ([int]$item.LimitMinutes)
+    } else { $defaultSettings }
     $argument = if ($item.PSObject.Properties['Arguments']) { $item.Arguments } else { $item.Check }
     $action = New-ScheduledTaskAction `
         -Execute $pythonw `
