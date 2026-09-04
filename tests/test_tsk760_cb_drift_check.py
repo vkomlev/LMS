@@ -186,3 +186,36 @@ class TestРеестрЧеков:
     def test_молчание_чека_попадает_в_сводку(self):
         text = weekly_checks.build_digest("2026-09-07", [])
         assert text is not None and "cb-drift" in text
+
+
+class TestОхватВЖурнале:
+    """Счётчики сверки при нуле находок обязаны доезжать до журнала (tsk-760).
+
+    Иначе молчаливое сужение охвата — потерялся снимок партии, отвалилась половина
+    ключей — выглядит как благополучное «чисто». На первом живом прогоне 04.09 цифры
+    были отброшены, и убедиться, что сверка прошла по всей базе, оказалось нечем.
+    """
+
+    def test_цифры_сверки_подшиваются(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(weekly_checks, "LOG_DIR", tmp_path)
+        monkeypatch.setattr(weekly_checks, "prod_dsn", lambda: "postgresql+asyncpg://u:p@h:5432/learn")
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(
+            weekly_checks, "run_check",
+            lambda check: (0, "Сверено заданий: 1358; совпало 897, разошлось 461"),
+        )
+        weekly_checks.main(["cb-drift"])
+        текст = (tmp_path / weekly_checks.CHECKS["cb-drift"].log).read_text(encoding="utf-8")
+        assert "Сверено заданий: 1358" in текст
+
+    def test_цифры_не_будят_сводку(self):
+        """Фон — не находка: сводка уходит оператору только при тревоге."""
+        строки = [
+            "2026-09-07 08:40  cb-drift           находок нет, но есть что посмотреть — logs/cb_drift_check.log",
+            "2026-09-07 09:00  section-order      чисто",
+            "2026-09-07 09:10  ungradable         чисто",
+            "2026-09-07 09:20  stale-verdicts     чисто",
+            "2026-09-07 09:25  slow-requests      чисто",
+            "2026-09-07 09:28  tutor-outcomes     чисто",
+        ]
+        assert weekly_checks.build_digest("2026-09-07", строки) is None
