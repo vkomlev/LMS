@@ -143,8 +143,19 @@ class VolumePlan:
     #: заданий, а не конечная программа), а потолок: больше, чем осталось, не
     #: задашь.
     remaining_items: int
-    #: Целевая недельная норма ЭТОГО класса.
+    #: Сколько нужно в неделю ЭТОМУ ученику, чтобы успеть. Считается из его
+    #: личного остатка программы и срока — не из класса (решение оператора
+    #: 04.09). Может быть недостижимо большой: это правда о разрыве, и прятать
+    #: её нельзя. Ученику это число не показывается.
     target_per_week: int
+    #: Какая программа: `ege`, `oge` или None — ученик не записан ни на одну,
+    #: тогда норма берётся по классу, как раньше.
+    program_kind: Optional[str]
+    #: К какому дню программу нужно закончить; None — программы нет.
+    program_deadline: Optional[date]
+    #: Обязательных ЗАДАНИЙ программы осталось (материалы считаются отдельно и
+    #: входят в `remaining_items`).
+    program_tasks_remaining: Optional[int]
     #: Сколько человек делает сейчас (медиана за FACT_WEEKS недель).
     fact_per_week: float
     #: Доля верных сдач за то же окно; None — сдач слишком мало.
@@ -178,6 +189,9 @@ class VolumePlan:
         """Снимок для `homework_assignment.volume_details` (JSON-совместимый)."""
         data = asdict(self)
         data["exam_date"] = self.exam_date.isoformat()
+        data["program_deadline"] = (
+            self.program_deadline.isoformat() if self.program_deadline else None
+        )
         return data
 
 
@@ -202,6 +216,145 @@ def exam_date_for(grade: Optional[int], today: date) -> date:
     this_year_exam = date(today.year, EXAM_MONTH, EXAM_DAY)
     base_year = today.year if today <= this_year_exam else today.year + 1
     return date(base_year + years_left, EXAM_MONTH, EXAM_DAY)
+
+
+def _course_ids(raw: str) -> list[int]:
+    """Номера курсов из настройки «88,112» → [88, 112]. Мусор молча пропускаем:
+    настройку правит человек, и одна опечатка не должна ронять расчёт всем."""
+    result: list[int] = []
+    for chunk in (raw or "").replace(";", ",").split(","):
+        chunk = chunk.strip()
+        if chunk.isdigit():
+            result.append(int(chunk))
+    return result
+
+
+def _deadline_for(raw: str, exam_day: date, fallback_md: tuple[int, int]) -> date:
+    """Срок «пройти программу» в году экзамена: из настройки вида «03-31».
+
+    Год берётся у экзамена, а не у сегодняшнего дня: одиннадцатикласснику это
+    ближайший март, десятикласснику — следующий (решение оператора 04.09).
+    """
+    month, day = fallback_md
+    parts = (raw or "").split("-")
+    if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+        month, day = int(parts[0]), int(parts[1])
+    try:
+        return date(exam_day.year, month, day)
+    except ValueError:
+        return date(exam_day.year, *fallback_md)
+
+
+#: Остаток ОБЯЗАТЕЛЬНЫХ элементов программы подготовки — курсов, которые ученик
+#: должен закончить к сроку. Не «весь банк заданий курса», как считалось до
+#: 04.09: банк не проходят целиком, и норма от него получалась одинаковой у всех.
+_PROGRAM_REMAINING_SQL = f"""
+WITH RECURSIVE tree AS (
+    SELECT unnest(CAST(:root_ids AS int[])) AS member_course_id
+    UNION
+    SELECT cp.course_id
+      FROM tree t
+      JOIN course_parents cp ON cp.parent_course_id = t.member_course_id
+),
+course_tasks AS (
+    SELECT DISTINCT t.id
+      FROM tasks t JOIN tree ON tree.member_course_id = t.course_id
+     WHERE COALESCE(t.is_active, true) AND t.requirement_level = ANY(:levels)
+),
+course_materials AS (
+    SELECT DISTINCT m.id
+      FROM materials m JOIN tree ON tree.member_course_id = m.course_id
+     WHERE COALESCE(m.is_active, true) AND m.requirement_level = ANY(:levels)
+),
+tasks_done AS (
+    SELECT DISTINCT tr.task_id AS id
+      FROM task_results tr
+      JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
+     WHERE tr.user_id = :student_id AND tr.is_correct = true
+       AND tr.task_id IN (SELECT id FROM course_tasks)
+    UNION
+    SELECT stp.task_id
+      FROM student_task_progress stp
+     WHERE stp.student_id = :student_id AND stp.status = 'skipped'
+       AND stp.task_id IN (SELECT id FROM course_tasks)
+),
+materials_done AS (
+    SELECT DISTINCT smp.material_id AS id
+      FROM student_material_progress smp
+     WHERE smp.student_id = :student_id AND smp.status IN ('completed', 'skipped')
+       AND smp.material_id IN (SELECT id FROM course_materials)
+)
+SELECT (SELECT count(*) FROM course_tasks) AS tasks_total,
+       (SELECT count(*) FROM course_materials) AS materials_total,
+       (SELECT count(*) FROM tasks_done) AS tasks_done,
+       (SELECT count(*) FROM materials_done) AS materials_done
+"""
+
+
+async def program_for_student(
+    db: AsyncSession, *, student_id: int, grade: Optional[int], today: date
+) -> Optional[dict[str, Any]]:
+    """Программа подготовки ученика: какие курсы, к какому сроку, сколько осталось.
+
+    Программа определяется по ФАКТИЧЕСКОЙ записи на курсы, а не по классу:
+    запись — это то, что школа реально сделала, а класс ученик указывает сам и
+    у 59 человек из 82 он до сих пор пустой.
+
+    `None` — ученик не записан ни на одну программу (или списки курсов пусты в
+    настройках). Тогда норма считается по-старому, от класса.
+    """
+    from app.core import settings_store
+
+    oge_ids = _course_ids(settings_store.get_str("homework_program_oge_courses"))
+    ege_ids = _course_ids(settings_store.get_str("homework_program_ege_courses"))
+    if not oge_ids and not ege_ids:
+        return None
+
+    enrolled = set(
+        (
+            await db.execute(
+                text(
+                    "SELECT course_id FROM user_courses "
+                    " WHERE user_id = :sid AND is_active = true"
+                ),
+                {"sid": student_id},
+            )
+        ).scalars().all()
+    )
+    # ОГЭ проверяем первым: девятикласснику могли открыть и материалы ЕГЭ, но
+    # сдаёт он в этом году ОГЭ, и срок у него свой.
+    if enrolled & set(oge_ids):
+        kind, root_ids = "oge", oge_ids
+        deadline_raw = settings_store.get_str("homework_program_oge_deadline")
+        fallback = (4, 30)
+    elif enrolled & set(ege_ids):
+        kind, root_ids = "ege", ege_ids
+        deadline_raw = settings_store.get_str("homework_program_ege_deadline")
+        fallback = (3, 31)
+    else:
+        return None
+
+    row = (
+        await db.execute(
+            text(_PROGRAM_REMAINING_SQL),
+            {
+                "student_id": student_id,
+                "root_ids": root_ids,
+                "levels": list(REQUIREMENT_LEVELS),
+            },
+        )
+    ).mappings().one()
+
+    total = int(row["tasks_total"]) + int(row["materials_total"])
+    done = int(row["tasks_done"]) + int(row["materials_done"])
+    deadline = _deadline_for(deadline_raw, exam_date_for(grade, today), fallback)
+    return {
+        "kind": kind,
+        "deadline": deadline,
+        "remaining": max(total - done, 0),
+        "tasks_remaining": max(int(row["tasks_total"]) - int(row["tasks_done"]), 0),
+        "total": total,
+    }
 
 
 def target_per_week_for(grade: Optional[int], today: Optional[date] = None) -> int:
@@ -389,6 +542,9 @@ async def compute(
             {"student_id": student_id, "levels": list(REQUIREMENT_LEVELS)},
         )
     ).mappings().one()
+    # Остаток ВСЕХ курсов ученика — потолок выдачи: больше, чем осталось, не
+    # задашь. Норму считает программа подготовки (ниже), и это разные числа:
+    # у ученика бывают курсы вне программы.
     remaining = max(int(totals["total_items"]) - int(totals["done_items"]), 0)
 
     weekly = [
@@ -431,10 +587,30 @@ async def compute(
 
     exam_day = exam_date_for(grade, moment.date())
     weeks_to_exam = max((exam_day - moment.date()).days, 1) / 7.0
-    target = target_per_week_for(grade, moment.date())
-    sprint = target == TARGET_PER_WEEK_EXAM_SPRINT and (
-        grade is None or grade >= 11
+
+    # Персональная норма: личный остаток программы, делённый на недели до
+    # срока. Раньше здесь стояла норма класса — одна на всех одиннадцати-
+    # классников, независимо от того, прошёл человек половину курса или не
+    # начинал (замечание оператора 04.09).
+    program = await program_for_student(
+        db, student_id=student_id, grade=grade, today=moment.date()
     )
+    sprint = False
+    if program is not None:
+        remaining = program["remaining"]
+        days_left = (program["deadline"] - moment.date()).days
+        if days_left > 0:
+            target = max(int(-(-remaining // max(days_left / 7.0, 1e-9))), 0)
+        else:
+            # Срок программы прошёл: гнать по ней больше некуда, дальше идёт
+            # отработка вариантов.
+            target = TARGET_PER_WEEK_EXAM_SPRINT
+            sprint = True
+    else:
+        target = target_per_week_for(grade, moment.date())
+        sprint = target == TARGET_PER_WEEK_EXAM_SPRINT and (
+            grade is None or grade >= 11
+        )
 
     #: Растим не быстрее, чем на GROWTH_FACTOR от нынешнего темпа, но не ниже
     #: минимума: у человека с нулевым темпом факт×1.2 = 0, и без пола он не
@@ -487,6 +663,9 @@ async def compute(
         correct_ratio=round(correct_ratio, 2) if correct_ratio is not None else None,
         quality_penalty_applied=penalty,
         volume_per_week=volume,
+        program_kind=(program or {}).get("kind"),
+        program_deadline=(program or {}).get("deadline"),
+        program_tasks_remaining=(program or {}).get("tasks_remaining"),
         missed_lessons=missed_lessons,
         catch_up_factor=round(catch_up, 2),
         weeks_of_program_left=weeks_left,

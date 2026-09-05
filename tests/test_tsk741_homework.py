@@ -399,7 +399,8 @@ async def test_volume_for_window_scales_by_days(db):
         remaining_items=100, target_per_week=20, fact_per_week=10.0, correct_ratio=0.9,
         quality_penalty_applied=False, volume_per_week=14, weeks_of_program_left=7,
         needs_more_program=False, exam_sprint=False, missed_lessons=0,
-        catch_up_factor=1.0, pace_gap=10,
+        catch_up_factor=1.0, pace_gap=10, program_kind=None,
+        program_deadline=None, program_tasks_remaining=None,
     )
     assert homework_volume_service.volume_for_window(plan, days=7) == 14
     assert homework_volume_service.volume_for_window(plan, days=3) == 6
@@ -1431,3 +1432,170 @@ async def test_due_date_skips_the_paired_lesson(db):
         db, student_id=student_id, after=now - timedelta(minutes=30), now=now,
     )
     assert due == far, "срок пришёлся на вторую пару того же блока"
+
+
+# ========== Персональная норма из остатка программы (tsk-797) ==========
+
+
+async def _program_student(db, *, done_tasks: int = 0, total_tasks: int = 100,
+                           grade: int = 11, monkeypatch=None, kind: str = "ege"):
+    """Ученик, записанный на курс программы подготовки, с заданным прогрессом."""
+    student_id, _ = await _new_user(db)
+    course_id = await _new_course(db, f"program-{kind}")
+    await _enroll(db, student_id=student_id, course_id=course_id)
+    now = datetime.now(UTC)
+    for pos in range(1, total_tasks + 1):
+        task_id = await _new_task(db, course_id=course_id, order_position=pos)
+        if pos <= done_tasks:
+            await _submit(
+                db, student_id=student_id, task_id=task_id, course_id=course_id,
+                is_correct=True, at=now - timedelta(days=40),
+            )
+    await _set_grade(db, student_id=student_id, grade=grade)
+    return student_id, course_id
+
+
+def _settings_with_program(course_id: int, kind: str = "ege"):
+    """Подмена настроек: этот курс — программа подготовки."""
+    values = {
+        "homework_program_ege_courses": str(course_id) if kind == "ege" else "",
+        "homework_program_oge_courses": str(course_id) if kind == "oge" else "",
+        "homework_program_ege_deadline": "03-31",
+        "homework_program_oge_deadline": "04-30",
+    }
+    return lambda key: values.get(key, "")
+
+
+@pytest.mark.asyncio
+async def test_norm_is_personal_not_per_grade(db, monkeypatch):
+    """Два одиннадцатиклассника с разным прогрессом получают РАЗНУЮ норму.
+
+    Замечание оператора 04.09: раньше всем 11 классам показывалось 20 в неделю
+    независимо от того, прошёл человек половину курса или не начинал.
+    """
+    from app.core import settings_store
+
+    ahead_id, course_id = await _program_student(db, done_tasks=80, total_tasks=100)
+    behind_id, _ = await _new_user(db)
+    await _enroll(db, student_id=behind_id, course_id=course_id)
+    await _set_grade(db, student_id=behind_id, grade=11)
+
+    monkeypatch.setattr(settings_store, "get_str", _settings_with_program(course_id))
+
+    ahead = await homework_volume_service.compute(db, student_id=ahead_id)
+    behind = await homework_volume_service.compute(db, student_id=behind_id)
+
+    assert ahead.program_kind == "ege" and behind.program_kind == "ege"
+    assert ahead.program_tasks_remaining == 20
+    assert behind.program_tasks_remaining == 100
+    assert behind.target_per_week > ahead.target_per_week, (
+        "норма не зависит от личного прогресса"
+    )
+
+
+@pytest.mark.asyncio
+async def test_norm_counts_only_required_items(db, monkeypatch):
+    """Необязательные задания в остаток программы не входят.
+
+    Прямое требование оператора: «только обязательные, опциональные считать не
+    нужно».
+    """
+    from app.core import settings_store
+
+    student_id, course_id = await _program_student(db, done_tasks=0, total_tasks=20)
+    extra = [await _new_task(db, course_id=course_id, order_position=500 + i) for i in range(30)]
+    await db.execute(
+        text("UPDATE tasks SET requirement_level = 'recommended' WHERE id = ANY(:ids)"),
+        {"ids": extra},
+    )
+    await db.commit()
+    monkeypatch.setattr(settings_store, "get_str", _settings_with_program(course_id))
+
+    plan = await homework_volume_service.compute(db, student_id=student_id)
+    assert plan.program_tasks_remaining == 20, "рекомендованные попали в программу"
+
+
+@pytest.mark.asyncio
+async def test_tenth_grade_has_a_year_more_and_a_softer_norm(db, monkeypatch):
+    """Срок — 31 марта года ИХ экзамена (решение оператора 04.09).
+
+    У десятиклассника до его марта на год больше, значит и норма мягче при том
+    же остатке.
+    """
+    from app.core import settings_store
+
+    eleventh_id, course_id = await _program_student(db, done_tasks=0, total_tasks=200)
+    tenth_id, _ = await _new_user(db)
+    await _enroll(db, student_id=tenth_id, course_id=course_id)
+    await _set_grade(db, student_id=tenth_id, grade=10)
+    monkeypatch.setattr(settings_store, "get_str", _settings_with_program(course_id))
+
+    eleventh = await homework_volume_service.compute(db, student_id=eleventh_id)
+    tenth = await homework_volume_service.compute(db, student_id=tenth_id)
+
+    assert eleventh.program_deadline.year + 1 == tenth.program_deadline.year
+    assert tenth.target_per_week < eleventh.target_per_week
+
+
+@pytest.mark.asyncio
+async def test_unreachable_norm_is_shown_honestly(db, monkeypatch):
+    """Норма может быть больше потолка выдачи — и показывается как есть.
+
+    Решение оператора 04.09: преподаватель видит «нужно 41, делает 9, задаём
+    11» — три разных числа. Прятать разрыв нельзя: на проде 49 учеников из 70
+    нуждаются в 30+ элементов в неделю.
+    """
+    from app.core import settings_store
+
+    student_id, course_id = await _program_student(db, done_tasks=0, total_tasks=900)
+    monkeypatch.setattr(settings_store, "get_str", _settings_with_program(course_id))
+
+    plan = await homework_volume_service.compute(db, student_id=student_id)
+    assert plan.target_per_week > homework_volume_service.MAX_PER_WEEK
+    # Выдача при этом остаётся посильной.
+    assert plan.volume_per_week <= homework_volume_service.MAX_PER_WEEK
+    assert plan.pace_gap == plan.target_per_week  # темпа нет вовсе
+
+
+@pytest.mark.asyncio
+async def test_oge_program_wins_over_ege(db, monkeypatch):
+    """Девятикласснику могли открыть материалы ЕГЭ — сдаёт он ОГЭ.
+
+    Программа определяется по фактической записи на курсы, а не по классу:
+    класс ученик указывает сам, и у 59 из 82 он пустой.
+    """
+    from app.core import settings_store
+
+    student_id, oge_course = await _program_student(
+        db, done_tasks=0, total_tasks=30, grade=9, kind="oge",
+    )
+    ege_course = await _new_course(db, "ege-extra")
+    await _enroll(db, student_id=student_id, course_id=ege_course)
+    for pos in range(1, 40):
+        await _new_task(db, course_id=ege_course, order_position=pos)
+
+    values = {
+        "homework_program_ege_courses": str(ege_course),
+        "homework_program_oge_courses": str(oge_course),
+        "homework_program_ege_deadline": "03-31",
+        "homework_program_oge_deadline": "04-30",
+    }
+    monkeypatch.setattr(settings_store, "get_str", lambda key: values.get(key, ""))
+
+    plan = await homework_volume_service.compute(db, student_id=student_id)
+    assert plan.program_kind == "oge"
+    assert plan.program_deadline.month == 4 and plan.program_deadline.day == 30
+    assert plan.program_tasks_remaining == 30, "в программу попал курс ЕГЭ"
+
+
+@pytest.mark.asyncio
+async def test_without_program_falls_back_to_grade_norm(db, monkeypatch):
+    """Ученик вне программ подготовки считается по классу, как раньше."""
+    from app.core import settings_store
+
+    student_id, _ = await _student_with_program(db, materials=0, tasks=40)
+    monkeypatch.setattr(settings_store, "get_str", lambda key: "")
+
+    plan = await homework_volume_service.compute(db, student_id=student_id)
+    assert plan.program_kind is None
+    assert plan.target_per_week == 20  # норма 11 класса

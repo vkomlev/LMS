@@ -219,6 +219,62 @@ SETTINGS: Tuple[SettingDef, ...] = (
         max_value=240,
     ),
     SettingDef(
+        key="homework_program_ege_courses",
+        group=GROUP_LESSONS,
+        title="Курсы программы подготовки к ЕГЭ",
+        description=(
+            "Через запятую номера корневых курсов, которые ученик должен "
+            "закончить к сроку ниже. По остатку ОБЯЗАТЕЛЬНЫХ элементов этих "
+            "курсов считается персональная норма домашней работы. Пусто — "
+            "норма берётся общая по классу, как было раньше."
+        ),
+        kind="str",
+        default="88,112",
+        env_var=None,
+        unit="номера курсов",
+        max_length=200,
+    ),
+    SettingDef(
+        key="homework_program_oge_courses",
+        group=GROUP_LESSONS,
+        title="Курсы программы подготовки к ОГЭ",
+        description=(
+            "То же для девятиклассников. Ученик считается ОГЭшником, если "
+            "записан на любой курс из этого списка."
+        ),
+        kind="str",
+        default="1080",
+        env_var=None,
+        unit="номера курсов",
+        max_length=200,
+    ),
+    SettingDef(
+        key="homework_program_ege_deadline",
+        group=GROUP_LESSONS,
+        title="К какому числу закончить программу ЕГЭ",
+        description=(
+            "День и месяц в формате ММ-ДД. Год берётся по классу ученика: "
+            "одиннадцатикласснику ближайший, десятикласснику — следующий. "
+            "После этой даты время уходит на отработку вариантов."
+        ),
+        kind="str",
+        default="03-31",
+        env_var=None,
+        unit="ММ-ДД",
+        max_length=5,
+    ),
+    SettingDef(
+        key="homework_program_oge_deadline",
+        group=GROUP_LESSONS,
+        title="К какому числу закончить программу ОГЭ",
+        description="День и месяц в формате ММ-ДД, год — по классу ученика.",
+        kind="str",
+        default="04-30",
+        env_var=None,
+        unit="ММ-ДД",
+        max_length=5,
+    ),
+    SettingDef(
         key="lesson_summary_after_start_minutes",
         group=GROUP_LESSONS,
         title="Сколько минут после начала занятия держать сводку по ученикам",
