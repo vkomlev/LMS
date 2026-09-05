@@ -401,6 +401,7 @@ async def test_volume_for_window_scales_by_days(db):
         needs_more_program=False, exam_sprint=False, missed_lessons=0,
         catch_up_factor=1.0, pace_gap=10, program_kind=None,
         program_deadline=None, program_tasks_remaining=None,
+        target_unreachable=False,
     )
     assert homework_volume_service.volume_for_window(plan, days=7) == 14
     assert homework_volume_service.volume_for_window(plan, days=3) == 6
@@ -1555,6 +1556,9 @@ async def test_unreachable_norm_is_shown_honestly(db, monkeypatch):
     # Выдача при этом остаётся посильной.
     assert plan.volume_per_week <= homework_volume_service.MAX_PER_WEEK
     assert plan.pace_gap == plan.target_per_week  # темпа нет вовсе
+    # …и разрыв назван причиной, а не оставлен голым числом: «нужно 48» без
+    # пояснения читается как упрёк ученику, хотя это про программу и срок.
+    assert plan.target_unreachable is True
 
 
 @pytest.mark.asyncio
