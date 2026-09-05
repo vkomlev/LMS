@@ -36,7 +36,7 @@ from typing import Any, Optional
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services import homework_volume_service
+from app.services import homework_volume_service, program_scope_service
 
 logger = logging.getLogger(__name__)
 
@@ -139,6 +139,15 @@ async def issue(
     moment = now or datetime.now(timezone.utc)
     if due_at <= moment:
         raise ValueError("Срок домашней работы должен быть в будущем.")
+
+    # tsk-798: объём программы пересчитывается ЗДЕСЬ, до подбора состава.
+    # Порядок важен: план решает, какие задания вообще попадут ученику в обход,
+    # и посчитай мы его после — первая выдача собралась бы по старому объёму.
+    # Выдача происходит раз в несколько дней, то есть план обновляется ровно
+    # с той частотой, с какой меняется картина, и без отдельного расписания.
+    await program_scope_service.refresh_for_student(
+        db, student_id=student_id, now=moment
+    )
 
     plan = await homework_volume_service.compute(db, student_id=student_id, now=moment)
     days = max((due_at - moment).days, 1)

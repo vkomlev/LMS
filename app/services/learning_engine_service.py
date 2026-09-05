@@ -38,6 +38,10 @@ from app.services.attempt_attachments import (
     mark_missing_one,
 )
 from app.services.task_sampling import sample_task_ids
+# tsk-798: персональный объём программы. Порог выборки зависит от срока и темпа
+# КОНКРЕТНОГО ученика, и знать это может только его план — общая настройка
+# подкурса не различает ноябрьского новичка и того, кто идёт с сентября.
+from app.services.program_scope_service import thresholds_for as program_scope_thresholds
 # tsk-692: содержимое, добавленное в курс после того, как ученик прошёл тему,
 # приходит ему рекомендуемым, а не долгом. Правило живёт отдельным модулем и
 # зовётся функцией, а не повторяется условием в каждой точке (иначе копии
@@ -792,7 +796,9 @@ class LearningEngineService:
         graced = await compute_graced_items(db, student_id, course_id)
 
         excluded_tasks: set[int] = set(graced.tasks)
-        sampling_map = await self._sampling_enabled_courses(db, tree_ids)
+        sampling_map = await self._sampling_enabled_courses(
+            db, tree_ids, student_id=student_id
+        )
         for sampled_course_id, cfg in sampling_map.items():
             excluded_tasks |= await self._sampled_out_task_ids(
                 db, sampled_course_id, student_id, cfg
@@ -1330,14 +1336,30 @@ class LearningEngineService:
         return [i for i, _ in await self._ordered_task_rows(db, course_id)]
 
     async def _sampling_enabled_courses(
-        self, db: AsyncSession, course_ids: Sequence[int]
+        self,
+        db: AsyncSession,
+        course_ids: Sequence[int],
+        student_id: Optional[int] = None,
     ) -> dict[int, dict]:
         """Курсы из `course_ids` с включённой выборкой по сложности (tsk-314).
 
-        Один лёгкий запрос по PK; в общем (сегодня — единственном на проде)
-        случае «выборка нигде не настроена» это единственная дополнительная
-        цена вызова — тяжёлый путь (JOIN c difficulties, сэмплинг) ниже
-        выполняется только для курсов, реально попавших в результат.
+        Два источника порога, и личный сильнее общего:
+
+        1. `courses.sampling_config` — настройка методиста на подкурс, одна на
+           всех учеников;
+        2. **персональный план объёма** (`student_program_scope`, tsk-798) —
+           сколько тренажёра этому ученику помещается до его срока. Программа
+           у ноябрьского и у сентябрьского ученика разной длины, и общий порог
+           не может выразить это в принципе.
+
+        Личный порог перекрывает общий, потому что общий не знает ни срока
+        ученика, ни его темпа. `easy_ratio` при этом берётся из настройки
+        курса (методическое решение о составе), а не из плана — план отвечает
+        за объём, не за пропорцию.
+
+        Один лёгкий запрос по PK плюс один по ученику; тяжёлый путь (JOIN c
+        difficulties, сэмплинг) ниже выполняется только для курсов, реально
+        попавших в результат.
 
         Фильтрация `enabled` — в Python, не в SQL: `sampling_config` пишется
         напрямую (нет PATCH-эндпоинта), и SQL-каст `->>'enabled')::boolean`
@@ -1355,11 +1377,27 @@ class LearningEngineService:
                 {"ids": list(course_ids)},
             )
         ).fetchall()
-        return {
+        result = {
             int(cid): cfg
             for cid, cfg in rows
             if isinstance(cfg, dict) and cfg.get("enabled")
         }
+
+        if student_id is None:
+            return result
+
+        personal = await program_scope_thresholds(db, student_id=student_id)
+        for cid in course_ids:
+            threshold = personal.get(int(cid))
+            if threshold is None:
+                continue
+            base = result.get(int(cid)) or {}
+            result[int(cid)] = {
+                "enabled": True,
+                "threshold": max(int(threshold), 1),
+                "easy_ratio": base.get("easy_ratio", 0.5),
+            }
+        return result
 
     async def _sampled_out_task_ids(
         self,
@@ -1406,6 +1444,29 @@ class LearningEngineService:
         if not easy_ids and not normal_ids:
             return set()
 
+        # tsk-798: уже пройденное выборка не трогает. Раньше это было не нужно
+        # (выборка настраивалась на подкурс заранее, до того как кто-то начал),
+        # а теперь она включается ученикам, которые давно учатся. Вырезав
+        # решённое, мы получили бы числитель прогресса больше знаменателя:
+        # `compute_course_state` вычитает вырезанное из общего числа заданий, а
+        # пройденные считает как есть — и подкурс мог бы не закрыться никогда.
+        solved = set(
+            (
+                await db.execute(
+                    text(
+                        "SELECT DISTINCT tr.task_id FROM task_results tr "
+                        "  JOIN attempts a ON a.id = tr.attempt_id "
+                        "   AND a.cancelled_at IS NULL "
+                        " WHERE tr.user_id = :sid AND tr.task_id = ANY(:ids) "
+                        "UNION "
+                        "SELECT stp.task_id FROM student_task_progress stp "
+                        " WHERE stp.student_id = :sid AND stp.task_id = ANY(:ids)"
+                    ),
+                    {"sid": student_id, "ids": easy_ids + normal_ids},
+                )
+            ).scalars().all()
+        )
+
         kept = sample_task_ids(
             easy_ids=easy_ids,
             normal_ids=normal_ids,
@@ -1413,6 +1474,7 @@ class LearningEngineService:
             easy_ratio=cfg.easy_ratio,
             student_id=student_id,
             course_id=course_id,
+            keep_ids=solved,
         )
         return (set(easy_ids) | set(normal_ids)) - kept
 
@@ -1440,7 +1502,9 @@ class LearningEngineService:
         if not rows:
             return rows
 
-        cfg_map = await self._sampling_enabled_courses(db, [course_id])
+        cfg_map = await self._sampling_enabled_courses(
+            db, [course_id], student_id=student_id
+        )
         config = cfg_map.get(course_id)
         dropped: set[int] = set()
         if config:

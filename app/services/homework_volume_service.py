@@ -72,8 +72,14 @@ logger = logging.getLogger(__name__)
 
 #: Меньше этого на дом не задаём — иначе выдача теряет смысл.
 MIN_PER_WEEK = 3
-#: Больше этого не задаём никогда: выше p90 нынешнего темпа ДЗ просто
-#: перестают делать, и невыполнимая норма обесценивает саму механику.
+#: Базовый потолок выдачи: выше p90 нынешнего темпа ДЗ просто перестают делать,
+#: и невыполнимая норма обесценивает саму механику.
+#:
+#: **Это потолок ДЛЯ ТЕХ, КТО СТОЛЬКО НЕ ДЕЛАЕТ.** Тому, кто уже показывает
+#: больше, он не мешает — см. `ceiling_for()`. Решение оператора 05.09: жёсткие
+#: 25 сами стали ограничением — ученику, пришедшему в ноябре, при них не
+#: помещается даже несокращаемое ядро программы (21.4 недели × 25 = 535 против
+#: 605), хотя на проде есть люди с темпом 48-66 в неделю.
 MAX_PER_WEEK = 25
 #: На сколько норма может превышать сегодняшний темп ученика за один шаг.
 GROWTH_FACTOR = 1.2
@@ -198,6 +204,21 @@ class VolumePlan:
             self.program_deadline.isoformat() if self.program_deadline else None
         )
         return data
+
+
+def ceiling_for(fact_per_week: float) -> int:
+    """Потолок недельной выдачи для ученика с таким фактическим темпом.
+
+    Потолок нужен, чтобы не завалить человека сверх того, что он тянет. Но
+    «тянет» — это про него, а не про среднее по школе: тот, кто уже делает 40
+    в неделю, от сорока не надорвётся, и срезать его до 25 значит мешать ему
+    успеть. Поэтому базовый потолок поднимается ровно до его собственного
+    темпа с обычным шагом роста (`GROWTH_FACTOR`), не выше.
+
+    Медленного это не касается вовсе: у него `факт × 1.2` заведомо ниже
+    базового потолка, и он остаётся прежним (решение оператора 05.09).
+    """
+    return max(MAX_PER_WEEK, int(round(fact_per_week * GROWTH_FACTOR)))
 
 
 def exam_date_for(grade: Optional[int], today: date) -> date:
@@ -356,6 +377,7 @@ async def program_for_student(
     return {
         "kind": kind,
         "deadline": deadline,
+        "root_ids": root_ids,
         "remaining": max(total - done, 0),
         "tasks_remaining": max(int(row["tasks_total"]) - int(row["tasks_done"]), 0),
         "total": total,
@@ -626,7 +648,8 @@ async def compute(
     if penalty:
         raw *= QUALITY_PENALTY
 
-    volume = int(round(max(min(raw, float(MAX_PER_WEEK)), float(MIN_PER_WEEK))))
+    ceiling = ceiling_for(fact_per_week)
+    volume = int(round(max(min(raw, float(ceiling)), float(MIN_PER_WEEK))))
 
     # Пропустил занятия — материал, который разбирали без него, придётся
     # пройти самому (требование оператора 02.09). Нагон применяется ПОСЛЕ
@@ -638,7 +661,7 @@ async def compute(
         1.0 + CATCH_UP_PER_MISSED_LESSON * missed_lessons, MAX_CATCH_UP_FACTOR
     )
     if catch_up > 1.0:
-        volume = int(round(min(volume * catch_up, float(MAX_PER_WEEK))))
+        volume = int(round(min(volume * catch_up, float(ceiling))))
 
     # Больше, чем осталось в программе, задать нельзя — иначе выдача попросит
     # то, чего нет, и пункты в ней окажутся невыполнимыми.
@@ -676,7 +699,7 @@ async def compute(
         weeks_of_program_left=weeks_left,
         needs_more_program=needs_more,
         exam_sprint=sprint,
-        target_unreachable=target > MAX_PER_WEEK,
+        target_unreachable=target > ceiling,
         pace_gap=pace_gap,
     )
 

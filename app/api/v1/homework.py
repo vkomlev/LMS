@@ -20,7 +20,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Path, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -32,7 +32,12 @@ from app.schemas.homework import (
     HomeworkRead,
     HomeworkVolumeRead,
 )
-from app.services import homework_service, homework_volume_service, manual_progress_service
+from app.services import (
+    homework_service,
+    homework_volume_service,
+    manual_progress_service,
+    program_scope_service,
+)
 from app.services.audit_service import log_event
 
 logger = logging.getLogger("api.homework")
@@ -89,10 +94,34 @@ async def get_homework_volume(
     Ничего не пишет и ничего не задаёт: преподаватель вправе сначала
     посмотреть, а решить потом. Здесь же видно `pace_gap` — на сколько
     элементов в неделю ученик не дотягивает до нормы своего класса.
+
+    tsk-798: и объём программы, подобранный под его срок и темп. Объём здесь
+    ТОЛЬКО СЧИТАЕТСЯ, но не сохраняется: просмотр карточки не должен менять
+    состав программы ученика — записывается план при выдаче домашней работы.
     """
     await manual_progress_service.ensure_can_edit_progress(db, current_user, student_id)
     plan = await homework_volume_service.compute(db, student_id=student_id)
-    return HomeworkVolumeRead(**plan.as_details())
+    details = plan.as_details()
+
+    program = await homework_volume_service.program_for_student(
+        db, student_id=student_id, grade=plan.grade, today=date.today()
+    )
+    if program is not None:
+        scope = await program_scope_service.compute_scope(
+            db,
+            student_id=student_id,
+            kind=program["kind"],
+            root_ids=program["root_ids"],
+            deadline=program["deadline"],
+            fact_per_week=plan.fact_per_week,
+        )
+        details.update(
+            program_core_total=scope.core_total,
+            program_drill_total=scope.drill_total,
+            program_drill_allowed=scope.drill_allowed,
+            program_core_trimmed=scope.core_trimmed,
+        )
+    return HomeworkVolumeRead(**details)
 
 
 @router.post(

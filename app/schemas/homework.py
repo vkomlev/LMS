@@ -147,6 +147,33 @@ class HomeworkVolumeRead(BaseModel):
             "(1-2 в неделю), и на обычное ДЗ времени почти не остаётся"
         )
     )
+    program_core_total: Optional[int] = Field(
+        default=None,
+        description=(
+            "Несокращаемых элементов программы осталось: теория, все номера "
+            "ЕГЭ, материалы. Проходится целиком — выбросить оттуда что-то "
+            "значит не пройти номер вовсе"
+        ),
+    )
+    program_drill_total: Optional[int] = Field(
+        default=None,
+        description="Заданий отработки (лёгкие и средние) осталось всего",
+    )
+    program_drill_allowed: Optional[int] = Field(
+        default=None,
+        description=(
+            "Сколько отработки помещается ученику до срока при его темпе. "
+            "Меньше `program_drill_total` — значит программа подобрана под "
+            "него: ядро целиком, отработка частью"
+        ),
+    )
+    program_core_trimmed: bool = Field(
+        default=False,
+        description=(
+            "Бюджета не хватает даже на ядро — программу придётся резать по "
+            "номерам ЕГЭ. Это решение методиста, система его не принимает сама"
+        ),
+    )
     target_unreachable: bool = Field(
         default=False,
         description=(

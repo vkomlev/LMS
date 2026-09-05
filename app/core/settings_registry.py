@@ -252,6 +252,23 @@ SETTINGS: Tuple[SettingDef, ...] = (
         max_length=200,
     ),
     SettingDef(
+        key="homework_program_planned_pace",
+        group=GROUP_LESSONS,
+        title="На какой недельный темп рассчитывать объём программы",
+        description=(
+            "Сколько элементов в неделю школа ожидает от ученика при "
+            "планировании. Из этого числа и срока считается, сколько "
+            "тренажёра ему выдать. У того, кто делает больше, план строится "
+            "по его собственному темпу — настройка его не ограничивает."
+        ),
+        kind="int",
+        default=25,
+        env_var=None,
+        unit="элементов в неделю",
+        min_value=5,
+        max_value=100,
+    ),
+    SettingDef(
         key="homework_program_ege_deadline",
         group=GROUP_LESSONS,
         title="К какому числу закончить программу ЕГЭ",
