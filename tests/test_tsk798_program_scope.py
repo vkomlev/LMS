@@ -327,6 +327,30 @@ async def test_core_is_trimmed_by_exam_number_not_by_pieces(db):
 
 
 @pytest.mark.asyncio
+async def test_small_hard_number_does_not_squeeze_out_a_big_easy_one(db):
+    """Порядок методиста соблюдается строго, даже ценой недогруза.
+
+    Найдено живой проверкой 05.09: пропуская неместившийся номер и беря
+    следующий («вдруг он меньше»), система оставляла в программе «Задание 27»
+    (9 заданий) вместо «Задания 14» (50) — то есть выпускник учил трудное и
+    бросал простое. Свободные элементы бюджета лучше отдать отработке, чем
+    пересобрать порядок за методиста.
+    """
+    student_id = await _new_user(db)
+    root = await _new_course(db, "order-root")
+    big_easy = await _subcourse(db, root, "крупный-простой", priority=1, theory=50)
+    small_hard = await _subcourse(db, root, "мелкий-трудный", priority=9, theory=5)
+
+    # Бюджет 30: крупный не влезает, мелкий влез бы — но он идёт позже.
+    scope = await _scope(db, student_id, [root], weeks=1, pace=30)
+
+    assert big_easy in scope.excluded_courses
+    assert small_hard in scope.excluded_courses, (
+        "мелкий трудный номер занял место крупного простого"
+    )
+
+
+@pytest.mark.asyncio
 async def test_unmarked_subcourses_never_drop_out(db):
     """Без приоритета номер не выпадает: систему не просили решать за методиста.
 
