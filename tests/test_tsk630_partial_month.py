@@ -13,19 +13,30 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 from sqlalchemy import text
 
 from app.services import charge_service
 from tests.test_tsk505_marketer_pricing import _auth, _new_group, _new_user
-from tests.test_tsk511_charges_breaks import PERIOD, _charge, _setup
+from tests.test_tsk511_charges_breaks import (
+    MONDAYS,
+    MONTH_LAST_DAY,
+    PERIOD,
+    _charge,
+    _setup,
+)
 
 pytestmark = pytest.mark.asyncio
 
-#: В сентябре 2026 понедельников ровно четыре: 7, 14, 21 и 28.
-MONDAYS = (date(2026, 9, 7), date(2026, 9, 14), date(2026, 9, 21), date(2026, 9, 28))
+#: Месяц расчёта и его понедельники (ровно четыре) берутся из tsk-511: он
+#: подбирается будущим, поэтому вычет «прошедший день без занятия» здесь
+#: не примешивается к проверяемому вычету «ещё не пришёл».
+#: Дни ниже задаются от этих понедельников, а не числами календаря.
+DAY_AFTER_FIRST_MONDAY = MONDAYS[0] + timedelta(days=1)
+DAY_AFTER_SECOND_MONDAY = MONDAYS[1] + timedelta(days=1)
+DAY_BEFORE_MONTH = PERIOD - timedelta(days=15)
 
 
 async def _joined_on(db, *, student_id: int, day: date) -> None:
@@ -58,15 +69,17 @@ async def _break(db, *, student_id: int, starts_on: date, ends_on: date) -> None
 
 
 async def test_joined_mid_month_pays_only_remaining_lessons(db, client):
-    """Пришёл 15.09 — платит за два понедельника из четырёх, а не за месяц."""
+    """Пришёл после второго занятия — платит за два понедельника из четырёх."""
     env = await _setup(db, "t630-mid", weekdays=(0,))
-    await _joined_on(db, student_id=env["student_id"], day=date(2026, 9, 15))
+    await _joined_on(
+        db, student_id=env["student_id"], day=DAY_AFTER_SECOND_MONDAY
+    )
 
     counts = await charge_service.lesson_counts_for_month(
         db, student_id=env["student_id"], period=PERIOD
     )
     assert counts.expected == 4, "знаменатель остаётся месячным"
-    assert counts.not_started == 2, "понедельники 7 и 14 — до прихода"
+    assert counts.not_started == 2, "первые два понедельника — до прихода"
     assert counts.on_break == 0
     assert counts.billable == 2
 
@@ -87,7 +100,7 @@ async def test_joined_before_month_pays_full_price(db, client):
     «пришёл 19-го» обязаны стоить по-разному.
     """
     env = await _setup(db, "t630-old", weekdays=(0,))
-    await _joined_on(db, student_id=env["student_id"], day=date(2026, 8, 1))
+    await _joined_on(db, student_id=env["student_id"], day=DAY_BEFORE_MONTH)
 
     counts = await charge_service.lesson_counts_for_month(
         db, student_id=env["student_id"], period=PERIOD
@@ -104,22 +117,22 @@ async def test_joined_before_month_pays_full_price(db, client):
 
 
 async def test_joined_mid_month_and_break_add_up(db, client):
-    """Пришёл 08.09 и ушёл в перерыв с 21.09 — вычитается и то, и другое."""
+    """Пришёл после первого занятия и ушёл в перерыв с третьего — вычитается и то, и другое."""
     env = await _setup(db, "t630-both", weekdays=(0,))
-    await _joined_on(db, student_id=env["student_id"], day=date(2026, 9, 8))
+    await _joined_on(db, student_id=env["student_id"], day=DAY_AFTER_FIRST_MONDAY)
     await _break(
         db,
         student_id=env["student_id"],
-        starts_on=date(2026, 9, 21),
-        ends_on=date(2026, 9, 30),
+        starts_on=MONDAYS[2],
+        ends_on=MONTH_LAST_DAY,
     )
 
     counts = await charge_service.lesson_counts_for_month(
         db, student_id=env["student_id"], period=PERIOD
     )
-    assert counts.not_started == 1, "понедельник 7 — до прихода"
-    assert counts.on_break == 2, "понедельники 21 и 28 — перерыв"
-    assert counts.billable == 1, "оплачивается только 14 сентября"
+    assert counts.not_started == 1, "первый понедельник — до прихода"
+    assert counts.on_break == 2, "третий и четвёртый понедельники — перерыв"
+    assert counts.billable == 1, "оплачивается только второй понедельник"
 
     await charge_service.recalculate_for_student(
         db, student_id=env["student_id"], period=PERIOD
@@ -135,18 +148,20 @@ async def test_break_before_arrival_is_not_counted_twice(db, client):
     меньше нуля занятий — один и тот же день вычли бы дважды.
     """
     env = await _setup(db, "t630-overlap", weekdays=(0,))
-    await _joined_on(db, student_id=env["student_id"], day=date(2026, 9, 8))
+    await _joined_on(db, student_id=env["student_id"], day=DAY_AFTER_FIRST_MONDAY)
     await _break(
         db,
         student_id=env["student_id"],
-        starts_on=date(2026, 9, 1),
-        ends_on=date(2026, 9, 10),
+        starts_on=PERIOD,
+        # Перерыв кончается до второго понедельника: он накрывает только
+        # первый — тот самый день, который уже вычтен как «до прихода».
+        ends_on=MONDAYS[0] + timedelta(days=3),
     )
 
     counts = await charge_service.lesson_counts_for_month(
         db, student_id=env["student_id"], period=PERIOD
     )
-    assert counts.not_started == 1, "понедельник 7 — до прихода"
+    assert counts.not_started == 1, "первый понедельник — до прихода"
     assert counts.on_break == 0, "он же в перерыве, но вычтен уже как «до прихода»"
     assert counts.billable == 3
 
@@ -163,8 +178,8 @@ async def test_second_slot_added_later_does_not_reset_arrival(db, client):
     (слот, ученик) уникальна.
     """
     env = await _setup(db, "t630-relink", weekdays=(0,))
-    await _joined_on(db, student_id=env["student_id"], day=date(2026, 8, 1))
-    # Второй слот — тоже понедельник, но посажен уже среди сентября.
+    await _joined_on(db, student_id=env["student_id"], day=DAY_BEFORE_MONTH)
+    # Второй слот — тоже понедельник, но посажен уже среди месяца.
     second_slot = (
         await db.execute(
             text(
@@ -181,14 +196,14 @@ async def test_second_slot_added_later_does_not_reset_arrival(db, client):
             "VALUES (:sl, :s, true, "
             "        (CAST(:d AS date) + TIME '12:00') AT TIME ZONE 'Europe/Moscow')"
         ),
-        {"sl": second_slot, "s": env["student_id"], "d": date(2026, 9, 15)},
+        {"sl": second_slot, "s": env["student_id"], "d": DAY_AFTER_SECOND_MONDAY},
     )
     await db.commit()
 
     counts = await charge_service.lesson_counts_for_month(
         db, student_id=env["student_id"], period=PERIOD
     )
-    assert counts.not_started == 0, "первая постановка была в августе"
+    assert counts.not_started == 0, "первая постановка была до месяца"
     assert counts.expected == 8, "два слота по понедельникам — восемь занятий"
     assert counts.billable == 8
 

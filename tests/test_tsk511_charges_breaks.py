@@ -24,8 +24,53 @@ from tests.test_tsk505_marketer_pricing import (
 
 pytestmark = pytest.mark.asyncio
 
-#: Месяц с понедельниками ровно 4 раза — чтобы доли считались предсказуемо.
-PERIOD = date(2026, 9, 1)
+
+def _month_days(period: date) -> list[date]:
+    """Все дни месяца, начинающегося с `period`."""
+    days: list[date] = []
+    day = period
+    while day.month == period.month:
+        days.append(day)
+        day += timedelta(days=1)
+    return days
+
+
+def _weekdays_in(period: date, weekday: int) -> list[date]:
+    """Даты месяца, попадающие на заданный день недели (0 = понедельник)."""
+    return [d for d in _month_days(period) if d.weekday() == weekday]
+
+
+def _pick_period() -> date:
+    """Заведомо БУДУЩИЙ месяц с 4 понедельниками и 5 средами.
+
+    Месяц обязан быть будущим: расчёт вычитает дни до прихода ученика
+    (`not_started`) и прошедшие дни без занятия (`missing`), а ученик здесь
+    заводится сегодня. Жёсткий `date(2026, 9, 1)` работал, пока сентябрь 2026
+    был впереди, и поехал в первых числах сентября: сумма стала 550000 * 8/9 —
+    среда 02.09 оказалась «до прихода». Дальше число менялось бы каждый день.
+
+    Форма месяца (ровно 4 понедельника и 5 сред) даёт те же количества занятий,
+    на которые опираются проверки ниже, — их не приходится пересчитывать.
+    """
+    candidate = charge_service.next_month(charge_service.month_start(date.today()))
+    for _ in range(24):
+        if len(_weekdays_in(candidate, 0)) == 4 and len(_weekdays_in(candidate, 2)) == 5:
+            return candidate
+        candidate = charge_service.next_month(candidate)
+    raise AssertionError("не нашли месяц с 4 понедельниками и 5 средами")
+
+
+#: Месяц расчёта: будущий, с 4 понедельниками и 5 средами.
+PERIOD = _pick_period()
+NEXT_PERIOD = charge_service.next_month(PERIOD)
+MONDAYS = _weekdays_in(PERIOD, 0)
+WEDNESDAYS = _weekdays_in(PERIOD, 2)
+MONTH_LAST_DAY = _month_days(PERIOD)[-1]
+assert len(MONDAYS) == 4 and len(WEDNESDAYS) == 5
+
+#: Перерыв на две недели: закрывает 2 понедельника из 4 — ровно половину месяца.
+BREAK_START = MONDAYS[0]
+BREAK_END = MONDAYS[1] + timedelta(days=6)
 
 
 async def _slot_on(db, *, student_id: int, teacher_id: int, weekday: int) -> int:
@@ -89,7 +134,7 @@ async def test_month_base_comes_from_permanent_schedule(db, client):
     counts = await charge_service.lesson_counts_for_month(
         db, student_id=env["student_id"], period=PERIOD
     )
-    # В сентябре 2026 понедельников ровно 4, занятий не сгенерировано ни одного.
+    # Понедельников в месяце ровно 4 (см. _pick_period), занятий не сгенерировано.
     assert counts.expected == 4
     assert counts.on_break == 0
 
@@ -119,8 +164,8 @@ async def test_break_reduces_amount_by_missed_lessons(db, client):
         "/api/v1/methodist/breaks",
         json={
             "student_id": env["student_id"],
-            "starts_on": "2026-09-07",
-            "ends_on": "2026-09-20",
+            "starts_on": BREAK_START.isoformat(),
+            "ends_on": BREAK_END.isoformat(),
             "note": "поездка",
         },
         headers=_auth((await _new_user(db, role="methodist", name="me-half"))[1]),
@@ -145,7 +190,7 @@ async def test_schedule_change_recalculates_open_month(db, client):
     await charge_service.recalculate_month(db, period=PERIOD)
 
     after = await _charge(client, env["token"], env["student_id"])
-    assert after["expected_lessons"] == 9, "4 понедельника + 5 сред в сентябре 2026"
+    assert after["expected_lessons"] == 9, "4 понедельника + 5 сред в месяце расчёта"
 
 
 async def test_closed_month_is_frozen_and_delta_carries_forward(db, client):
@@ -165,8 +210,8 @@ async def test_closed_month_is_frozen_and_delta_carries_forward(db, client):
         "/api/v1/methodist/breaks",
         json={
             "student_id": env["student_id"],
-            "starts_on": "2026-09-07",
-            "ends_on": "2026-09-20",
+            "starts_on": BREAK_START.isoformat(),
+            "ends_on": BREAK_END.isoformat(),
         },
         headers=_auth(methodist_token),
     )
@@ -176,10 +221,10 @@ async def test_closed_month_is_frozen_and_delta_carries_forward(db, client):
     assert frozen["status"] == "closed"
     assert frozen["total_minor"] == 550000, "закрытый месяц не переписывают задним числом"
 
-    nxt = await _charge(client, env["token"], env["student_id"], date(2026, 10, 1))
+    nxt = await _charge(client, env["token"], env["student_id"], NEXT_PERIOD)
     assert nxt is not None, "перенос должен был создать следующий месяц"
     assert nxt["adjustments_minor"] == -275000
-    assert "Перенос за 09.2026" in (nxt["adjustment_details"] or "")
+    assert f"Перенос за {PERIOD:%m.%Y}" in (nxt["adjustment_details"] or "")
 
 
 async def test_carry_forward_does_not_double_on_repeated_recalc(db, client):
@@ -196,8 +241,8 @@ async def test_carry_forward_does_not_double_on_repeated_recalc(db, client):
         "/api/v1/methodist/breaks",
         json={
             "student_id": env["student_id"],
-            "starts_on": "2026-09-07",
-            "ends_on": "2026-09-20",
+            "starts_on": BREAK_START.isoformat(),
+            "ends_on": BREAK_END.isoformat(),
         },
         headers=_auth(methodist_token),
     )
@@ -265,8 +310,8 @@ async def test_manual_price_is_not_prorated_by_break(db, client):
         "/api/v1/methodist/breaks",
         json={
             "student_id": env["student_id"],
-            "starts_on": "2026-09-01",
-            "ends_on": "2026-09-30",
+            "starts_on": PERIOD.isoformat(),
+            "ends_on": MONTH_LAST_DAY.isoformat(),
         },
         headers=_auth(methodist_token),
     )
@@ -284,9 +329,9 @@ async def test_break_pauses_only_scheduled_and_restores_on_delete(db, client):
 
     made: dict[str, int] = {}
     for tag, day, status in (
-        ("будущее", date(2026, 9, 7), "scheduled"),
-        ("отмечено", date(2026, 9, 14), "confirmed"),
-        ("вне перерыва", date(2026, 9, 28), "scheduled"),
+        ("будущее", MONDAYS[0], "scheduled"),
+        ("отмечено", MONDAYS[1], "confirmed"),
+        ("вне перерыва", MONDAYS[3], "scheduled"),
     ):
         occ_id = (
             await db.execute(
@@ -312,8 +357,8 @@ async def test_break_pauses_only_scheduled_and_restores_on_delete(db, client):
         "/api/v1/methodist/breaks",
         json={
             "student_id": student_id,
-            "starts_on": "2026-09-07",
-            "ends_on": "2026-09-20",
+            "starts_on": BREAK_START.isoformat(),
+            "ends_on": BREAK_END.isoformat(),
         },
         headers=_auth(methodist_token),
     )
@@ -354,7 +399,13 @@ async def test_overlapping_breaks_do_not_unpause_each_other(db, client):
             ),
             {
                 "t": env["teacher_id"],
-                "at": datetime(2026, 9, 14, 10, tzinfo=timezone(timedelta(hours=3))),
+                "at": datetime(
+                    MONDAYS[1].year,
+                    MONDAYS[1].month,
+                    MONDAYS[1].day,
+                    10,
+                    tzinfo=timezone(timedelta(hours=3)),
+                ),
             },
         )
     ).scalar()
@@ -370,12 +421,22 @@ async def test_overlapping_breaks_do_not_unpause_each_other(db, client):
     token = (await _new_user(db, role="methodist", name="me-overlap"))[1]
     first = await client.post(
         "/api/v1/methodist/breaks",
-        json={"student_id": student_id, "starts_on": "2026-09-07", "ends_on": "2026-09-20"},
+        json={
+            "student_id": student_id,
+            "starts_on": BREAK_START.isoformat(),
+            "ends_on": BREAK_END.isoformat(),
+        },
         headers=_auth(token),
     )
     second = await client.post(
         "/api/v1/methodist/breaks",
-        json={"student_id": student_id, "starts_on": "2026-09-10", "ends_on": "2026-09-30"},
+        json={
+            "student_id": student_id,
+            # Начинается позже первого перерыва и тянется до конца месяца —
+            # общий у них день MONDAYS[1].
+            "starts_on": (MONDAYS[0] + timedelta(days=3)).isoformat(),
+            "ends_on": MONTH_LAST_DAY.isoformat(),
+        },
         headers=_auth(token),
     )
     assert first.status_code == 201 and second.status_code == 201
@@ -398,21 +459,25 @@ async def test_overlapping_breaks_do_not_unpause_each_other(db, client):
 async def test_break_across_month_boundary_recalculates_both(db, client):
     """Перерыв поперёк границы месяцев пересчитывает оба месяца."""
     env = await _setup(db, "cross", weekdays=(0,), price=550000)
-    await charge_service.recalculate_month(db, period=date(2026, 9, 1))
-    await charge_service.recalculate_month(db, period=date(2026, 10, 1))
+    await charge_service.recalculate_month(db, period=PERIOD)
+    await charge_service.recalculate_month(db, period=NEXT_PERIOD)
 
     token = (await _new_user(db, role="methodist", name="me-cross"))[1]
     resp = await client.post(
         "/api/v1/methodist/breaks",
-        json={"student_id": env["student_id"], "starts_on": "2026-09-21", "ends_on": "2026-10-11"},
+        json={
+            "student_id": env["student_id"],
+            "starts_on": MONDAYS[2].isoformat(),
+            "ends_on": (NEXT_PERIOD + timedelta(days=10)).isoformat(),
+        },
         headers=_auth(token),
     )
     assert resp.status_code == 201, resp.text
 
-    sep = await _charge(client, env["token"], env["student_id"], date(2026, 9, 1))
-    oct_ = await _charge(client, env["token"], env["student_id"], date(2026, 10, 1))
-    assert sep["break_lessons"] > 0
-    assert oct_["break_lessons"] > 0, "соседний месяц тоже обязан пересчитаться"
+    first = await _charge(client, env["token"], env["student_id"], PERIOD)
+    second = await _charge(client, env["token"], env["student_id"], NEXT_PERIOD)
+    assert first["break_lessons"] > 0
+    assert second["break_lessons"] > 0, "соседний месяц тоже обязан пересчитаться"
 
 
 async def test_manual_amount_rejected_on_closed_month(db, client):
@@ -471,7 +536,11 @@ async def test_break_only_for_students(db, client):
     victim_id, _ = await _new_user(db, role="teacher", name="victim-brk")
     resp = await client.post(
         "/api/v1/methodist/breaks",
-        json={"student_id": victim_id, "starts_on": "2026-09-01", "ends_on": "2026-09-02"},
+        json={
+            "student_id": victim_id,
+            "starts_on": PERIOD.isoformat(),
+            "ends_on": (PERIOD + timedelta(days=1)).isoformat(),
+        },
         headers=_auth(token),
     )
     assert resp.status_code == 404
@@ -482,7 +551,11 @@ async def test_break_end_before_start_is_rejected(db, client):
     student_id, _ = await _new_user(db, role="student", name="s-badrange")
     resp = await client.post(
         "/api/v1/methodist/breaks",
-        json={"student_id": student_id, "starts_on": "2026-09-10", "ends_on": "2026-09-01"},
+        json={
+            "student_id": student_id,
+            "starts_on": (PERIOD + timedelta(days=9)).isoformat(),
+            "ends_on": PERIOD.isoformat(),
+        },
         headers=_auth(token),
     )
     assert resp.status_code == 422
