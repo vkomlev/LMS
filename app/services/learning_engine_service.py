@@ -41,7 +41,10 @@ from app.services.task_sampling import sample_task_ids
 # tsk-798: персональный объём программы. Порог выборки зависит от срока и темпа
 # КОНКРЕТНОГО ученика, и знать это может только его план — общая настройка
 # подкурса не различает ноябрьского новичка и того, кто идёт с сентября.
-from app.services.program_scope_service import thresholds_for as program_scope_thresholds
+from app.services.program_scope_service import (
+    excluded_courses_for as program_scope_excluded,
+    thresholds_for as program_scope_thresholds,
+)
 # tsk-692: содержимое, добавленное в курс после того, как ученик прошёл тему,
 # приходит ему рекомендуемым, а не долгом. Правило живёт отдельным модулем и
 # зовётся функцией, а не повторяется условием в каждой точке (иначе копии
@@ -803,6 +806,29 @@ class LearningEngineService:
             excluded_tasks |= await self._sampled_out_task_ids(
                 db, sampled_course_id, student_id, cfg
             )
+
+        # tsk-798: номера, выпавшие из сокращённой программы, из знаменателя
+        # уходят целиком — по той же причине, что и вырезанное выборкой: их
+        # ученику не предложат, и без правки курс не дошёл бы до COMPLETED
+        # никогда. Множеством, а не вычитанием счётчиков: задание выпавшего
+        # номера могло попасть и в `graced`, и в выборку — сумма вычла бы его
+        # дважды и занизила знаменатель.
+        dropped_courses = (
+            await program_scope_excluded(db, student_id=student_id)
+        ) & set(tree_ids)
+        if dropped_courses:
+            excluded_tasks |= set(
+                (
+                    await db.execute(
+                        text(
+                            "SELECT id FROM tasks WHERE course_id = ANY(:ids) "
+                            "  AND COALESCE(is_active, true) "
+                            "  AND requirement_level IN ('required', 'skippable')"
+                        ),
+                        {"ids": list(dropped_courses)},
+                    )
+                ).scalars().all()
+            )
         total_tasks = max(0, total_tasks - len(excluded_tasks))
 
         materials_count_stmt = select(func.count(Materials.id)).where(
@@ -811,7 +837,21 @@ class LearningEngineService:
             Materials.requirement_level.in_(("required", "skippable")),
         )
         r = await db.execute(materials_count_stmt)
-        total_materials = max(0, (r.scalar() or 0) - len(graced.materials))
+        excluded_materials: set[int] = set(graced.materials)
+        if dropped_courses:
+            excluded_materials |= set(
+                (
+                    await db.execute(
+                        text(
+                            "SELECT id FROM materials WHERE course_id = ANY(:ids) "
+                            "  AND COALESCE(is_active, true) "
+                            "  AND requirement_level IN ('required', 'skippable')"
+                        ),
+                        {"ids": list(dropped_courses)},
+                    )
+                ).scalars().all()
+            )
+        total_materials = max(0, (r.scalar() or 0) - len(excluded_materials))
 
         # Число заданий в дереве, по которым последний task_result — PASS.
         # Парность compute_task_state: учитываем все task_results из не-cancelled attempts
@@ -1502,6 +1542,13 @@ class LearningEngineService:
         if not rows:
             return rows
 
+        # tsk-798: номер, выпавший из сокращённой программы этого ученика, не
+        # выдаётся целиком — вместе с теорией и отработкой. Половина разбора
+        # не готовит ни к чему, а решение «этот номер не проходим» принимает
+        # методист приоритетами, не система.
+        if course_id in await program_scope_excluded(db, student_id=student_id):
+            return []
+
         cfg_map = await self._sampling_enabled_courses(
             db, [course_id], student_id=student_id
         )
@@ -1533,6 +1580,10 @@ class LearningEngineService:
         rows = await self._ordered_material_rows(db, course_id)
         if not rows:
             return rows
+        # tsk-798: у выпавшего номера прячется и теория — иначе ученик получил
+        # бы разбор темы, задания по которой ему всё равно не покажут.
+        if course_id in await program_scope_excluded(db, student_id=student_id):
+            return []
         graced = await compute_graced_items(db, student_id, root_course_id or course_id)
         if not graced.materials:
             return rows

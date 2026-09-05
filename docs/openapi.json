@@ -52589,8 +52589,16 @@
           "program_core_trimmed": {
             "type": "boolean",
             "title": "Program Core Trimmed",
-            "description": "Бюджета не хватает даже на ядро — программу придётся резать по номерам ЕГЭ. Это решение методиста, система его не принимает сама",
+            "description": "Бюджета не хватает даже на ядро — программа сокращена по номерам ЕГЭ. Пустой `program_dropped_courses` при этом значит, что резать было нечего: приоритеты номеров не размечены, и система не стала решать за методиста",
             "default": false
+          },
+          "program_dropped_courses": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Program Dropped Courses",
+            "description": "Названия номеров, выпавших из программы этого ученика. Выпадает номер ЦЕЛИКОМ — с теорией и отработкой: половина разбора не готовит ни к чему"
           },
           "target_unreachable": {
             "type": "boolean",

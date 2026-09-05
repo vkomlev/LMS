@@ -40,6 +40,7 @@
 """
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
@@ -98,6 +99,9 @@ class ProgramScope:
     core_trimmed: bool
     #: `{course_id: порог выборки}` — бюджет, разложенный по подкурсам.
     per_course: dict[int, int]
+    #: Подкурсы (номера ЕГЭ), выпавшие из программы целиком. Пусто — ничего не
+    #: выброшено: либо ядро поместилось, либо приоритеты не размечены.
+    excluded_courses: frozenset[int] = frozenset()
 
     @property
     def drill_ratio(self) -> float:
@@ -142,6 +146,8 @@ tasks_done AS (
      WHERE stp.student_id = :student_id AND stp.status = 'skipped'
 )
 SELECT ct.course_id,
+       (SELECT c.program_priority FROM courses c WHERE c.id = ct.course_id)
+           AS program_priority,
        count(*) FILTER (
            WHERE ct.code = ANY(:core_codes)
              AND ct.id NOT IN (SELECT id FROM tasks_done)
@@ -153,7 +159,8 @@ SELECT ct.course_id,
        count(*) FILTER (
            WHERE ct.code = ANY(:drill_codes)
              AND ct.id IN (SELECT id FROM tasks_done)
-       ) AS drill_done
+       ) AS drill_done,
+       count(*) FILTER (WHERE ct.id IN (SELECT id FROM tasks_done)) AS done_any
   FROM course_tasks ct
  GROUP BY ct.course_id
 """
@@ -171,7 +178,7 @@ WITH RECURSIVE tree AS (
       FROM tree t
       JOIN course_parents cp ON cp.parent_course_id = t.member_course_id
 )
-SELECT count(*) AS n
+SELECT m.course_id, count(*) AS n
   FROM materials m
   JOIN tree ON tree.member_course_id = m.course_id
  WHERE COALESCE(m.is_active, true) AND m.requirement_level = ANY(:levels)
@@ -180,6 +187,7 @@ SELECT count(*) AS n
         WHERE smp.student_id = :student_id AND smp.material_id = m.id
           AND smp.status IN ('completed', 'skipped')
    )
+ GROUP BY m.course_id
 """
 
 
@@ -228,6 +236,61 @@ def _split_budget(
     return result
 
 
+def _trim_core(
+    core_by_course: dict[int, int],
+    priority_by_course: dict[int, Optional[int]],
+    budget: int,
+    started: Optional[set[int]] = None,
+) -> tuple[set[int], int]:
+    """Какие подкурсы выпадают, когда бюджета не хватает даже на ядро.
+
+    Решение оператора 05.09: резать **по номерам ЕГЭ** — выбрасывать номер
+    целиком, а не куски из каждого. Половина разбора каждого номера не готовит
+    ни к одному из них; целый номер, пройденный до конца, даёт балл.
+
+    Подкурсы берутся по возрастанию `program_priority`, пока помещаются в
+    бюджет. Не выпадают никогда две группы:
+
+    * **неразмеченные** (`priority is None`) — NULL означает «методист сюда не
+      смотрел», и выбросить у выпускника разбор номера по догадке хуже, чем
+      показать преподавателю, что программа не помещается;
+    * **начатые** (`started`) — отнять номер, в котором человек уже что-то
+      решил, значит обесценить сделанную работу. Темп меняется по ходу года, и
+      без этого правила номер выпадал бы у того, кто просто сбавил на неделю.
+
+    Args:
+        core_by_course: сколько несокращаемых элементов в каждом подкурсе.
+        priority_by_course: приоритет подкурса; None — не размечен.
+        budget: сколько элементов ученик успевает всего.
+        started: подкурсы, где у ученика уже есть пройденное.
+
+    Returns:
+        `(что выбросить, сколько ядра осталось)`.
+    """
+    protected = {cid for cid, p in priority_by_course.items() if p is None}
+    protected |= set(started or ()) & set(core_by_course)
+    protected_size = sum(core_by_course.get(cid, 0) for cid in protected)
+
+    # Размеченные — кандидаты на выбывание, по возрастанию приоритета.
+    ranked = sorted(
+        (cid for cid in core_by_course if cid not in protected),
+        key=lambda cid: (priority_by_course[cid], cid),
+    )
+
+    kept_size = protected_size
+    excluded: set[int] = set()
+    for cid in ranked:
+        size = core_by_course.get(cid, 0)
+        if kept_size + size <= budget:
+            kept_size += size
+        else:
+            # Не `break`: следующий номер может оказаться меньше и поместиться.
+            # Выбрасывать заодно и его только потому, что не влез предыдущий, —
+            # значит терять то, что ученик успел бы пройти.
+            excluded.add(cid)
+    return excluded, kept_size
+
+
 async def compute_scope(
     db: AsyncSession,
     *,
@@ -270,8 +333,9 @@ async def compute_scope(
         )
     ).mappings().all()
 
-    materials_left = int(
-        (
+    materials_by_course = {
+        int(r["course_id"]): int(r["n"])
+        for r in (
             await db.execute(
                 text(_MATERIALS_LEFT_SQL),
                 {
@@ -280,9 +344,9 @@ async def compute_scope(
                     "levels": _requirement_levels(),
                 },
             )
-        ).scalar()
-        or 0
-    )
+        ).mappings()
+    }
+    materials_left = sum(materials_by_course.values())
 
     per_course_drill = {
         int(r["course_id"]): int(r["drill_left"])
@@ -298,6 +362,44 @@ async def compute_scope(
     budget = int(planned_pace * weeks_left)
 
     core_trimmed = budget < core_total
+    excluded: set[int] = set()
+    if core_trimmed:
+        # Ядро не помещается — режем его ПО НОМЕРАМ (решение оператора 05.09).
+        # Материалы подкурса считаются вместе с его заданиями: выбрасывая
+        # номер, выбрасываем и его теорию, иначе ученик получил бы разбор
+        # темы, задания по которой ему всё равно не покажут.
+        core_by_course = {
+            int(r["course_id"]): int(r["core_left"])
+            + materials_by_course.get(int(r["course_id"]), 0)
+            for r in rows
+        }
+        for cid, n in materials_by_course.items():
+            core_by_course.setdefault(cid, n)
+        priority_by_course = {
+            int(r["course_id"]): (
+                int(r["program_priority"])
+                if r["program_priority"] is not None
+                else None
+            )
+            for r in rows
+        }
+        for cid in core_by_course:
+            priority_by_course.setdefault(cid, None)
+
+        started = {
+            int(r["course_id"]) for r in rows if int(r["done_any"]) > 0
+        }
+        excluded, core_total = _trim_core(
+            core_by_course, priority_by_course, budget, started=started
+        )
+        # Выпавшие подкурсы уходят из программы целиком — вместе со своим
+        # тренажёром: задавать отработку по номеру, который не проходим, незачем.
+        for cid in excluded:
+            per_course_drill.pop(cid, None)
+        drill_total = sum(per_course_drill.values())
+        # Признак остаётся поднятым, даже если после резки всё поместилось:
+        # преподаватель обязан знать, что программа этого ученика короче.
+
     drill_allowed = max(budget - core_total, 0)
 
     # Совсем тонкий слой отработки бесполезен: курс без практики — это не
@@ -328,6 +430,7 @@ async def compute_scope(
         drill_allowed=allowed,
         core_trimmed=core_trimmed,
         per_course=per_course,
+        excluded_courses=frozenset(excluded),
     )
 
 
@@ -374,11 +477,11 @@ async def store_scope(
             INSERT INTO student_program_scope (
                 student_id, program_kind, deadline, planned_pace,
                 core_total, drill_total, drill_allowed, core_trimmed,
-                per_course, computed_at
+                per_course, excluded_courses, computed_at
             ) VALUES (
                 :sid, :kind, :deadline, :pace,
                 :core_total, :drill_total, :drill_allowed, :core_trimmed,
-                CAST(:per_course AS jsonb), now()
+                CAST(:per_course AS jsonb), CAST(:excluded AS jsonb), now()
             )
             ON CONFLICT (student_id, program_kind) DO UPDATE SET
                 deadline = EXCLUDED.deadline,
@@ -388,6 +491,7 @@ async def store_scope(
                 drill_allowed = EXCLUDED.drill_allowed,
                 core_trimmed = EXCLUDED.core_trimmed,
                 per_course = EXCLUDED.per_course,
+                excluded_courses = EXCLUDED.excluded_courses,
                 computed_at = now()
             """
         ),
@@ -401,6 +505,7 @@ async def store_scope(
             "drill_allowed": scope.drill_allowed,
             "core_trimmed": scope.core_trimmed,
             "per_course": _json_keys(merged),
+            "excluded": json.dumps(sorted(scope.excluded_courses)),
         },
     )
     return merged
@@ -464,7 +569,53 @@ async def refresh_for_student(
         drill_allowed=scope.drill_allowed,
         core_trimmed=scope.core_trimmed,
         per_course=merged,
+        excluded_courses=scope.excluded_courses,
     )
+
+
+async def excluded_courses_for(
+    db: AsyncSession, *, student_id: int
+) -> frozenset[int]:
+    """Подкурсы, выпавшие из программы ученика (tsk-798).
+
+    Пустое множество — ничего не выброшено: ядро поместилось, приоритеты не
+    размечены или плана нет вовсе. Движок в этом случае ведёт себя как раньше.
+
+    Ученик может держать план и по ЕГЭ, и по ОГЭ (подкурсы у них общие) —
+    берётся ПЕРЕСЕЧЕНИЕ: номер, нужный хотя бы одной из его программ, выпасть
+    не может.
+    """
+    rows = (
+        await db.execute(
+            text(
+                "SELECT excluded_courses FROM student_program_scope "
+                " WHERE student_id = :sid"
+            ),
+            {"sid": student_id},
+        )
+    ).scalars().all()
+
+    sets: list[set[int]] = []
+    for raw in rows:
+        if not isinstance(raw, list):
+            continue
+        current: set[int] = set()
+        for cid in raw:
+            try:
+                current.add(int(cid))
+            except (TypeError, ValueError):
+                logger.warning(
+                    "tsk-798: битый excluded_courses у ученика %s: %r",
+                    student_id, cid,
+                )
+        sets.append(current)
+
+    if not sets:
+        return frozenset()
+    result = sets[0]
+    for other in sets[1:]:
+        result &= other
+    return frozenset(result)
 
 
 async def thresholds_for(

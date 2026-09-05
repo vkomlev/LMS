@@ -23,6 +23,7 @@ import logging
 from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Path, status
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_async_db, get_bare_db, require_authenticated, require_role
@@ -115,11 +116,26 @@ async def get_homework_volume(
             deadline=program["deadline"],
             fact_per_week=plan.fact_per_week,
         )
+        dropped: list[str] = []
+        if scope.excluded_courses:
+            dropped = [
+                str(t)
+                for t in (
+                    await db.execute(
+                        text(
+                            "SELECT title FROM courses WHERE id = ANY(:ids) "
+                            " ORDER BY program_priority, id"
+                        ),
+                        {"ids": sorted(scope.excluded_courses)},
+                    )
+                ).scalars().all()
+            ]
         details.update(
             program_core_total=scope.core_total,
             program_drill_total=scope.drill_total,
             program_drill_allowed=scope.drill_allowed,
             program_core_trimmed=scope.core_trimmed,
+            program_dropped_courses=dropped,
         )
     return HomeworkVolumeRead(**details)
 

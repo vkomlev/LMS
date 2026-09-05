@@ -69,6 +69,14 @@ class StudentProgramScope(Base):
             "подкурсам пропорционально их размеру. Только растёт"
         ),
     )
+    excluded_courses: Mapped[list[int]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb"),
+        comment=(
+            "Подкурсы, выпавшие из программы этого ученика: бюджета не хватило "
+            "даже на ядро. Задания и материалы этих подкурсов ему не выдаются "
+            "и не считаются в прогрессе"
+        ),
+    )
     computed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("now()"), nullable=False,
     )

@@ -285,6 +285,145 @@ async def test_threshold_never_shrinks_between_recalculations(db):
     assert stored[course_id] == generous.per_course[course_id]
 
 
+async def _subcourse(db, root: int, title: str, *, priority: int | None,
+                     theory: int = 0, easy: int = 0, normal: int = 0) -> int:
+    """Подкурс-«номер ЕГЭ» с заданным приоритетом включения в программу."""
+    cid = await _new_course(db, title)
+    await db.execute(
+        text(
+            "INSERT INTO course_parents (parent_course_id, course_id) VALUES (:p, :c)"
+        ),
+        {"p": root, "c": cid},
+    )
+    await db.execute(
+        text("UPDATE courses SET program_priority = :p WHERE id = :c"),
+        {"p": priority, "c": cid},
+    )
+    await db.commit()
+    await _fill_course(db, cid, theory=theory, easy=easy, normal=normal)
+    return cid
+
+
+@pytest.mark.asyncio
+async def test_core_is_trimmed_by_exam_number_not_by_pieces(db):
+    """Не помещается ядро — выпадает номер ЦЕЛИКОМ, по приоритету методиста.
+
+    Решение оператора 05.09. Половина разбора каждого номера не готовит ни к
+    одному из них; целый номер, пройденный до конца, даёт балл.
+    """
+    student_id = await _new_user(db)
+    root = await _new_course(db, "program-root")
+    first = await _subcourse(db, root, "номер-1", priority=1, theory=40)
+    second = await _subcourse(db, root, "номер-2", priority=2, theory=40)
+    last = await _subcourse(db, root, "номер-9", priority=9, theory=40)
+
+    # Бюджет 25 × 2 недели = 50: помещается один номер из трёх.
+    scope = await _scope(db, student_id, [root], weeks=2, pace=25)
+
+    assert scope.core_trimmed is True
+    assert first not in scope.excluded_courses, "первый по приоритету обязан остаться"
+    assert {second, last} <= scope.excluded_courses
+    assert scope.core_total == 40, "в ядре остался ровно один номер"
+
+
+@pytest.mark.asyncio
+async def test_unmarked_subcourses_never_drop_out(db):
+    """Без приоритета номер не выпадает: систему не просили решать за методиста.
+
+    NULL означает «сюда не смотрели». Выбросить у выпускника разбор номера по
+    догадке хуже, чем показать преподавателю, что программа не помещается.
+    """
+    student_id = await _new_user(db)
+    root = await _new_course(db, "unmarked-root")
+    await _subcourse(db, root, "без-приоритета-1", priority=None, theory=40)
+    await _subcourse(db, root, "без-приоритета-2", priority=None, theory=40)
+
+    scope = await _scope(db, student_id, [root], weeks=1, pace=25)
+
+    assert scope.core_trimmed is True, "о нехватке сказать всё равно обязаны"
+    assert scope.excluded_courses == frozenset(), "выброшено то, чего не размечали"
+
+
+@pytest.mark.asyncio
+async def test_started_number_is_not_taken_away(db):
+    """Номер, в котором ученик уже что-то решил, не отнимается.
+
+    Темп меняется по ходу года, и без этого правила номер выпадал бы у того,
+    кто просто сбавил на неделю, — вместе с уже сделанной работой.
+    """
+    from tests.test_tsk741_homework import _submit
+
+    student_id = await _new_user(db)
+    root = await _new_course(db, "started-root")
+    cheap = await _subcourse(db, root, "дешёвый", priority=1, theory=30)
+    started = await _subcourse(db, root, "начатый", priority=9, theory=30)
+
+    task_id = (
+        await db.execute(
+            text("SELECT id FROM tasks WHERE course_id = :c LIMIT 1"), {"c": started}
+        )
+    ).scalar()
+    await _submit(
+        db, student_id=student_id, task_id=int(task_id), course_id=started,
+        is_correct=True, at=datetime.now(UTC) - timedelta(days=40),
+    )
+    await db.commit()
+
+    # Бюджета хватает ровно на один номер. По приоритету это был бы `cheap`,
+    # но защита начатого сильнее: у ученика уже есть работа в `started`, и
+    # выпадает поэтому `cheap`, а не он.
+    scope = await _scope(db, student_id, [root], weeks=1, pace=30)
+
+    assert started not in scope.excluded_courses, "отняли начатое"
+    assert cheap in scope.excluded_courses
+    assert scope.core_total == 29, "остался начатый номер без решённого задания"
+
+
+@pytest.mark.asyncio
+async def test_engine_hides_a_dropped_number_completely(db):
+    """Выпавший номер не выдаётся ни заданиями, ни теорией.
+
+    Иначе ученик получил бы разбор темы, задания по которой ему не покажут, —
+    и курс не дошёл бы до COMPLETED, потому что в знаменателе остались бы
+    элементы, которых он никогда не увидит.
+    """
+    from app.services.learning_engine_service import LearningEngineService
+
+    student_id = await _new_user(db)
+    root = await _new_course(db, "engine-trim-root")
+    kept = await _subcourse(db, root, "остаётся", priority=1, theory=20)
+    dropped = await _subcourse(db, root, "выпадает", priority=9, theory=20)
+    await db.execute(
+        text(
+            "INSERT INTO materials (course_id, title, type, content, order_position) "
+            "VALUES (:c, :t, 'text', CAST(:body AS jsonb), 1)"
+        ),
+        {"c": dropped, "t": f"{_TAG} теория", "body": json.dumps({"body": "x"})},
+    )
+    await db.execute(
+        text(
+            "INSERT INTO user_courses (user_id, course_id, is_active) "
+            "VALUES (:u, :c, true)"
+        ),
+        {"u": student_id, "c": root},
+    )
+    await db.commit()
+
+    scope = await _scope(db, student_id, [root], weeks=1, pace=20)
+    assert dropped in scope.excluded_courses
+    await scope_service.store_scope(db, student_id=student_id, scope=scope)
+    await db.commit()
+
+    service = LearningEngineService()
+    assert await service._effective_task_rows(db, dropped, student_id) == []
+    assert await service._effective_material_rows(db, dropped, student_id) == []
+    assert len(await service._effective_task_rows(db, kept, student_id)) == 20
+
+    # И знаменатель курса не считает выпавшее — иначе COMPLETED недостижим.
+    state = await service.compute_course_state(db, student_id, root)
+    assert state is not None
+
+
 @pytest.mark.asyncio
 async def test_engine_hides_tasks_outside_the_personal_scope(db):
     """Движок выдаёт ровно то, что попало в персональный объём.

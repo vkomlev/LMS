@@ -2,7 +2,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, List, Optional
 from datetime import datetime
 from sqlalchemy import (
-    Integer, String, Text, Boolean, DateTime,
+    Integer, SmallInteger, String, Text, Boolean, DateTime,
     Enum, ForeignKeyConstraint, Index, PrimaryKeyConstraint, text
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -75,6 +75,15 @@ class Courses(Base):
         comment=(
             "Выборка заданий по сложности на подкурс (tsk-314): "
             "{enabled, threshold, easy_ratio}. NULL/enabled=false = все задания."
+        ),
+    )
+    program_priority: Mapped[Optional[int]] = mapped_column(
+        SmallInteger,
+        nullable=True,
+        comment=(
+            "tsk-798: место номера ЕГЭ в сокращённой программе, меньше — "
+            "входит раньше. NULL = не размечено, такой подкурс не выпадает "
+            "никогда. Ставит методист: из данных этот порядок не выводится"
         ),
     )
 
