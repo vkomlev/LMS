@@ -261,6 +261,15 @@ async def change_student_subscription(
             status.HTTP_409_CONFLICT, f"Ученик уже на тарифе «{body.plan_code}»"
         )
 
+    # tsk-804: деньги уходящего пересчитываются ДО смены тарифа. У «Выпускника»
+    # тарифной группы нет, и после смены считать месяц становится не из чего —
+    # у ушедшего 1-го числа строка удалилась бы вместе с долгом. Порядок tsk-673
+    # (свод → заморозка → снятие) при этом сохраняется: пересчёт встаёт перед
+    # ним целиком. Падение любого следующего шага откатывает и этот пересчёт —
+    # сессия закрывается без commit.
+    if body.plan_code == graduation_service.ALUMNI_PLAN_CODE:
+        await graduation_service.recalculate_on_leave(db, student_id)
+
     changed = await subscription_service.change_plan(
         db,
         student_id,

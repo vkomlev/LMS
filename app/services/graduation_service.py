@@ -40,6 +40,7 @@ from datetime import date
 from typing import Optional
 
 from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services import charge_service, inbox_service, payment_service
@@ -59,6 +60,7 @@ __all__ = [
     "settlement",
     "schedule_plan",
     "preview",
+    "recalculate_on_leave",
     "apply",
     "assert_course_work_allowed",
 ]
@@ -366,6 +368,57 @@ async def _detach_from_schedule(db: AsyncSession, student_id: int) -> tuple[int,
     return slots.rowcount, lessons.rowcount
 
 
+async def recalculate_on_leave(
+    db: AsyncSession, student_id: int, *, left_on: Optional[date] = None
+) -> int:
+    """Пересчитать открытые месяцы уходящего с учётом дня ухода. Без commit.
+
+    **Зовётся ДО смены тарифа, и это не косметика.** Расчёт берёт тарифную
+    группу подписки, действовавшей на ПЕРВОЕ ЧИСЛО месяца (tsk-585), а у
+    «Выпускника» тарифной группы нет вовсе. Ученику, ушедшему 1-го числа, новая
+    строка подписки перекрывает прежнюю уже на первое число — считать становится
+    не из чего, и `recalculate_student_group` удалит открытую строку вместе с
+    долгом. Ровно та ловушка, из-за которой в tsk-673 пересчёт при выпуске не
+    звали вовсе. До смены тарифа прежняя подписка ещё действует, а день ухода
+    передаётся параметром — база верна, вычет тоже.
+
+    **Почему не `charge_service.recalculate_open_months_for_student`**, хотя
+    отбор месяцев там ровно такой же: она коммитит. Выпуск обязан быть одним
+    целым (см. `apply`), и коммит посреди него оставил бы человека с
+    пересчитанным месяцем, но без снятия с расписания, если следующий шаг упадёт.
+
+    Прошедшие месяцы не трогаются: `recalculate_student_group` их не пересчитает
+    (tsk-756), и это правильно — уход не повод переписывать август.
+
+    Returns:
+        Сколько строк месяцев пересчитано.
+    """
+    left_on = left_on or date.today()
+    rows = (
+        await db.execute(
+            text(
+                "SELECT group_id, period FROM student_monthly_charge "
+                " WHERE student_id = :s AND status = 'open' AND period >= :cur "
+                " ORDER BY period, group_id"
+            ),
+            {"s": student_id, "cur": charge_service.month_start(date.today())},
+        )
+    ).all()
+    for row in rows:
+        await charge_service.recalculate_student_group(
+            db,
+            student_id=student_id,
+            group_id=int(row.group_id),
+            period=row.period,
+            left_on=left_on,
+        )
+    logger.info(
+        "tsk-804: ученику %s пересчитано открытых месяцев %s с днём ухода %s",
+        student_id, len(rows), left_on,
+    )
+    return len(rows)
+
+
 async def _freeze_charges(
     db: AsyncSession, student_id: int, *, closed_by: Optional[int]
 ) -> int:
@@ -378,8 +431,12 @@ async def _freeze_charges(
     ни расписания, ни тарифной группы, — и «сколько он остался должен» перестало
     бы существовать как факт.
 
-    Суммы не меняются: закрытие переставляет только статус. Итог месяца по школе
-    от этого не сдвигается ни на копейку.
+    Суммы здесь не меняются: закрытие переставляет только статус. Считает их
+    :func:`recalculate_on_leave` — ДО смены тарифа и до этого шага (tsk-804).
+    Раньше пересчёта не было вовсе, и месяц замерзал таким, каким его посчитали
+    1-го числа на весь месяц вперёд: ученице, ушедшей 06.09 после одного
+    занятия, закрыли сентябрь на 5 500 ₽ — долг за восемь занятий, которых уже
+    не будет.
 
     Отличается от `charge_service.close_month` адресатом: тот закрывает месяц
     ВСЕЙ школе разом (действие маркетолога раз в месяц), здесь — строки одного
@@ -494,12 +551,42 @@ async def _notify_marketers(
 async def preview(
     db: AsyncSession, student_id: int, *, today: Optional[date] = None
 ) -> GraduationPreview:
-    """Что произойдёт при переводе — до нажатия и без единой записи."""
-    return GraduationPreview(
-        student_id=student_id,
-        schedule=await schedule_plan(db, student_id),
-        settlement=await settlement(db, student_id, today=today),
-    )
+    """Что произойдёт при переводе — до нажатия и без единой записи.
+
+    Свод считается ПОСЛЕ пересчёта с днём ухода, иначе экран показал бы одну
+    сумму, а перевод списал другую: месяц начисляется на весь месяц вперёд, и
+    уходящему среди месяца эти суммы расходятся втрое (tsk-804). Пересчёт идёт
+    во вложенной транзакции и откатывается целиком — «без единой записи»
+    остаётся правдой, а формула остаётся одна, здесь её копии нет.
+
+    Пересчёт может не удаться на гонке (платёж пришёл ровно между проверкой и
+    удалением строки — тот же случай, ради которого `recalculate_for_student`
+    держит вложенную транзакцию). Экран предпросмотра из-за этого падать не
+    должен: свод тогда собирается по текущим суммам, и расхождение уходит в
+    журнал, а не проглатывается молча.
+    """
+    schedule = await schedule_plan(db, student_id)
+    savepoint = await db.begin_nested()
+    try:
+        await recalculate_on_leave(db, student_id, left_on=today)
+        due = await settlement(db, student_id, today=today)
+    except SQLAlchemyError:
+        logger.warning(
+            "tsk-804: предпросмотр выпуска ученика %s собран БЕЗ пересчёта — "
+            "строки месяцев изменились во время расчёта",
+            student_id,
+            exc_info=True,
+        )
+        if savepoint.is_active:
+            await savepoint.rollback()
+        return GraduationPreview(
+            student_id=student_id,
+            schedule=schedule,
+            settlement=await settlement(db, student_id, today=today),
+        )
+    if savepoint.is_active:
+        await savepoint.rollback()
+    return GraduationPreview(student_id=student_id, schedule=schedule, settlement=due)
 
 
 async def apply(

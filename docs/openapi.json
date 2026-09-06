@@ -45378,6 +45378,11 @@
             "title": "Missing Lessons",
             "default": 0
           },
+          "after_leave_lessons": {
+            "type": "integer",
+            "title": "After Leave Lessons",
+            "default": 0
+          },
           "status": {
             "type": "string",
             "enum": [

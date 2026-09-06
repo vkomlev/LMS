@@ -75,14 +75,25 @@ def charge_total_minor(
 class ChargeCounts:
     """Сколько занятий период предполагал и сколько из них не оплачивается.
 
-    Вычетов три, и они не пересекаются по построению — каждый следующий
+    Вычетов четыре, и они не пересекаются по построению — каждый следующий
     считается только среди дней, которые не забрал предыдущий:
 
     * `not_started` — дни ДО прихода ученика в расписание (tsk-630);
     * `on_break` — перерыв, только среди дней ОТ прихода: иначе новичок,
       которому сразу оформили перерыв, получил бы двойной вычет за один день;
+    * `after_leave` — дни ПОСЛЕ ухода ученика из школы (tsk-804), зеркало
+      `not_started`. Только среди дней от прихода и вне перерыва;
     * `missing` — прошедший день, который сетка предполагала, а занятия в него
-      не было вовсе (tsk-756). Только среди дней от прихода и вне перерыва.
+      не было вовсе (tsk-756). Только среди дней от прихода, вне перерыва и
+      не позже ухода.
+
+    **Почему `after_leave` понадобился отдельно, а `missing` его не заменяет.**
+    Месяц считается на весь месяц вперёд по сетке расписания, и `missing` по
+    построению смотрит только на ПРОШЕДШИЕ дни (`days.day < today`) — дни после
+    ухода почти всегда будущие. Поэтому ученик, ушедший 6-го числа, платил за
+    весь месяц: у прихода вычет был, у ухода — нет. До автоматического выпуска
+    (tsk-673) это закрывали руками, оформляя перерыв «окончание обучения», —
+    автомат этот шаг не унаследовал, и регрессия приехала вместе с ним.
 
     `expected` — знаменатель доли — остаётся месячным при любых вычетах: экран
     начислений должен показывать и «занятий в месяце», и сколько из них выпало,
@@ -95,17 +106,24 @@ class ChargeCounts:
     not_started: int = 0
     #: Занятий, которые сетка предполагала, но которых не было (tsk-756).
     missing: int = 0
+    #: Занятий на днях ПОСЛЕ ухода ученика из школы (tsk-804).
+    after_leave: int = 0
 
     @property
     def billable(self) -> int:
         """Занятий, за которые берут деньги. Ниже нуля не опускается."""
         return max(
-            self.expected - self.on_break - self.not_started - self.missing, 0
+            self.expected
+            - self.on_break
+            - self.not_started
+            - self.missing
+            - self.after_leave,
+            0,
         )
 
 
 async def lesson_counts_for_month(
-    db: AsyncSession, *, student_id: int, period: date
+    db: AsyncSession, *, student_id: int, period: date, left_on: Optional[date] = None
 ) -> ChargeCounts:
     """Занятий в месяце по постоянному расписанию и сколько попало в перерыв.
 
@@ -115,12 +133,21 @@ async def lesson_counts_for_month(
     """
     last_day = next_month(period) - timedelta(days=1)
     return await lesson_counts_for_period(
-        db, student_id=student_id, period_from=period, period_to=last_day
+        db,
+        student_id=student_id,
+        period_from=period,
+        period_to=last_day,
+        left_on=left_on,
     )
 
 
 async def lesson_counts_for_period(
-    db: AsyncSession, *, student_id: int, period_from: date, period_to: date
+    db: AsyncSession,
+    *,
+    student_id: int,
+    period_from: date,
+    period_to: date,
+    left_on: Optional[date] = None,
 ) -> ChargeCounts:
     """Занятий за ПРОИЗВОЛЬНЫЙ период по постоянному расписанию, сколько из них
     попало в перерыв и сколько пришлось на дни до прихода ученика (границы
@@ -174,6 +201,26 @@ async def lesson_counts_for_period(
     см. модуль). Днём считается ЛЮБАЯ строка участия, включая пропуск и перенос:
     пропуск оплачивается (это выбор ученика), а перенос уже посчитан в свой
     исходный день — считать его вторично в новый день значило бы взять дважды.
+
+    **Уход ученика (tsk-804)** — зеркало прихода. День берётся из `left_on`,
+    а если его не передали — из подписки на тариф, который учиться уже не даёт
+    (`subscription_plan.course_work = false`). Три решения:
+
+    * **не `ends_on` прежней подписки**, хотя выглядит она подходяще:
+      `subscription_service.change_plan` ставит её при ЛЮБОЙ смене тарифа, и
+      вычет срезал бы месяц каждому, кто просто перешёл с одного платного
+      тарифа на другой;
+    * **признак `course_work`, а не код `alumni`** — список кодов в сервисе
+      разъедется со справочником при первом же новом тарифе-архиве (урок
+      tsk-610, он же в `assert_course_work_allowed`);
+    * **день ухода оплачивается, вычитается только то, что СТРОГО после**.
+      Занятие в день ухода состоялось, пока человек ещё учился: на проде
+      ученица ушла 01.09 в 18:47, а занятие у неё было в тот же день в 16:00.
+      Отсюда же и граница «ушёл в конце месяца — платит за месяц полностью».
+
+    Параметр `left_on` нужен потому, что в момент выпуска пересчёт идёт ДО
+    смены тарифа (см. `graduation_service.recalculate_on_leave`): подписки
+    «Выпускник» ещё нет, и прочитать день ухода из базы неоткуда.
     """
     row = (
         await db.execute(
@@ -235,6 +282,21 @@ async def lesson_counts_for_period(
                                  WHERE p.student_id = :student_id)
                            ) AS started_on
                 ),
+                -- День ухода из школы: зеркало `joined`. Либо передан явно
+                -- (выпуск считает деньги ДО смены тарифа), либо берётся из
+                -- действующей подписки на тариф, который учиться не даёт.
+                -- NULL — человек учится, вычета нет.
+                gone AS (
+                    SELECT COALESCE(
+                               CAST(:left_on AS date),
+                               (SELECT s.starts_on
+                                  FROM student_subscription s
+                                  JOIN subscription_plan pl ON pl.id = s.plan_id
+                                 WHERE s.student_id = :student_id
+                                   AND s.ends_on IS NULL
+                                   AND NOT pl.course_work)
+                           ) AS left_on
+                ),
                 -- Дни, в которые у ученика фактически было занятие. Сегодняшний
                 -- день в сверку не входит: занятие может быть ещё впереди.
                 fact AS (
@@ -262,13 +324,32 @@ async def lesson_counts_for_period(
                            )
                        ) AS on_break,
                        count(*) FILTER (
+                           -- День ПОСЛЕ ухода. Только среди дней от прихода и
+                           -- ВНЕ перерыва — иначе день, накрытый и перерывом, и
+                           -- уходом, вычелся бы дважды (так на проде выглядят
+                           -- выпускники, которым перерыв «окончание обучения»
+                           -- оформляли руками). Строго больше: занятие в день
+                           -- ухода состоялось, пока человек ещё учился.
+                           WHERE gone.left_on IS NOT NULL
+                             AND days.day > gone.left_on
+                             AND (joined.started_on IS NULL
+                                  OR days.day >= joined.started_on)
+                             AND NOT EXISTS (
+                               SELECT 1 FROM student_break b
+                                WHERE b.student_id = :student_id
+                                  AND days.day BETWEEN b.starts_on AND b.ends_on
+                             )
+                       ) AS after_leave,
+                       count(*) FILTER (
                            -- Прошедший день, который сетка предполагала, а
                            -- занятия в него не было. Только среди дней от
-                           -- прихода и ВНЕ перерыва — иначе тот же день
-                           -- вычелся бы дважды.
+                           -- прихода, ВНЕ перерыва и не позже ухода — иначе тот
+                           -- же день вычелся бы дважды.
                            WHERE days.day < (now() AT TIME ZONE 'Europe/Moscow')::date
                              AND (joined.started_on IS NULL
                                   OR days.day >= joined.started_on)
+                             AND (gone.left_on IS NULL
+                                  OR days.day <= gone.left_on)
                              AND NOT EXISTS (
                                SELECT 1 FROM student_break b
                                 WHERE b.student_id = :student_id
@@ -285,12 +366,14 @@ async def lesson_counts_for_period(
                             AND (slots.active_until IS NULL
                                  OR days.day <= slots.active_until)
                   CROSS JOIN joined
+                  CROSS JOIN gone
                 """
             ),
             {
                 "student_id": student_id,
                 "period_from": period_from,
                 "period_to": period_to,
+                "left_on": left_on,
             },
         )
     ).one()
@@ -299,6 +382,7 @@ async def lesson_counts_for_period(
         on_break=int(row.on_break),
         not_started=int(row.not_started),
         missing=int(row.missing),
+        after_leave=int(row.after_leave),
     )
 
 
@@ -371,11 +455,12 @@ async def _base_price_minor(
 def _prorate(base_minor: int, counts: ChargeCounts) -> int:
     """Доля месяца за вычетом занятий, за которые денег не берут.
 
-    Вычетов три и они складываются: перерыв, «ученик пришёл среди месяца»
-    (tsk-630) и «занятия в этот день не было» (tsk-756). Складываются именно
-    суммой, а не максимумом: месяц, в который человек пришёл 12-го и с 20-го
-    ушёл в перерыв, оплачивается только за промежуток между этими датами.
-    Пересечься вычеты не могут — см. `ChargeCounts`.
+    Вычетов четыре и они складываются: перерыв, «ученик пришёл среди месяца»
+    (tsk-630), «занятия в этот день не было» (tsk-756) и «человек уже ушёл»
+    (tsk-804). Складываются именно суммой, а не максимумом: месяц, в который
+    человек пришёл 12-го и с 20-го ушёл в перерыв, оплачивается только за
+    промежуток между этими датами. Пересечься вычеты не могут — см.
+    `ChargeCounts`.
 
     Округляем ВНИЗ, то есть в пользу ученика: копейка спора не стоит, а
     предсказуемое направление округления стоит.
@@ -404,6 +489,7 @@ async def recalculate_student_group(
     period: date,
     allow_past: bool = False,
     today: Optional[date] = None,
+    left_on: Optional[date] = None,
 ) -> Optional[int]:
     """Пересчитать один месяц одного ученика по одной группе.
 
@@ -430,6 +516,10 @@ async def recalculate_student_group(
     от СВОЕГО времени, а не от календаря: самостоятельная покупка относит платёж
     к периоду по дате платежа, и без проброса строка начисления за него не
     создалась бы вовсе — а на неё ссылается сам платёж.
+
+    `left_on` — день ухода ученика, когда его ещё нельзя прочитать из базы
+    (tsk-804): выпуск считает деньги ДО смены тарифа. Без него день ухода
+    берётся из подписки, см. `lesson_counts_for_period`.
 
     Возвращает итог месяца в копейках либо None, если считать не из чего.
     """
@@ -497,7 +587,9 @@ async def recalculate_student_group(
             )
         return None
 
-    counts = await lesson_counts_for_month(db, student_id=student_id, period=period)
+    counts = await lesson_counts_for_month(
+        db, student_id=student_id, period=period, left_on=left_on
+    )
     calculated = base.minor if base.from_override else _prorate(base.minor, counts)
 
     existing = (
@@ -518,8 +610,8 @@ async def recalculate_student_group(
                 INSERT INTO student_monthly_charge
                        (student_id, group_id, period, calculated_minor,
                         expected_lessons, break_lessons, not_started_lessons,
-                        missing_lessons)
-                VALUES (:s, :g, :p, :calc, :exp, :brk, :nst, :mis)
+                        missing_lessons, after_leave_lessons)
+                VALUES (:s, :g, :p, :calc, :exp, :brk, :nst, :mis, :aft)
                 ON CONFLICT (student_id, group_id, period) DO NOTHING
                 """
             ),
@@ -532,6 +624,7 @@ async def recalculate_student_group(
                 "brk": counts.on_break,
                 "nst": counts.not_started,
                 "mis": counts.missing,
+                "aft": counts.after_leave,
             },
         )
         return calculated
@@ -542,7 +635,8 @@ async def recalculate_student_group(
                 "UPDATE student_monthly_charge "
                 "SET calculated_minor = :calc, expected_lessons = :exp, "
                 "    break_lessons = :brk, not_started_lessons = :nst, "
-                "    missing_lessons = :mis, updated_at = now() "
+                "    missing_lessons = :mis, after_leave_lessons = :aft, "
+                "    updated_at = now() "
                 "WHERE id = :id"
             ),
             {
@@ -552,6 +646,7 @@ async def recalculate_student_group(
                 "brk": counts.on_break,
                 "nst": counts.not_started,
                 "mis": counts.missing,
+                "aft": counts.after_leave,
             },
         )
         return (
@@ -719,8 +814,8 @@ async def _ensure_charge_row(
             INSERT INTO student_monthly_charge
                    (student_id, group_id, period, calculated_minor,
                     expected_lessons, break_lessons, not_started_lessons,
-                    missing_lessons)
-            VALUES (:s, :g, :p, :calc, :exp, :brk, :nst, :mis)
+                    missing_lessons, after_leave_lessons)
+            VALUES (:s, :g, :p, :calc, :exp, :brk, :nst, :mis, :aft)
             ON CONFLICT (student_id, group_id, period) DO NOTHING
             """
         ),
@@ -733,6 +828,7 @@ async def _ensure_charge_row(
             "brk": counts.on_break,
             "nst": counts.not_started,
             "mis": counts.missing,
+            "aft": counts.after_leave,
         },
     )
 
@@ -974,6 +1070,7 @@ async def list_charges(db: AsyncSession, *, period: date) -> list[dict]:
                        ch.break_lessons,
                        ch.not_started_lessons,
                        ch.missing_lessons,
+                       ch.after_leave_lessons,
                        ch.status,
                        ch.closed_at,
                        COALESCE(adj.total, 0) AS adjustments_minor,
@@ -1028,6 +1125,7 @@ async def list_charges(db: AsyncSession, *, period: date) -> list[dict]:
                 "break_lessons": r.break_lessons,
                 "not_started_lessons": r.not_started_lessons,
                 "missing_lessons": r.missing_lessons,
+                "after_leave_lessons": r.after_leave_lessons,
                 "status": r.status,
                 "closed_at": r.closed_at,
                 "has_price_override": bool(r.has_price_override),

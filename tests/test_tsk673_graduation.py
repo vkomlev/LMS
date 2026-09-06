@@ -64,6 +64,31 @@ async def _pay(db, *, student_id: int, group_id: int, amount_minor: int, status:
     await db.commit()
 
 
+async def _agreed_sum(db, student_id: int, amount_minor: int) -> None:
+    """Поставить сумму месяца руками — договорённость с уходящим человеком.
+
+    tsk-804: месяц фикстуры БУДУЩИЙ, и с появлением вычета за дни после ухода
+    расчётная сумма уходящего сегодня закономерно обнуляется — платить не за
+    что, занятия ещё не начались. Долг для проверки побочных действий берётся
+    оттуда же, откуда он берётся на проде у выпускника: из суммы, названной
+    человеку руками (так закрыт август у выпускника 4500). Она долю не
+    применяет, и пересчёт при уходе её не трогает — это тест заодно и проверяет.
+    """
+    charge_id = (
+        await db.execute(
+            text(
+                "SELECT id FROM student_monthly_charge "
+                " WHERE student_id = :s AND period = :p"
+            ),
+            {"s": student_id, "p": PERIOD},
+        )
+    ).scalar()
+    await charge_service.set_manual_amount(
+        db, charge_id=int(charge_id), amount_minor=amount_minor
+    )
+    await db.commit()
+
+
 async def _make_marketer(db, tag: str) -> int:
     marketer_id, _ = await _marketer_token(db, tag)
     return marketer_id
@@ -463,6 +488,7 @@ async def test_endpoint_preview_shows_what_will_happen(db, client) -> None:
     await charge_service.recalculate_for_student(
         db, student_id=env["student_id"], period=PERIOD
     )
+    await _agreed_sum(db, env["student_id"], 550000)
     slot_id = await _slot_of(db, env["student_id"])
     await _occurrence(
         db, slot_id=slot_id, teacher_id=env["teacher_id"],
@@ -490,6 +516,7 @@ async def test_endpoint_graduation_runs_side_effects(db, client) -> None:
     await charge_service.recalculate_for_student(
         db, student_id=env["student_id"], period=PERIOD
     )
+    await _agreed_sum(db, env["student_id"], 550000)
     slot_id = await _slot_of(db, env["student_id"])
     await _occurrence(
         db, slot_id=slot_id, teacher_id=env["teacher_id"],

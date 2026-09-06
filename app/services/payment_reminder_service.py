@@ -66,6 +66,8 @@ class OverdueDebtor:
     break_lessons: int = 0
     not_started_lessons: int = 0
     missing_lessons: int = 0
+    #: Занятий на днях после ухода ученика из школы (tsk-804).
+    after_leave_lessons: int = 0
     #: Занятий, которые у ученика фактически были в этом месяце.
     fact_lessons: int = 0
     #: Сумма месяца поставлена руками — расчёт её не перебивал.
@@ -81,7 +83,8 @@ class OverdueDebtor:
                 self.expected_lessons
                 - self.break_lessons
                 - self.not_started_lessons
-                - self.missing_lessons,
+                - self.missing_lessons
+                - self.after_leave_lessons,
                 0,
             )
             parts = [f"{self.expected_lessons} занятий по сетке"]
@@ -91,6 +94,8 @@ class OverdueDebtor:
                 parts.append(f"{self.break_lessons} в перерыве")
             if self.missing_lessons:
                 parts.append(f"{self.missing_lessons} не состоялось")
+            if self.after_leave_lessons:
+                parts.append(f"{self.after_leave_lessons} после ухода")
             parts.append(f"{billable} к оплате")
             head = ", ".join(parts)
         return (
@@ -134,6 +139,7 @@ async def list_overdue(db: AsyncSession, *, today: Optional[date] = None) -> lis
                        ch.break_lessons,
                        ch.not_started_lessons,
                        ch.missing_lessons,
+                       ch.after_leave_lessons,
                        -- tsk-756: занятий фактически было. Рядом с расчётом это
                        -- сразу показывает «начислено, а занятий ноль».
                        (SELECT count(*)
@@ -224,6 +230,7 @@ async def list_overdue(db: AsyncSession, *, today: Optional[date] = None) -> lis
                 break_lessons=int(r.break_lessons or 0),
                 not_started_lessons=int(r.not_started_lessons or 0),
                 missing_lessons=int(r.missing_lessons or 0),
+                after_leave_lessons=int(r.after_leave_lessons or 0),
                 fact_lessons=int(r.fact_lessons or 0),
                 is_manual=r.manual_minor is not None,
             )

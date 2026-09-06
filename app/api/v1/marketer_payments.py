@@ -240,6 +240,7 @@ def _debtor_view(debtor: payment_reminder_service.OverdueDebtor) -> dict:
         "not_started_lessons": debtor.not_started_lessons,
         "break_lessons": debtor.break_lessons,
         "missing_lessons": debtor.missing_lessons,
+        "after_leave_lessons": debtor.after_leave_lessons,
         "fact_lessons": debtor.fact_lessons,
         "is_manual": debtor.is_manual,
         # Ученик, которому начислено, но занятий у него не было вовсе, — самый
