@@ -220,6 +220,57 @@ async def reminders_send(
     }
 
 
+@router.get(
+    "/payments/alumni-debts",
+    summary="Долги ушедших учеников",
+    description=(
+        "Кто ушёл из школы, не заплатив. Список держится, пока долг не погашен: "
+        "месяцы выпускника заморожены, и в общую рассылку он не попадает."
+    ),
+)
+async def alumni_debts(
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(_payments_gate),
+) -> dict:
+    debts = await payment_reminder_service.list_alumni_debts(db)
+    return {
+        "total": len(debts),
+        "total_due_minor": sum(d.due_minor for d in debts),
+        "items": [_debtor_view(d) | {"is_overdue": d.is_overdue} for d in debts],
+    }
+
+
+@router.post(
+    "/payments/alumni-debts/{student_id}/remind",
+    summary="Напомнить ушедшему об оплате",
+    description=(
+        "Письмо уходит адресно, по решению маркетолога: человек уже не учится, "
+        "и повод написать ему оценивают каждый раз. Тому, кому писали на этой "
+        "неделе, письмо не уйдёт — окно повтора общее с рассылкой."
+    ),
+)
+async def alumni_debt_remind(
+    student_id: int,
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(_payments_gate),
+) -> dict:
+    run = await payment_reminder_service.send_alumni_reminder(
+        db, student_id=student_id, sent_by=current_user.id
+    )
+    # Пусто во всех четырёх списках — значит долга за этим человеком нет.
+    # Молчаливый успех тут читался бы как «письмо ушло».
+    if not (run.sent or run.failed or run.skipped_recent or run.without_email):
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, "За этим учеником долга нет"
+        )
+    return {
+        "sent": run.sent,
+        "failed": run.failed,
+        "skipped_recent": run.skipped_recent,
+        "without_email": run.without_email,
+    }
+
+
 def _debtor_view(debtor: payment_reminder_service.OverdueDebtor) -> dict:
     return {
         "student_id": debtor.student_id,

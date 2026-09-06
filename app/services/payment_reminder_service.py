@@ -10,6 +10,16 @@
    Иначе нажатие кнопки дважды подряд отправило бы человеку два письма.
 2. **Тех, кому писать некуда, не проглатываем.** Ученик без почты возвращается
    отдельным списком: маркетолог напомнит ему сам — в мессенджере или звонком.
+
+Должника определяет ОСТАТОК, а не статус месяца (tsk-805). Отбор по
+`status = 'open'` выглядел равнозначным, но закрытие месяца — это заморозка
+суммы, а не прощение долга: выпуск ученика закрывает его месяцы (tsk-673), и
+должник молча выпадал из рассылки навсегда. Та же дыра ждала обычных учеников
+при первом нажатии кнопки «Закрыть месяц».
+
+Ушедшие идут не здесь, а отдельным списком (`list_alumni_debts`). Долг у них
+настоящий, но письмо человеку, который уже не учится, школа шлёт по решению
+человека, а не веером: решение оператора 06.09.2026.
 """
 
 from __future__ import annotations
@@ -32,7 +42,9 @@ __all__ = [
     "OverdueDebtor",
     "ReminderRun",
     "list_overdue",
+    "list_alumni_debts",
     "send_reminders",
+    "send_alumni_reminder",
     "REMINDER_KIND",
     "REPEAT_AFTER_DAYS",
 ]
@@ -72,6 +84,10 @@ class OverdueDebtor:
     fact_lessons: int = 0
     #: Сумма месяца поставлена руками — расчёт её не перебивал.
     is_manual: bool = False
+    #: Срок оплаты этого месяца уже прошёл. В общей рассылке иначе не бывает, а
+    #: в списке ушедших бывает и «ещё не просрочено»: ученик выпущен в середине
+    #: месяца, и заплатить за него он обязан только к концу.
+    is_overdue: bool = False
 
     @property
     def basis(self) -> str:
@@ -116,11 +132,43 @@ class ReminderRun:
 
 
 async def list_overdue(db: AsyncSession, *, today: Optional[date] = None) -> list[OverdueDebtor]:
-    """Кто просрочил оплату на сегодня.
+    """Кто просрочил оплату на сегодня — те, кто ещё учится.
 
     Просрочку определяет `payment_service.payment_state` — та же логика, что
     красит бейдж в кабинете. Второй копии правила «сколько дней ждём» здесь нет:
     разъехавшись, они дали бы письмо человеку, у которого на экране всё в порядке.
+    """
+    return await _fetch_debtors(db, today=today, alumni=False, only_overdue=True)
+
+
+async def list_alumni_debts(
+    db: AsyncSession, *, today: Optional[date] = None
+) -> list[OverdueDebtor]:
+    """Долги ушедших: у кого школа не забрала деньги, а учить его уже перестала.
+
+    Просрочка здесь не условие, а признак: выпущенному 6-го числа заплатить за
+    этот месяц ещё только предстоит, но увидеть его долг маркетолог должен уже
+    сегодня — иначе строка всплывёт через месяц на экране, куда никто не листает.
+
+    Возврат денег держится на этом списке, а не на разовой эскалации при выпуске
+    (`graduation_service._notify_marketers`): та лежит в общей ленте уведомлений
+    рядом с сотней других, и две из первых трёх остались непрочитанными.
+    """
+    return await _fetch_debtors(db, today=today, alumni=True, only_overdue=False)
+
+
+async def _fetch_debtors(
+    db: AsyncSession,
+    *,
+    today: Optional[date],
+    alumni: bool,
+    only_overdue: bool,
+) -> list[OverdueDebtor]:
+    """Общая выборка должников: один SQL на оба списка.
+
+    Списки различаются двумя параметрами — учится человек или уже ушёл и нужна
+    ли просрочка. Своя копия запроса на каждый разъехалась бы с формулой суммы
+    ровно там, где это дороже всего, — в письмах о деньгах.
     """
     today = today or date.today()
     rows = (
@@ -186,15 +234,39 @@ async def list_overdue(db: AsyncSession, *, today: Optional[date] = None) -> lis
                            AND p.group_id = ch.group_id
                            AND p.period = ch.period
                   ) pay ON TRUE
+                  -- Учится человек или уже ушёл. Признак берётся из тарифа
+                  -- (`course_work`), а не из его кода: список кодов разъехался
+                  -- бы со справочником при первом новом тарифе-архиве
+                  -- (урок tsk-610). Подписок без даты конца может оказаться
+                  -- несколько — берём последнюю начавшуюся, как это делает
+                  -- расчёт начислений.
+                  LEFT JOIN LATERAL (
+                        SELECT p.course_work
+                          FROM student_subscription s
+                          JOIN subscription_plan p ON p.id = s.plan_id
+                         WHERE s.student_id = ch.student_id AND s.ends_on IS NULL
+                         ORDER BY s.starts_on DESC
+                         LIMIT 1
+                  ) plan ON TRUE
                  -- Слитые и заблокированные учётки не тревожим: за ними уже нет
                  -- живого человека, которому это письмо адресовано.
-                 WHERE ch.status = 'open'
-                   AND u.is_active
+                 --
+                 -- Статуса месяца здесь нет намеренно (tsk-805): закрытие
+                 -- замораживает сумму, а не прощает долг.
+                 WHERE u.is_active
                    AND u.blocked_at IS NULL
+                   -- Тарифа нет — значит «ещё не размечен», а не «выпускник»:
+                   -- трактовать пустоту как уход значило бы выкинуть из
+                   -- рассылки всех, кому тариф просто не успели поставить.
+                   AND COALESCE(plan.course_work, TRUE) = :course_work
                  ORDER BY u.full_name, ch.period
                 """
             ),
-            {"kind": REMINDER_KIND, "window_days": REPEAT_AFTER_DAYS},
+            {
+                "kind": REMINDER_KIND,
+                "window_days": REPEAT_AFTER_DAYS,
+                "course_work": not alumni,
+            },
         )
     ).all()
 
@@ -212,7 +284,11 @@ async def list_overdue(db: AsyncSession, *, today: Optional[date] = None) -> lis
             period=r.period,
             today=today,
         )
-        if not state.is_overdue:
+        # Чек на проверке долгом не считается: человек своё сделал, торопить
+        # его нечем — тот же довод, что и в плашке кабинета.
+        if not state.is_unpaid:
+            continue
+        if only_overdue and not state.is_overdue:
             continue
         debtors.append(
             OverdueDebtor(
@@ -233,6 +309,7 @@ async def list_overdue(db: AsyncSession, *, today: Optional[date] = None) -> lis
                 after_leave_lessons=int(r.after_leave_lessons or 0),
                 fact_lessons=int(r.fact_lessons or 0),
                 is_manual=r.manual_minor is not None,
+                is_overdue=state.is_overdue,
             )
         )
     return debtors
@@ -249,48 +326,7 @@ async def send_reminders(
     """
     run = ReminderRun()
     for debtor in await list_overdue(db, today=today):
-        who = debtor.full_name or f"#{debtor.student_id}"
-        if debtor.email is None:
-            run.without_email.append(who)
-            continue
-        if debtor.reminded_recently:
-            run.skipped_recent.append(who)
-            continue
-
-        ok = await notification_email_service.send_payment_overdue(
-            recipient_email=debtor.email,
-            full_name=debtor.full_name,
-            period=debtor.period,
-            group_name=debtor.group_name,
-            due_minor=debtor.due_minor,
-            settings=settings,
-        )
-        if not ok:
-            run.failed.append(who)
-            logger.warning(
-                "tsk-010: не удалось отправить напоминание ученику %s за %s",
-                debtor.student_id,
-                debtor.period,
-            )
-            continue
-
-        await inbox_service.create_for_user(
-            db,
-            user_id=debtor.student_id,
-            kind=REMINDER_KIND,
-            title="Не оплачено обучение",
-            content=(
-                f"За {debtor.period:%m.%Y} осталось оплатить "
-                f"{debtor.due_minor / 100:.2f} ₽."
-            ),
-            payload={
-                "period": debtor.period.isoformat(),
-                "group_id": debtor.group_id,
-                "due_minor": debtor.due_minor,
-            },
-            created_by=sent_by,
-        )
-        run.sent.append(who)
+        await _remind_one(db, debtor, sent_by=sent_by, run=run)
 
     await db.commit()
     logger.info(
@@ -302,3 +338,95 @@ async def send_reminders(
         len(run.without_email),
     )
     return run
+
+
+async def send_alumni_reminder(
+    db: AsyncSession, *, student_id: int, sent_by: int, today: Optional[date] = None
+) -> ReminderRun:
+    """Напомнить об оплате ОДНОМУ ушедшему — по кнопке, а не веером (tsk-805).
+
+    Письмо человеку, который уже не учится, школа шлёт по решению маркетолога:
+    долг настоящий, но повод для письма каждый раз оценивает человек. Поэтому
+    отправка адресная, а не частью общей рассылки.
+
+    Недельное окно повтора то же самое: нажатая дважды кнопка не превращается в
+    два письма об одном долге.
+    """
+    run = ReminderRun()
+    debts = [
+        d for d in await list_alumni_debts(db, today=today) if d.student_id == student_id
+    ]
+    if not debts:
+        logger.info(
+            "tsk-805: напоминание ушедшему %s не отправлено — долга за ним нет",
+            student_id,
+        )
+        return run
+
+    for debtor in debts:
+        await _remind_one(db, debtor, sent_by=sent_by, run=run)
+
+    await db.commit()
+    logger.info(
+        "tsk-805: напоминание ушедшему %s — отправлено %s, не дошло %s, "
+        "пропущено (уже писали) %s, без почты %s",
+        student_id,
+        len(run.sent),
+        len(run.failed),
+        len(run.skipped_recent),
+        len(run.without_email),
+    )
+    return run
+
+
+async def _remind_one(
+    db: AsyncSession, debtor: OverdueDebtor, *, sent_by: int, run: ReminderRun
+) -> None:
+    """Одно напоминание: письмо и след в журнале. Итог дописывается в `run`.
+
+    Запись в журнал делается ТОЛЬКО после успешной отправки: иначе сбой почты
+    закрыл бы человеку напоминание на неделю вперёд, и он бы его не получил
+    вовсе. Коммит остаётся за вызывающим — рассылка и кнопка коммитят по-разному.
+    """
+    who = debtor.full_name or f"#{debtor.student_id}"
+    if debtor.email is None:
+        run.without_email.append(who)
+        return
+    if debtor.reminded_recently:
+        run.skipped_recent.append(who)
+        return
+
+    ok = await notification_email_service.send_payment_overdue(
+        recipient_email=debtor.email,
+        full_name=debtor.full_name,
+        period=debtor.period,
+        group_name=debtor.group_name,
+        due_minor=debtor.due_minor,
+        settings=settings,
+    )
+    if not ok:
+        run.failed.append(who)
+        logger.warning(
+            "tsk-010: не удалось отправить напоминание ученику %s за %s",
+            debtor.student_id,
+            debtor.period,
+        )
+        return
+
+    await inbox_service.create_for_user(
+        db,
+        user_id=debtor.student_id,
+        kind=REMINDER_KIND,
+        title="Не оплачено обучение",
+        content=(
+            f"За {debtor.period:%m.%Y} осталось оплатить "
+            f"{debtor.due_minor / 100:.2f} ₽."
+        ),
+        payload={
+            "period": debtor.period.isoformat(),
+            "group_id": debtor.group_id,
+            "due_minor": debtor.due_minor,
+        },
+        created_by=sent_by,
+    )
+    run.sent.append(who)
