@@ -217,6 +217,155 @@ async def test_audit_allows_rollback_of_a_batch(db, result_ctx):
     assert len(await _audit_rows(db, rid)) == 1
 
 
+# ---------- Удаление результата ----------
+
+
+@pytest.mark.asyncio
+async def test_delete_is_logged_with_last_known_score(db, result_ctx):
+    """Удаление результата пишет снимок последнего состояния.
+
+    Дыра, которую закрывает tsk-803b: без этого пара «удалить и вставить
+    заново» позволяла заменить оценку, не оставив следа, — ровно тот обход,
+    ради которого журнал и заводился.
+    """
+    rid = result_ctx["result_id"]
+
+    await db.execute(text("DELETE FROM task_results WHERE id = :rid"), {"rid": rid})
+    await db.flush()
+
+    rows = await _audit_rows(db, rid)
+    assert len(rows) == 1, f"удаление не попало в журнал: {rows}"
+    row = rows[0]
+    assert row.action == "DELETE"
+    # У удаления заполнено только «было» — «стало» не существует.
+    assert (row.old_score, row.new_score) == (3, None)
+    assert (row.old_is_correct, row.new_is_correct) == (False, None)
+    assert row.task_id == result_ctx["task_id"]
+    assert row.user_id == result_ctx["user_id"]
+    assert row.db_role
+
+
+@pytest.mark.asyncio
+async def test_delete_after_edit_keeps_both_records(db, result_ctx):
+    """История правки и удаления живут вместе: сначала UPDATE, потом DELETE.
+
+    Так виден весь путь оценки, включая случай «поправили, а потом стёрли».
+    """
+    rid = result_ctx["result_id"]
+
+    await db.execute(
+        text("UPDATE task_results SET score = 9, is_correct = true WHERE id = :rid"),
+        {"rid": rid},
+    )
+    await db.flush()
+    await db.execute(text("DELETE FROM task_results WHERE id = :rid"), {"rid": rid})
+    await db.flush()
+
+    rows = await _audit_rows(db, rid)
+    assert [r.action for r in rows] == ["UPDATE", "DELETE"]
+    assert (rows[0].old_score, rows[0].new_score) == (3, 9)
+    # Снимок удаления берёт значение, действовавшее на момент удаления.
+    assert rows[1].old_score == 9
+    assert rows[1].old_is_correct is True
+
+
+@pytest.mark.asyncio
+async def test_delete_by_cascade_from_task_is_logged(db, result_ctx):
+    """Каскад от задания (`ON DELETE CASCADE`) тоже оставляет след.
+
+    Это основной путь удаления на проде — результат исчезает не сам по себе,
+    а вместе с заданием или учеником.
+    """
+    rid = result_ctx["result_id"]
+
+    await db.execute(
+        text("DELETE FROM tasks WHERE id = :tid"), {"tid": result_ctx["task_id"]}
+    )
+    await db.flush()
+
+    rows = await _audit_rows(db, rid)
+    assert len(rows) == 1
+    assert rows[0].action == "DELETE"
+    assert rows[0].old_score == 3
+
+
+@pytest.mark.asyncio
+async def test_delete_by_cascade_from_user_is_logged(db, result_ctx):
+    """Каскад от ученика: строки исчезают, а память об оценках остаётся.
+
+    Журнал переживает удаление ученика намеренно — у `result_id`/`user_id`
+    нет внешних ключей.
+    """
+    rid = result_ctx["result_id"]
+
+    await db.execute(
+        text("DELETE FROM users WHERE id = :uid"), {"uid": result_ctx["user_id"]}
+    )
+    await db.flush()
+
+    rows = await _audit_rows(db, rid)
+    assert len(rows) == 1
+    assert rows[0].action == "DELETE"
+    assert rows[0].user_id == result_ctx["user_id"]
+
+
+@pytest.mark.asyncio
+async def test_delete_records_the_actor(db, result_ctx):
+    """Источник удаления называется той же меткой, что и источник правки."""
+    rid = result_ctx["result_id"]
+
+    await db.execute(
+        text("SELECT set_config('app.audit_actor', 'script:tsk803b_cleanup.py', true)")
+    )
+    await db.execute(text("DELETE FROM task_results WHERE id = :rid"), {"rid": rid})
+    await db.flush()
+
+    rows = await _audit_rows(db, rid)
+    assert rows[0].changed_by == "script:tsk803b_cleanup.py"
+
+
+@pytest.mark.asyncio
+async def test_delete_can_be_silenced_for_maintenance(db, result_ctx):
+    """Обслуживание может не писать в журнал — тем же рубильником, что правка.
+
+    Нужно чистке тестовых артефактов и переносам данных: иначе единственным
+    способом остаётся отключение триггера через ALTER TABLE.
+    """
+    rid = result_ctx["result_id"]
+
+    await db.execute(
+        text("SELECT set_config('app.skip_task_result_audit_trigger', 'true', true)")
+    )
+    await db.execute(text("DELETE FROM task_results WHERE id = :rid"), {"rid": rid})
+    await db.execute(
+        text("SELECT set_config('app.skip_task_result_audit_trigger', 'false', true)")
+    )
+    await db.flush()
+
+    assert await _audit_rows(db, rid) == []
+
+
+@pytest.mark.asyncio
+async def test_multirow_delete_logs_every_row(db, result_ctx):
+    """Удаление нескольких работ одним запросом пишет строку на каждую."""
+    extra_id = await _new_result(
+        db,
+        user_id=result_ctx["user_id"],
+        task_id=result_ctx["task_id"],
+        score=7,
+        is_correct=True,
+    )
+    rid = result_ctx["result_id"]
+
+    await db.execute(
+        text("DELETE FROM task_results WHERE id = ANY(:ids)"), {"ids": [rid, extra_id]}
+    )
+    await db.flush()
+
+    assert len(await _audit_rows(db, rid)) == 1
+    assert len(await _audit_rows(db, extra_id)) == 1
+
+
 # ---------- Что в журнал НЕ попадает ----------
 
 
