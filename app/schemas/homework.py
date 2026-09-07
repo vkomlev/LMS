@@ -105,8 +105,39 @@ class HomeworkVolumeRead(BaseModel):
         ),
     )
     fact_per_week: float = Field(
-        description="Сколько человек делает сейчас — медиана за 3 недели"
+        description=(
+            "Сколько человек делает сейчас — медиана по неделям. Считается ВСЯ "
+            "его работа: и дома, и на занятии. Окно — до 3 недель, но не "
+            "больше, чем ученик вообще занимается: у новичка медиана трёх "
+            "недель дала бы ноль при любом результате"
+        )
     )
+    fact_weeks_used: int = Field(
+        default=3,
+        description="По скольким неделям посчитан темп; меньше 3 — ученик новый",
+    )
+    lesson_share: Optional[float] = Field(
+        default=None,
+        description=(
+            "Какая доля сделанного пришлась на занятия, а не на дом (0..1); "
+            "null — работы за окно не было. Доля близкая к единице значит, "
+            "что сам человек не работает — это другой разговор, чем «мало "
+            "делает»"
+        ),
+    )
+    early_target_per_week: Optional[int] = Field(
+        default=None,
+        description=(
+            "Сколько нужно в неделю, чтобы закончить программу за ЭТОТ учебный "
+            "год. Только для тех, кто ещё не выпускник; null — выбора нет"
+        ),
+    )
+    summer_target_per_week: Optional[int] = Field(
+        default=None,
+        description="То же, но с занятиями летом",
+    )
+    early_deadline: Optional[str] = Field(default=None)
+    summer_deadline: Optional[str] = Field(default=None)
     correct_ratio: Optional[float] = Field(
         default=None, description="Доля верных сдач; null — сдач слишком мало"
     )

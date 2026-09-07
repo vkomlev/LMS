@@ -1463,8 +1463,122 @@ def _settings_with_program(course_id: int, kind: str = "ege"):
         "homework_program_oge_courses": str(course_id) if kind == "oge" else "",
         "homework_program_ege_deadline": "03-31",
         "homework_program_oge_deadline": "04-30",
+        "homework_program_early_finish": "05-31",
+        "homework_program_summer_finish": "08-31",
     }
     return lambda key: values.get(key, "")
+
+
+@pytest.mark.asyncio
+async def test_newcomer_pace_is_measured_over_weeks_he_has_been_here(db, monkeypatch):
+    """Темп новичка считается по его неделям, а не по трём (tsk-798, 07.09).
+
+    На проде ученица решила 60 заданий за одно занятие, а в сводке стояло
+    «делает 0»: медиана трёх недель у человека, занимающегося три дня, — это
+    медиана [0, 0, 60]. По нулевому темпу ей и выдача считалась как совсем
+    неработающей.
+    """
+    from app.core import settings_store
+
+    student_id, course_id = await _program_student(db, done_tasks=0, total_tasks=200)
+    monkeypatch.setattr(settings_store, "get_str", _settings_with_program(course_id))
+
+    now = datetime.now(UTC)
+    tasks = (
+        await db.execute(
+            text("SELECT id FROM tasks WHERE course_id = :c LIMIT 30"), {"c": course_id}
+        )
+    ).scalars().all()
+    for task_id in tasks:
+        await _submit(
+            db, student_id=student_id, task_id=int(task_id), course_id=course_id,
+            is_correct=True, at=now - timedelta(days=1),
+        )
+
+    plan = await homework_volume_service.compute(db, student_id=student_id, now=now)
+
+    assert plan.fact_weeks_used == 1, "окно шире, чем ученик вообще занимается"
+    assert plan.fact_per_week == 30, "работа новичка потеряна медианой пустых недель"
+
+
+@pytest.mark.asyncio
+async def test_lesson_work_counts_and_is_shown_separately(db, monkeypatch):
+    """Работа на занятии входит в темп и видна отдельной долей.
+
+    Требование оператора 07.09: «делает N» без разбивки не читается —
+    непонятно, работает человек сам или только под присмотром преподавателя.
+    """
+    from app.core import settings_store
+
+    student_id, course_id = await _program_student(db, done_tasks=0, total_tasks=60)
+    monkeypatch.setattr(settings_store, "get_str", _settings_with_program(course_id))
+
+    now = datetime.now(UTC)
+    lesson_at = now - timedelta(days=1)
+    teacher_id, _ = await _new_user(db, role="teacher", name="teacher")
+    await _create_occurrence(
+        db, student_id=student_id, teacher_id=teacher_id, scheduled_at=lesson_at,
+    )
+
+    tasks = (
+        await db.execute(
+            text("SELECT id FROM tasks WHERE course_id = :c ORDER BY id LIMIT 10"),
+            {"c": course_id},
+        )
+    ).scalars().all()
+    # Шесть заданий — прямо на занятии, четыре — дома вечером.
+    for i, task_id in enumerate(tasks):
+        await _submit(
+            db, student_id=student_id, task_id=int(task_id), course_id=course_id,
+            is_correct=True,
+            at=lesson_at + timedelta(minutes=10 * (i + 1)) if i < 6
+            else lesson_at + timedelta(hours=5),
+        )
+
+    plan = await homework_volume_service.compute(db, student_id=student_id, now=now)
+
+    assert plan.fact_per_week == 10, "работа на занятии обязана входить в темп"
+    assert plan.lesson_share == 0.6
+
+
+@pytest.mark.asyncio
+async def test_non_graduate_sees_what_finishing_early_would_take(db, monkeypatch):
+    """Десятикласснику показываются два альтернативных срока.
+
+    Требование оператора 07.09: у него есть выбор, которого нет у выпускника —
+    закончить за учебный год или прихватить лето, отдав выпускной год
+    вариантам. Одна цифра «до марта через год» этот выбор прячет.
+    """
+    from app.core import settings_store
+
+    student_id, course_id = await _program_student(
+        db, done_tasks=0, total_tasks=200, grade=10,
+    )
+    monkeypatch.setattr(settings_store, "get_str", _settings_with_program(course_id))
+
+    plan = await homework_volume_service.compute(db, student_id=student_id)
+
+    assert plan.early_target_per_week is not None
+    assert plan.summer_target_per_week is not None
+    assert plan.early_target_per_week > plan.summer_target_per_week > plan.target_per_week
+    assert plan.early_deadline is not None and plan.summer_deadline is not None
+    assert plan.early_deadline < plan.summer_deadline
+
+
+@pytest.mark.asyncio
+async def test_graduate_has_no_alternative_deadlines(db, monkeypatch):
+    """Выпускнику альтернативы не показываем: у него срок один."""
+    from app.core import settings_store
+
+    student_id, course_id = await _program_student(
+        db, done_tasks=0, total_tasks=200, grade=11,
+    )
+    monkeypatch.setattr(settings_store, "get_str", _settings_with_program(course_id))
+
+    plan = await homework_volume_service.compute(db, student_id=student_id)
+
+    assert plan.early_target_per_week is None
+    assert plan.summer_target_per_week is None
 
 
 @pytest.mark.asyncio

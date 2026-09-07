@@ -195,6 +195,21 @@ class VolumePlan:
     #: класса; 0 — дотягивает. Это и есть сигнал преподавателю: не «завалить
     #: заданиями», а «видно, что отстаёт».
     pace_gap: int
+    #: Сколько из сделанного за окно пришлось на занятия, а не на дом; None —
+    #: работы не было вовсе. Доля 0..1.
+    lesson_share: Optional[float] = None
+    #: Сколько недель реально взято для оценки темпа. Меньше `FACT_WEEKS` —
+    #: ученик с нами меньше трёх недель, и по трём его мерить нельзя.
+    fact_weeks_used: int = FACT_WEEKS
+    #: Темп, нужный чтобы закончить программу к концу ЭТОГО учебного года;
+    #: None — ученик и так выпускник, у него другого срока нет.
+    early_target_per_week: Optional[int] = None
+    #: То же, но с занятиями летом.
+    summer_target_per_week: Optional[int] = None
+    #: Дата раннего финиша (конец учебного года).
+    early_deadline: Optional[date] = None
+    #: Дата финиша с летними занятиями.
+    summer_deadline: Optional[date] = None
 
     def as_details(self) -> dict[str, Any]:
         """Снимок для `homework_assignment.volume_details` (JSON-совместимый)."""
@@ -202,6 +217,12 @@ class VolumePlan:
         data["exam_date"] = self.exam_date.isoformat()
         data["program_deadline"] = (
             self.program_deadline.isoformat() if self.program_deadline else None
+        )
+        data["early_deadline"] = (
+            self.early_deadline.isoformat() if self.early_deadline else None
+        )
+        data["summer_deadline"] = (
+            self.summer_deadline.isoformat() if self.summer_deadline else None
         )
         return data
 
@@ -253,6 +274,14 @@ def _course_ids(raw: str) -> list[int]:
         if chunk.isdigit():
             result.append(int(chunk))
     return result
+
+
+def _weekly_for(remaining: int, deadline: date, today: date) -> int:
+    """Сколько элементов в неделю нужно, чтобы пройти `remaining` к сроку."""
+    days = (deadline - today).days
+    if days <= 0:
+        return remaining
+    return max(int(-(-remaining // max(days / 7.0, 1e-9))), 0)
 
 
 def _deadline_for(raw: str, exam_day: date, fallback_md: tuple[int, int]) -> date:
@@ -511,6 +540,53 @@ SELECT w.wk::date AS week,
  ORDER BY 1
 """
 
+#: Когда ученик впервые что-то сделал. Нужно, чтобы не мерить темп новичка по
+#: неделям, которых у него ещё не было: медиана трёх недель у человека,
+#: занимающегося три дня, — это медиана [0, 0, N], то есть ноль. На проде это
+#: дало «делает 0» ученице, решившей 60 заданий за одно занятие (замер 07.09).
+_FIRST_ACTIVITY_SQL = f"""
+SELECT least(
+    (SELECT min(tr.submitted_at)
+       FROM task_results tr
+       JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
+      WHERE tr.user_id = :student_id AND {real_student_results_filter('tr')}),
+    (SELECT min(smp.completed_at)
+       FROM student_material_progress smp
+      WHERE smp.student_id = :student_id AND smp.completed_at IS NOT NULL
+        AND {real_student_material_filter('smp')})
+) AS first_at
+"""
+
+#: Сколько из сделанного за окно пришлось НА ЗАНЯТИЕ, а не на дом. Занятием
+#: считается работа в промежутке от начала урока до его конца: расписание —
+#: единственный признак «урок идёт», который есть в данных.
+#:
+#: Зачем разделять (требование оператора 07.09): в сводке видно «делает N», но
+#: без разбивки непонятно, работает человек сам или только под присмотром
+#: преподавателя. Это разные выводы и разные действия.
+_LESSON_WORK_SQL = f"""
+WITH lessons AS (
+    SELECT lo.scheduled_at AS starts_at,
+           lo.scheduled_at
+             + CAST(COALESCE(lo.duration_minutes, 60) || ' minutes' AS interval)
+             AS ends_at
+      FROM lesson_occurrence_participant lop
+      JOIN lesson_occurrence lo ON lo.id = lop.occurrence_id
+     WHERE lop.student_id = :student_id
+       AND lo.scheduled_at >= CAST(:since AS timestamptz) - interval '1 day'
+)
+SELECT count(DISTINCT tr.task_id) AS n
+  FROM task_results tr
+  JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
+ WHERE tr.user_id = :student_id AND tr.is_correct = true
+   AND {real_student_results_filter('tr')}
+   AND tr.submitted_at >= :since
+   AND EXISTS (
+       SELECT 1 FROM lessons l
+        WHERE tr.submitted_at BETWEEN l.starts_at AND l.ends_at
+   )
+"""
+
 #: Пропущенные занятия за то же окно. Перенос и перерыв не считаются: правило
 #: берётся из `student_dashboard_service.MISSED_STATUSES`, а не пишется заново —
 #: разъехавшись, «пропустил» на дашборде и «нагоняем» в домашней работе стали
@@ -555,7 +631,20 @@ async def compute(
         `VolumePlan` — норма и всё, из чего она сложилась.
     """
     moment = now or datetime.now(timezone.utc)
-    since = moment - timedelta(weeks=FACT_WEEKS)
+
+    # Окно темпа не может быть длиннее, чем ученик вообще с нами (tsk-798,
+    # замер 07.09): медиана трёх недель у человека, занимающегося три дня, —
+    # это медиана [0, 0, N], то есть ноль. На проде так и вышло: ученица
+    # решила 60 заданий за одно занятие, а в сводке стояло «делает 0», и
+    # выдача ей считалась как человеку с нулевым темпом.
+    first_at = (
+        await db.execute(text(_FIRST_ACTIVITY_SQL), {"student_id": student_id})
+    ).scalar()
+    weeks_window = FACT_WEEKS
+    if first_at is not None:
+        days = max((moment - first_at).days, 0)
+        weeks_window = max(1, min(FACT_WEEKS, -(-days // 7) or 1))
+    since = moment - timedelta(weeks=weeks_window)
 
     grade = (
         await db.execute(
@@ -579,11 +668,28 @@ async def compute(
         for r in (
             await db.execute(
                 text(_FACT_SQL),
-                {"student_id": student_id, "since": since, "weeks": FACT_WEEKS},
+                {"student_id": student_id, "since": since, "weeks": weeks_window},
             )
         ).mappings()
     ]
     fact_per_week = float(statistics.median(weekly)) if weekly else 0.0
+
+    # Сколько из этого сделано НА ЗАНЯТИИ (требование оператора 07.09).
+    # Работа на уроке в темп входила и раньше — это обычные сдачи, — но в
+    # сводке была неотличима от домашней, и «делает N» нельзя было прочитать:
+    # человек работает сам или только под присмотром преподавателя.
+    lesson_done = int(
+        (
+            await db.execute(
+                text(_LESSON_WORK_SQL), {"student_id": student_id, "since": since}
+            )
+        ).scalar()
+        or 0
+    )
+    total_done = sum(weekly)
+    lesson_share = (
+        round(lesson_done / total_done, 2) if total_done > 0 else None
+    )
 
     quality = (
         await db.execute(
@@ -623,9 +729,33 @@ async def compute(
         db, student_id=student_id, grade=grade, today=moment.date()
     )
     sprint = False
+    early_target = summer_target = None
+    early_day = summer_day = None
     if program is not None:
         remaining = program["remaining"]
         days_left = (program["deadline"] - moment.date()).days
+
+        # Не выпускник — у него есть выбор, которого нет у одиннадцати-
+        # классника: закончить программу за этот учебный год или прихватить
+        # лето, а весь выпускной год отдать вариантам. Одна цифра «18 в неделю
+        # до марта 2028» этот выбор прячет, и разговор о летних занятиях
+        # опереть не на что (требование оператора 07.09).
+        if (program["deadline"] - moment.date()).days > 400:
+            from app.core import settings_store
+
+            early_day = _deadline_for(
+                settings_store.get_str("homework_program_early_finish"),
+                date(moment.year + 1, EXAM_MONTH, EXAM_DAY),
+                (5, 31),
+            )
+            summer_day = _deadline_for(
+                settings_store.get_str("homework_program_summer_finish"),
+                date(moment.year + 1, EXAM_MONTH, EXAM_DAY),
+                (8, 31),
+            )
+            early_target = _weekly_for(remaining, early_day, moment.date())
+            summer_target = _weekly_for(remaining, summer_day, moment.date())
+
         if days_left > 0:
             target = max(int(-(-remaining // max(days_left / 7.0, 1e-9))), 0)
         else:
@@ -700,6 +830,12 @@ async def compute(
         needs_more_program=needs_more,
         exam_sprint=sprint,
         target_unreachable=target > ceiling,
+        lesson_share=lesson_share,
+        fact_weeks_used=weeks_window,
+        early_target_per_week=early_target,
+        summer_target_per_week=summer_target,
+        early_deadline=early_day,
+        summer_deadline=summer_day,
         pace_gap=pace_gap,
     )
 

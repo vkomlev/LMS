@@ -252,6 +252,37 @@ SETTINGS: Tuple[SettingDef, ...] = (
         max_length=200,
     ),
     SettingDef(
+        key="homework_program_early_finish",
+        group=GROUP_LESSONS,
+        title="Ранний финиш программы: к какому числу",
+        description=(
+            "День и месяц в формате ММ-ДД. Для тех, кто ещё не выпускник: "
+            "сколько нужно в неделю, чтобы пройти программу за этот учебный "
+            "год. Показывается рядом с обычной нормой — иначе выбор «успеть "
+            "раньше или растянуть на два года» не виден."
+        ),
+        kind="str",
+        default="05-31",
+        env_var=None,
+        unit="ММ-ДД",
+        max_length=5,
+    ),
+    SettingDef(
+        key="homework_program_summer_finish",
+        group=GROUP_LESSONS,
+        title="Финиш с летними занятиями: к какому числу",
+        description=(
+            "То же, но с занятиями летом. Вторая цифра нужна, чтобы разговор "
+            "о летнем обучении опирался на числа: закончив программу за лето, "
+            "ученик отдаёт весь выпускной год отработке вариантов."
+        ),
+        kind="str",
+        default="08-31",
+        env_var=None,
+        unit="ММ-ДД",
+        max_length=5,
+    ),
+    SettingDef(
         key="homework_program_planned_pace",
         group=GROUP_LESSONS,
         title="На какой недельный темп рассчитывать объём программы",
