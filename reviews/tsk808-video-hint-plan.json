@@ -1,0 +1,880 @@
+[
+  {
+    "task_id": 2351,
+    "course_id": 144,
+    "course": "Задание 16 ЕГЭ по информатике. Рекурсивные функции",
+    "external_uid": "ext:d4:sdamgia:20260602:56544",
+    "task_title": "Число аргументов с заданным значением",
+    "key": "K1:uid",
+    "src": "sdamgia",
+    "code": "56544",
+    "warn": [
+      "несколько разборов одной задачи"
+    ],
+    "videos": [
+      {
+        "source_item_id": 7205,
+        "title": "Курс ЕГЭ по информатике. Разбираем задание №16 (16_56544)",
+        "url": "https://vk.com/video-53400615_456239604",
+        "publication_id": 443,
+        "published_at": "2026-02-13 01:53:40.696832+00:00",
+        "recorded_at": "2025-01-24T15:22:40-05:00",
+        "resolve": "code+unique_id",
+        "tg_posts": [
+          "311"
+        ],
+        "link_check": "ОК"
+      },
+      {
+        "source_item_id": 7204,
+        "title": "Курс ЕГЭ по информатике. Разбираем задание №16 (16_56544)",
+        "url": "https://vk.com/video-53400615_456239603",
+        "publication_id": 442,
+        "published_at": "2026-02-13 01:52:38.873860+00:00",
+        "recorded_at": "2025-01-24T15:22:40-05:00",
+        "resolve": "code+unique_id",
+        "tg_posts": [
+          "310"
+        ],
+        "link_check": "ОК"
+      }
+    ]
+  },
+  {
+    "task_id": 2058,
+    "course_id": 138,
+    "course": "ЕГЭ по информатике. Задание №3. Базы данных в Excel",
+    "external_uid": "ext:polyakov:pilot:mini50:4406",
+    "task_title": "Среднее население городов с английским",
+    "key": "K1:uid",
+    "src": "polyakov",
+    "code": "4406",
+    "warn": [
+      "несколько разборов одной задачи"
+    ],
+    "videos": [
+      {
+        "source_item_id": 7013,
+        "title": "Курс ЕГЭ по информатике. Разбираем задание №3 (3_4406) (Поляков)",
+        "url": "https://vk.com/video-53400615_456239412",
+        "publication_id": 251,
+        "published_at": "2026-02-12 22:05:04.417860+00:00",
+        "recorded_at": "2025-11-04T17:26:57",
+        "resolve": "href",
+        "tg_posts": [
+          "702"
+        ],
+        "link_check": "ОК"
+      },
+      {
+        "source_item_id": 7126,
+        "title": "Курс ЕГЭ по информатике. Разбираем задание №3 (3_4406) (Поляков)",
+        "url": "https://vk.com/video-53400615_456239525",
+        "publication_id": 364,
+        "published_at": "2026-02-13 00:21:51.668088+00:00",
+        "recorded_at": "2024-01-30T19:19:09-05:00",
+        "resolve": "title",
+        "tg_posts": [
+          "56"
+        ],
+        "link_check": "ОК"
+      }
+    ]
+  },
+  {
+    "task_id": 2281,
+    "course_id": 156,
+    "course": "Задание 5 ЕГЭ. Анализ алгоритмов для исполнителей",
+    "external_uid": "ext:d4:sdamgia:20260602:60247",
+    "task_title": "Минимальное итоговое число после дописывания",
+    "key": "K1:uid",
+    "src": "sdamgia",
+    "code": "60247",
+    "warn": [],
+    "videos": [
+      {
+        "source_item_id": 7116,
+        "title": "Курс ЕГЭ по информатике. Разбираем задание №5 (5_60247)",
+        "url": "https://vk.com/video-53400615_456239515",
+        "publication_id": 354,
+        "published_at": "2026-02-13 00:09:32.128121+00:00",
+        "recorded_at": "2023-12-30T15:53:38-05:00",
+        "resolve": "code+unique_id",
+        "tg_posts": [
+          "35"
+        ],
+        "link_check": "ОК"
+      }
+    ]
+  },
+  {
+    "task_id": 2305,
+    "course_id": 146,
+    "course": "Задание 18 ЕГЭ по информатике. Жадные алгоритмы",
+    "external_uid": "ext:d4:sdamgia:20260602:33763",
+    "task_title": "Минимальная сумма пути ладьи",
+    "key": "K1:uid",
+    "src": "sdamgia",
+    "code": "33763",
+    "warn": [],
+    "videos": [
+      {
+        "source_item_id": 7176,
+        "title": "Курс ЕГЭ по информатике. Разбираем задание №18 (18_33763)",
+        "url": "https://vk.com/video-53400615_456239575",
+        "publication_id": 414,
+        "published_at": "2026-02-13 01:19:36.862877+00:00",
+        "recorded_at": "2024-12-20T17:14:05-05:00",
+        "resolve": "code+unique_id",
+        "tg_posts": [
+          "267"
+        ],
+        "link_check": "ОК"
+      }
+    ]
+  },
+  {
+    "task_id": 2212,
+    "course_id": 160,
+    "course": "Задание 9 ЕГЭ по информатике. Агрегатные функции и вычисления в электронных таблицах",
+    "external_uid": "ext:d4:sdamgia:20260602:56537",
+    "task_title": "Повторы и средние в строке",
+    "key": "K1:uid",
+    "src": "sdamgia",
+    "code": "56537",
+    "warn": [],
+    "videos": [
+      {
+        "source_item_id": 7133,
+        "title": "Курс ЕГЭ по информатике. Разбираем задание №9 (9_56537)",
+        "url": "https://vk.com/video-53400615_456239532",
+        "publication_id": 371,
+        "published_at": "2026-02-13 00:30:35.497672+00:00",
+        "recorded_at": "2024-09-03T16:29:41-05:00",
+        "resolve": "code+unique_id",
+        "tg_posts": [
+          "104"
+        ],
+        "link_check": "ОК"
+      }
+    ]
+  },
+  {
+    "task_id": 7160,
+    "course_id": 1179,
+    "course": "Задание 14. Обработка данных в электронной таблице",
+    "external_uid": "sdamgia:oge:14:10574",
+    "task_title": "ОГЭ. Задание 14 (обработка таблицы) — вариант 10574",
+    "key": "K1:uid",
+    "src": "sdamgia_oge",
+    "code": "10574",
+    "warn": [],
+    "videos": [
+      {
+        "source_item_id": 7821,
+        "title": "Курс ОГЭ по информатике. Разбираем задание №14 (14_10574)",
+        "url": "https://vk.com/video-53400615_456240220",
+        "publication_id": 1059,
+        "published_at": "2026-02-13 14:49:41.489990+00:00",
+        "recorded_at": "2025-12-27T12:38:05",
+        "resolve": "href",
+        "tg_posts": [
+          "155"
+        ],
+        "link_check": "ОК"
+      }
+    ]
+  },
+  {
+    "task_id": 7161,
+    "course_id": 1179,
+    "course": "Задание 14. Обработка данных в электронной таблице",
+    "external_uid": "sdamgia:oge:14:10575",
+    "task_title": "ОГЭ. Задание 14 (обработка таблицы) — вариант 10575",
+    "key": "K1:uid",
+    "src": "sdamgia_oge",
+    "code": "10575",
+    "warn": [],
+    "videos": [
+      {
+        "source_item_id": 7829,
+        "title": "Курс ОГЭ по информатике. Разбираем тему \"14_10575\"",
+        "url": "https://vk.com/video-53400615_456240228",
+        "publication_id": 1067,
+        "published_at": "2026-02-13 14:58:25.408060+00:00",
+        "recorded_at": "2026-02-05T19:19:13",
+        "resolve": "href",
+        "tg_posts": [
+          "163"
+        ],
+        "link_check": "ОК"
+      }
+    ]
+  },
+  {
+    "task_id": 7168,
+    "course_id": 1179,
+    "course": "Задание 14. Обработка данных в электронной таблице",
+    "external_uid": "sdamgia:oge:14:11041",
+    "task_title": "ОГЭ. Задание 14 (обработка таблицы) — вариант 11041",
+    "key": "K1:uid",
+    "src": "sdamgia_oge",
+    "code": "11041",
+    "warn": [
+      "несколько разборов одной задачи"
+    ],
+    "videos": [
+      {
+        "source_item_id": 7822,
+        "title": "Курс ОГЭ по информатике. Разбираем задание №14 (14_11041)",
+        "url": "https://vk.com/video-53400615_456240221",
+        "publication_id": 1060,
+        "published_at": "2026-02-13 14:50:47.326418+00:00",
+        "recorded_at": "2025-12-30T17:02:18",
+        "resolve": "href",
+        "tg_posts": [
+          "156"
+        ],
+        "link_check": "ОК"
+      },
+      {
+        "source_item_id": 7768,
+        "title": "Курс ОГЭ по информатике. Разбираем задание №14 (14_11041) (Решу ОГЭ)",
+        "url": "https://vk.com/video-53400615_456240167",
+        "publication_id": 1006,
+        "published_at": "2026-02-13 13:50:11.049519+00:00",
+        "recorded_at": "2025-06-01T21:17:59",
+        "resolve": "href",
+        "tg_posts": [
+          "98"
+        ],
+        "link_check": "ОК"
+      }
+    ]
+  },
+  {
+    "task_id": 2938,
+    "course_id": 162,
+    "course": "Задание 11 ЕГЭ по информатике. Вычисление объема информации",
+    "external_uid": "ext:calib:polyakov:img:20260525:4406",
+    "task_title": "Среднее население городов по языкам",
+    "key": "K1:uid",
+    "src": "polyakov",
+    "code": "4406",
+    "warn": [
+      "номер задания в заголовке ролика (3) не совпал с номером курса (11)",
+      "несколько разборов одной задачи"
+    ],
+    "videos": [
+      {
+        "source_item_id": 7013,
+        "title": "Курс ЕГЭ по информатике. Разбираем задание №3 (3_4406) (Поляков)",
+        "url": "https://vk.com/video-53400615_456239412",
+        "publication_id": 251,
+        "published_at": "2026-02-12 22:05:04.417860+00:00",
+        "recorded_at": "2025-11-04T17:26:57",
+        "resolve": "href",
+        "tg_posts": [
+          "702"
+        ],
+        "link_check": "ОК"
+      },
+      {
+        "source_item_id": 7126,
+        "title": "Курс ЕГЭ по информатике. Разбираем задание №3 (3_4406) (Поляков)",
+        "url": "https://vk.com/video-53400615_456239525",
+        "publication_id": 364,
+        "published_at": "2026-02-13 00:21:51.668088+00:00",
+        "recorded_at": "2024-01-30T19:19:09-05:00",
+        "resolve": "title",
+        "tg_posts": [
+          "56"
+        ],
+        "link_check": "ОК"
+      }
+    ]
+  },
+  {
+    "task_id": 4223,
+    "course_id": 159,
+    "course": "Задание 8 ЕГЭ по информатике. Комбинаторика",
+    "external_uid": "wp_nav:8:7cfacd9a",
+    "task_title": "Кодовые слова с одной буквой К",
+    "key": "K1:provenance",
+    "src": "kompege",
+    "code": "7",
+    "warn": [],
+    "videos": [
+      {
+        "source_item_id": 6865,
+        "title": "Курс ЕГЭ по информатике. Разбираем задание №8 (КЕГЭ)",
+        "url": "https://vk.com/video-53400615_456239263",
+        "publication_id": 103,
+        "published_at": "2026-02-12 19:11:36.144569+00:00",
+        "recorded_at": "2025-05-22T17:29:35",
+        "resolve": "href",
+        "tg_posts": [
+          "521"
+        ],
+        "link_check": "ОК"
+      }
+    ]
+  },
+  {
+    "task_id": 7211,
+    "course_id": 1180,
+    "course": "Задание 15. Короткий алгоритм: Робот в среде КуМир",
+    "external_uid": "sdamgia:oge:15:37713",
+    "task_title": "ОГЭ. Задание 15 (короткий алгоритм: Робот) — вариант 37713",
+    "key": "K1:uid",
+    "src": "sdamgia_oge",
+    "code": "37713",
+    "warn": [
+      "несколько разборов одной задачи"
+    ],
+    "videos": [
+      {
+        "source_item_id": 7761,
+        "title": "Курс ОГЭ по информатике. Разбираем задание №15 (15_37713) (РешуОГЭ)",
+        "url": "https://vk.com/video-53400615_456240160",
+        "publication_id": 999,
+        "published_at": "2026-02-13 13:42:07.677547+00:00",
+        "recorded_at": "2025-05-13T18:48:26",
+        "resolve": "href",
+        "tg_posts": [
+          "91"
+        ],
+        "link_check": "ОК"
+      },
+      {
+        "source_item_id": 7762,
+        "title": "Курс ОГЭ по информатике. Разбираем задание №15 (15_37713) (РешуОГЭ)",
+        "url": "https://vk.com/video-53400615_456240161",
+        "publication_id": 1000,
+        "published_at": "2026-02-13 13:43:13.529717+00:00",
+        "recorded_at": "2025-05-13T18:48:26",
+        "resolve": "code+unique_id",
+        "tg_posts": [
+          "92"
+        ],
+        "link_check": "ОК"
+      }
+    ]
+  },
+  {
+    "task_id": 7212,
+    "course_id": 1180,
+    "course": "Задание 15. Короткий алгоритм: Робот в среде КуМир",
+    "external_uid": "sdamgia:oge:15:37714",
+    "task_title": "ОГЭ. Задание 15 (короткий алгоритм: Робот) — вариант 37714",
+    "key": "K1:uid",
+    "src": "sdamgia_oge",
+    "code": "37714",
+    "warn": [],
+    "videos": [
+      {
+        "source_item_id": 7938,
+        "title": "Курс ОГЭ по информатике. Разбираем задание №15 (15_37714)",
+        "url": "https://vk.com/video-53400615_456240339",
+        "publication_id": 1161,
+        "published_at": "2026-02-20 06:42:47.547806+00:00",
+        "recorded_at": "2026-02-19T18:25:58+00:00",
+        "resolve": "code+unique_id",
+        "tg_posts": [],
+        "link_check": "ОК"
+      }
+    ]
+  },
+  {
+    "task_id": 3957,
+    "course_id": 153,
+    "course": "Задание 26 ЕГЭ по информатике. Обработка данных",
+    "external_uid": "wp_nav:26:63fc00be",
+    "task_title": "Матрешка из коробок с шагом 9",
+    "key": "K1:provenance",
+    "src": "kompege",
+    "code": "21424",
+    "warn": [],
+    "videos": [
+      {
+        "source_item_id": 6849,
+        "title": "Курс ЕГЭ по информатике. Разбираем задание №26 (26_21424) (КЕГЭ)",
+        "url": "https://vk.com/video-53400615_456239247",
+        "publication_id": 87,
+        "published_at": "2026-02-12 18:47:45.700701+00:00",
+        "recorded_at": "2025-05-12T17:24:50",
+        "resolve": "href",
+        "tg_posts": [
+          "504"
+        ],
+        "link_check": "ОК"
+      }
+    ]
+  },
+  {
+    "task_id": 2059,
+    "course_id": 1381,
+    "course": "Задание 3. Сложные",
+    "external_uid": "ext:polyakov:pilot:mini50:7613",
+    "task_title": "Стоимость детских товаров радиоуправляемых игрушек",
+    "key": "K1:uid",
+    "src": "polyakov",
+    "code": "7613",
+    "warn": [],
+    "videos": [
+      {
+        "source_item_id": 7022,
+        "title": "Курс ЕГЭ по информатике. Разбираем задание №3",
+        "url": "https://vk.com/video-53400615_456239421",
+        "publication_id": 260,
+        "published_at": "2026-02-12 22:16:08.583419+00:00",
+        "recorded_at": "2025-11-17T18:01:35",
+        "resolve": "href",
+        "tg_posts": [
+          "711"
+        ],
+        "link_check": "ОК"
+      }
+    ]
+  },
+  {
+    "task_id": 4206,
+    "course_id": 147,
+    "course": "Задание 19-21 ЕГЭ по информатике. Теория игр",
+    "external_uid": "wp_nav:19:26d847b4",
+    "task_title": "Пара чисел до 80",
+    "key": "K1:provenance",
+    "src": "kompege",
+    "code": "63",
+    "warn": [],
+    "videos": [
+      {
+        "source_item_id": 7092,
+        "title": "Курс ЕГЭ по информатике. Разбираем задание №1 (КЕГЭ)",
+        "url": "https://vk.com/video-53400615_456239491",
+        "publication_id": 330,
+        "published_at": "2026-02-12 23:40:30.146669+00:00",
+        "recorded_at": "2026-02-05T18:27:45",
+        "resolve": "href",
+        "tg_posts": [
+          "793"
+        ],
+        "link_check": "ОК"
+      }
+    ]
+  },
+  {
+    "task_id": 6596,
+    "course_id": 1129,
+    "course": "Задание 5. Формальный исполнитель",
+    "external_uid": "oge:reshu:t5:10457",
+    "task_title": "Параметр деления для чисел 46 и 8",
+    "key": "K1:uid",
+    "src": "sdamgia_oge",
+    "code": "10457",
+    "warn": [],
+    "videos": [
+      {
+        "source_item_id": 7786,
+        "title": "Курс ОГЭ по информатике. Разбираем тему \"5_10457 (Решу ОГЭ)\"",
+        "url": "https://vk.com/video-53400615_456240185",
+        "publication_id": 1024,
+        "published_at": "2026-02-13 14:11:02.283851+00:00",
+        "recorded_at": "2025-09-15T17:51:41",
+        "resolve": "href",
+        "tg_posts": [
+          "119"
+        ],
+        "link_check": "ОК"
+      }
+    ]
+  },
+  {
+    "task_id": 3800,
+    "course_id": 153,
+    "course": "Задание 26 ЕГЭ по информатике. Обработка данных",
+    "external_uid": "wp_nav:26:201ae504",
+    "task_title": "Упаковка подарка в коробки",
+    "key": "K1:provenance",
+    "src": "sdamgia",
+    "code": "81493",
+    "warn": [],
+    "videos": [
+      {
+        "source_item_id": 7089,
+        "title": "Курс ЕГЭ по информатике. Разбираем задание №26 (Решу ЕГЭ)",
+        "url": "https://vk.com/video-53400615_456239488",
+        "publication_id": 327,
+        "published_at": "2026-02-12 23:36:56.239259+00:00",
+        "recorded_at": "2026-02-03T20:22:52",
+        "resolve": "href",
+        "tg_posts": [
+          "789"
+        ],
+        "link_check": "ОК"
+      }
+    ]
+  },
+  {
+    "task_id": 2254,
+    "course_id": 158,
+    "course": "Задание 7 ЕГЭ. Кодирование различных видов информации. Передача информации.",
+    "external_uid": "ext:d4:sdamgia:20260602:13620",
+    "task_title": "Размер файла повторной звукозаписи",
+    "key": "K1:uid",
+    "src": "sdamgia",
+    "code": "13620",
+    "warn": [],
+    "videos": [
+      {
+        "source_item_id": 7166,
+        "title": "Курс ЕГЭ по информатике. Разбираем задание №7 (7_13620)",
+        "url": "https://vk.com/video-53400615_456239565",
+        "publication_id": 404,
+        "published_at": "2026-02-13 01:07:52.024618+00:00",
+        "recorded_at": "2024-02-12T19:26:56-05:00",
+        "resolve": "code+unique_id",
+        "tg_posts": [
+          "251"
+        ],
+        "link_check": "ОК"
+      }
+    ]
+  },
+  {
+    "task_id": 2220,
+    "course_id": 160,
+    "course": "Задание 9 ЕГЭ по информатике. Агрегатные функции и вычисления в электронных таблицах",
+    "external_uid": "ext:d4:sdamgia:20260602:58322",
+    "task_title": "Квадрат максимума и прогрессия",
+    "key": "K1:uid",
+    "src": "sdamgia",
+    "code": "58322",
+    "warn": [],
+    "videos": [
+      {
+        "source_item_id": 7199,
+        "title": "Курс ЕГЭ по информатике. Разбираем задание №9 (9_58322)",
+        "url": "https://vk.com/video-53400615_456239598",
+        "publication_id": 437,
+        "published_at": "2026-02-13 01:46:43.510596+00:00",
+        "recorded_at": "2025-01-18T16:56:55-05:00",
+        "resolve": "code+unique_id",
+        "tg_posts": [
+          "302"
+        ],
+        "link_check": "ОК"
+      }
+    ]
+  },
+  {
+    "task_id": 2293,
+    "course_id": 159,
+    "course": "Задание 8 ЕГЭ по информатике. Комбинаторика",
+    "external_uid": "ext:d4:sdamgia:20260602:69913",
+    "task_title": "Последний номер слова с двумя Р",
+    "key": "K1:uid",
+    "src": "sdamgia",
+    "code": "69913",
+    "warn": [],
+    "videos": [
+      {
+        "source_item_id": 7185,
+        "title": "Курс ЕГЭ по информатике. Разбираем задание №8 (8_69913)",
+        "url": "https://vk.com/video-53400615_456239584",
+        "publication_id": 423,
+        "published_at": "2026-02-13 01:30:38.858375+00:00",
+        "recorded_at": "2025-07-01T16:32:02-05:00",
+        "resolve": "code+unique_id",
+        "tg_posts": [
+          "282"
+        ],
+        "link_check": "ОК"
+      }
+    ]
+  },
+  {
+    "task_id": 2333,
+    "course_id": 138,
+    "course": "ЕГЭ по информатике. Задание №3. Базы данных в Excel",
+    "external_uid": "ext:d4:sdamgia:20260602:75240",
+    "task_title": "Максимальная выручка молочного отдела",
+    "key": "K1:uid",
+    "src": "sdamgia",
+    "code": "75240",
+    "warn": [],
+    "videos": [
+      {
+        "source_item_id": 6989,
+        "title": "Курс ЕГЭ по информатике. Разбираем задание №3 (3_75240)",
+        "url": "https://vk.com/video-53400615_456239388",
+        "publication_id": 227,
+        "published_at": "2026-02-12 21:36:41.004629+00:00",
+        "recorded_at": "2025-09-24T17:21:59",
+        "resolve": "href",
+        "tg_posts": [
+          "670"
+        ],
+        "link_check": "ОК"
+      }
+    ]
+  },
+  {
+    "task_id": 3476,
+    "course_id": 153,
+    "course": "Задание 26 ЕГЭ по информатике. Обработка данных",
+    "external_uid": "wp_nav:26:8b1e0a5b",
+    "task_title": "Акционная цена товаров в чеках",
+    "key": "K1:provenance",
+    "src": "yandex",
+    "code": "b24b2dd9-52dc-42a7-b9f8-766c46e4c737:26",
+    "warn": [],
+    "videos": [
+      {
+        "source_item_id": 6902,
+        "title": "Курс ЕГЭ по информатике. Разбираем задание №26 (Яндекс Учебник)",
+        "url": "https://vk.com/video-53400615_456239301",
+        "publication_id": 140,
+        "published_at": "2026-02-12 19:58:27.395617+00:00",
+        "recorded_at": "2025-06-06T16:51:29",
+        "resolve": "href",
+        "tg_posts": [
+          "571"
+        ],
+        "link_check": "ОК"
+      }
+    ]
+  },
+  {
+    "task_id": 6760,
+    "course_id": 1153,
+    "course": "Задание 8. Поисковые запросы, логика И/ИЛИ",
+    "external_uid": "oge:reshu:t8:37276",
+    "task_title": "Запрос по двум сайтам и Монитору",
+    "key": "K1:uid",
+    "src": "sdamgia_oge",
+    "code": "37276",
+    "warn": [],
+    "videos": [
+      {
+        "source_item_id": 7830,
+        "title": "Курс ОГЭ по информатике. Разбираем тему \"8_37276\"",
+        "url": "https://vk.com/video-53400615_456240229",
+        "publication_id": 1068,
+        "published_at": "2026-02-13 14:59:31.187132+00:00",
+        "recorded_at": "2026-02-05T20:51:58",
+        "resolve": "href",
+        "tg_posts": [
+          "164"
+        ],
+        "link_check": "ОК"
+      }
+    ]
+  },
+  {
+    "task_id": 6503,
+    "course_id": 1120,
+    "course": "Задание 3. Значение логического выражения",
+    "external_uid": "oge:reshu:t3:37190",
+    "task_title": "Количество двузначных чисел при лживом высказывании об чётности и 13",
+    "key": "K1:uid",
+    "src": "sdamgia_oge",
+    "code": "37190",
+    "warn": [],
+    "videos": [
+      {
+        "source_item_id": 7797,
+        "title": "Курс ОГЭ по информатике. Разбираем задание №3 (3_37190)",
+        "url": "https://vk.com/video-53400615_456240196",
+        "publication_id": 1035,
+        "published_at": "2026-02-13 14:23:00.806333+00:00",
+        "recorded_at": "2025-09-25T17:12:41",
+        "resolve": "href",
+        "tg_posts": [
+          "130"
+        ],
+        "link_check": "ОК"
+      }
+    ]
+  },
+  {
+    "task_id": 3786,
+    "course_id": 1402,
+    "course": "Задание 26. Сложные",
+    "external_uid": "wp_nav:26:561d4697",
+    "task_title": "Очереди в двух окнах банка",
+    "key": "K1:provenance",
+    "src": "sdamgia",
+    "code": "63075",
+    "warn": [],
+    "videos": [
+      {
+        "source_item_id": 7297,
+        "title": "Курс ЕГЭ по информатике. Разбираем задание №26 (26_63075) (Решу ЕГЭ)",
+        "url": "https://vk.com/video-53400615_456239696",
+        "publication_id": 535,
+        "published_at": "2026-02-13 03:41:19.777822+00:00",
+        "recorded_at": "2025-04-03T13:29:59-05:00",
+        "resolve": "title",
+        "tg_posts": [
+          "436"
+        ],
+        "link_check": "ОК"
+      }
+    ]
+  },
+  {
+    "task_id": 3763,
+    "course_id": 153,
+    "course": "Задание 26 ЕГЭ по информатике. Обработка данных",
+    "external_uid": "wp_nav:26:2c36d01d",
+    "task_title": "Архив файлов на диске",
+    "key": "K1:provenance",
+    "src": "sdamgia",
+    "code": "27423",
+    "warn": [],
+    "videos": [
+      {
+        "source_item_id": 7311,
+        "title": "Курс ЕГЭ по информатике. Разбираем задание №26 (26_27423) (Решу ЕГЭ)",
+        "url": "https://vk.com/video-53400615_456239710",
+        "publication_id": 549,
+        "published_at": "2026-02-13 03:57:36.312183+00:00",
+        "recorded_at": "2025-08-03T16:12:25-05:00",
+        "resolve": "title",
+        "tg_posts": [
+          "454"
+        ],
+        "link_check": "ОК"
+      }
+    ]
+  },
+  {
+    "task_id": 3768,
+    "course_id": 153,
+    "course": "Задание 26 ЕГЭ по информатике. Обработка данных",
+    "external_uid": "wp_nav:26:9e6fe25f",
+    "task_title": "Покупка со скидкой 25 процентов",
+    "key": "K1:provenance",
+    "src": "sdamgia",
+    "code": "29674",
+    "warn": [],
+    "videos": [
+      {
+        "source_item_id": 7941,
+        "title": "Курс ЕГЭ по информатике. Разбираем задание №26 (26_29674) (Решу ЕГЭ)",
+        "url": "https://vk.com/video-53400615_456240334",
+        "publication_id": 1164,
+        "published_at": "2026-02-20 06:41:22.761937+00:00",
+        "recorded_at": "2026-02-19T17:19:48+00:00",
+        "resolve": "title",
+        "tg_posts": [],
+        "link_check": "ОК"
+      }
+    ]
+  },
+  {
+    "task_id": 2308,
+    "course_id": 1396,
+    "course": "Задание 18. Сложные",
+    "external_uid": "ext:d4:sdamgia:20260602:55635",
+    "task_title": "Максимальная сумма и недоступные клетки",
+    "key": "K1:uid",
+    "src": "sdamgia",
+    "code": "55635",
+    "warn": [],
+    "videos": [
+      {
+        "source_item_id": 7186,
+        "title": "Курс ЕГЭ по информатике. Разбираем задание №18 (18_55635)",
+        "url": "https://vk.com/video-53400615_456239585",
+        "publication_id": 424,
+        "published_at": "2026-02-13 01:31:54.016847+00:00",
+        "recorded_at": "2025-07-01T17:32:12-05:00",
+        "resolve": "code+unique_id",
+        "tg_posts": [
+          "283"
+        ],
+        "link_check": "ОК"
+      }
+    ]
+  },
+  {
+    "task_id": 4271,
+    "course_id": 1402,
+    "course": "Задание 26. Сложные",
+    "external_uid": "wp_nav:26:69525be7",
+    "task_title": "Самокаты на парковках по заявкам",
+    "key": "K1:provenance",
+    "src": "kompege",
+    "code": "9077",
+    "warn": [],
+    "videos": [
+      {
+        "source_item_id": 7235,
+        "title": "Курс ЕГЭ по информатике. Разбираем задание №26 (26_9077) (КЕГЭ)",
+        "url": "https://vk.com/video-53400615_456239634",
+        "publication_id": 473,
+        "published_at": "2026-02-13 02:29:29.530100+00:00",
+        "recorded_at": "2025-02-15T21:04:52-05:00",
+        "resolve": "title",
+        "tg_posts": [
+          "357"
+        ],
+        "link_check": "ОК"
+      }
+    ]
+  },
+  {
+    "task_id": 2337,
+    "course_id": 138,
+    "course": "ЕГЭ по информатике. Задание №3. Базы данных в Excel",
+    "external_uid": "ext:d4:sdamgia:20260602:63052",
+    "task_title": "Магазин с продажами зеленого чая",
+    "key": "K1:uid",
+    "src": "sdamgia",
+    "code": "63052",
+    "warn": [],
+    "videos": [
+      {
+        "source_item_id": 7125,
+        "title": "Курс ЕГЭ по информатике. Разбираем задание №3 (3_63052)",
+        "url": "https://vk.com/video-53400615_456239524",
+        "publication_id": 363,
+        "published_at": "2026-02-13 00:20:43.891733+00:00",
+        "recorded_at": "2024-01-30T19:18:14-05:00",
+        "resolve": "code+unique_id",
+        "tg_posts": [
+          "55"
+        ],
+        "link_check": "ОК"
+      }
+    ]
+  },
+  {
+    "task_id": 2328,
+    "course_id": 1384,
+    "course": "Задание 6. Сложные",
+    "external_uid": "ext:d4:sdamgia:20260602:58249",
+    "task_title": "Подсчёт точек внутри повторяющихся четырёх дуг",
+    "key": "K1:uid",
+    "src": "sdamgia",
+    "code": "58249",
+    "warn": [],
+    "videos": [
+      {
+        "source_item_id": 7134,
+        "title": "Курс ЕГЭ по информатике. Разбираем задание №6 (6_58249)",
+        "url": "https://vk.com/video-53400615_456239533",
+        "publication_id": 372,
+        "published_at": "2026-02-13 00:31:37.626004+00:00",
+        "recorded_at": "2024-11-03T18:20:44-05:00",
+        "resolve": "code+unique_id",
+        "tg_posts": [
+          "106"
+        ],
+        "link_check": "ОК"
+      }
+    ]
+  }
+]
