@@ -1,0 +1,159 @@
+{
+  "_": "tsk-812, исправление своей же правки того же дня: разбор «Регулярные выражения. Задание 3» был роздан на все десять заданий на регулярные выражения, а он про одно. Подпись ссылки в материале «Типовые решения» — «Разбор задания 3», а не «Смотреть разбор»; описание ролика: «Задание 3. Проверка корректности email». Остаётся на lms:c151:vvod:12 «Проверка email регулярным выражением», с остальных снимается.",
+  "allow_empty": false,
+  "items": [
+    {
+      "task_id": 5072,
+      "external_uid": "lms:c151:vvod:10",
+      "title": "Первый символ после поиска цифры",
+      "before": [
+        "https://vk.com/video-53400615_456239237",
+        "https://vk.com/video-53400615_456239483",
+        "https://vk.com/video-53400615_456239433"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239237",
+        "https://vk.com/video-53400615_456239483"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239433"
+      ]
+    },
+    {
+      "task_id": 5073,
+      "external_uid": "lms:c151:vvod:11",
+      "title": "Вывод слова в кавычках",
+      "before": [
+        "https://vk.com/video-53400615_456239237",
+        "https://vk.com/video-53400615_456239483",
+        "https://vk.com/video-53400615_456239433"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239237",
+        "https://vk.com/video-53400615_456239483"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239433"
+      ]
+    },
+    {
+      "task_id": 5075,
+      "external_uid": "lms:c151:vvod:13",
+      "title": "Повтор слова с пробелом",
+      "before": [
+        "https://vk.com/video-53400615_456239237",
+        "https://vk.com/video-53400615_456239483",
+        "https://vk.com/video-53400615_456239433"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239237",
+        "https://vk.com/video-53400615_456239483"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239433"
+      ]
+    },
+    {
+      "task_id": 5076,
+      "external_uid": "lms:c151:vvod:14",
+      "title": "Поиск телефонного номера",
+      "before": [
+        "https://vk.com/video-53400615_456239237",
+        "https://vk.com/video-53400615_456239483",
+        "https://vk.com/video-53400615_456239433"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239237",
+        "https://vk.com/video-53400615_456239483"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239433"
+      ]
+    },
+    {
+      "task_id": 5077,
+      "external_uid": "lms:c151:vvod:15",
+      "title": "Подсчёт фрагментов перед угловой скобкой",
+      "before": [
+        "https://vk.com/video-53400615_456239237",
+        "https://vk.com/video-53400615_456239428",
+        "https://vk.com/video-53400615_456239433"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239237",
+        "https://vk.com/video-53400615_456239428"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239433"
+      ]
+    },
+    {
+      "task_id": 5078,
+      "external_uid": "lms:c151:vvod:16",
+      "title": "Подсчёт дат в тексте",
+      "before": [
+        "https://vk.com/video-53400615_456239237",
+        "https://vk.com/video-53400615_456239428",
+        "https://vk.com/video-53400615_456239433"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239237",
+        "https://vk.com/video-53400615_456239428"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239433"
+      ]
+    },
+    {
+      "task_id": 5079,
+      "external_uid": "lms:c151:vvod:17",
+      "title": "Количество слов из пяти букв",
+      "before": [
+        "https://vk.com/video-53400615_456239237",
+        "https://vk.com/video-53400615_456239428",
+        "https://vk.com/video-53400615_456239433"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239237",
+        "https://vk.com/video-53400615_456239428"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239433"
+      ]
+    },
+    {
+      "task_id": 5080,
+      "external_uid": "lms:c151:vvod:18",
+      "title": "Извлечение протокола из URL",
+      "before": [
+        "https://vk.com/video-53400615_456239237",
+        "https://vk.com/video-53400615_456239428",
+        "https://vk.com/video-53400615_456239433"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239237",
+        "https://vk.com/video-53400615_456239428"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239433"
+      ]
+    },
+    {
+      "task_id": 5081,
+      "external_uid": "lms:c151:vvod:19",
+      "title": "Поиск IPv6-адреса в строке",
+      "before": [
+        "https://vk.com/video-53400615_456239237",
+        "https://vk.com/video-53400615_456239428",
+        "https://vk.com/video-53400615_456239433"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239237",
+        "https://vk.com/video-53400615_456239428"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239433"
+      ]
+    }
+  ]
+}
