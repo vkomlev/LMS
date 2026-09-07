@@ -1,0 +1,1447 @@
+{
+  "_": "tsk-812: снять раздачу разбора одной задачи на соседние. Два эпизода. (1) Курсы 150 и 1399 (задание 13, бывшее 23 — нумерация ЕГЭ сменилась): четыре разбора конкретных задач (kompege 21420 и 21604, sdamgia 52194 и 63039) стояли у всех 55 заданий блока, хотя у каждого есть ровно один адресат — #3956, #3967, #3777, #3785. Задачи там разные по существу: у одной команды A/B/C «прибавить 1 / прибавить 2 / умножить на 2», у другой «прибавить старший разряд / прибавить 3 / сделать нечётным». (2) Курс 151: разборы 24_21421 и 24_59847 на вводных заданиях. Дубли одного и того же задания (одно условие, два импорта) в план НЕ входят — там общий разбор законен. ТРИ ЗАДАНИЯ ИСКЛЮЧЕНЫ ИЗ ПЛАНА (#5063, #5067, #5071, курс 151): у них единственная подсказка — 456239733, и в курсе этот ролик лежит видео-материалом «Метод скользящих окон для решения заданий 24», то есть для заданий про цепочки и серии он по теме. Снятие оставило бы их пустыми, а решения оператора на это не было.",
+  "allow_empty": false,
+  "items": [
+    {
+      "task_id": 5081,
+      "external_uid": "lms:c151:vvod:19",
+      "title": "Поиск IPv6-адреса в строке",
+      "before": [
+        "https://vk.com/video-53400615_456239237",
+        "https://vk.com/video-53400615_456239428"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239428"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239237"
+      ]
+    },
+    {
+      "task_id": 3777,
+      "external_uid": "wp_nav:23:98a6d0e1",
+      "title": "Пути из 1 в 16 без трёх повторов",
+      "before": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239293",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471",
+        "https://t.me/cyberguru_ege/501"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471",
+        "https://t.me/cyberguru_ege/501"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239293"
+      ]
+    },
+    {
+      "task_id": 5076,
+      "external_uid": "lms:c151:vvod:14",
+      "title": "Поиск телефонного номера",
+      "before": [
+        "https://vk.com/video-53400615_456239237",
+        "https://vk.com/video-53400615_456239483"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239483"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239237"
+      ]
+    },
+    {
+      "task_id": 5078,
+      "external_uid": "lms:c151:vvod:16",
+      "title": "Подсчёт дат в тексте",
+      "before": [
+        "https://vk.com/video-53400615_456239237",
+        "https://vk.com/video-53400615_456239428"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239428"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239237"
+      ]
+    },
+    {
+      "task_id": 5065,
+      "external_uid": "lms:c151:vvod:03",
+      "title": "Максимальная серия чередующихся символов",
+      "before": [
+        "https://vk.com/video-53400615_456239660",
+        "https://vk.com/video-53400615_456239733"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239660"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239733"
+      ]
+    },
+    {
+      "task_id": 5077,
+      "external_uid": "lms:c151:vvod:15",
+      "title": "Подсчёт фрагментов перед угловой скобкой",
+      "before": [
+        "https://vk.com/video-53400615_456239237",
+        "https://vk.com/video-53400615_456239428"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239428"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239237"
+      ]
+    },
+    {
+      "task_id": 5080,
+      "external_uid": "lms:c151:vvod:18",
+      "title": "Извлечение протокола из URL",
+      "before": [
+        "https://vk.com/video-53400615_456239237",
+        "https://vk.com/video-53400615_456239428"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239428"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239237"
+      ]
+    },
+    {
+      "task_id": 3509,
+      "external_uid": "wp_nav:23:384d28ae",
+      "title": "Траектория с числом 73 без 81",
+      "before": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239293",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239293"
+      ]
+    },
+    {
+      "task_id": 5068,
+      "external_uid": "lms:c151:vvod:06",
+      "title": "Максимальная цепочка по шаблону XYZ",
+      "before": [
+        "https://vk.com/video-53400615_456239420",
+        "https://vk.com/video-53400615_456239733"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239420"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239733"
+      ]
+    },
+    {
+      "task_id": 3936,
+      "external_uid": "wp_nav:23:6a7cf1a2",
+      "title": "Число программ с числом 10",
+      "before": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239293",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239293"
+      ]
+    },
+    {
+      "task_id": 3956,
+      "external_uid": "wp_nav:23:72aca976",
+      "title": "Число программ с числами 13 и 15",
+      "before": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239293",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239293"
+      ]
+    },
+    {
+      "task_id": 3967,
+      "external_uid": "wp_nav:23:0175f13f",
+      "title": "Пути из 34 в 9 через 20 и 30",
+      "before": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239293",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239293",
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245"
+      ]
+    },
+    {
+      "task_id": 4068,
+      "external_uid": "wp_nav:23:47df85c5",
+      "title": "Число программ преобразования 1 в 15",
+      "before": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239293",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239293"
+      ]
+    },
+    {
+      "task_id": 4287,
+      "external_uid": "wp_nav:23:321561cd",
+      "title": "Пути из 4 в 23 через 8",
+      "before": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239293",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239293"
+      ]
+    },
+    {
+      "task_id": 5075,
+      "external_uid": "lms:c151:vvod:13",
+      "title": "Повтор слова с пробелом",
+      "before": [
+        "https://vk.com/video-53400615_456239237",
+        "https://vk.com/video-53400615_456239483"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239483"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239237"
+      ]
+    },
+    {
+      "task_id": 3599,
+      "external_uid": "wp_nav:23:872966fc",
+      "title": "Числа после четырех команд",
+      "before": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239293",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239293"
+      ]
+    },
+    {
+      "task_id": 3487,
+      "external_uid": "wp_nav:23:20f2131b",
+      "title": "Пути к числу 40 из 8",
+      "before": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239293",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239293"
+      ]
+    },
+    {
+      "task_id": 3520,
+      "external_uid": "wp_nav:23:458cc88b",
+      "title": "Числа за пять команд Сумножатора",
+      "before": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239293",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239293"
+      ]
+    },
+    {
+      "task_id": 3587,
+      "external_uid": "wp_nav:23:44470167",
+      "title": "Программы с тремя командами до 25",
+      "before": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239293",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239293"
+      ]
+    },
+    {
+      "task_id": 3638,
+      "external_uid": "wp_nav:23:bca13017",
+      "title": "Пути к 125 без числа 27",
+      "before": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239293",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239293"
+      ]
+    },
+    {
+      "task_id": 3602,
+      "external_uid": "wp_nav:23:f1a1aebc",
+      "title": "Программы к чётному числу за 3 команды",
+      "before": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239293",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239293"
+      ]
+    },
+    {
+      "task_id": 3819,
+      "external_uid": "wp_nav:23:f9a1ea9f",
+      "title": "Пути из 100 в 11101 в двоичной записи",
+      "before": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239293",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239293"
+      ]
+    },
+    {
+      "task_id": 3820,
+      "external_uid": "wp_nav:23:b204f208",
+      "title": "Программы Нолика из 100001 в 100",
+      "before": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239293",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239293"
+      ]
+    },
+    {
+      "task_id": 3821,
+      "external_uid": "wp_nav:23:35a8c804",
+      "title": "Программы Нолика из 1100 в 100",
+      "before": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239293",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239293"
+      ]
+    },
+    {
+      "task_id": 3823,
+      "external_uid": "wp_nav:23:6f5455db",
+      "title": "Траектории Нолика в троичной системе",
+      "before": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239293",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239293"
+      ]
+    },
+    {
+      "task_id": 3893,
+      "external_uid": "wp_nav:23:85522194",
+      "title": "Программы к числу 62",
+      "before": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239293",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239293"
+      ]
+    },
+    {
+      "task_id": 3897,
+      "external_uid": "wp_nav:23:b15fbad3",
+      "title": "Пути к числу 24 делением",
+      "before": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239293",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239293"
+      ]
+    },
+    {
+      "task_id": 4061,
+      "external_uid": "wp_nav:23:2d6b8f42",
+      "title": "Числа, приводимые к восьмёрке",
+      "before": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239293",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239293"
+      ]
+    },
+    {
+      "task_id": 3979,
+      "external_uid": "wp_nav:23:4dd50ffb",
+      "title": "Программы преобразования 25 в 51",
+      "before": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239293",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239293"
+      ]
+    },
+    {
+      "task_id": 4044,
+      "external_uid": "wp_nav:23:febb1d35",
+      "title": "Программы без повторов чисел",
+      "before": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239293",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239293"
+      ]
+    },
+    {
+      "task_id": 4049,
+      "external_uid": "wp_nav:23:5de99281",
+      "title": "Пары чисел с суммой 88",
+      "before": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239293",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239293"
+      ]
+    },
+    {
+      "task_id": 4177,
+      "external_uid": "wp_nav:23:fd067791",
+      "title": "Программы из 4 в 1228",
+      "before": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239293",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239293"
+      ]
+    },
+    {
+      "task_id": 4059,
+      "external_uid": "wp_nav:23:c1bb8d42",
+      "title": "Программы с числом 1024",
+      "before": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239293",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239293"
+      ]
+    },
+    {
+      "task_id": 4256,
+      "external_uid": "wp_nav:23:074a1f2a",
+      "title": "Пути из 3 в 30",
+      "before": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239293",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239293"
+      ]
+    },
+    {
+      "task_id": 4088,
+      "external_uid": "wp_nav:23:a4c5d842",
+      "title": "Преобразование 1 в 2970 с ограничениями",
+      "before": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239293",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239293"
+      ]
+    },
+    {
+      "task_id": 4130,
+      "external_uid": "wp_nav:23:b2ff55ed",
+      "title": "Преобразование 1 в 600 с кратной суммой",
+      "before": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239293",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239293"
+      ]
+    },
+    {
+      "task_id": 4141,
+      "external_uid": "wp_nav:23:5a8d1976",
+      "title": "Преобразование 2 в 400 с длинной траекторией",
+      "before": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239293",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239293"
+      ]
+    },
+    {
+      "task_id": 4172,
+      "external_uid": "wp_nav:23:0cfe7ff5",
+      "title": "Максимум программ со штрафом за квадрат",
+      "before": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239293",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239293"
+      ]
+    },
+    {
+      "task_id": 4194,
+      "external_uid": "wp_nav:23:77323b97",
+      "title": "Пути к 625 с нечётными",
+      "before": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239293",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239293"
+      ]
+    },
+    {
+      "task_id": 4195,
+      "external_uid": "wp_nav:23:106fb7d0",
+      "title": "Пути к 55 с чётными",
+      "before": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239293",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239293"
+      ]
+    },
+    {
+      "task_id": 4203,
+      "external_uid": "wp_nav:23:c0c6b200",
+      "title": "Возврат кузнечика к 42 без повторов",
+      "before": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239293",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239293"
+      ]
+    },
+    {
+      "task_id": 4226,
+      "external_uid": "wp_nav:23:2f2fb166",
+      "title": "Пути персевера к 1 без повторов",
+      "before": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239293",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239293"
+      ]
+    },
+    {
+      "task_id": 4228,
+      "external_uid": "wp_nav:23:01007b82",
+      "title": "Программы к 20 со строгим ростом",
+      "before": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239293",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239293"
+      ]
+    },
+    {
+      "task_id": 4270,
+      "external_uid": "wp_nav:23:a1e7746a",
+      "title": "Пути к 31 с взаимной простотой",
+      "before": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239293",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239293"
+      ]
+    },
+    {
+      "task_id": 4279,
+      "external_uid": "wp_nav:23:5784f0b0",
+      "title": "Чётные числа из 3 до 100",
+      "before": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239293",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239293"
+      ]
+    },
+    {
+      "task_id": 4295,
+      "external_uid": "wp_nav:23:8092b4c1",
+      "title": "Пути к 69 с фрагментом CAC",
+      "before": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239293",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239293"
+      ]
+    },
+    {
+      "task_id": 4357,
+      "external_uid": "wp_nav:23:fe89abed",
+      "title": "Число программ без одинаковых команд",
+      "before": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239293",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239293"
+      ]
+    },
+    {
+      "task_id": 4359,
+      "external_uid": "wp_nav:23:f55225a0",
+      "title": "Путь через 16 и 140 с тремя командами",
+      "before": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239293",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239293"
+      ]
+    },
+    {
+      "task_id": 3785,
+      "external_uid": "wp_nav:23:6e9503b8",
+      "title": "Пути из 3 в 20 без двух A",
+      "before": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239293",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471",
+        "https://t.me/cyberguru_ege/502"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471",
+        "https://t.me/cyberguru_ege/502"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239293"
+      ]
+    },
+    {
+      "task_id": 4259,
+      "external_uid": "wp_nav:23:5af6c5e7",
+      "title": "Преобразование 12 в 37 с цифровым корнем",
+      "before": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239293",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239293"
+      ]
+    },
+    {
+      "task_id": 5064,
+      "external_uid": "lms:c151:vvod:02",
+      "title": "Максимальная серия одинаковых символов",
+      "before": [
+        "https://vk.com/video-53400615_456239649",
+        "https://vk.com/video-53400615_456239733"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239649"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239733"
+      ]
+    },
+    {
+      "task_id": 5072,
+      "external_uid": "lms:c151:vvod:10",
+      "title": "Первый символ после поиска цифры",
+      "before": [
+        "https://vk.com/video-53400615_456239237",
+        "https://vk.com/video-53400615_456239483"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239483"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239237"
+      ]
+    },
+    {
+      "task_id": 3555,
+      "external_uid": "wp_nav:23:fa944d45",
+      "title": "Счёт программ с траекторией через 250",
+      "before": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239293",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239293"
+      ]
+    },
+    {
+      "task_id": 5079,
+      "external_uid": "lms:c151:vvod:17",
+      "title": "Количество слов из пяти букв",
+      "before": [
+        "https://vk.com/video-53400615_456239237",
+        "https://vk.com/video-53400615_456239428"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239428"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239237"
+      ]
+    },
+    {
+      "task_id": 5074,
+      "external_uid": "lms:c151:vvod:12",
+      "title": "Проверка email регулярным выражением",
+      "before": [
+        "https://vk.com/video-53400615_456239237",
+        "https://vk.com/video-53400615_456239433"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239433"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239237"
+      ]
+    },
+    {
+      "task_id": 5073,
+      "external_uid": "lms:c151:vvod:11",
+      "title": "Вывод слова в кавычках",
+      "before": [
+        "https://vk.com/video-53400615_456239237",
+        "https://vk.com/video-53400615_456239483"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239483"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239237"
+      ]
+    },
+    {
+      "task_id": 3642,
+      "external_uid": "wp_nav:23:6ac38623",
+      "title": "Числа Сумножатора меньше 100",
+      "before": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239293",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239293"
+      ]
+    },
+    {
+      "task_id": 3640,
+      "external_uid": "wp_nav:23:c0015dfd",
+      "title": "Программы к числу 15",
+      "before": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239293",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239293"
+      ]
+    },
+    {
+      "task_id": 3978,
+      "external_uid": "wp_nav:23:0e647386",
+      "title": "Числа на отрезке из 8 команд",
+      "before": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239293",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239293"
+      ]
+    },
+    {
+      "task_id": 4360,
+      "external_uid": "wp_nav:23:d989cf30",
+      "title": "Путь через 16 и 152 с палиндромом",
+      "before": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239293",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239293"
+      ]
+    },
+    {
+      "task_id": 4090,
+      "external_uid": "wp_nav:23:622181e2",
+      "title": "Числа из единицы за шесть команд",
+      "before": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239293",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239293"
+      ]
+    },
+    {
+      "task_id": 4083,
+      "external_uid": "wp_nav:23:7b9f9c77",
+      "title": "Преобразование 21 в 62 командами",
+      "before": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239293",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239293"
+      ]
+    },
+    {
+      "task_id": 4178,
+      "external_uid": "wp_nav:23:b1318f7c",
+      "title": "Преобразование 10 в 4096 по разрядам",
+      "before": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239293",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239293"
+      ]
+    },
+    {
+      "task_id": 4089,
+      "external_uid": "wp_nav:23:1c35b9ff",
+      "title": "Пути к числу 79 с ограничениями",
+      "before": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239293",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239293"
+      ]
+    },
+    {
+      "task_id": 4358,
+      "external_uid": "wp_nav:23:63a040a1",
+      "title": "Путь через 362 без команды B",
+      "before": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239293",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239293"
+      ]
+    },
+    {
+      "task_id": 3843,
+      "external_uid": "wp_nav:23:ccfabb9a",
+      "title": "Программы из 1 в двоичное число",
+      "before": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239293",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239293"
+      ]
+    },
+    {
+      "task_id": 4449,
+      "external_uid": "wp_nav:23:11bf2e19",
+      "title": "Размен суммы монетами 1 3 5",
+      "before": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239293",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239274",
+        "https://vk.com/video-53400615_456239471"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239206",
+        "https://vk.com/video-53400615_456239244",
+        "https://vk.com/video-53400615_456239245",
+        "https://vk.com/video-53400615_456239293"
+      ]
+    }
+  ]
+}
