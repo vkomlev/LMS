@@ -108,6 +108,8 @@ OGE_ONLY = {4, 5}
 
 VK_RE = re.compile(r"(?:vk\.com|vk\.ru|vkvideo\.ru)/video(-?\d+)_(\d+)", re.I)
 TITLE_RE = re.compile(r'"title"\s*:\s*"([^"]{1,200})"')
+# ссылки на файлы ролика в JSON плеера — единственный надёжный признак живого (tsk-816)
+MP4_RE = re.compile(r'"mp4_[0-9]+"\s*:\s*"http')
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/131.0 Safari/537.36")
 
@@ -157,12 +159,29 @@ def _task_key(uid: str | None, kind: str | None, tid: str | None) -> tuple[str |
 
 
 def probe_link(url: str, attempts: int = 3) -> tuple[str, str]:
-    """Открывается ли ролик у ученика. Возвращает (статус, живое название)."""
+    """Открывается ли ролик у ученика. Возвращает (статус, живое название).
+
+    Признак живого — ССЫЛКИ НА ФАЙЛЫ в JSON плеера, а не название и не текст
+    ошибки (tsk-816, сентябрь 2026). ВК сменил разметку `video_ext.php`:
+    `og:title` не отдаётся вовсе, а несуществующий ролик отвечает тем же
+    HTTP 200 и тем же `<title>Video embed</title>`, что и живой. Прежняя
+    проверка на этом ломалась молча — все 51 ссылка наряда tsk-814 вернули
+    «БЕЗ_НАЗВАНИЯ», то есть ни живых, ни мёртвых.
+
+    ПРОВЕРКА ОДНОСТОРОННЯЯ. «ОК» — доказательство, что ролик живой; «НЕТ_ФАЙЛОВ»
+    доказательством смерти НЕ является. После полусотни анонимных запросов подряд
+    ВК начинает отдавать урезанную страницу с капчей (26 КБ вместо 75 КБ, без
+    файлов и без "count"), и заведомо живой ролик выглядит там так же, как
+    несуществующий — замер tsk-816: те же ссылки давали «ОК», а через час
+    «НЕТ_ФАЙЛОВ», притом что в браузере они играли. Поэтому статус «НЕТ_ФАЙЛОВ»
+    читать как «не проверено»: снимать подсказку по нему нельзя, нужен живой
+    прогон (scripts/live-browse.mjs в SPW, обязательно --headed).
+    """
     m = VK_RE.search(url)
     if not m:
         return "НЕ_ВК", ""
     ext = f"https://vk.com/video_ext.php?oid={m.group(1)}&id={m.group(2)}&hd=2"
-    last = "БЕЗ_НАЗВАНИЯ"
+    last = "НЕОПРЕДЕЛЕНО"
     for n in range(attempts):
         try:
             req = urllib.request.Request(ext, headers={"User-Agent": UA})
@@ -171,12 +190,13 @@ def probe_link(url: str, attempts: int = 3) -> tuple[str, str]:
         except Exception as exc:  # noqa: BLE001
             last = f"ОШИБКА:{exc}"[:80]
         else:
-            if "Видеофайл не найден" in html or "видеозапись удалена" in html.lower():
+            if MP4_RE.search(html):
+                found = TITLE_RE.search(html)
+                return "ОК", found.group(1) if found else ""
+            if '"count":0' in html or "Видеофайл не найден" in html \
+                    or "видеозапись удалена" in html.lower():
                 return "НЕ_НАЙДЕН", ""
-            found = TITLE_RE.search(html)
-            if found:
-                return "ОК", found.group(1)
-            last = "БЕЗ_НАЗВАНИЯ"
+            last = "НЕТ_ФАЙЛОВ"
         if n + 1 < attempts:
             time.sleep(1.5)
     return last, ""

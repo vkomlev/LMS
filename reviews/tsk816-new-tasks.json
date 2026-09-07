@@ -1,0 +1,518 @@
+{
+ "_": "tsk-816: завести новое задание вместе с его разбором",
+ "items": [
+  {
+   "course_id": 109,
+   "external_uid": "lms:tsk816:spiski:33",
+   "title": "Строка чисел через запятую в список",
+   "stem": "Дана строка с числами, разделёнными запятой:\n\n```\ns = \"12,45,7,103,8\"\n```\n\nПреобразуйте её в список целых чисел (разбейте строку методом\n`split(',')` и переведите каждый кусок в `int`). Выведите\nполучившийся список через `print`.\n\nПоместите вывод в поле «Ответ».\n",
+   "answer": "[12, 45, 7, 103, 8]\n",
+   "difficulty_id": 2,
+   "normalization": [
+    "trim",
+    "lower",
+    "strip_punctuation",
+    "collapse_spaces"
+   ],
+   "videos": [
+    "https://vk.com/video-53400615_456240331"
+   ],
+   "posts": [
+    "547"
+   ],
+   "reference_code": "s = \"12,45,7,103,8\"\nprint([int(x) for x in s.split(\",\")])",
+   "reference_stdin": "",
+   "source_topic": "списки",
+   "source_num": "33"
+  },
+  {
+   "course_id": 109,
+   "external_uid": "lms:tsk816:spiski:39",
+   "title": "Индексы первого максимума матрицы",
+   "stem": "Дана матрица из 3 строк и 4 столбцов:\n\n```\nmatrix = [\n    [13, 47, 5, 88],\n    [62, 88, 21, 9],\n    [34, 7, 51, 76],\n]\n```\n\nНайдите ПЕРВОЕ вхождение максимального элемента (просматривайте\nматрицу по строкам сверху вниз, в каждой строке слева направо) и\nвыведите через пробел два числа: номер строки и номер столбца\n(нумерация с нуля).\n\nПоместите вывод в поле «Ответ».\n",
+   "answer": "0 3\n",
+   "difficulty_id": 3,
+   "normalization": [
+    "trim",
+    "lower",
+    "strip_punctuation",
+    "collapse_spaces"
+   ],
+   "videos": [
+    "https://vk.com/video-53400615_456240359"
+   ],
+   "posts": [
+    "551"
+   ],
+   "reference_code": "matrix = [\n    [13, 47, 5, 88],\n    [62, 88, 21, 9],\n    [34, 7, 51, 76],\n]\nbest = None\nfor i, row in enumerate(matrix):\n    for j, value in enumerate(row):\n        if best is None or value > matrix[best[0]][best[1]]:\n            best = (i, j)\nprint(best[0], best[1])",
+   "reference_stdin": "",
+   "source_topic": "списки",
+   "source_num": "39"
+  },
+  {
+   "course_id": 109,
+   "external_uid": "lms:tsk816:spiski:41",
+   "title": "Обмен столбцов матрицы",
+   "stem": "Дана матрица из 3 строк и 4 столбцов:\n\n```\nmatrix = [\n    [1, 2, 3, 4],\n    [5, 6, 7, 8],\n    [9, 10, 11, 12],\n]\n```\n\nПоменяйте местами столбцы с номерами `i = 1` и `j = 3`\n(нумерация столбцов с нуля) и выведите получившуюся матрицу:\nкаждая строка — с новой строки, числа в строке через пробел.\n\nПоместите вывод программы (3 строки) в поле «Ответ».\n",
+   "answer": "1 4 3 2\n5 8 7 6\n9 12 11 10\n",
+   "difficulty_id": 3,
+   "normalization": [
+    "trim",
+    "lower",
+    "strip_punctuation",
+    "collapse_spaces"
+   ],
+   "videos": [
+    "https://vk.com/video-53400615_456239894"
+   ],
+   "posts": [
+    "253"
+   ],
+   "reference_code": "matrix = [\n    [1, 2, 3, 4],\n    [5, 6, 7, 8],\n    [9, 10, 11, 12],\n]\ni, j = 1, 3\nfor row in matrix:\n    row[i], row[j] = row[j], row[i]\nfor row in matrix:\n    print(\" \".join(str(x) for x in row))",
+   "reference_stdin": "",
+   "source_topic": "списки",
+   "source_num": "41"
+  },
+  {
+   "course_id": 109,
+   "external_uid": "lms:tsk816:spiski:42",
+   "title": "Свободное место в концертном зале",
+   "stem": "Места в концертном зале заданы матрицей: строки — ряды, столбцы —\nместа в ряду. Значение `-1` означает, что место занято, любое другое\nчисло — стоимость билета на это место.\n\n```\nhall = [\n    [100, -1, 150, 200],\n    [-1, -1, 120, 130],\n    [90, 110, -1, 160],\n]\n```\n\nПрограмма считывает два числа: номер ряда `r` и номер места `m`\n(каждое с новой строки, нумерация рядов и мест с единицы).\nЕсли место занято — выведите слово `Занято`, иначе выведите\nстоимость билета (только число).\n\nЗапустите программу 2 раза:\n1. ряд `2`, место `4`\n2. ряд `3`, место `3`\n\nПоместите вывод обеих программ (две строки) в поле «Ответ».\n",
+   "answer": "130\nЗанято\n",
+   "difficulty_id": 3,
+   "normalization": [
+    "trim",
+    "lower",
+    "strip_punctuation",
+    "collapse_spaces"
+   ],
+   "videos": [
+    "https://vk.com/video-53400615_456240006",
+    "https://vk.com/video-53400615_456240314"
+   ],
+   "posts": [
+    "400",
+    "546"
+   ],
+   "reference_code": "hall = [\n    [100, -1, 150, 200],\n    [-1, -1, 120, 130],\n    [90, 110, -1, 160],\n]\nfor r, m in ((2, 4), (3, 3)):\n    price = hall[r - 1][m - 1]\n    print(\"Занято\" if price == -1 else price)",
+   "reference_stdin": "",
+   "source_topic": "списки",
+   "source_num": "42"
+  },
+  {
+   "course_id": 109,
+   "external_uid": "lms:tsk816:spiski:43",
+   "title": "Ходы ферзя на шахматной доске",
+   "stem": "Шахматная доска 8×8 задана матрицей. Ферзь стоит в позиции\n`i = 3`, `j = 4` (нумерация строк и столбцов с нуля).\n\nОтметьте на доске:\n- `-1` — текущую клетку ферзя;\n- `1` — клетки, куда ферзь может пойти (по своей строке, по своему\n  столбцу и по обеим диагоналям, проходящим через его клетку);\n- `0` — все остальные клетки.\n\nВыведите доску: каждая строка — с новой строки, числа в строке\nчерез пробел.\n\nПоместите вывод программы (8 строк) в поле «Ответ».\n",
+   "answer": "0 1 0 0 1 0 0 1\n0 0 1 0 1 0 1 0\n0 0 0 1 1 1 0 0\n1 1 1 1 -1 1 1 1\n0 0 0 1 1 1 0 0\n0 0 1 0 1 0 1 0\n0 1 0 0 1 0 0 1\n1 0 0 0 1 0 0 0\n",
+   "difficulty_id": 4,
+   "normalization": [
+    "trim",
+    "lower",
+    "collapse_spaces"
+   ],
+   "videos": [
+    "https://vk.com/video-53400615_456240122"
+   ],
+   "posts": [
+    "525"
+   ],
+   "reference_code": "n = 8\nqi, qj = 3, 4\nboard = [[0] * n for _ in range(n)]\nfor i in range(n):\n    for j in range(n):\n        if i == qi and j == qj:\n            board[i][j] = -1\n        elif i == qi or j == qj or abs(i - qi) == abs(j - qj):\n            board[i][j] = 1\nfor row in board:\n    print(\" \".join(str(x) for x in row))",
+   "reference_stdin": "",
+   "source_topic": "списки",
+   "source_num": "43"
+  },
+  {
+   "course_id": 109,
+   "external_uid": "lms:tsk816:spiski:47",
+   "title": "Максимум и индекс последнего вхождения",
+   "stem": "Дан фиксированный список чисел:\n\n```\nnumbers = [3, 9, 1, 9, 4, 9, 2, 8]\n```\n\nВыведите через пробел два числа: максимальный элемент списка и его\nиндекс (нумерация с нуля). Если максимум встречается несколько раз,\nвыведите индекс его ПОСЛЕДНЕГО вхождения.\n\nПоместите вывод в поле «Ответ».\n",
+   "answer": "9 5\n",
+   "difficulty_id": 3,
+   "normalization": [
+    "trim",
+    "lower",
+    "strip_punctuation",
+    "collapse_spaces"
+   ],
+   "videos": [
+    "https://vk.com/video-53400615_456240116"
+   ],
+   "posts": [
+    "519"
+   ],
+   "reference_code": "numbers = [3, 9, 1, 9, 4, 9, 2, 8]\ntop = max(numbers)\nprint(top, len(numbers) - 1 - numbers[::-1].index(top))",
+   "reference_stdin": "",
+   "source_topic": "списки",
+   "source_num": "47"
+  },
+  {
+   "course_id": 109,
+   "external_uid": "lms:tsk816:spiski:49",
+   "title": "Количество различных элементов списка",
+   "stem": "Дан фиксированный список чисел:\n\n```\nnumbers = [3, 7, 3, 1, 9, 7, 3, 5]\n```\n\nСколько в нём различных элементов? Выведите через `print` только\nчисло (подсказка: различные элементы удобно получить через `set`).\n\nПоместите вывод в поле «Ответ».\n",
+   "answer": "5\n",
+   "difficulty_id": 2,
+   "normalization": [
+    "trim",
+    "lower",
+    "strip_punctuation",
+    "collapse_spaces"
+   ],
+   "videos": [
+    "https://vk.com/video-53400615_456240117",
+    "https://vk.com/video-53400615_456240126"
+   ],
+   "posts": [
+    "520",
+    "529"
+   ],
+   "reference_code": "numbers = [3, 7, 3, 1, 9, 7, 3, 5]\nprint(len(set(numbers)))",
+   "reference_stdin": "",
+   "source_topic": "списки",
+   "source_num": "49"
+  },
+  {
+   "course_id": 109,
+   "external_uid": "lms:tsk816:spiski:50",
+   "title": "Перестановка пар соседних элементов",
+   "stem": "Дан фиксированный список чисел:\n\n```\nnumbers = [10, 20, 30, 40, 50, 60, 70]\n```\n\nПереставьте местами элементы в каждой паре соседей: элементы с\nиндексами 0 и 1, затем 2 и 3, затем 4 и 5 и так далее. Если\nпоследний элемент остался без пары — он не двигается.\n\nВыведите получившийся список через `print`.\n\nПоместите вывод в поле «Ответ».\n",
+   "answer": "[20, 10, 40, 30, 60, 50, 70]\n",
+   "difficulty_id": 3,
+   "normalization": [
+    "trim",
+    "lower",
+    "strip_punctuation",
+    "collapse_spaces"
+   ],
+   "videos": [
+    "https://vk.com/video-53400615_456240361",
+    "https://vk.com/video-53400615_456240087"
+   ],
+   "posts": [
+    "553",
+    "487"
+   ],
+   "reference_code": "numbers = [10, 20, 30, 40, 50, 60, 70]\nfor k in range(0, len(numbers) - 1, 2):\n    numbers[k], numbers[k + 1] = numbers[k + 1], numbers[k]\nprint(numbers)",
+   "reference_stdin": "",
+   "source_topic": "списки",
+   "source_num": "50"
+  },
+  {
+   "course_id": 109,
+   "external_uid": "lms:tsk816:spiski:51",
+   "title": "Обмен вторых максимума и минимума",
+   "stem": "Дан фиксированный список, все элементы которого различны:\n\n```\nnumbers = [15, 3, 42, 8, 27, 1, 36]\n```\n\nНайдите второй по величине максимум (то есть второе по величине\nчисло списка) и второй по величине минимум (второе наименьшее\nчисло) и поменяйте их в списке местами. Порядок остальных\nэлементов не меняется.\n\nВыведите получившийся список через `print`.\n\nПоместите вывод в поле «Ответ».\n",
+   "answer": "[15, 36, 42, 8, 27, 1, 3]\n",
+   "difficulty_id": 4,
+   "normalization": [
+    "trim",
+    "lower",
+    "strip_punctuation",
+    "collapse_spaces"
+   ],
+   "videos": [
+    "https://vk.com/video-53400615_456240073",
+    "https://vk.com/video-53400615_456240102"
+   ],
+   "posts": [
+    "472",
+    "503"
+   ],
+   "reference_code": "numbers = [15, 3, 42, 8, 27, 1, 36]\norder = sorted(numbers)\nsecond_min, second_max = order[1], order[-2]\ni, j = numbers.index(second_min), numbers.index(second_max)\nnumbers[i], numbers[j] = numbers[j], numbers[i]\nprint(numbers)",
+   "reference_stdin": "",
+   "source_topic": "списки",
+   "source_num": "51"
+  },
+  {
+   "course_id": 109,
+   "external_uid": "lms:tsk816:spiski:53",
+   "title": "Элементы, встречающиеся ровно три раза",
+   "stem": "Дан фиксированный список чисел:\n\n```\nnumbers = [2, 5, 3, 5, 1, 3, 2, 5, 3, 4, 3, 2]\n```\n\nВыведите через пробел в порядке возрастания все элементы, которые\nвстречаются в списке ровно три раза (каждый такой элемент — один\nраз).\n\nПоместите вывод в поле «Ответ».\n",
+   "answer": "2 5\n",
+   "difficulty_id": 3,
+   "normalization": [
+    "trim",
+    "lower",
+    "strip_punctuation",
+    "collapse_spaces"
+   ],
+   "videos": [
+    "https://vk.com/video-53400615_456240068",
+    "https://vk.com/video-53400615_456240360"
+   ],
+   "posts": [
+    "467",
+    "552"
+   ],
+   "reference_code": "numbers = [2, 5, 3, 5, 1, 3, 2, 5, 3, 4, 3, 2]\nresult = sorted({x for x in numbers if numbers.count(x) == 3})\nprint(\" \".join(str(x) for x in result))",
+   "reference_stdin": "",
+   "source_topic": "списки",
+   "source_num": "53"
+  },
+  {
+   "course_id": 110,
+   "external_uid": "lms:tsk816:cikly:25",
+   "title": "Третье по величине число последовательности",
+   "stem": "Программа в цикле считывает неотрицательные целые числа (каждое с\nновой строки) до тех пор, пока не будет введено отрицательное число\n(тогда — `break`; само отрицательное число в последовательность не\nвходит).\n\nОпределите третье по величине число последовательности. Числа,\nравные между собой, считаются одним значением: третье по величине —\nэто третье по счёту среди РАЗЛИЧНЫХ значений, если идти от\nнаибольшего к наименьшему. Выведите его через `print` (только\nчисло).\n\nЗапустите программу со следующей последовательностью вводов\n(8 строк):\n```\n14\n7\n23\n9\n23\n31\n5\n-1\n```\n\nПоместите вывод программы (одно число) в поле «Ответ».\n",
+   "answer": "14\n",
+   "difficulty_id": 3,
+   "normalization": [
+    "trim",
+    "lower",
+    "strip_punctuation",
+    "collapse_spaces"
+   ],
+   "videos": [
+    "https://vk.com/video-53400615_456240307"
+   ],
+   "posts": [
+    "536"
+   ],
+   "reference_code": "values = []\nwhile True:\n    x = int(input())\n    if x < 0:\n        break\n    values.append(x)\nprint(sorted(set(values), reverse=True)[2])",
+   "reference_stdin": "14\n7\n23\n9\n23\n31\n5\n-1\n",
+   "source_topic": "циклы",
+   "source_num": "25"
+  },
+  {
+   "course_id": 110,
+   "external_uid": "lms:tsk816:cikly:26",
+   "title": "Сколько чисел равны минимальному",
+   "stem": "Программа в цикле считывает неотрицательные целые числа (каждое с\nновой строки) до тех пор, пока не будет введено отрицательное число\n(тогда — `break`; само отрицательное число в последовательность не\nвходит).\n\nОпределите, сколько чисел последовательности равны её минимальному\nзначению. Выведите результат через `print` (только число).\n\nЗапустите программу со следующей последовательностью вводов\n(8 строк):\n```\n8\n3\n12\n3\n7\n3\n15\n-2\n```\n\nПоместите вывод программы (одно число) в поле «Ответ».\n",
+   "answer": "3\n",
+   "difficulty_id": 3,
+   "normalization": [
+    "trim",
+    "lower",
+    "strip_punctuation",
+    "collapse_spaces"
+   ],
+   "videos": [
+    "https://vk.com/video-53400615_456239953"
+   ],
+   "posts": [
+    "343"
+   ],
+   "reference_code": "values = []\nwhile True:\n    x = int(input())\n    if x < 0:\n        break\n    values.append(x)\nprint(values.count(min(values)))",
+   "reference_stdin": "8\n3\n12\n3\n7\n3\n15\n-2\n",
+   "source_topic": "циклы",
+   "source_num": "26"
+  },
+  {
+   "course_id": 110,
+   "external_uid": "lms:tsk816:cikly:27",
+   "title": "Первые n чисел Фибоначчи",
+   "stem": "Числа Фибоначчи — последовательность, которая начинается с 0 и 1,\nа каждое следующее число равно сумме двух предыдущих:\n0, 1, 1, 2, 3, 5, 8, 13, 21, 34, …\n\nНапишите программу, которая считывает натуральное число `n` и\nвыводит первые `n` чисел Фибоначчи через пробел в одну строку.\n\nЗапустите программу с вводом: `10`.\n\nВведите вывод программы в поле «Ответ».\n",
+   "answer": "0 1 1 2 3 5 8 13 21 34\n",
+   "difficulty_id": 3,
+   "normalization": [
+    "trim",
+    "lower",
+    "strip_punctuation",
+    "collapse_spaces"
+   ],
+   "videos": [
+    "https://vk.com/video-53400615_456240308"
+   ],
+   "posts": [
+    "540"
+   ],
+   "reference_code": "n = int(input())\na, b = 0, 1\nresult = []\nfor _ in range(n):\n    result.append(a)\n    a, b = b, a + b\nprint(\" \".join(str(x) for x in result))",
+   "reference_stdin": "10\n",
+   "source_topic": "циклы",
+   "source_num": "27"
+  },
+  {
+   "course_id": 110,
+   "external_uid": "lms:tsk816:cikly:28",
+   "title": "Минимальное число больше 400, кратное 19",
+   "stem": "Напишите программу, которая с помощью цикла находит и выводит\nминимальное натуральное число, которое больше 400 и нацело делится\nна 19. Программа должна выводить только число.\n\nПоместите вывод в поле «Ответ».\n",
+   "answer": "418\n",
+   "difficulty_id": 2,
+   "normalization": [
+    "trim",
+    "lower",
+    "strip_punctuation",
+    "collapse_spaces"
+   ],
+   "videos": [
+    "https://vk.com/video-53400615_456240069"
+   ],
+   "posts": [
+    "468"
+   ],
+   "reference_code": "x = 401\nwhile x % 19 != 0:\n    x += 1\nprint(x)",
+   "reference_stdin": "",
+   "source_topic": "циклы",
+   "source_num": "28"
+  },
+  {
+   "course_id": 108,
+   "external_uid": "lms:tsk816:stroki:23",
+   "title": "Число слов и перестановка второго с четвёртым",
+   "stem": "Дано предложение (слова разделены одним пробелом):\n\n```\nsentence = \"Каждый охотник желает знать где сидит фазан\"\n```\n\nПрограмма должна вывести две строки:\n1) количество слов в предложении (только число);\n2) то же предложение, в котором второе и четвёртое слова\n   поменяны местами (нумерация слов с первого).\n\nПоместите вывод программы (две строки) в поле «Ответ».\n",
+   "answer": "7\nКаждый знать желает охотник где сидит фазан\n",
+   "difficulty_id": 3,
+   "normalization": [
+    "trim",
+    "lower",
+    "strip_punctuation",
+    "collapse_spaces"
+   ],
+   "videos": [
+    "https://vk.com/video-53400615_456240003"
+   ],
+   "posts": [
+    "397"
+   ],
+   "reference_code": "sentence = \"Каждый охотник желает знать где сидит фазан\"\nwords = sentence.split()\nprint(len(words))\nwords[1], words[3] = words[3], words[1]\nprint(\" \".join(words))",
+   "reference_stdin": "",
+   "source_topic": "строки",
+   "source_num": "23"
+  },
+  {
+   "course_id": 108,
+   "external_uid": "lms:tsk816:stroki:28",
+   "title": "Строка чека с выравниванием по правому краю",
+   "stem": "Дана информация о товаре:\n\n```\nname = \"Молоко\"\nprice = 89.9\nquantity = 3\n```\n\nСоберите одну строку чека, выровняв каждое поле ПО ПРАВОМУ КРАЮ\n(используйте форматирование с указанием ширины — `f\"{...:>10}\"`\nили метод `.format()`):\n- название товара — в поле шириной 10 символов;\n- цена — в поле шириной 10 символов, ровно с 2 знаками после\n  запятой;\n- количество — в поле шириной 5 символов.\n\nПоля идут подряд, без разделителей между ними.\n\nПрограмма должна вывести две строки:\n1) саму строку чека;\n2) её длину (`len`) — только число.\n\nПоместите вывод программы (две строки) в поле «Ответ».\n",
+   "answer": "    Молоко     89.90    3\n25\n",
+   "difficulty_id": 3,
+   "normalization": [
+    "trim",
+    "lower",
+    "strip_punctuation",
+    "collapse_spaces"
+   ],
+   "videos": [
+    "https://vk.com/video-53400615_456240005"
+   ],
+   "posts": [
+    "399"
+   ],
+   "reference_code": "name = \"Молоко\"\nprice = 89.9\nquantity = 3\nline = f\"{name:>10}{price:>10.2f}{quantity:>5}\"\nprint(line)\nprint(len(line))",
+   "reference_stdin": "",
+   "source_topic": "строки",
+   "source_num": "28"
+  },
+  {
+   "course_id": 104,
+   "external_uid": "lms:tsk816:funkcii:31",
+   "title": "Фильтрация списка строк функцией-предикатом",
+   "stem": "Напишите функцию `filter_by_length(strings, predicate)`, которая\nпринимает список строк и функцию-предикат (функцию, возвращающую\n`True` или `False` для одной строки) и возвращает список тех строк,\nдля которых предикат вернул `True`. Порядок строк сохраняется.\n\nЗатем задайте предикат «длина строки больше 3» и выведите\nрезультат вызова для списка:\n\n```\nwords = [\"кот\", \"собака\", \"слон\", \"бегемот\", \"ёж\"]\n```\n\nВведите вывод программы в поле «Ответ».\n",
+   "answer": "['собака', 'слон', 'бегемот']\n",
+   "difficulty_id": 3,
+   "normalization": [
+    "trim",
+    "lower",
+    "strip_punctuation",
+    "collapse_spaces"
+   ],
+   "videos": [
+    "https://vk.com/video-53400615_456240028"
+   ],
+   "posts": [
+    "422"
+   ],
+   "reference_code": "def filter_by_length(strings, predicate):\n    return [s for s in strings if predicate(s)]\n\nwords = [\"кот\", \"собака\", \"слон\", \"бегемот\", \"ёж\"]\nprint(filter_by_length(words, lambda s: len(s) > 3))",
+   "reference_stdin": "",
+   "source_topic": "функции",
+   "source_num": "31"
+  },
+  {
+   "course_id": 107,
+   "external_uid": "lms:tsk816:slovari:5",
+   "title": "Словарь из строк вида ключ-значение",
+   "stem": "Даны строки с данными в формате `ключ: значение`:\n\n```\nlines = [\"name: Анна\", \"age: 17\", \"city: Москва\", \"score: 95\"]\n```\n\nСоздайте из них словарь: слева от двоеточия — ключ, справа —\nзначение. Лишние пробелы по краям уберите (`strip`). Если значение\nсостоит только из цифр — сохраните его как целое число, иначе\nкак строку.\n\nВыведите получившийся словарь через `print`.\n\nПоместите вывод в поле «Ответ».\n",
+   "answer": "{'name': 'Анна', 'age': 17, 'city': 'Москва', 'score': 95}\n",
+   "difficulty_id": 3,
+   "normalization": [
+    "trim",
+    "lower",
+    "strip_punctuation",
+    "collapse_spaces"
+   ],
+   "videos": [
+    "https://vk.com/video-53400615_456240350"
+   ],
+   "posts": [
+    "549"
+   ],
+   "reference_code": "lines = [\"name: Анна\", \"age: 17\", \"city: Москва\", \"score: 95\"]\ndata = {}\nfor line in lines:\n    key, value = line.split(\":\", 1)\n    value = value.strip()\n    data[key.strip()] = int(value) if value.isdigit() else value\nprint(data)",
+   "reference_stdin": "",
+   "source_topic": "словари",
+   "source_num": "5"
+  },
+  {
+   "course_id": 106,
+   "external_uid": "lms:tsk816:pervaya:3",
+   "title": "Приветствие по имени",
+   "stem": "Напишите программу, которая запрашивает у пользователя его имя\nи выводит приветственное сообщение строго в формате:\n\n`Привет, <имя>!`\n\nЗапустите программу с вводом: `Анастасия`.\n\nВведите вывод программы в поле «Ответ».\n",
+   "answer": "Привет, Анастасия!\n",
+   "difficulty_id": 1,
+   "normalization": [
+    "trim",
+    "lower",
+    "strip_punctuation",
+    "collapse_spaces"
+   ],
+   "videos": [
+    "https://vk.com/video-53400615_456240045"
+   ],
+   "posts": [
+    "440"
+   ],
+   "reference_code": "name = input()\nprint(f\"Привет, {name}!\")",
+   "reference_stdin": "Анастасия\n",
+   "source_topic": "первая программа",
+   "source_num": "3"
+  },
+  {
+   "course_id": 106,
+   "external_uid": "lms:tsk816:pervaya:4",
+   "title": "Сумма двух чисел",
+   "stem": "Напишите программу, которая запрашивает у пользователя два целых\nчисла (каждое с новой строки) и выводит их сумму. Программа должна\nвыводить только число.\n\nЗапустите программу с вводом:\n```\n748291\n356408\n```\n\nВведите вывод программы в поле «Ответ».\n",
+   "answer": "1104699\n",
+   "difficulty_id": 1,
+   "normalization": [
+    "trim",
+    "lower",
+    "strip_punctuation",
+    "collapse_spaces"
+   ],
+   "videos": [
+    "https://vk.com/video-53400615_456240036"
+   ],
+   "posts": [
+    "431"
+   ],
+   "reference_code": "a = int(input())\nb = int(input())\nprint(a + b)",
+   "reference_stdin": "748291\n356408\n",
+   "source_topic": "первая программа",
+   "source_num": "4"
+  },
+  {
+   "course_id": 1451,
+   "external_uid": "lms:tsk816:funkcii:36",
+   "title": "Значение функции F(50)",
+   "stem": "Алгоритм вычисления значения функции F(n), где n — целое\nнеотрицательное число, задан следующими соотношениями:\n\nF(n) = 0, при n ≤ 1;\nF(n) = F(n − 1) + 3·n², если n > 1 и при этом нечётно;\nF(n) = n / 2 + F(n − 1) + 2, если n > 1 и при этом чётно.\n\nЧему равно значение функции F(50)?\n\nВ ответе запишите только целое число.\n",
+   "answer": "62847\n",
+   "difficulty_id": 3,
+   "normalization": [
+    "trim",
+    "lower",
+    "strip_punctuation",
+    "collapse_spaces"
+   ],
+   "videos": [
+    "https://vk.com/video-53400615_456240089"
+   ],
+   "posts": [
+    "489"
+   ],
+   "reference_code": "import sys\nsys.setrecursionlimit(10000)\n\n\ndef F(n):\n    if n <= 1:\n        return 0\n    if n % 2 == 1:\n        return F(n - 1) + 3 * n ** 2\n    return n // 2 + F(n - 1) + 2\n\n\nprint(F(50))",
+   "reference_stdin": "",
+   "source_topic": "функции",
+   "source_num": "36"
+  }
+ ]
+}

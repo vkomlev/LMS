@@ -1,0 +1,241 @@
+{
+ "_": "tsk-816: прикрепить авторский разбор к существующему заданию",
+ "items": [
+  {
+   "task_id": 320,
+   "external_uid": "wp:task:komlev:ispolzovanie-mnozhestv-set-v-python:37",
+   "video": "https://vk.com/video-53400615_456240063",
+   "code": "множества:38",
+   "posts": [
+    "461"
+   ],
+   "was_in_plan_as": "merge"
+  },
+  {
+   "task_id": 113,
+   "external_uid": "wp:task:komlev:pervaya-programma-na-python-osnovnye-konstruktsii:2",
+   "video": "https://vk.com/video-53400615_456240088",
+   "code": "первая программа:5",
+   "posts": [
+    "488"
+   ],
+   "was_in_plan_as": "merge"
+  },
+  {
+   "task_id": 60,
+   "external_uid": "wp:task:komlev:chisla-v-python-i-operatsii-s-nimi:15",
+   "video": "https://vk.com/video-53400615_456240112",
+   "code": "прочее:16",
+   "posts": [
+    "515"
+   ],
+   "was_in_plan_as": "merge"
+  },
+  {
+   "task_id": 142,
+   "external_uid": "wp:task:komlev:rabota-so-strokami-v-python:13",
+   "video": "https://vk.com/video-53400615_456240001",
+   "code": "строки:14",
+   "posts": [
+    "395"
+   ],
+   "was_in_plan_as": "merge"
+  },
+  {
+   "task_id": 84,
+   "external_uid": "wp:task:komlev:funktsii-v-python-sozdanie-sobstvennyh-funktsij:15",
+   "video": "https://vk.com/video-53400615_456240083",
+   "code": "функции:16",
+   "posts": [
+    "483",
+    "469"
+   ],
+   "was_in_plan_as": "merge"
+  },
+  {
+   "task_id": 84,
+   "external_uid": "wp:task:komlev:funktsii-v-python-sozdanie-sobstvennyh-funktsij:15",
+   "video": "https://vk.com/video-53400615_456240070",
+   "code": "функции:16",
+   "posts": [
+    "483",
+    "469"
+   ],
+   "was_in_plan_as": "merge"
+  },
+  {
+   "task_id": 50,
+   "external_uid": "wp:task:komlev:chisla-v-python-i-operatsii-s-nimi:5",
+   "video": "https://vk.com/video-53400615_456240023",
+   "code": "функции:6",
+   "posts": [
+    "417",
+    "441"
+   ],
+   "was_in_plan_as": "merge"
+  },
+  {
+   "task_id": 50,
+   "external_uid": "wp:task:komlev:chisla-v-python-i-operatsii-s-nimi:5",
+   "video": "https://vk.com/video-53400615_456240046",
+   "code": "функции:6",
+   "posts": [
+    "417",
+    "441"
+   ],
+   "was_in_plan_as": "merge"
+  },
+  {
+   "task_id": 52,
+   "external_uid": "wp:task:komlev:chisla-v-python-i-operatsii-s-nimi:7",
+   "video": "https://vk.com/video-53400615_456240095",
+   "code": "функции:8",
+   "posts": [
+    "495"
+   ],
+   "was_in_plan_as": "merge"
+  },
+  {
+   "task_id": 53,
+   "external_uid": "wp:task:komlev:chisla-v-python-i-operatsii-s-nimi:8",
+   "video": "https://vk.com/video-53400615_456240096",
+   "code": "функции:9",
+   "posts": [
+    "496"
+   ],
+   "was_in_plan_as": "merge"
+  },
+  {
+   "task_id": 222,
+   "external_uid": "wp:task:komlev:tsikly-v-python:10",
+   "video": "https://vk.com/video-53400615_456240064",
+   "code": "циклы:11",
+   "posts": [
+    "462"
+   ],
+   "was_in_plan_as": "merge"
+  },
+  {
+   "task_id": 218,
+   "external_uid": "wp:task:komlev:tsikly-v-python:6",
+   "video": "https://vk.com/video-53400615_456240055",
+   "code": "циклы:7",
+   "posts": [
+    "452"
+   ],
+   "was_in_plan_as": "merge"
+  },
+  {
+   "task_id": 374,
+   "external_uid": "wp:task:komlev:rabota-so-slovaryami-v-python:40",
+   "video": "https://vk.com/video-53400615_456240082",
+   "code": "словари:26",
+   "posts": [
+    "482"
+   ],
+   "was_in_plan_as": "create"
+  },
+  {
+   "task_id": 272,
+   "external_uid": "wp:task:komlev:spiski-massivy-v-python:20",
+   "video": "https://vk.com/video-53400615_456239839",
+   "code": "списки:21",
+   "posts": [
+    "193",
+    "542"
+   ],
+   "was_in_plan_as": "create"
+  },
+  {
+   "task_id": 272,
+   "external_uid": "wp:task:komlev:spiski-massivy-v-python:20",
+   "video": "https://vk.com/video-53400615_456240310",
+   "code": "списки:21",
+   "posts": [
+    "193",
+    "542"
+   ],
+   "was_in_plan_as": "create"
+  },
+  {
+   "task_id": 281,
+   "external_uid": "wp:task:komlev:spiski-massivy-v-python:29",
+   "video": "https://vk.com/video-53400615_456239868",
+   "code": "списки:30",
+   "posts": [
+    "225"
+   ],
+   "was_in_plan_as": "create"
+  },
+  {
+   "task_id": 563,
+   "external_uid": "wp:task:komlev:funktsii-v-python-sozdanie-sobstvennyh-funktsij:14",
+   "video": "https://vk.com/video-53400615_456240020",
+   "code": "функции:15",
+   "posts": [
+    "414"
+   ],
+   "was_in_plan_as": "create"
+  },
+  {
+   "task_id": 564,
+   "external_uid": "wp:task:komlev:funktsii-v-python-sozdanie-sobstvennyh-funktsij:16",
+   "video": "https://vk.com/video-53400615_456240079",
+   "code": "функции:18",
+   "posts": [
+    "478"
+   ],
+   "was_in_plan_as": "create"
+  },
+  {
+   "task_id": 85,
+   "external_uid": "wp:task:komlev:funktsii-v-python-sozdanie-sobstvennyh-funktsij:17",
+   "video": "https://vk.com/video-53400615_456240110",
+   "code": "функции:19",
+   "posts": [
+    "513"
+   ],
+   "was_in_plan_as": "create"
+  },
+  {
+   "task_id": 94,
+   "external_uid": "wp:task:komlev:funktsii-v-python-sozdanie-sobstvennyh-funktsij:27",
+   "video": "https://vk.com/video-53400615_456240027",
+   "code": "функции:30",
+   "posts": [
+    "421"
+   ],
+   "was_in_plan_as": "create"
+  },
+  {
+   "task_id": 225,
+   "external_uid": "wp:task:komlev:tsikly-v-python:13",
+   "video": "https://vk.com/video-53400615_456240061",
+   "code": "циклы:14",
+   "posts": [
+    "459"
+   ],
+   "was_in_plan_as": "create"
+  },
+  {
+   "task_id": 226,
+   "external_uid": "wp:task:komlev:tsikly-v-python:14",
+   "video": "https://vk.com/video-53400615_456240062",
+   "code": "циклы:15",
+   "posts": [
+    "460"
+   ],
+   "was_in_plan_as": "create"
+  },
+  {
+   "task_id": 228,
+   "external_uid": "wp:task:komlev:tsikly-v-python:16",
+   "video": "https://vk.com/video-53400615_456240097",
+   "code": "циклы:17",
+   "posts": [
+    "498"
+   ],
+   "was_in_plan_as": "create"
+  }
+ ]
+}
