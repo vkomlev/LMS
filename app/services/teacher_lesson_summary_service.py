@@ -528,16 +528,18 @@ def _build_attention(
 
     if stuck_items:
         first = stuck_items[0]
-        if first.get("by_limit") and not first["wrong_attempts"]:
-            detail = f"стоит на задании: {first['task_title']} — кончились попытки"
-        else:
-            attempts = first["wrong_attempts"]
-            detail = (
-                f"стоит на задании: {first['task_title']} — {attempts} "
-                + _plural(attempts, "неверная попытка", "неверные попытки", "неверных попыток")
+        # «Ошибся N раз», а не «N неверных попыток»: рядом с «попытки кончились»
+        # второе давало «3 неверные попытки, попытки кончились» — увидел на
+        # живом проде, читается как заикание.
+        attempts = first["wrong_attempts"]
+        parts = []
+        if attempts:
+            parts.append(
+                f"ошибся {attempts} " + _plural(attempts, "раз", "раза", "раз")
             )
-            if first.get("by_limit"):
-                detail = f"{detail}, попытки кончились"
+        if first.get("by_limit"):
+            parts.append("попытки кончились")
+        detail = f"стоит на задании: {first['task_title']} — {', '.join(parts)}"
         return {
             "rank": 2,
             "reason": "stuck",

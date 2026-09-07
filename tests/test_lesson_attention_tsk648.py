@@ -166,7 +166,7 @@ async def test_stuck_task_reason_with_wrong_attempts(db, client):
     assert p["attention"]["reason"] == "stuck"
     assert p["attention"]["rank"] == 2
     assert p["attention"]["task_id"] == task_id
-    assert "3 неверные попытки" in p["attention"]["detail"]
+    assert "ошибся 3 раза" in p["attention"]["detail"]
 
 
 @pytest.mark.asyncio
@@ -204,7 +204,7 @@ async def test_attempt_limit_counts_only_while_task_unsolved(db, client):
         for p in await _summary(client, occ_id=today, teacher_id=teacher_id, token=token)
     }
     assert rows[stuck_id]["attention"]["reason"] == "stuck"
-    assert "попытки" in rows[stuck_id]["attention"]["detail"]
+    assert "попытки кончились" in rows[stuck_id]["attention"]["detail"]
     assert rows[solved_id]["attention"] is None
 
 
