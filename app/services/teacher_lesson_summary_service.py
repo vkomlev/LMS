@@ -28,6 +28,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -40,6 +41,7 @@ from app.services import (
     lesson_occurrence_service,
     manual_progress_service,
 )
+from app.services.stuck_tasks_service import load_stuck_tasks
 from app.utils.task_title import humanize_task_title
 
 #: Сколько последних occurrence ученика поднимаем для поиска предыдущего
@@ -55,13 +57,39 @@ MANUAL_SOURCE = "manual_teacher"
 #: Публичная константа — переиспользуется ``student_dashboard_service`` (tsk-494).
 DONE_STATUSES = ("PASSED", "COMPLETED", "SKIPPED")
 
+#: tsk-648: поводы подойти к ученику, в порядке очерёдности. Порядок задан не
+#: тяжестью события, а ценой бездействия ИМЕННО СЕГОДНЯ: молчавший на прошлом
+#: занятии просидит впустую и это, стоящий на задании сам не сдвинется,
+#: пропустивший отстал от темы. Ранг принадлежит поводу, а не ученику: это
+#: очерёдность на одно занятие, а не оценка, которая копится.
+_ATTENTION_ORDER = (
+    "idle_last_lesson",
+    "stuck",
+    "missed_last_lesson",
+    "homework_overdue",
+    "help_asked",
+)
+
+#: Расписание школы ведётся по Москве — дату занятия в подписи показываем в нём
+#: же. Сегодня занятия идут с 10 до 18 по Москве, и в UTC дата та же (проверено
+#: по всем 136 занятиям базы), но подпись «пропустил 31.08» под занятием первого
+#: сентября — ровно та ошибка, которую потом ищут часами.
+_SCHOOL_TZ = ZoneInfo("Europe/Moscow")
+
+#: Окно, в котором ищем «стоит на задании». Совпадает с окном трудностей в
+#: плане занятия (tsk-743): окно «между занятиями» на боевых данных короче
+#: (медиана 65 часов), но у него разная длина на каждого ученика, а повод
+#: должен читаться одинаково у всей группы.
+_STUCK_LOOKBACK_DAYS = 7
+
 _participant_repo = LessonOccurrenceParticipantRepository()
 
 
 async def _load_prev_occurrence_and_streak(
     db: AsyncSession, *, student_id: int, before: datetime,
-) -> tuple[Optional[datetime], int]:
-    """(конец предыдущего occurrence ученика | None, серия пропусков подряд).
+) -> tuple[Optional[datetime], int, Optional[int], Optional[datetime]]:
+    """(конец предыдущего occurrence ученика | None, серия пропусков подряд,
+    id предыдущего occurrence | None, его начало | None).
 
     Один запрос: последние ``_MISSED_STREAK_LOOKBACK`` occurrence ученика
     (ЛЮБОЙ преподаватель) строго ДО текущего, по убыванию времени. Первая
@@ -71,7 +99,7 @@ async def _load_prev_occurrence_and_streak(
     rows = (
         await db.execute(
             text(
-                "SELECT lo.scheduled_at, lo.duration_minutes, lop.status "
+                "SELECT lo.id, lo.scheduled_at, lo.duration_minutes, lop.status "
                 "FROM lesson_occurrence_participant lop "
                 "JOIN lesson_occurrence lo ON lo.id = lop.occurrence_id "
                 "WHERE lop.student_id = :student_id AND lo.scheduled_at < :before "
@@ -83,7 +111,7 @@ async def _load_prev_occurrence_and_streak(
     ).mappings().fetchall()
 
     if not rows:
-        return None, 0
+        return None, 0, None, None
 
     prev = rows[0]
     window_from = prev["scheduled_at"] + timedelta(minutes=int(prev["duration_minutes"]))
@@ -94,7 +122,9 @@ async def _load_prev_occurrence_and_streak(
             streak += 1
         else:
             break
-    return window_from, streak
+    # tsk-648: id предыдущего занятия нужен, чтобы спросить, молчал ли на нём
+    # ученик. Отдельным запросом это был бы второй проход по той же истории.
+    return window_from, streak, int(prev["id"]), prev["scheduled_at"]
 
 
 async def _load_last_activity(db: AsyncSession, *, student_id: int) -> Optional[dict[str, Any]]:
@@ -379,6 +409,197 @@ def _assigned_fields(status: Optional[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _plural(n: int, one: str, few: str, many: str) -> str:
+    """Русское склонение: 1 попытка, 2 попытки, 5 попыток."""
+    if n % 10 == 1 and n % 100 != 11:
+        return one
+    if n % 10 in (2, 3, 4) and n % 100 not in (12, 13, 14):
+        return few
+    return many
+
+
+async def _load_idle_on_lessons(
+    db: AsyncSession, *, pairs: list[tuple[int, int]],
+) -> dict[int, dict[str, Any]]:
+    """Простой (tsk-591) на ПРЕДЫДУЩЕМ занятии каждого ученика.
+
+    Ключ ответа — student_id, потому что предыдущее занятие у каждого своё
+    (в группе состав участников от урока к уроку разный).
+
+    Почему прошлое занятие, а не любое: «сидел и молчал» устаревает вместе с
+    занятием. Эпизод трёхнедельной давности не говорит, к кому подойти
+    сегодня, — а список, который копит такое, превращается в тот самый вечный
+    рейтинг, которого задача просила избежать.
+    """
+    if not pairs:
+        return {}
+    occurrence_ids = sorted({occ_id for occ_id, _ in pairs})
+    student_ids = sorted({student_id for _, student_id in pairs})
+    rows = (
+        await db.execute(
+            text(
+                "SELECT occurrence_id, student_id, count(*) AS episodes, "
+                "       max(kind) AS kind, "
+                "       sum(EXTRACT(EPOCH FROM ("
+                "           COALESCE(resolved_at, detected_at) - silent_since"
+                "       ))) AS silent_seconds "
+                "FROM lesson_idle_episode "
+                "WHERE occurrence_id = ANY(:occ_ids) AND student_id = ANY(:student_ids) "
+                "GROUP BY 1, 2"
+            ),
+            {"occ_ids": occurrence_ids, "student_ids": student_ids},
+        )
+    ).mappings().fetchall()
+
+    # Оба массива в запросе независимы, поэтому в ответ попадают и лишние
+    # сочетания «ученик × чужое занятие» — оставляем только запрошенные пары.
+    wanted = set(pairs)
+    result: dict[int, dict[str, Any]] = {}
+    for row in rows:
+        key = (int(row["occurrence_id"]), int(row["student_id"]))
+        if key not in wanted:
+            continue
+        result[int(row["student_id"])] = {
+            "episodes": int(row["episodes"]),
+            "minutes": max(1, int(float(row["silent_seconds"] or 0) // 60)),
+            "kind": row["kind"],
+        }
+    return result
+
+
+async def _load_absence_followups(
+    db: AsyncSession, *, pairs: list[tuple[int, int]],
+) -> set[int]:
+    """Ученики, с которыми про пропуск ПРОШЛОГО занятия уже поговорили.
+
+    Отметка ставится в плане занятия (tsk-743, `lesson_absence_followup`), и
+    здесь она снимает повод: разговор состоялся, звать преподавателя к тому же
+    человеку с тем же поводом второй раз — способ научить его не читать список.
+    """
+    if not pairs:
+        return set()
+    rows = (
+        await db.execute(
+            text(
+                "SELECT student_id, occurrence_id FROM lesson_absence_followup "
+                "WHERE occurrence_id = ANY(:occ_ids) AND student_id = ANY(:student_ids)"
+            ),
+            {
+                "occ_ids": sorted({occ_id for occ_id, _ in pairs}),
+                "student_ids": sorted({student_id for _, student_id in pairs}),
+            },
+        )
+    ).mappings().fetchall()
+    wanted = set(pairs)
+    return {
+        int(row["student_id"])
+        for row in rows
+        if (int(row["occurrence_id"]), int(row["student_id"])) in wanted
+    }
+
+
+def _build_attention(
+    *,
+    idle: Optional[dict[str, Any]],
+    stuck_items: list[dict[str, Any]],
+    missed_streak: int,
+    prev_started_at: Optional[datetime],
+    absence_asked: bool,
+    homework: dict[str, Any],
+) -> Optional[dict[str, Any]]:
+    """Повод подойти к ученику сегодня — один, самый срочный (tsk-648).
+
+    Поводов у человека может быть несколько, но в строке нужен один: список
+    из пяти пометок на каждого из двенадцати учеников преподаватель во время
+    урока не прочитает. Остальное он увидит в личной сводке по клику.
+
+    Возвращает ``None``, если поводов нет вовсе, — и это нормальное состояние:
+    на боевых данных за две недели повод был у 38 % участий.
+
+    ``absence_asked`` снимает повод «пропустил»: разговор про этот пропуск уже
+    отмечен в плане занятия (tsk-743). Пропуск — самый частый повод (46 из 88
+    случаев за две недели), и без такого снятия он вытеснил бы остальные.
+    """
+    if idle:
+        detail = f"молчал {idle['minutes']} мин на прошлом занятии"
+        if idle["kind"] == "away":
+            detail = f"{detail} (кабинет был закрыт)"
+        return {"rank": 1, "reason": "idle_last_lesson", "detail": detail, "task_id": None}
+
+    if stuck_items:
+        first = stuck_items[0]
+        if first.get("by_limit") and not first["wrong_attempts"]:
+            detail = f"стоит на задании: {first['task_title']} — кончились попытки"
+        else:
+            attempts = first["wrong_attempts"]
+            detail = (
+                f"стоит на задании: {first['task_title']} — {attempts} "
+                + _plural(attempts, "неверная попытка", "неверные попытки", "неверных попыток")
+            )
+            if first.get("by_limit"):
+                detail = f"{detail}, попытки кончились"
+        return {
+            "rank": 2,
+            "reason": "stuck",
+            "detail": detail,
+            "task_id": first["task_id"],
+        }
+
+    if missed_streak > 0 and not absence_asked:
+        if missed_streak == 1 and prev_started_at is not None:
+            local_day = prev_started_at.astimezone(_SCHOOL_TZ).strftime("%d.%m")
+            detail = f"пропустил прошлое занятие {local_day}"
+        else:
+            detail = (
+                f"пропустил подряд: {missed_streak} "
+                + _plural(missed_streak, "занятие", "занятия", "занятий")
+            )
+        return {
+            "rank": 3,
+            "reason": "missed_last_lesson",
+            "detail": detail,
+            "task_id": None,
+        }
+
+    total = homework.get("assigned_total")
+    done = homework.get("assigned_done") or 0
+    # `None` — ученику не задавали; это НЕ то же самое, что «задали ноль», и
+    # спрашивать за несделанное здесь нельзя (та же развилка, что в tsk-741).
+    if total and done < total and homework.get("assigned_is_overdue"):
+        return {
+            "rank": 4,
+            "reason": "homework_overdue",
+            "detail": f"домашняя работа {done} из {total}, срок прошёл",
+            "task_id": None,
+        }
+
+    asked = int(homework.get("help_requested") or 0)
+    if asked:
+        return {
+            "rank": 5,
+            "reason": "help_asked",
+            "detail": (
+                f"просил помощи между занятиями: {asked} "
+                + _plural(asked, "раз", "раза", "раз")
+            ),
+            "task_id": None,
+        }
+    return None
+
+
+def _attention_sort_key(row: dict[str, Any]) -> tuple[Any, ...]:
+    """Порядок участников: сперва поводы по рангу, внутри ранга — по имени.
+
+    Ученики без повода идут следом в том же алфавитном порядке. Имя как
+    вторичный ключ, а не «вес события»: сравнивать 13 минут молчания с 4
+    неверными попытками нечем, а неустойчивый порядок на экране, который
+    обновляется раз в минуту, читать нельзя.
+    """
+    attention = row.get("attention")
+    rank = attention["rank"] if attention else len(_ATTENTION_ORDER) + 1
+    return (rank, (row.get("full_name") or "").lower(), row["student_id"])
+
+
 async def get_occurrence_summary(
     db: AsyncSession,
     *,
@@ -449,14 +670,33 @@ async def get_occurrence_summary(
         as_of=occurrence.scheduled_at,
     )
 
+    # tsk-648: «стоит на задании» — один групповой запрос на всю группу, до
+    # цикла по участникам. Внутри цикла это был бы N+1 на панели, которая
+    # тикает раз в минуту всё занятие.
+    stuck_by_student = await load_stuck_tasks(
+        db,
+        student_ids=student_ids,
+        since=now_utc - timedelta(days=_STUCK_LOOKBACK_DAYS),
+        until=now_utc,
+        include_limit_blocked=True,
+    )
+
     result_participants: list[dict[str, Any]] = []
+    prev_lesson_pairs: list[tuple[int, int]] = []
     for p in participants:
         profile = profiles.get(p.student_id, {})
         is_overdue = p.status == "scheduled" and (occurrence.scheduled_at + threshold) < now_utc
 
-        window_from, missed_streak = await _load_prev_occurrence_and_streak(
+        (
+            window_from,
+            missed_streak,
+            prev_occurrence_id,
+            prev_started_at,
+        ) = await _load_prev_occurrence_and_streak(
             db, student_id=p.student_id, before=occurrence.scheduled_at,
         )
+        if prev_occurrence_id is not None:
+            prev_lesson_pairs.append((prev_occurrence_id, p.student_id))
         last_activity = await _load_last_activity(db, student_id=p.student_id)
         days_since = None
         if last_activity is not None:
@@ -499,7 +739,27 @@ async def get_occurrence_summary(
             "closed_help_requests": closed_help,
             "missed_streak": missed_streak,
             "course_progress": course_progress,
+            "prev_started_at": prev_started_at,
         })
+
+    # tsk-648: очерёдность внимания. Считается после цикла — простой на
+    # прошлом занятии берётся одним запросом на всю группу.
+    idle_by_student = await _load_idle_on_lessons(db, pairs=prev_lesson_pairs)
+    absence_asked = await _load_absence_followups(db, pairs=prev_lesson_pairs)
+    for row in result_participants:
+        row["attention"] = _build_attention(
+            idle=idle_by_student.get(row["student_id"]),
+            stuck_items=stuck_by_student.get(row["student_id"], []),
+            missed_streak=row["missed_streak"],
+            prev_started_at=row.pop("prev_started_at"),
+            absence_asked=row["student_id"] in absence_asked,
+            homework=row["homework"],
+        )
+
+    # Сортировка на сервере, а не на клиенте: порядок — это и есть ответ на
+    # вопрос задачи, и он не должен разъезжаться между списком занятия и
+    # любым другим потребителем ответа.
+    result_participants.sort(key=_attention_sort_key)
 
     return {
         "occurrence_id": occurrence.id,

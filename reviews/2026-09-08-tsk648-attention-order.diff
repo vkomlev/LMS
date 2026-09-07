@@ -1,0 +1,1354 @@
+diff --git a/app/schemas/lesson_calendar.py b/app/schemas/lesson_calendar.py
+index acb10b9..871ddd5 100644
+--- a/app/schemas/lesson_calendar.py
++++ b/app/schemas/lesson_calendar.py
+@@ -420,6 +420,43 @@ class TeacherSummaryHomework(BaseModel):
+     )
+ 
+ 
++class TeacherSummaryAttention(BaseModel):
++    """tsk-648: повод подойти к ученику на ЭТОМ занятии.
++
++    Не оценка и не балл: `rank` принадлежит поводу, а не человеку, и вместе с
++    поводом исчезает. Ученик без свежих событий приходит с `attention = null`
++    и стоит в списке ниже — это не «плохая оценка» и не «хорошая», это
++    отсутствие причины подходить в первую очередь.
++    """
++
++    rank: int = Field(
++        ...,
++        ge=1,
++        description=(
++            "Место повода в очереди: 1 — подойти первым. Порядок задан ценой "
++            "бездействия на сегодняшнем занятии, а не тяжестью события"
++        ),
++    )
++    reason: str = Field(
++        description=(
++            "idle_last_lesson — молчал на прошлом занятии · stuck — стоит на "
++            "задании · missed_last_lesson — пропустил прошлое · "
++            "homework_overdue — домашняя работа просрочена · help_asked — "
++            "просил помощи между занятиями"
++        )
++    )
++    detail: str = Field(
++        description=(
++            "Готовая подпись под именем — «молчал 13 мин на прошлом занятии», "
++            "«стоит на задании: Задача 5 — 4 неверные попытки». Тот же приём, "
++            "что в плане занятия (tsk-743): не призыв, а факт"
++        )
++    )
++    task_id: Optional[int] = Field(
++        default=None, description="Задание, о котором речь (повод `stuck`)"
++    )
++
++
+ class TeacherSummaryParticipant(BaseModel):
+     student_id: int
+     full_name: Optional[str] = None
+@@ -464,6 +501,14 @@ class TeacherSummaryParticipant(BaseModel):
+         default_factory=list,
+         description="tsk-665: `null` — не считалось; пустой список — курсов нет.",
+     )
++    attention: Optional[TeacherSummaryAttention] = Field(
++        default=None,
++        description=(
++            "tsk-648: почему к этому ученику стоит подойти сегодня. `null` — "
++            "свежих поводов нет. Участники в ответе уже отсортированы по "
++            "очерёдности, пересортировывать на клиенте не нужно"
++        ),
++    )
+ 
+ 
+ class TeacherLessonOccurrenceSummaryRead(BaseModel):
+diff --git a/app/services/lesson_plan_service.py b/app/services/lesson_plan_service.py
+index c9b40dc..911f4f9 100644
+--- a/app/services/lesson_plan_service.py
++++ b/app/services/lesson_plan_service.py
+@@ -63,6 +63,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
+ from app.core import settings_store
+ from app.repos.lesson_calendar_repository import LessonOccurrenceParticipantRepository
+ from app.services import homework_service, lesson_occurrence_service
++from app.services.stuck_tasks_service import load_stuck_tasks
+ from app.utils.task_title import humanize_task_title
+ 
+ logger = logging.getLogger(__name__)
+@@ -79,9 +80,6 @@ _ABSENCE_LOOKBACK_DAYS = 30
+ #: Окно свежих успехов. Неделя — типичный промежуток между занятиями.
+ _WINS_LOOKBACK_DAYS = 7
+ 
+-#: Сколько неверных попыток по ОДНОМУ заданию считаем «застрял».
+-_STUCK_WRONG_ATTEMPTS = 3
+-
+ #: Окно поиска трудностей к началу занятия (что накопилось между занятиями).
+ _DIFFICULTY_LOOKBACK_DAYS = 7
+ 
+@@ -236,70 +234,6 @@ async def _load_open_help(
+     return result
+ 
+ 
+-async def _load_stuck_tasks(
+-    db: AsyncSession, *, student_ids: list[int], since: datetime, until: datetime,
+-) -> dict[int, list[dict[str, Any]]]:
+-    """Задания, где ученик за окно ошибся ``_STUCK_WRONG_ATTEMPTS`` раз и так и
+-    не решил.
+-
+-    Это «трудности по заданиям» из постановки, и они не теоретические: замер
+-    боевой базы за 30 дней — 47 таких пар «ученик + задание» на 26 занятиях из
+-    56, то есть почти на каждом втором уроке кто-то буксует молча.
+-
+-    Ручные зачёты преподавателя (``source_system = manual_teacher``) не считаем:
+-    это не попытка ученика.
+-    """
+-    if not student_ids:
+-        return {}
+-    rows = (
+-        await db.execute(
+-            text(
+-                "WITH wrong AS ( "
+-                "    SELECT tr.user_id, tr.task_id, count(*) AS wrong_cnt, "
+-                "           max(tr.submitted_at) AS last_at "
+-                "    FROM task_results tr "
+-                "    WHERE tr.user_id = ANY(:ids) AND tr.is_correct = false "
+-                "      AND tr.source_system IS DISTINCT FROM :manual_source "
+-                "      AND tr.submitted_at >= :since AND tr.submitted_at <= :until "
+-                "    GROUP BY 1, 2 "
+-                "    HAVING count(*) >= :min_wrong "
+-                ") "
+-                "SELECT w.user_id, w.task_id, w.wrong_cnt, w.last_at, "
+-                "       tk.external_uid, tk.task_content->>'title' AS title_raw, "
+-                "       tk.task_content->>'stem' AS stem "
+-                "FROM wrong w "
+-                "JOIN tasks tk ON tk.id = w.task_id "
+-                "WHERE NOT EXISTS ( "
+-                "    SELECT 1 FROM task_results ok "
+-                "    WHERE ok.user_id = w.user_id AND ok.task_id = w.task_id "
+-                "      AND ok.is_correct = true "
+-                ") "
+-                "ORDER BY w.last_at DESC"
+-            ),
+-            {
+-                "ids": student_ids,
+-                "since": since,
+-                "until": until,
+-                "min_wrong": _STUCK_WRONG_ATTEMPTS,
+-                "manual_source": _MANUAL_SOURCE,
+-            },
+-        )
+-    ).mappings().fetchall()
+-
+-    result: dict[int, list[dict[str, Any]]] = {}
+-    for row in rows:
+-        result.setdefault(int(row["user_id"]), []).append(
+-            {
+-                "task_id": int(row["task_id"]),
+-                "task_title": humanize_task_title(
+-                    int(row["task_id"]), row["title_raw"], row["stem"], row["external_uid"],
+-                ),
+-                "wrong_attempts": int(row["wrong_cnt"]),
+-            }
+-        )
+-    return result
+-
+-
+ async def _load_open_idle(
+     db: AsyncSession, *, occurrence_id: int, now: datetime,
+ ) -> dict[int, dict[str, Any]]:
+@@ -509,7 +443,7 @@ async def _start_steps(
+         student_ids=student_ids,
+         since=now - timedelta(days=_DIFFICULTY_LOOKBACK_DAYS),
+     )
+-    stuck = await _load_stuck_tasks(
++    stuck = await load_stuck_tasks(
+         db,
+         student_ids=student_ids,
+         since=now - timedelta(days=_DIFFICULTY_LOOKBACK_DAYS),
+@@ -626,7 +560,7 @@ async def _during_steps(
+ ) -> list[Optional[dict[str, Any]]]:
+     """Ход урока: кто выпал из работы и кто буксует прямо сейчас."""
+     idle = await _load_open_idle(db, occurrence_id=occurrence_id, now=now)
+-    stuck = await _load_stuck_tasks(
++    stuck = await load_stuck_tasks(
+         db, student_ids=student_ids, since=scheduled_at, until=now,
+     )
+     help_now = await _load_open_help(db, student_ids=student_ids, since=scheduled_at)
+diff --git a/app/services/stuck_tasks_service.py b/app/services/stuck_tasks_service.py
+new file mode 100644
+index 0000000..8bd6ef3
+--- /dev/null
++++ b/app/services/stuck_tasks_service.py
+@@ -0,0 +1,129 @@
++"""Задания, на которых ученик стоит: несколько неверных попыток подряд или
++исчерпанный лимит попыток — и до сих пор не решено.
++
++Отдельный модуль, потому что расчёт нужен двум потребителям с разными
++вопросами: плану занятия (tsk-743, «кто буксует прямо сейчас») и очерёдности
++внимания в сводке (tsk-648, «к кому подойти сегодня»). Держать его в одном из
++них значило бы тянуть в другой всю его цепочку зависимостей — на этом сразу
++получился круговой импорт через ``retention_service``.
++"""
++from __future__ import annotations
++
++from datetime import datetime
++from typing import Any
++
++from sqlalchemy import text
++from sqlalchemy.ext.asyncio import AsyncSession
++
++from app.utils.task_title import humanize_task_title
++
++#: Сколько неверных попыток по ОДНОМУ заданию считаем «застрял».
++_STUCK_WRONG_ATTEMPTS = 3
++
++#: Ручные (проставленные преподавателем) результаты не считаются работой
++#: ученика — та же константа, что в сводке занятия и в плане.
++_MANUAL_SOURCE = "manual_teacher"
++
++
++async def load_stuck_tasks(
++    db: AsyncSession,
++    *,
++    student_ids: list[int],
++    since: datetime,
++    until: datetime,
++    include_limit_blocked: bool = False,
++) -> dict[int, list[dict[str, Any]]]:
++    """Задания, где ученик за окно ошибся ``_STUCK_WRONG_ATTEMPTS`` раз и так и
++    не решил.
++
++    Это «трудности по заданиям» из постановки, и они не теоретические: замер
++    боевой базы за 30 дней — 47 таких пар «ученик + задание» на 26 занятиях из
++    56, то есть почти на каждом втором уроке кто-то буксует молча.
++
++    Ручные зачёты преподавателя (``source_system = manual_teacher``) не считаем:
++    это не попытка ученика.
++
++    tsk-648: ``include_limit_blocked`` добавляет второй способ упереться —
++    исчерпанный лимит попыток (``attempt_limit_reached``). До лимита ученик
++    может дойти и с двумя ошибками, если лимит понижен, — тогда порога «три
++    неверных» он не переступит, а сдвинуться сам всё равно не может. Условие
++    «и до сих пор не решил» здесь несёт основную нагрузку: за 7 дней боевой
++    базы в лимит упёрлись 50 пар «ученик + задание» у 24 человек, а остались
++    нерешёнными 8 у 8 — остальным преподаватель продлил попытки, и повод
++    подходить отпал. Порядок очерёдности (сводка занятия) зовёт с ним, план
++    занятия (tsk-743) — без него: там шаг «буксует» про ошибки на уроке.
++    """
++    if not student_ids:
++        return {}
++    # Второй источник подключается отдельной веткой UNION, а не отдельным
++    # запросом: одно и то же задание может прийти обоими путями, и решать это
++    # склейкой в Python значило бы считать порядок из двух разных снимков.
++    limit_branch = (
++        "    UNION ALL "
++        "    SELECT le.student_id AS user_id, (le.payload->>'task_id')::int AS task_id, "
++        "           0::bigint AS wrong_cnt, max(le.created_at) AS last_at, true AS by_limit "
++        "    FROM learning_events le "
++        "    WHERE le.student_id = ANY(:ids) AND le.event_type = 'attempt_limit_reached' "
++        "      AND le.created_at >= :since AND le.created_at <= :until "
++        "      AND le.payload->>'task_id' IS NOT NULL "
++        "    GROUP BY 1, 2 "
++    ) if include_limit_blocked else ""
++
++    rows = (
++        await db.execute(
++            text(
++                "WITH candidate AS ( "
++                "    SELECT tr.user_id, tr.task_id, count(*) AS wrong_cnt, "
++                "           max(tr.submitted_at) AS last_at, false AS by_limit "
++                "    FROM task_results tr "
++                "    WHERE tr.user_id = ANY(:ids) AND tr.is_correct = false "
++                "      AND tr.source_system IS DISTINCT FROM :manual_source "
++                "      AND tr.submitted_at >= :since AND tr.submitted_at <= :until "
++                "    GROUP BY 1, 2 "
++                "    HAVING count(*) >= :min_wrong "
++                f"{limit_branch}"
++                "), "
++                "stuck AS ( "
++                "    SELECT user_id, task_id, max(wrong_cnt) AS wrong_cnt, "
++                "           max(last_at) AS last_at, bool_or(by_limit) AS by_limit "
++                "    FROM candidate GROUP BY 1, 2 "
++                ") "
++                "SELECT w.user_id, w.task_id, w.wrong_cnt, w.last_at, w.by_limit, "
++                "       tk.external_uid, tk.task_content->>'title' AS title_raw, "
++                "       tk.task_content->>'stem' AS stem "
++                "FROM stuck w "
++                "JOIN tasks tk ON tk.id = w.task_id "
++                "WHERE NOT EXISTS ( "
++                "    SELECT 1 FROM task_results ok "
++                "    WHERE ok.user_id = w.user_id AND ok.task_id = w.task_id "
++                "      AND ok.is_correct = true "
++                ") "
++                "ORDER BY w.last_at DESC"
++            ),
++            {
++                "ids": student_ids,
++                "since": since,
++                "until": until,
++                "min_wrong": _STUCK_WRONG_ATTEMPTS,
++                "manual_source": _MANUAL_SOURCE,
++            },
++        )
++    ).mappings().fetchall()
++
++    result: dict[int, list[dict[str, Any]]] = {}
++    for row in rows:
++        result.setdefault(int(row["user_id"]), []).append(
++            {
++                "task_id": int(row["task_id"]),
++                "task_title": humanize_task_title(
++                    int(row["task_id"]), row["title_raw"], row["stem"], row["external_uid"],
++                ),
++                "wrong_attempts": int(row["wrong_cnt"]),
++                "by_limit": bool(row["by_limit"]),
++                "last_at": row["last_at"],
++            }
++        )
++    return result
++
++
++__all__ = ["load_stuck_tasks"]
+diff --git a/app/services/teacher_lesson_summary_service.py b/app/services/teacher_lesson_summary_service.py
+index 6851319..95bb47a 100644
+--- a/app/services/teacher_lesson_summary_service.py
++++ b/app/services/teacher_lesson_summary_service.py
+@@ -28,6 +28,7 @@ from __future__ import annotations
+ 
+ from datetime import datetime, timedelta, timezone
+ from typing import Any, Optional
++from zoneinfo import ZoneInfo
+ 
+ from sqlalchemy import text
+ from sqlalchemy.ext.asyncio import AsyncSession
+@@ -40,6 +41,7 @@ from app.services import (
+     lesson_occurrence_service,
+     manual_progress_service,
+ )
++from app.services.stuck_tasks_service import load_stuck_tasks
+ from app.utils.task_title import humanize_task_title
+ 
+ #: Сколько последних occurrence ученика поднимаем для поиска предыдущего
+@@ -55,13 +57,39 @@ MANUAL_SOURCE = "manual_teacher"
+ #: Публичная константа — переиспользуется ``student_dashboard_service`` (tsk-494).
+ DONE_STATUSES = ("PASSED", "COMPLETED", "SKIPPED")
+ 
++#: tsk-648: поводы подойти к ученику, в порядке очерёдности. Порядок задан не
++#: тяжестью события, а ценой бездействия ИМЕННО СЕГОДНЯ: молчавший на прошлом
++#: занятии просидит впустую и это, стоящий на задании сам не сдвинется,
++#: пропустивший отстал от темы. Ранг принадлежит поводу, а не ученику: это
++#: очерёдность на одно занятие, а не оценка, которая копится.
++_ATTENTION_ORDER = (
++    "idle_last_lesson",
++    "stuck",
++    "missed_last_lesson",
++    "homework_overdue",
++    "help_asked",
++)
++
++#: Расписание школы ведётся по Москве — дату занятия в подписи показываем в нём
++#: же. Сегодня занятия идут с 10 до 18 по Москве, и в UTC дата та же (проверено
++#: по всем 136 занятиям базы), но подпись «пропустил 31.08» под занятием первого
++#: сентября — ровно та ошибка, которую потом ищут часами.
++_SCHOOL_TZ = ZoneInfo("Europe/Moscow")
++
++#: Окно, в котором ищем «стоит на задании». Совпадает с окном трудностей в
++#: плане занятия (tsk-743): окно «между занятиями» на боевых данных короче
++#: (медиана 65 часов), но у него разная длина на каждого ученика, а повод
++#: должен читаться одинаково у всей группы.
++_STUCK_LOOKBACK_DAYS = 7
++
+ _participant_repo = LessonOccurrenceParticipantRepository()
+ 
+ 
+ async def _load_prev_occurrence_and_streak(
+     db: AsyncSession, *, student_id: int, before: datetime,
+-) -> tuple[Optional[datetime], int]:
+-    """(конец предыдущего occurrence ученика | None, серия пропусков подряд).
++) -> tuple[Optional[datetime], int, Optional[int], Optional[datetime]]:
++    """(конец предыдущего occurrence ученика | None, серия пропусков подряд,
++    id предыдущего occurrence | None, его начало | None).
+ 
+     Один запрос: последние ``_MISSED_STREAK_LOOKBACK`` occurrence ученика
+     (ЛЮБОЙ преподаватель) строго ДО текущего, по убыванию времени. Первая
+@@ -71,7 +99,7 @@ async def _load_prev_occurrence_and_streak(
+     rows = (
+         await db.execute(
+             text(
+-                "SELECT lo.scheduled_at, lo.duration_minutes, lop.status "
++                "SELECT lo.id, lo.scheduled_at, lo.duration_minutes, lop.status "
+                 "FROM lesson_occurrence_participant lop "
+                 "JOIN lesson_occurrence lo ON lo.id = lop.occurrence_id "
+                 "WHERE lop.student_id = :student_id AND lo.scheduled_at < :before "
+@@ -83,7 +111,7 @@ async def _load_prev_occurrence_and_streak(
+     ).mappings().fetchall()
+ 
+     if not rows:
+-        return None, 0
++        return None, 0, None, None
+ 
+     prev = rows[0]
+     window_from = prev["scheduled_at"] + timedelta(minutes=int(prev["duration_minutes"]))
+@@ -94,7 +122,9 @@ async def _load_prev_occurrence_and_streak(
+             streak += 1
+         else:
+             break
+-    return window_from, streak
++    # tsk-648: id предыдущего занятия нужен, чтобы спросить, молчал ли на нём
++    # ученик. Отдельным запросом это был бы второй проход по той же истории.
++    return window_from, streak, int(prev["id"]), prev["scheduled_at"]
+ 
+ 
+ async def _load_last_activity(db: AsyncSession, *, student_id: int) -> Optional[dict[str, Any]]:
+@@ -379,6 +409,197 @@ def _assigned_fields(status: Optional[dict[str, Any]]) -> dict[str, Any]:
+     }
+ 
+ 
++def _plural(n: int, one: str, few: str, many: str) -> str:
++    """Русское склонение: 1 попытка, 2 попытки, 5 попыток."""
++    if n % 10 == 1 and n % 100 != 11:
++        return one
++    if n % 10 in (2, 3, 4) and n % 100 not in (12, 13, 14):
++        return few
++    return many
++
++
++async def _load_idle_on_lessons(
++    db: AsyncSession, *, pairs: list[tuple[int, int]],
++) -> dict[int, dict[str, Any]]:
++    """Простой (tsk-591) на ПРЕДЫДУЩЕМ занятии каждого ученика.
++
++    Ключ ответа — student_id, потому что предыдущее занятие у каждого своё
++    (в группе состав участников от урока к уроку разный).
++
++    Почему прошлое занятие, а не любое: «сидел и молчал» устаревает вместе с
++    занятием. Эпизод трёхнедельной давности не говорит, к кому подойти
++    сегодня, — а список, который копит такое, превращается в тот самый вечный
++    рейтинг, которого задача просила избежать.
++    """
++    if not pairs:
++        return {}
++    occurrence_ids = sorted({occ_id for occ_id, _ in pairs})
++    student_ids = sorted({student_id for _, student_id in pairs})
++    rows = (
++        await db.execute(
++            text(
++                "SELECT occurrence_id, student_id, count(*) AS episodes, "
++                "       max(kind) AS kind, "
++                "       sum(EXTRACT(EPOCH FROM ("
++                "           COALESCE(resolved_at, detected_at) - silent_since"
++                "       ))) AS silent_seconds "
++                "FROM lesson_idle_episode "
++                "WHERE occurrence_id = ANY(:occ_ids) AND student_id = ANY(:student_ids) "
++                "GROUP BY 1, 2"
++            ),
++            {"occ_ids": occurrence_ids, "student_ids": student_ids},
++        )
++    ).mappings().fetchall()
++
++    # Оба массива в запросе независимы, поэтому в ответ попадают и лишние
++    # сочетания «ученик × чужое занятие» — оставляем только запрошенные пары.
++    wanted = set(pairs)
++    result: dict[int, dict[str, Any]] = {}
++    for row in rows:
++        key = (int(row["occurrence_id"]), int(row["student_id"]))
++        if key not in wanted:
++            continue
++        result[int(row["student_id"])] = {
++            "episodes": int(row["episodes"]),
++            "minutes": max(1, int(float(row["silent_seconds"] or 0) // 60)),
++            "kind": row["kind"],
++        }
++    return result
++
++
++async def _load_absence_followups(
++    db: AsyncSession, *, pairs: list[tuple[int, int]],
++) -> set[int]:
++    """Ученики, с которыми про пропуск ПРОШЛОГО занятия уже поговорили.
++
++    Отметка ставится в плане занятия (tsk-743, `lesson_absence_followup`), и
++    здесь она снимает повод: разговор состоялся, звать преподавателя к тому же
++    человеку с тем же поводом второй раз — способ научить его не читать список.
++    """
++    if not pairs:
++        return set()
++    rows = (
++        await db.execute(
++            text(
++                "SELECT student_id, occurrence_id FROM lesson_absence_followup "
++                "WHERE occurrence_id = ANY(:occ_ids) AND student_id = ANY(:student_ids)"
++            ),
++            {
++                "occ_ids": sorted({occ_id for occ_id, _ in pairs}),
++                "student_ids": sorted({student_id for _, student_id in pairs}),
++            },
++        )
++    ).mappings().fetchall()
++    wanted = set(pairs)
++    return {
++        int(row["student_id"])
++        for row in rows
++        if (int(row["occurrence_id"]), int(row["student_id"])) in wanted
++    }
++
++
++def _build_attention(
++    *,
++    idle: Optional[dict[str, Any]],
++    stuck_items: list[dict[str, Any]],
++    missed_streak: int,
++    prev_started_at: Optional[datetime],
++    absence_asked: bool,
++    homework: dict[str, Any],
++) -> Optional[dict[str, Any]]:
++    """Повод подойти к ученику сегодня — один, самый срочный (tsk-648).
++
++    Поводов у человека может быть несколько, но в строке нужен один: список
++    из пяти пометок на каждого из двенадцати учеников преподаватель во время
++    урока не прочитает. Остальное он увидит в личной сводке по клику.
++
++    Возвращает ``None``, если поводов нет вовсе, — и это нормальное состояние:
++    на боевых данных за две недели повод был у 38 % участий.
++
++    ``absence_asked`` снимает повод «пропустил»: разговор про этот пропуск уже
++    отмечен в плане занятия (tsk-743). Пропуск — самый частый повод (46 из 88
++    случаев за две недели), и без такого снятия он вытеснил бы остальные.
++    """
++    if idle:
++        detail = f"молчал {idle['minutes']} мин на прошлом занятии"
++        if idle["kind"] == "away":
++            detail = f"{detail} (кабинет был закрыт)"
++        return {"rank": 1, "reason": "idle_last_lesson", "detail": detail, "task_id": None}
++
++    if stuck_items:
++        first = stuck_items[0]
++        if first.get("by_limit") and not first["wrong_attempts"]:
++            detail = f"стоит на задании: {first['task_title']} — кончились попытки"
++        else:
++            attempts = first["wrong_attempts"]
++            detail = (
++                f"стоит на задании: {first['task_title']} — {attempts} "
++                + _plural(attempts, "неверная попытка", "неверные попытки", "неверных попыток")
++            )
++            if first.get("by_limit"):
++                detail = f"{detail}, попытки кончились"
++        return {
++            "rank": 2,
++            "reason": "stuck",
++            "detail": detail,
++            "task_id": first["task_id"],
++        }
++
++    if missed_streak > 0 and not absence_asked:
++        if missed_streak == 1 and prev_started_at is not None:
++            local_day = prev_started_at.astimezone(_SCHOOL_TZ).strftime("%d.%m")
++            detail = f"пропустил прошлое занятие {local_day}"
++        else:
++            detail = (
++                f"пропустил подряд: {missed_streak} "
++                + _plural(missed_streak, "занятие", "занятия", "занятий")
++            )
++        return {
++            "rank": 3,
++            "reason": "missed_last_lesson",
++            "detail": detail,
++            "task_id": None,
++        }
++
++    total = homework.get("assigned_total")
++    done = homework.get("assigned_done") or 0
++    # `None` — ученику не задавали; это НЕ то же самое, что «задали ноль», и
++    # спрашивать за несделанное здесь нельзя (та же развилка, что в tsk-741).
++    if total and done < total and homework.get("assigned_is_overdue"):
++        return {
++            "rank": 4,
++            "reason": "homework_overdue",
++            "detail": f"домашняя работа {done} из {total}, срок прошёл",
++            "task_id": None,
++        }
++
++    asked = int(homework.get("help_requested") or 0)
++    if asked:
++        return {
++            "rank": 5,
++            "reason": "help_asked",
++            "detail": (
++                f"просил помощи между занятиями: {asked} "
++                + _plural(asked, "раз", "раза", "раз")
++            ),
++            "task_id": None,
++        }
++    return None
++
++
++def _attention_sort_key(row: dict[str, Any]) -> tuple[Any, ...]:
++    """Порядок участников: сперва поводы по рангу, внутри ранга — по имени.
++
++    Ученики без повода идут следом в том же алфавитном порядке. Имя как
++    вторичный ключ, а не «вес события»: сравнивать 13 минут молчания с 4
++    неверными попытками нечем, а неустойчивый порядок на экране, который
++    обновляется раз в минуту, читать нельзя.
++    """
++    attention = row.get("attention")
++    rank = attention["rank"] if attention else len(_ATTENTION_ORDER) + 1
++    return (rank, (row.get("full_name") or "").lower(), row["student_id"])
++
++
+ async def get_occurrence_summary(
+     db: AsyncSession,
+     *,
+@@ -449,14 +670,33 @@ async def get_occurrence_summary(
+         as_of=occurrence.scheduled_at,
+     )
+ 
++    # tsk-648: «стоит на задании» — один групповой запрос на всю группу, до
++    # цикла по участникам. Внутри цикла это был бы N+1 на панели, которая
++    # тикает раз в минуту всё занятие.
++    stuck_by_student = await load_stuck_tasks(
++        db,
++        student_ids=student_ids,
++        since=now_utc - timedelta(days=_STUCK_LOOKBACK_DAYS),
++        until=now_utc,
++        include_limit_blocked=True,
++    )
++
+     result_participants: list[dict[str, Any]] = []
++    prev_lesson_pairs: list[tuple[int, int]] = []
+     for p in participants:
+         profile = profiles.get(p.student_id, {})
+         is_overdue = p.status == "scheduled" and (occurrence.scheduled_at + threshold) < now_utc
+ 
+-        window_from, missed_streak = await _load_prev_occurrence_and_streak(
++        (
++            window_from,
++            missed_streak,
++            prev_occurrence_id,
++            prev_started_at,
++        ) = await _load_prev_occurrence_and_streak(
+             db, student_id=p.student_id, before=occurrence.scheduled_at,
+         )
++        if prev_occurrence_id is not None:
++            prev_lesson_pairs.append((prev_occurrence_id, p.student_id))
+         last_activity = await _load_last_activity(db, student_id=p.student_id)
+         days_since = None
+         if last_activity is not None:
+@@ -499,8 +739,28 @@ async def get_occurrence_summary(
+             "closed_help_requests": closed_help,
+             "missed_streak": missed_streak,
+             "course_progress": course_progress,
++            "prev_started_at": prev_started_at,
+         })
+ 
++    # tsk-648: очерёдность внимания. Считается после цикла — простой на
++    # прошлом занятии берётся одним запросом на всю группу.
++    idle_by_student = await _load_idle_on_lessons(db, pairs=prev_lesson_pairs)
++    absence_asked = await _load_absence_followups(db, pairs=prev_lesson_pairs)
++    for row in result_participants:
++        row["attention"] = _build_attention(
++            idle=idle_by_student.get(row["student_id"]),
++            stuck_items=stuck_by_student.get(row["student_id"], []),
++            missed_streak=row["missed_streak"],
++            prev_started_at=row.pop("prev_started_at"),
++            absence_asked=row["student_id"] in absence_asked,
++            homework=row["homework"],
++        )
++
++    # Сортировка на сервере, а не на клиенте: порядок — это и есть ответ на
++    # вопрос задачи, и он не должен разъезжаться между списком занятия и
++    # любым другим потребителем ответа.
++    result_participants.sort(key=_attention_sort_key)
++
+     return {
+         "occurrence_id": occurrence.id,
+         "is_ad_hoc": occurrence.slot_id is None,
+diff --git a/docs/openapi.json b/docs/openapi.json
+index c0be4e8..db2ce45 100644
+--- a/docs/openapi.json
++++ b/docs/openapi.json
+@@ -68979,6 +68979,46 @@
+         "title": "TeacherSummaryActivity",
+         "description": "Последнее выполненное задание/материал ученика (не ручной зачёт)."
+       },
++      "TeacherSummaryAttention": {
++        "properties": {
++          "rank": {
++            "type": "integer",
++            "minimum": 1.0,
++            "title": "Rank",
++            "description": "Место повода в очереди: 1 — подойти первым. Порядок задан ценой бездействия на сегодняшнем занятии, а не тяжестью события"
++          },
++          "reason": {
++            "type": "string",
++            "title": "Reason",
++            "description": "idle_last_lesson — молчал на прошлом занятии · stuck — стоит на задании · missed_last_lesson — пропустил прошлое · homework_overdue — домашняя работа просрочена · help_asked — просил помощи между занятиями"
++          },
++          "detail": {
++            "type": "string",
++            "title": "Detail",
++            "description": "Готовая подпись под именем — «молчал 13 мин на прошлом занятии», «стоит на задании: Задача 5 — 4 неверные попытки». Тот же приём, что в плане занятия (tsk-743): не призыв, а факт"
++          },
++          "task_id": {
++            "anyOf": [
++              {
++                "type": "integer"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Task Id",
++            "description": "Задание, о котором речь (повод `stuck`)"
++          }
++        },
++        "type": "object",
++        "required": [
++          "rank",
++          "reason",
++          "detail"
++        ],
++        "title": "TeacherSummaryAttention",
++        "description": "tsk-648: повод подойти к ученику на ЭТОМ занятии.\n\nНе оценка и не балл: `rank` принадлежит поводу, а не человеку, и вместе с\nповодом исчезает. Ученик без свежих событий приходит с `attention = null`\nи стоит в списке ниже — это не «плохая оценка» и не «хорошая», это\nотсутствие причины подходить в первую очередь."
++      },
+       "TeacherSummaryBlockedTask": {
+         "properties": {
+           "task_id": {
+@@ -69341,6 +69381,17 @@
+             ],
+             "title": "Course Progress",
+             "description": "tsk-665: `null` — не считалось; пустой список — курсов нет."
++          },
++          "attention": {
++            "anyOf": [
++              {
++                "$ref": "#/components/schemas/TeacherSummaryAttention"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "description": "tsk-648: почему к этому ученику стоит подойти сегодня. `null` — свежих поводов нет. Участники в ответе уже отсортированы по очерёдности, пересортировывать на клиенте не нужно"
+           }
+         },
+         "type": "object",
+diff --git a/docs/qa/2026-09-08-tsk648-attention-order.md b/docs/qa/2026-09-08-tsk648-attention-order.md
+new file mode 100644
+index 0000000..808dd65
+--- /dev/null
++++ b/docs/qa/2026-09-08-tsk648-attention-order.md
+@@ -0,0 +1,168 @@
++# tsk-648 — очерёдность внимания на занятии: разведка, решение, сверка с преподавателем
++
++**Дата:** 2026-09-08. Источник цифр — боевая база (только чтение).
++**Задача:** [[tsk-648]] в комплексе [[tsk-589]]. Решение оператора, которое
++метрика должна менять: «кому уделить время на ближайшем занятии».
++
++---
++
++## 1. Живость источников: два из пяти оказались мёртвыми
++
++Постановка называла пять источников. Проверил каждый до того, как опираться.
++
++| Источник из постановки | За 7 дней | Вывод |
++|---|---|---|
++| Простой на занятии (`lesson_idle_episode`, tsk-591) | 21 эпизод, 13 учеников | **живой**, взят |
++| Застрял на задании (3+ неверных, не решено) | 7 пар, 7 учеников | **живой**, взят |
++| Блокировка лимитом попыток | 219 событий, 23 ученика | **живой**, взят с оговоркой (см. §2) |
++| Пропустил прошлое занятие | 22 пропуска, 20 учеников | **живой**, взят |
++| **Заявка помощи открыта и не закрыта** | **0 открытых** | **мёртвый, не взят** |
++| **Работа возвращена на доработку** | **0 за неделю** | **мёртвый, не взят** |
++
++**Почему «открытая заявка» не работает.** За 30 дней 181 заявка, открытых на
++момент проверки — ни одной. Среднее время до закрытия 69 минут, p90 — 91 минута,
++дольше суток прожила одна заявка за месяц. Заявку закрывают на том же занятии,
++на котором открыли, — к следующему занятию открытых не остаётся по построению.
++В очерёдности этот повод давал бы пустую графу круглый год.
++
++Взамен взят факт обращения: «просил помощи между занятиями» — заявка была,
++разобрали, стоит проверить, понял ли. Это уже считается в сводке
++(`homework.help_requested`).
++
++**Почему «возврат на доработку» не работает.** Уведомлений
++`task_returned_for_rework` — 6 за всю историю платформы, последнее 17.08,
++за неделю ноль. Механика есть, ею не пользуются.
++
++## 2. Лимит попыток: сигнал становится острым только с условием «не решено»
++
++За 7 дней в лимит попыток упёрлись **50 пар «ученик + задание» у 24 человек** —
++это треть всех активных (76 учеников за две недели). Как повод подойти это
++бесполезно: зовёт к трети школы разом.
++
++Но из этих 50 пар **нерешёнными остались 8 у 8 человек**. В остальных случаях
++преподаватель продлил попытки (60 продлений за неделю), и ученик задание сдал —
++повод отпал сам.
++
++Поэтому «стоит на задании» = задание, где ученик упёрся (3+ неверных попыток
++**или** кончились попытки) **и до сих пор его не решил**. Условие «не решил»
++здесь несёт всю нагрузку.
++
++## 3. Что получилось
++
++**Отдельного экрана нет.** Очерёдность живёт в сводке занятия, которая уже
++открывается на карточке урока (`/teacher/lessons`, tsk-022/410/473):
++
++- участники приходят **отсортированными**, порядок и есть ответ на вопрос;
++- под именем — **одна** подпись, почему подойти («молчал 13 мин на прошлом
++  занятии», «стоит на задании: Задача 5 — 3 неверные попытки»);
++- строка-граница «Дальше — без свежих поводов» отделяет остальных;
++- значок, который дублировал бы подпись (серия пропусков, ДЗ), при этом гасится.
++
++Поводы и порядок — по цене бездействия **сегодня**, а не по тяжести события:
++
++| № | Повод | Почему здесь |
++|---|---|---|
++| 1 | молчал на прошлом занятии | был на уроке и просидел его впустую; не подойти — повторится сейчас |
++| 2 | стоит на задании | сам не сдвинется, ждёт человека |
++| 3 | пропустил прошлое занятие | выпал из темы |
++| 4 | домашняя работа просрочена | сделанного меньше заданного, срок прошёл |
++| 5 | просил помощи между занятиями | трудность была, стоит проверить |
++
++**Список устаревает вместе с занятием.** Простой берётся только с ПРЕДЫДУЩЕГО
++занятия ученика, а не «за всё время»; окно домашней работы — между занятиями;
++повод «пропустил» снимается, как только преподаватель отметил разговор
++(`lesson_absence_followup`, механика tsk-743). Ничего не накапливается.
++
++**Охват на боевых данных** (35 занятий за 2 недели, 230 участий): повод есть у
++**38 % участий**. На занятии из 8–14 человек помечено обычно 2–8, на 8 занятиях
++из 35 — ни одного. То есть список действительно короче группы.
++
++## 4. Сверка с тем, что преподаватель сделал сам
++
++Оператор просил проверить не на выборке, а на прошедшем занятии и сравнить с
++действиями преподавателя. Спросить преподавателя может только оператор, поэтому
++сверка сделана **по следам в базе**: продление попыток, закрытие заявки помощи,
++ручная простановка результата, отметка разговора о пропуске — всё в окне
++занятия (−10 минут … +30 после конца).
++
++### Занятие 05.09, 10:00 МСК (10 участников)
++
++| № | Ученик | Система советует | Что сделал преподаватель |
++|---|---|---|---|
++| 1 | Влад Литовкин | молчал 13 мин на прошлом занятии | продлил попытки, закрыл заявку |
++| 2 | Газаров Богдан | пропустил прошлое 01.09 | — |
++| 3 | Денис Белов | пропустил прошлое 02.09 | закрыл заявку помощи |
++| 4 | Иван Мочалов | пропустил прошлое 29.08 | — |
++| 5 | Курунов Кирилл | пропустил прошлое 03.09 | проставил вручную ×361 |
++| 6 | Максим Сундуков | пропустил прошлое 01.08 | продлил попытки, закрыл заявку, проставил ×252 |
++| 7 | Мамедов Джемаль | пропустил прошлое 31.08 | — (и сам не пришёл) |
++| 8 | Артемий Нуженко | просил помощи между занятиями: 3 | закрыл заявку помощи |
++| — | Ильдар Альбеков | — | — |
++| — | Рузняева Арина | — | — (не пришла) |
++
++Здесь очерёдность и работа преподавателя сходятся: оба ученика, к которым он
++подошёл содержательно, стоят в списке первым и последним номером, а те двое,
++кого система не назвала, внимания и не потребовали.
++
++### Занятие 07.09, 16:00 МСК (8 участников) — расхождение
++
++| № | Ученик | Система советует | Что сделал преподаватель |
++|---|---|---|---|
++| 1 | Грабовский Владимир | молчал 29 мин на прошлом занятии | продлил попытки, закрыл 3 заявки |
++| 2 | Костенков Матвей | пропустил прошлое 03.09 | отметил разговор о пропуске |
++| 3 | Терехов Илья | просил помощи между занятиями: 2 | закрыл заявку помощи |
++| — | **Максим Мачула** | — | **продлил попытки, закрыл 2 заявки** |
++| — | **Газаров Богдан** | — | **отметил разговор о пропуске** |
++| — | **Рахимжанов Вадим** | — | **отметил разговор о пропуске** |
++| — | Влад Литовкин, Емельяненко Софья | — | — |
++
++### Что расхождение показало (это ценнее совпадения)
++
++1. **Очерёдность отвечает на вопрос «с чем человек ПРИШЁЛ», а не «что случилось
++   на уроке».** Максим Мачула забуксовал прямо на занятии — система молчала,
++   потому что все её поводы собраны с прошлого раза. Это не дыра: «что
++   происходит сейчас» уже показывает план занятия (tsk-743, фаза «по ходу» —
++   шаги «молчит» и «буксует»). Две панели дополняют друг друга, и объединять их
++   не нужно: одна отвечает на вопрос до урока, другая во время.
++2. **Преподаватель спрашивает про пропуски глубже, чем последнее занятие.**
++   Газаров и Рахимжанов получили разговор про пропуски, которых нет в
++   очерёдности: она смотрит только на прошлое занятие. Более старые
++   неразобранные пропуски за 30 дней уже собирает шаг «absences» плана — там же
++   стоит галочка «спросили». Дублировать их в очерёдности значило бы показать
++   один пропуск дважды, поэтому не стал; вместо этого отметка разговора **снимает
++   повод** в очерёдности.
++3. **Ручные простановки — не признак внимания к конкретному ученику.** У
++   Курунова 361 запись, у Сундукова 252 за час занятия: это массовый зачёт
++   пройденного, а не разговор. Тот же класс ошибки, что в разведке tsk-589
++   («проскакивает теорию за секунду» оказалось темпом преподавателя).
++
++### Что стоит спросить у преподавателя (вопросы для оператора)
++
++1. На занятии 07.09 система назвала троих, вы работали с шестью. Кого из
++   названных вы бы поставили первым сами — и совпадает ли это с порядком?
++2. Молчание на прошлом занятии стоит первым номером. Это правда важнее, чем
++   «стоит на задании»?
++3. Пропуск прошлого занятия — самый частый повод (46 из 88 за две недели).
++   Он вам полезен в списке или это шум, который вы и так видите по явке?
++
++## 5. Границы, названные прямо
++
++- **Поводы — только «с прошлого раза».** Что происходит на самом уроке, здесь
++  не появляется (это план занятия tsk-743).
++- **Простой считается с 21.08**, эпизодов всего 49 — сигнал молодой.
++- **Пропуск учитывается только последний**, глубже — в плане занятия.
++- **Порядок фиксирован правилами, а не весом.** Внутри одного повода порядок по
++  имени: сравнивать 13 минут молчания с 4 неверными попытками нечем, а
++  прыгающий список на экране, который обновляется раз в минуту, не читается.
++- **Балла нет и не будет.** `attention = null` означает «нет свежего повода», а
++  не «хороший/плохой ученик».
++
++## 6. Что изменилось в коде
++
++- LMS: `teacher_lesson_summary_service` — поле `attention` и сортировка
++  участников; новый `stuck_tasks_service` (общий с планом занятия расчёт «стоит
++  на задании», переехал из `lesson_plan_service` — там он давал круговой импорт);
++  схема `TeacherSummaryAttention`.
++- SPW: `TeacherLessonSummary` — подпись повода под именем, порядок как пришёл,
++  строка-граница, гашение дублирующих значков.
++- Миграций нет, схема БД не менялась, новых адресов и уведомлений нет.
+diff --git a/reviews/2026-09-08-tsk648-attention-order.md b/reviews/2026-09-08-tsk648-attention-order.md
+new file mode 100644
+index 0000000..d8f921b
+--- /dev/null
++++ b/reviews/2026-09-08-tsk648-attention-order.md
+@@ -0,0 +1,101 @@
++# tsk-648 — очерёдность внимания на занятии (review artifact)
++
++**Дата:** 2026-09-08
++**Задача:** [[tsk-648]] в комплексе [[tsk-589]] («кому уделить время на
++ближайшем занятии»)
++**Разведка и сверка с преподавателем:** `docs/qa/2026-09-08-tsk648-attention-order.md`
++
++## Цель правки
++
++Дать преподавателю порядок очерёдности к конкретному занятию: кто в группе, что
++случилось с прошлого раза, к кому подойти первым. **Не оценка и не балл**:
++список привязан к занятию и устаревает вместе с ним.
++
++**Границы.** Отдельного экрана не заводим — очерёдность ложится в существующую
++сводку занятия (tsk-022/410/473). Новых уведомлений нет (доставка — tsk-652),
++сводного балла нет (зонтик tsk-589), схема БД не менялась, миграций нет.
++
++## Затронутые файлы и контракты
++
++| Файл | Что |
++|---|---|
++| `app/schemas/lesson_calendar.py` | новая `TeacherSummaryAttention`; аддитивное поле `TeacherSummaryParticipant.attention` |
++| `app/services/teacher_lesson_summary_service.py` | расчёт повода, два групповых запроса (простой на прошлом занятии, отметки разговора о пропуске), сортировка участников |
++| `app/services/stuck_tasks_service.py` (новый) | расчёт «стоит на задании», общий с планом занятия; вынесен, потому что держать его в `lesson_plan_service` давало круговой импорт через `retention_service` |
++| `app/services/lesson_plan_service.py` | функция уехала в новый модуль, поведение плана не менялось (флаг `include_limit_blocked` по умолчанию `False`) |
++| `docs/openapi.json` | пересобран (354 адреса) |
++| SPW `components/teacher/TeacherLessonSummary.tsx` | подпись повода под именем, порядок как пришёл с сервера, строка-граница, гашение дублирующих значков |
++| SPW `lib/api-types.ts` | перегенерирован из openapi.json |
++| CB `docs/cross-project/contracts/lms-api.md`, `CHANGELOG.md` | контракт зафиксирован |
++
++**Изменение контракта (аддитивное поле + смена порядка).** Участники в ответе
++`GET /teacher/lesson-occurrences/{id}/summary` теперь отсортированы по
++`attention.rank`, внутри ранга — по имени. Прежний порядок повторял выборку
++участников; единственный потребитель (SPW) рисует список как пришёл.
++
++## Regression / новые тесты
++
++`tests/test_lesson_attention_tsk648.py` — 9 тестов на настоящей БД:
++
++- повод «молчал на прошлом занятии» с минутами в подписи;
++- простой на ПОЗАПРОШЛОМ занятии поводом не является (свойство устаревания);
++- «стоит на задании» по трём неверным попыткам, с `task_id`;
++- лимит попыток считается **только пока задание не решено** (два ученика: один
++  застрял, второму продлили и он решил — у второго повода нет);
++- пропуск прошлого занятия;
++- **повод пропуска исчезает после отметки разговора** (`lesson_absence_followup`),
++  при этом `missed_streak` остаётся;
++- ученик без событий приходит с `attention = null`;
++- порядок участников: молчавший → пропустивший → без повода;
++- запрос подробностей одного ученика несёт тот же повод, что строка списка.
++
++SPW `tests/unit/teacher-lesson-attention-tsk648.test.tsx` — 6 тестов: подпись,
++порядок как пришёл, ровно одна строка-граница, отсутствие границы когда поводов
++нет, гашение значка пропусков при поводе-пропуске и его сохранение при другом
++поводе.
++
++## Валидация (raw)
++
++```
++# LMS — целевые наборы
++tests/test_lesson_attention_tsk648.py .......... 9 passed
++tests/test_teacher_lesson_summary_tsk022_410.py + tests/test_lesson_plan_tsk743.py + новый:
++  41 passed, 60 warnings in 17.89s
++
++# LMS — типы
++mypy app/services/stuck_tasks_service.py app/services/teacher_lesson_summary_service.py \
++     app/services/lesson_plan_service.py
++  Success: no issues found in 3 source files
++
++# SPW — полный набор
++Test Files  202 passed (202)
++     Tests  1703 passed (1703)
++
++# SPW — типы и линт
++tsc --noEmit -p tsconfig.json   → без ошибок
++eslint components/teacher/TeacherLessonSummary.tsx → без замечаний
++
++# URL-guard (api-contract-rules §4)
++grep -rE "https?://(learn|api|tg)\.victor-komlev\.ru|https?://localhost:[0-9]+" по изменённым файлам
++  → 0 совпадений
++```
++
++Полный набор LMS — см. итог в задаче трекера (прогон запущен после последней
++правки).
++
++## Проверка на боевых данных (только чтение)
++
++- Живость каждого источника из постановки проверена до реализации; **два из
++  пяти оказались мёртвыми** и в список не попали (открытая заявка помощи — 0
++  открытых при p90 закрытия 91 минута; возврат на доработку — 6 записей за всю
++  историю). Разбор: `docs/qa/2026-09-08-tsk648-attention-order.md` §1.
++- Охват: 35 занятий за две недели, 230 участий, повод есть у 38 %.
++- Сверка с действиями преподавателя на четырёх прошедших занятиях — там же §4,
++  включая три расхождения и вопросы, которые оператор задаст преподавателю.
++
++## Rollback note
++
++Правка аддитивная, состояния не пишет, миграций нет. Откат — `git revert`
++коммитов LMS и SPW (в любом порядке: старое поле фронт не требует, новое поле
++старый фронт игнорирует). Промежуточное состояние «новый backend + старый
++фронт» рабочее: изменится только порядок строк.
+diff --git a/tests/test_lesson_attention_tsk648.py b/tests/test_lesson_attention_tsk648.py
+new file mode 100644
+index 0000000..4aca7e1
+--- /dev/null
++++ b/tests/test_lesson_attention_tsk648.py
+@@ -0,0 +1,336 @@
++"""tsk-648: очерёдность внимания — к кому преподаватель подойдёт первым.
++
++Проверяем на НАСТОЯЩЕЙ БД, как и остальная сводка занятия (tsk-022/410), поле
++`attention` и порядок участников в ответе
++`GET /teacher/lesson-occurrences/{id}/summary`.
++
++Главное свойство, за которым тут следим: список привязан к ЭТОМУ занятию и
++устаревает вместе с ним. Простой, случившийся не на прошлом занятии ученика, а
++раньше, поводом не является — иначе получился бы вечный рейтинг, а задача
++просила ровно обратного.
++"""
++from __future__ import annotations
++
++import json
++from datetime import datetime, timedelta, timezone
++
++import pytest
++from sqlalchemy import text
++
++from app.models.lesson_occurrence import LessonOccurrence
++from app.models.lesson_occurrence_participant import LessonOccurrenceParticipant
++from tests.test_teacher_lesson_summary_tsk022_410 import (
++    _insert_task_result,
++    _new_course,
++    _new_task,
++    _new_user,
++)
++
++UTC = timezone.utc
++
++
++async def _occurrence(
++    db, *, teacher_id: int, scheduled_at: datetime, duration_minutes: int = 60,
++) -> int:
++    occ = LessonOccurrence(
++        slot_id=None, teacher_id=teacher_id, scheduled_at=scheduled_at,
++        duration_minutes=duration_minutes,
++    )
++    db.add(occ)
++    await db.flush()
++    occ_id = occ.id
++    await db.commit()
++    return occ_id
++
++
++async def _join(db, *, occurrence_id: int, student_id: int, status: str = "scheduled") -> None:
++    db.add(
++        LessonOccurrenceParticipant(
++            occurrence_id=occurrence_id, student_id=student_id, status=status
++        )
++    )
++    await db.commit()
++
++
++async def _idle_episode(
++    db, *, occurrence_id: int, student_id: int, silent_since: datetime,
++    resolved_at: datetime, kind: str = "idle",
++) -> None:
++    await db.execute(
++        text(
++            "INSERT INTO lesson_idle_episode "
++            "  (occurrence_id, student_id, kind, silent_since, detected_at, resolved_at) "
++            "VALUES (:o, :s, :k, :since, :since, :resolved)"
++        ),
++        {
++            "o": occurrence_id, "s": student_id, "k": kind,
++            "since": silent_since, "resolved": resolved_at,
++        },
++    )
++    await db.commit()
++
++
++async def _limit_reached(db, *, student_id: int, task_id: int, created_at: datetime) -> None:
++    await db.execute(
++        text(
++            "INSERT INTO learning_events (student_id, event_type, payload, created_at) "
++            "VALUES (:s, 'attempt_limit_reached', CAST(:p AS jsonb), :ts)"
++        ),
++        {"s": student_id, "p": json.dumps({"task_id": task_id}), "ts": created_at},
++    )
++    await db.commit()
++
++
++async def _summary(client, *, occ_id: int, teacher_id: int, token: str) -> list[dict]:
++    resp = await client.get(
++        f"/api/v1/teacher/lesson-occurrences/{occ_id}/summary",
++        params={"teacher_id": teacher_id, "include_progress": "false"},
++        headers={"Authorization": f"Bearer {token}"},
++    )
++    assert resp.status_code == 200, resp.text
++    return resp.json()["participants"]
++
++
++# ============================== Поводы ==============================
++
++
++@pytest.mark.asyncio
++async def test_idle_on_previous_lesson_is_first_reason(db, client):
++    """Молчал на прошлом занятии — повод номер один, с минутами в подписи."""
++    teacher_id, token = await _new_user(db, role="teacher", name="t648a")
++    student_id, _ = await _new_user(db, role="student", name="s648a")
++    now = datetime.now(UTC)
++
++    prev_at = now - timedelta(days=3)
++    prev = await _occurrence(db, teacher_id=teacher_id, scheduled_at=prev_at)
++    await _join(db, occurrence_id=prev, student_id=student_id, status="confirmed")
++    await _idle_episode(
++        db, occurrence_id=prev, student_id=student_id,
++        silent_since=prev_at + timedelta(minutes=10),
++        resolved_at=prev_at + timedelta(minutes=23),
++    )
++    today = await _occurrence(db, teacher_id=teacher_id, scheduled_at=now + timedelta(hours=1))
++    await _join(db, occurrence_id=today, student_id=student_id)
++
++    (p,) = await _summary(client, occ_id=today, teacher_id=teacher_id, token=token)
++    assert p["attention"] is not None
++    assert p["attention"]["reason"] == "idle_last_lesson"
++    assert p["attention"]["rank"] == 1
++    assert "13 мин" in p["attention"]["detail"]
++
++
++@pytest.mark.asyncio
++async def test_idle_on_older_lesson_is_not_a_reason(db, client):
++    """Простой на ПОЗАПРОШЛОМ занятии поводом не считается: список привязан к
++    ближайшему занятию и обязан устаревать, а не копиться."""
++    teacher_id, token = await _new_user(db, role="teacher", name="t648b")
++    student_id, _ = await _new_user(db, role="student", name="s648b")
++    now = datetime.now(UTC)
++
++    older_at = now - timedelta(days=9)
++    older = await _occurrence(db, teacher_id=teacher_id, scheduled_at=older_at)
++    await _join(db, occurrence_id=older, student_id=student_id, status="confirmed")
++    await _idle_episode(
++        db, occurrence_id=older, student_id=student_id,
++        silent_since=older_at + timedelta(minutes=5),
++        resolved_at=older_at + timedelta(minutes=25),
++    )
++    prev = await _occurrence(db, teacher_id=teacher_id, scheduled_at=now - timedelta(days=2))
++    await _join(db, occurrence_id=prev, student_id=student_id, status="confirmed")
++    today = await _occurrence(db, teacher_id=teacher_id, scheduled_at=now + timedelta(hours=1))
++    await _join(db, occurrence_id=today, student_id=student_id)
++
++    (p,) = await _summary(client, occ_id=today, teacher_id=teacher_id, token=token)
++    assert p["attention"] is None
++
++
++@pytest.mark.asyncio
++async def test_stuck_task_reason_with_wrong_attempts(db, client):
++    """Три неверные попытки по одному заданию, задание не решено — «стоит»."""
++    teacher_id, token = await _new_user(db, role="teacher", name="t648c")
++    student_id, _ = await _new_user(db, role="student", name="s648c")
++    now = datetime.now(UTC)
++    course_id = await _new_course(db, "tsk648 курс")
++    task_id = await _new_task(db, course_id=course_id, uid="stuck")
++
++    for i in range(3):
++        await _insert_task_result(
++            db, student_id=student_id, task_id=task_id, course_id=course_id,
++            is_correct=False, submitted_at=now - timedelta(days=1, minutes=i),
++        )
++
++    today = await _occurrence(db, teacher_id=teacher_id, scheduled_at=now + timedelta(hours=1))
++    await _join(db, occurrence_id=today, student_id=student_id)
++
++    (p,) = await _summary(client, occ_id=today, teacher_id=teacher_id, token=token)
++    assert p["attention"]["reason"] == "stuck"
++    assert p["attention"]["rank"] == 2
++    assert p["attention"]["task_id"] == task_id
++    assert "3 неверные попытки" in p["attention"]["detail"]
++
++
++@pytest.mark.asyncio
++async def test_attempt_limit_counts_only_while_task_unsolved(db, client):
++    """Упёрся в лимит попыток — повод; решил после продления — повода нет.
++
++    На боевой базе за 7 дней в лимит упёрлись 50 пар «ученик + задание» у 24
++    человек, а нерешёнными остались 8 у 8: без этого условия очерёдность звала
++    бы к трети школы разом.
++    """
++    teacher_id, token = await _new_user(db, role="teacher", name="t648d")
++    stuck_id, _ = await _new_user(db, role="student", name="s648d1")
++    solved_id, _ = await _new_user(db, role="student", name="s648d2")
++    now = datetime.now(UTC)
++    course_id = await _new_course(db, "tsk648 лимит")
++    task_id = await _new_task(db, course_id=course_id, uid="limit")
++
++    await _limit_reached(
++        db, student_id=stuck_id, task_id=task_id, created_at=now - timedelta(days=1)
++    )
++    await _limit_reached(
++        db, student_id=solved_id, task_id=task_id, created_at=now - timedelta(days=1)
++    )
++    await _insert_task_result(
++        db, student_id=solved_id, task_id=task_id, course_id=course_id,
++        is_correct=True, submitted_at=now - timedelta(hours=20),
++    )
++
++    today = await _occurrence(db, teacher_id=teacher_id, scheduled_at=now + timedelta(hours=1))
++    await _join(db, occurrence_id=today, student_id=stuck_id)
++    await _join(db, occurrence_id=today, student_id=solved_id)
++
++    rows = {
++        p["student_id"]: p
++        for p in await _summary(client, occ_id=today, teacher_id=teacher_id, token=token)
++    }
++    assert rows[stuck_id]["attention"]["reason"] == "stuck"
++    assert "попытки" in rows[stuck_id]["attention"]["detail"]
++    assert rows[solved_id]["attention"] is None
++
++
++@pytest.mark.asyncio
++async def test_missed_previous_lesson_reason(db, client):
++    """Пропустил прошлое занятие — третий по срочности повод."""
++    teacher_id, token = await _new_user(db, role="teacher", name="t648e")
++    student_id, _ = await _new_user(db, role="student", name="s648e")
++    now = datetime.now(UTC)
++
++    prev = await _occurrence(db, teacher_id=teacher_id, scheduled_at=now - timedelta(days=4))
++    await _join(db, occurrence_id=prev, student_id=student_id, status="no_show")
++    today = await _occurrence(db, teacher_id=teacher_id, scheduled_at=now + timedelta(hours=1))
++    await _join(db, occurrence_id=today, student_id=student_id)
++
++    (p,) = await _summary(client, occ_id=today, teacher_id=teacher_id, token=token)
++    assert p["attention"]["reason"] == "missed_last_lesson"
++    assert p["attention"]["rank"] == 3
++
++
++@pytest.mark.asyncio
++async def test_absence_reason_disappears_after_teacher_asked(db, client):
++    """Про пропуск уже поговорили (отметка из плана занятия, tsk-743) — повод снят.
++
++    Пропуск — самый частый повод (46 из 88 случаев за две недели боевой базы);
++    без снятия он вытеснял бы остальные и висел бы на каждом занятии.
++    """
++    teacher_id, token = await _new_user(db, role="teacher", name="t648i")
++    student_id, _ = await _new_user(db, role="student", name="s648i")
++    now = datetime.now(UTC)
++
++    prev = await _occurrence(db, teacher_id=teacher_id, scheduled_at=now - timedelta(days=4))
++    await _join(db, occurrence_id=prev, student_id=student_id, status="no_show")
++    today = await _occurrence(db, teacher_id=teacher_id, scheduled_at=now + timedelta(hours=1))
++    await _join(db, occurrence_id=today, student_id=student_id)
++
++    (before,) = await _summary(client, occ_id=today, teacher_id=teacher_id, token=token)
++    assert before["attention"]["reason"] == "missed_last_lesson"
++
++    await db.execute(
++        text(
++            "INSERT INTO lesson_absence_followup "
++            "  (student_id, occurrence_id, asked_by, reason) "
++            "VALUES (:s, :o, :t, 'illness')"
++        ),
++        {"s": student_id, "o": prev, "t": teacher_id},
++    )
++    await db.commit()
++
++    (after,) = await _summary(client, occ_id=today, teacher_id=teacher_id, token=token)
++    assert after["attention"] is None
++    # Само число пропусков подряд остаётся: разговор состоялся, занятие всё
++    # равно пропущено, и в личной сводке это по-прежнему видно.
++    assert after["missed_streak"] == 1
++
++
++@pytest.mark.asyncio
++async def test_no_reason_for_student_without_events(db, client):
++    """Ученик без свежих событий приходит без повода — это не «плохая оценка»,
++    а отсутствие причины подходить в первую очередь."""
++    teacher_id, token = await _new_user(db, role="teacher", name="t648f")
++    student_id, _ = await _new_user(db, role="student", name="s648f")
++    now = datetime.now(UTC)
++
++    prev = await _occurrence(db, teacher_id=teacher_id, scheduled_at=now - timedelta(days=3))
++    await _join(db, occurrence_id=prev, student_id=student_id, status="confirmed")
++    today = await _occurrence(db, teacher_id=teacher_id, scheduled_at=now + timedelta(hours=1))
++    await _join(db, occurrence_id=today, student_id=student_id)
++
++    (p,) = await _summary(client, occ_id=today, teacher_id=teacher_id, token=token)
++    assert p["attention"] is None
++
++
++# ============================== Порядок ==============================
++
++
++@pytest.mark.asyncio
++async def test_participants_sorted_by_attention_rank(db, client):
++    """Порядок в ответе — это и есть очерёдность: молчавший выше пропустившего,
++    оба выше того, к кому повода подходить нет."""
++    teacher_id, token = await _new_user(db, role="teacher", name="t648g")
++    silent_id, _ = await _new_user(db, role="student", name="s648g1")
++    missed_id, _ = await _new_user(db, role="student", name="s648g2")
++    calm_id, _ = await _new_user(db, role="student", name="s648g3")
++    now = datetime.now(UTC)
++
++    prev_at = now - timedelta(days=2)
++    prev = await _occurrence(db, teacher_id=teacher_id, scheduled_at=prev_at)
++    await _join(db, occurrence_id=prev, student_id=silent_id, status="confirmed")
++    await _join(db, occurrence_id=prev, student_id=missed_id, status="no_show")
++    await _join(db, occurrence_id=prev, student_id=calm_id, status="confirmed")
++    await _idle_episode(
++        db, occurrence_id=prev, student_id=silent_id,
++        silent_since=prev_at + timedelta(minutes=5),
++        resolved_at=prev_at + timedelta(minutes=20),
++    )
++
++    today = await _occurrence(db, teacher_id=teacher_id, scheduled_at=now + timedelta(hours=1))
++    for sid in (calm_id, missed_id, silent_id):
++        await _join(db, occurrence_id=today, student_id=sid)
++
++    order = [
++        p["student_id"]
++        for p in await _summary(client, occ_id=today, teacher_id=teacher_id, token=token)
++    ]
++    assert order == [silent_id, missed_id, calm_id]
++
++
++@pytest.mark.asyncio
++async def test_single_student_request_keeps_attention(db, client):
++    """Подробности по клику (`student_id`) несут тот же повод, что и строка
++    списка — иначе список и открытая карточка говорили бы разное."""
++    teacher_id, token = await _new_user(db, role="teacher", name="t648h")
++    student_id, _ = await _new_user(db, role="student", name="s648h")
++    now = datetime.now(UTC)
++
++    prev = await _occurrence(db, teacher_id=teacher_id, scheduled_at=now - timedelta(days=3))
++    await _join(db, occurrence_id=prev, student_id=student_id, status="no_show")
++    today = await _occurrence(db, teacher_id=teacher_id, scheduled_at=now + timedelta(hours=1))
++    await _join(db, occurrence_id=today, student_id=student_id)
++
++    resp = await client.get(
++        f"/api/v1/teacher/lesson-occurrences/{today}/summary",
++        params={"teacher_id": teacher_id, "student_id": student_id},
++        headers={"Authorization": f"Bearer {token}"},
++    )
++    assert resp.status_code == 200, resp.text
++    (p,) = resp.json()["participants"]
++    assert p["attention"]["reason"] == "missed_last_lesson"

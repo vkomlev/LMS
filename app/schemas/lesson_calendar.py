@@ -420,6 +420,43 @@ class TeacherSummaryHomework(BaseModel):
     )
 
 
+class TeacherSummaryAttention(BaseModel):
+    """tsk-648: повод подойти к ученику на ЭТОМ занятии.
+
+    Не оценка и не балл: `rank` принадлежит поводу, а не человеку, и вместе с
+    поводом исчезает. Ученик без свежих событий приходит с `attention = null`
+    и стоит в списке ниже — это не «плохая оценка» и не «хорошая», это
+    отсутствие причины подходить в первую очередь.
+    """
+
+    rank: int = Field(
+        ...,
+        ge=1,
+        description=(
+            "Место повода в очереди: 1 — подойти первым. Порядок задан ценой "
+            "бездействия на сегодняшнем занятии, а не тяжестью события"
+        ),
+    )
+    reason: str = Field(
+        description=(
+            "idle_last_lesson — молчал на прошлом занятии · stuck — стоит на "
+            "задании · missed_last_lesson — пропустил прошлое · "
+            "homework_overdue — домашняя работа просрочена · help_asked — "
+            "просил помощи между занятиями"
+        )
+    )
+    detail: str = Field(
+        description=(
+            "Готовая подпись под именем — «молчал 13 мин на прошлом занятии», "
+            "«стоит на задании: Задача 5 — 4 неверные попытки». Тот же приём, "
+            "что в плане занятия (tsk-743): не призыв, а факт"
+        )
+    )
+    task_id: Optional[int] = Field(
+        default=None, description="Задание, о котором речь (повод `stuck`)"
+    )
+
+
 class TeacherSummaryParticipant(BaseModel):
     student_id: int
     full_name: Optional[str] = None
@@ -463,6 +500,14 @@ class TeacherSummaryParticipant(BaseModel):
     course_progress: Optional[list[TeacherSummaryCourseProgress]] = Field(
         default_factory=list,
         description="tsk-665: `null` — не считалось; пустой список — курсов нет.",
+    )
+    attention: Optional[TeacherSummaryAttention] = Field(
+        default=None,
+        description=(
+            "tsk-648: почему к этому ученику стоит подойти сегодня. `null` — "
+            "свежих поводов нет. Участники в ответе уже отсортированы по "
+            "очерёдности, пересортировывать на клиенте не нужно"
+        ),
     )
 
 

@@ -63,6 +63,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core import settings_store
 from app.repos.lesson_calendar_repository import LessonOccurrenceParticipantRepository
 from app.services import homework_service, lesson_occurrence_service
+from app.services.stuck_tasks_service import load_stuck_tasks
 from app.utils.task_title import humanize_task_title
 
 logger = logging.getLogger(__name__)
@@ -78,9 +79,6 @@ _ABSENCE_LOOKBACK_DAYS = 30
 
 #: Окно свежих успехов. Неделя — типичный промежуток между занятиями.
 _WINS_LOOKBACK_DAYS = 7
-
-#: Сколько неверных попыток по ОДНОМУ заданию считаем «застрял».
-_STUCK_WRONG_ATTEMPTS = 3
 
 #: Окно поиска трудностей к началу занятия (что накопилось между занятиями).
 _DIFFICULTY_LOOKBACK_DAYS = 7
@@ -232,70 +230,6 @@ async def _load_open_help(
         )
         result.setdefault(int(row["student_id"]), []).append(
             {"request_id": int(row["id"]), "task_id": row["task_id"], "task_title": title}
-        )
-    return result
-
-
-async def _load_stuck_tasks(
-    db: AsyncSession, *, student_ids: list[int], since: datetime, until: datetime,
-) -> dict[int, list[dict[str, Any]]]:
-    """Задания, где ученик за окно ошибся ``_STUCK_WRONG_ATTEMPTS`` раз и так и
-    не решил.
-
-    Это «трудности по заданиям» из постановки, и они не теоретические: замер
-    боевой базы за 30 дней — 47 таких пар «ученик + задание» на 26 занятиях из
-    56, то есть почти на каждом втором уроке кто-то буксует молча.
-
-    Ручные зачёты преподавателя (``source_system = manual_teacher``) не считаем:
-    это не попытка ученика.
-    """
-    if not student_ids:
-        return {}
-    rows = (
-        await db.execute(
-            text(
-                "WITH wrong AS ( "
-                "    SELECT tr.user_id, tr.task_id, count(*) AS wrong_cnt, "
-                "           max(tr.submitted_at) AS last_at "
-                "    FROM task_results tr "
-                "    WHERE tr.user_id = ANY(:ids) AND tr.is_correct = false "
-                "      AND tr.source_system IS DISTINCT FROM :manual_source "
-                "      AND tr.submitted_at >= :since AND tr.submitted_at <= :until "
-                "    GROUP BY 1, 2 "
-                "    HAVING count(*) >= :min_wrong "
-                ") "
-                "SELECT w.user_id, w.task_id, w.wrong_cnt, w.last_at, "
-                "       tk.external_uid, tk.task_content->>'title' AS title_raw, "
-                "       tk.task_content->>'stem' AS stem "
-                "FROM wrong w "
-                "JOIN tasks tk ON tk.id = w.task_id "
-                "WHERE NOT EXISTS ( "
-                "    SELECT 1 FROM task_results ok "
-                "    WHERE ok.user_id = w.user_id AND ok.task_id = w.task_id "
-                "      AND ok.is_correct = true "
-                ") "
-                "ORDER BY w.last_at DESC"
-            ),
-            {
-                "ids": student_ids,
-                "since": since,
-                "until": until,
-                "min_wrong": _STUCK_WRONG_ATTEMPTS,
-                "manual_source": _MANUAL_SOURCE,
-            },
-        )
-    ).mappings().fetchall()
-
-    result: dict[int, list[dict[str, Any]]] = {}
-    for row in rows:
-        result.setdefault(int(row["user_id"]), []).append(
-            {
-                "task_id": int(row["task_id"]),
-                "task_title": humanize_task_title(
-                    int(row["task_id"]), row["title_raw"], row["stem"], row["external_uid"],
-                ),
-                "wrong_attempts": int(row["wrong_cnt"]),
-            }
         )
     return result
 
@@ -509,7 +443,7 @@ async def _start_steps(
         student_ids=student_ids,
         since=now - timedelta(days=_DIFFICULTY_LOOKBACK_DAYS),
     )
-    stuck = await _load_stuck_tasks(
+    stuck = await load_stuck_tasks(
         db,
         student_ids=student_ids,
         since=now - timedelta(days=_DIFFICULTY_LOOKBACK_DAYS),
@@ -626,7 +560,7 @@ async def _during_steps(
 ) -> list[Optional[dict[str, Any]]]:
     """Ход урока: кто выпал из работы и кто буксует прямо сейчас."""
     idle = await _load_open_idle(db, occurrence_id=occurrence_id, now=now)
-    stuck = await _load_stuck_tasks(
+    stuck = await load_stuck_tasks(
         db, student_ids=student_ids, since=scheduled_at, until=now,
     )
     help_now = await _load_open_help(db, student_ids=student_ids, since=scheduled_at)

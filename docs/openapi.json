@@ -68979,6 +68979,46 @@
         "title": "TeacherSummaryActivity",
         "description": "Последнее выполненное задание/материал ученика (не ручной зачёт)."
       },
+      "TeacherSummaryAttention": {
+        "properties": {
+          "rank": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Rank",
+            "description": "Место повода в очереди: 1 — подойти первым. Порядок задан ценой бездействия на сегодняшнем занятии, а не тяжестью события"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason",
+            "description": "idle_last_lesson — молчал на прошлом занятии · stuck — стоит на задании · missed_last_lesson — пропустил прошлое · homework_overdue — домашняя работа просрочена · help_asked — просил помощи между занятиями"
+          },
+          "detail": {
+            "type": "string",
+            "title": "Detail",
+            "description": "Готовая подпись под именем — «молчал 13 мин на прошлом занятии», «стоит на задании: Задача 5 — 4 неверные попытки». Тот же приём, что в плане занятия (tsk-743): не призыв, а факт"
+          },
+          "task_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Id",
+            "description": "Задание, о котором речь (повод `stuck`)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "rank",
+          "reason",
+          "detail"
+        ],
+        "title": "TeacherSummaryAttention",
+        "description": "tsk-648: повод подойти к ученику на ЭТОМ занятии.\n\nНе оценка и не балл: `rank` принадлежит поводу, а не человеку, и вместе с\nповодом исчезает. Ученик без свежих событий приходит с `attention = null`\nи стоит в списке ниже — это не «плохая оценка» и не «хорошая», это\nотсутствие причины подходить в первую очередь."
+      },
       "TeacherSummaryBlockedTask": {
         "properties": {
           "task_id": {
@@ -69341,6 +69381,17 @@
             ],
             "title": "Course Progress",
             "description": "tsk-665: `null` — не считалось; пустой список — курсов нет."
+          },
+          "attention": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TeacherSummaryAttention"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "tsk-648: почему к этому ученику стоит подойти сегодня. `null` — свежих поводов нет. Участники в ответе уже отсортированы по очерёдности, пересортировывать на клиенте не нужно"
           }
         },
         "type": "object",
