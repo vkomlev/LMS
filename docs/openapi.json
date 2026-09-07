@@ -59350,6 +59350,16 @@
           "retention": {
             "$ref": "#/components/schemas/RetentionSummaryRead"
           },
+          "program": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StudentDashboardProgramRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "student_full_name": {
             "anyOf": [
               {
@@ -63502,6 +63512,125 @@
         ],
         "title": "StudentDashboardMetricsRead"
       },
+      "StudentDashboardProgramRead": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "title": "Kind",
+            "description": "ege | oge"
+          },
+          "deadline": {
+            "type": "string",
+            "format": "date",
+            "title": "Deadline",
+            "description": "К какому дню нужно закончить программу подготовки"
+          },
+          "remaining": {
+            "type": "integer",
+            "title": "Remaining",
+            "description": "Сколько элементов программы осталось"
+          },
+          "target_per_week": {
+            "type": "integer",
+            "title": "Target Per Week",
+            "description": "Сколько нужно в неделю, чтобы успеть. Это ОБЩИЙ темп: и дома, и на занятиях — программа не различает, где именно ребёнок её проходит"
+          },
+          "fact_per_week": {
+            "type": "number",
+            "title": "Fact Per Week",
+            "description": "Сколько выходит сейчас — вся работа, дома и на занятиях"
+          },
+          "lesson_share": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lesson Share",
+            "description": "Какая доля этой работы приходится на занятия (0..1); null — за период работы не было"
+          },
+          "forecast_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Forecast Date",
+            "description": "Когда программа будет пройдена при нынешнем темпе; null — темпа нет, предсказывать не по чему"
+          },
+          "on_track": {
+            "type": "boolean",
+            "title": "On Track",
+            "description": "Нынешнего темпа хватает, чтобы успеть к сроку. Считается по факту, а не по выданному объёму"
+          },
+          "early_target_per_week": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Early Target Per Week",
+            "description": "Сколько нужно в неделю, чтобы закончить за этот учебный год. Только для тех, кто ещё не выпускник"
+          },
+          "summer_target_per_week": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summer Target Per Week",
+            "description": "То же, но с занятиями летом"
+          },
+          "early_deadline": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Early Deadline"
+          },
+          "summer_deadline": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summer Deadline"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "deadline",
+          "remaining",
+          "target_per_week",
+          "fact_per_week",
+          "on_track"
+        ],
+        "title": "StudentDashboardProgramRead",
+        "description": "Программа подготовки: успевает ли ребёнок к экзамену (tsk-815).\n\nГлавный вопрос родителя — «успеет ли», и до сих пор ответить на него по\nдашборду было нельзя: проценты по курсам показывают, где ученик сейчас, но\nне говорят, хватит ли оставшегося времени.\n\n`None` вместо блока — ученик не записан ни на одну программу подготовки.\nТогда вопрос не стоит, и пустой блок только занимал бы место."
+      },
       "StudentDashboardRead": {
         "properties": {
           "student_id": {
@@ -63552,6 +63681,16 @@
           },
           "retention": {
             "$ref": "#/components/schemas/RetentionSummaryRead"
+          },
+          "program": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StudentDashboardProgramRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",

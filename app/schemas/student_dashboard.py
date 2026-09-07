@@ -17,7 +17,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Literal, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.schemas.pricing import FrequencySource
 from app.schemas.retention import RetentionSummaryRead
@@ -112,6 +112,65 @@ class StudentDashboardHomeworkRead(BaseModel):
     level: CohortLevel
 
 
+class StudentDashboardProgramRead(BaseModel):
+    """Программа подготовки: успевает ли ребёнок к экзамену (tsk-815).
+
+    Главный вопрос родителя — «успеет ли», и до сих пор ответить на него по
+    дашборду было нельзя: проценты по курсам показывают, где ученик сейчас, но
+    не говорят, хватит ли оставшегося времени.
+
+    `None` вместо блока — ученик не записан ни на одну программу подготовки.
+    Тогда вопрос не стоит, и пустой блок только занимал бы место.
+    """
+
+    kind: str = Field(description="ege | oge")
+    deadline: date = Field(
+        description="К какому дню нужно закончить программу подготовки"
+    )
+    remaining: int = Field(description="Сколько элементов программы осталось")
+    target_per_week: int = Field(
+        description=(
+            "Сколько нужно в неделю, чтобы успеть. Это ОБЩИЙ темп: и дома, и на "
+            "занятиях — программа не различает, где именно ребёнок её проходит"
+        )
+    )
+    fact_per_week: float = Field(
+        description="Сколько выходит сейчас — вся работа, дома и на занятиях"
+    )
+    lesson_share: Optional[float] = Field(
+        default=None,
+        description=(
+            "Какая доля этой работы приходится на занятия (0..1); null — за "
+            "период работы не было"
+        ),
+    )
+    forecast_date: Optional[date] = Field(
+        default=None,
+        description=(
+            "Когда программа будет пройдена при нынешнем темпе; null — темпа "
+            "нет, предсказывать не по чему"
+        ),
+    )
+    on_track: bool = Field(
+        description=(
+            "Нынешнего темпа хватает, чтобы успеть к сроку. Считается по факту, "
+            "а не по выданному объёму"
+        )
+    )
+    early_target_per_week: Optional[int] = Field(
+        default=None,
+        description=(
+            "Сколько нужно в неделю, чтобы закончить за этот учебный год. "
+            "Только для тех, кто ещё не выпускник"
+        ),
+    )
+    summer_target_per_week: Optional[int] = Field(
+        default=None, description="То же, но с занятиями летом"
+    )
+    early_deadline: Optional[date] = None
+    summer_deadline: Optional[date] = None
+
+
 class StudentDashboardRead(BaseModel):
     student_id: int
     period_from: datetime
@@ -135,3 +194,8 @@ class StudentDashboardRead(BaseModel):
     #: `between_lessons` намеренно: это та же активность, но в виде
     #: «возвращается ли ребёнок регулярно», а не «сколько сделал за период».
     retention: RetentionSummaryRead
+    #: tsk-815: успевает ли ребёнок пройти программу подготовки к сроку. Это
+    #: единственный блок дашборда, который смотрит ВПЕРЁД, а не назад:
+    #: остальные отвечают «что было за период», этот — «чем всё кончится».
+    #: `None` — ученик не записан ни на одну программу подготовки.
+    program: Optional[StudentDashboardProgramRead] = None

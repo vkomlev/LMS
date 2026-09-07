@@ -616,6 +616,50 @@ async def _bulk_between_lessons_activity(
     return activity
 
 
+async def _program_progress(
+    db: AsyncSession, *, student_id: int, now: datetime
+) -> Optional[dict[str, Any]]:
+    """Успевает ли ученик пройти программу подготовки к сроку (tsk-815).
+
+    `None` — он не записан ни на одну программу; тогда вопрос «успеет ли» не
+    стоит, и пустой блок только занимал бы место на экране.
+
+    Числа берутся из `homework_volume_service`, а не считаются заново: у
+    преподавателя в сводке и у родителя на дашборде обязан быть ОДИН ответ на
+    вопрос «сколько нужно в неделю». Две разные формулы здесь означали бы, что
+    родителю и учителю система говорит разное про одного ребёнка.
+    """
+    from app.services import homework_volume_service
+
+    plan = await homework_volume_service.compute(db, student_id=student_id, now=now)
+    if plan.program_kind is None or plan.program_deadline is None:
+        return None
+
+    # Прогноз: при нынешнем темпе. Ноль темпа — предсказывать не по чему, и
+    # выдуманная дата тут хуже пустого места: родитель принял бы её за оценку.
+    forecast: Optional[date] = None
+    if plan.fact_per_week > 0:
+        weeks_needed = plan.remaining_items / plan.fact_per_week
+        forecast = now.date() + timedelta(days=int(weeks_needed * 7))
+
+    return {
+        "kind": plan.program_kind,
+        "deadline": plan.program_deadline,
+        "remaining": plan.remaining_items,
+        "target_per_week": plan.target_per_week,
+        "fact_per_week": plan.fact_per_week,
+        "lesson_share": plan.lesson_share,
+        "forecast_date": forecast,
+        # «Успевает» — по ФАКТУ, а не по выданному объёму: объём это то, что
+        # мы задали, а вопрос родителя про то, что выходит на самом деле.
+        "on_track": plan.fact_per_week >= plan.target_per_week,
+        "early_target_per_week": plan.early_target_per_week,
+        "summer_target_per_week": plan.summer_target_per_week,
+        "early_deadline": plan.early_deadline,
+        "summer_deadline": plan.summer_deadline,
+    }
+
+
 async def _load_course_pace_and_forecast(
     db: AsyncSession,
     *,
@@ -779,6 +823,12 @@ async def get_student_dashboard(
         higher_is_better=True, cohort_size=len(global_peer_ids), min_cohort=min_cohort,
     )
 
+    # tsk-815: успевает ли ребёнок к экзамену. Единственный блок дашборда,
+    # смотрящий ВПЕРЁД: остальные отвечают «что было за период». Считается тем
+    # же сервисом, что и норма домашней работы, — иначе у преподавателя и у
+    # родителя появились бы два разных ответа на один вопрос.
+    program_block = await _program_progress(db, student_id=student_id, now=now)
+
     courses: list[dict[str, Any]] = []
     for course in accessible:
         course_id = course["course_id"]
@@ -877,6 +927,7 @@ async def get_student_dashboard(
             ),
             "level": homework_level,
         },
+        "program": program_block,
         # tsk-032: серия активных недель между занятиями. Считается тем же
         # определением события, что и `between_lessons` выше (общий код —
         # `retention_service`), поэтому число и серия не могут разойтись.
