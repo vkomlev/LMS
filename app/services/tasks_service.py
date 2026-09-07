@@ -898,12 +898,23 @@ class TasksService(BaseService[Tasks]):
         - **422** — обнаружены дубликаты ``order_position`` в теле запроса;
         - **400** — ``task_id`` не принадлежит курсу ``course_id`` или не найден.
 
-        Partial reorder допустим: можно прислать порядок только для подмножества
-        заданий курса; остальные сохраняют свои текущие позиции.
+        Частичный реордер допустим: можно прислать порядок только для
+        подмножества заданий курса. **Переданные встают на указанные места, а
+        непереданные заполняют оставшиеся, сохраняя свой взаимный порядок**
+        (tsk-813) — итог всегда плотный 1..N без дублей.
+
+        Прежде непереданные просто сохраняли свои числа, а контракт перекладывал
+        ответственность за коллизии на клиента. Так и появились дубликаты
+        позиций в курсах 146, 147 и 1397 ([[tsk-810]]): кабинет методиста
+        нумерует от единицы ОТФИЛЬТРОВАННЫЙ список, и под фильтром «Активные»
+        активные задания получали 1..N поверх чисел, на которых стояли
+        выключенные. Триггер здесь не спасал — реордер его намеренно глушит.
 
         Атомарность обеспечивает ``TasksRepository.reorder_tasks`` через
         session-variable ``app.skip_task_order_trigger`` + bulk UPDATE + commit
         в одной транзакции.
+
+        :return: ВЕСЬ порядок курса после правки (не только переданные задания).
         """
         from sqlalchemy.exc import IntegrityError
 
@@ -949,9 +960,29 @@ class TasksService(BaseService[Tasks]):
                     status_code=400,
                 )
 
-        # 5. Bulk UPDATE через repo (атомарный commit внутри)
+        # 5. tsk-813: достроить полный порядок курса. Переданные задания встают
+        #    на указанные места, непереданные заполняют оставшиеся слоты по
+        #    возрастанию, сохраняя взаимный порядок. Без этого шага частичный
+        #    реордер оставлял непереданные на их прежних числах — и они
+        #    сталкивались с новыми позициями переданных.
+        requested: Dict[int, int] = {
+            item["task_id"]: item["order_position"] for item in task_orders
+        }
+        current_order = await self.repo.list_order_by_course(db, course_id)
+        taken = set(requested.values())
+        full_orders: List[Dict[str, int]] = list(task_orders)
+        slot = 1
+        for tid, _pos in current_order:
+            if tid in requested:
+                continue
+            while slot in taken:
+                slot += 1
+            full_orders.append({"task_id": tid, "order_position": slot})
+            slot += 1
+
+        # 6. Bulk UPDATE через repo (атомарный commit внутри)
         try:
-            return await self.repo.reorder_tasks(db, course_id, task_orders)
+            return await self.repo.reorder_tasks(db, course_id, full_orders)
         except IntegrityError as e:
             raise DomainError(
                 detail=f"Ошибка при изменении порядка заданий: {e!s}",

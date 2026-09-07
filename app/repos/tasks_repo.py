@@ -1,6 +1,6 @@
 # app/repos/tasks_repo.py
 
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,6 +24,30 @@ class TasksRepository(BaseRepository[Tasks]):
         stmt = select(Tasks.id).where(Tasks.course_id == course_id)
         rows = (await db.execute(stmt)).all()
         return {int(r[0]) for r in rows}
+
+    async def list_order_by_course(
+        self,
+        db: AsyncSession,
+        course_id: int,
+    ) -> List[Tuple[int, Optional[int]]]:
+        """
+        ``[(id задания, текущая позиция), …]`` в порядке показа курса
+        (``order_position NULLS LAST, id``).
+
+        tsk-813: нужен частичному реордеру, чтобы разложить НЕпереданные
+        задания по свободным местам, сохранив их взаимный порядок. Отдельно
+        от :meth:`list_ids_by_course` — той хватает множества id, а здесь
+        важен именно порядок.
+        """
+        stmt = (
+            select(Tasks.id, Tasks.order_position)
+            .where(Tasks.course_id == course_id)
+            .order_by(Tasks.order_position.asc().nulls_last(), Tasks.id.asc())
+        )
+        rows = (await db.execute(stmt)).all()
+        return [
+            (int(r[0]), int(r[1]) if r[1] is not None else None) for r in rows
+        ]
 
     async def reorder_tasks(
         self,
