@@ -1,0 +1,181 @@
+{
+  "_": "tsk-814: разборы канала @CyberGuruPython (source_id 1821049174) к заданиям курса Python. Ключ — только текст: задания авторские и переделаны под один ответ, поэтому меряли ВЛОЖЕНИЕ слов поста в условие, а не сходство. Каждая пара сверена вручную; отклонено 11 пар, севших на общую преамбулу (урок tsk-316: «Алгоритм вычисления F(n)... задан соотношениями» одинаков у трёх разных рекуррент). Две пары приняты оператором как пограничные.",
+  "items": [
+    {
+      "task_id": 103,
+      "external_uid": "wp:task:komlev:funktsii-v-python-sozdanie-sobstvennyh-funktsij:cq:0:8",
+      "video": "https://vk.com/video-53400615_456239870",
+      "code": "ТГ-пост 227",
+      "source_item_id": 227,
+      "note": "вложение текста поста в условие 1.00; пара сверена вручную"
+    },
+    {
+      "task_id": 10004,
+      "external_uid": null,
+      "video": "https://vk.com/video-53400615_456239852",
+      "code": "ТГ-пост 207",
+      "source_item_id": 207,
+      "note": "вложение текста поста в условие 0.93; пара сверена вручную"
+    },
+    {
+      "task_id": 10004,
+      "external_uid": null,
+      "video": "https://vk.com/video-53400615_456239900",
+      "code": "ТГ-пост 264",
+      "source_item_id": 264,
+      "note": "вложение текста поста в условие 0.92; пара сверена вручную"
+    },
+    {
+      "task_id": 10007,
+      "external_uid": null,
+      "video": "https://vk.com/video-53400615_456239912",
+      "code": "ТГ-пост 278",
+      "source_item_id": 278,
+      "note": "вложение текста поста в условие 0.86; пара сверена вручную"
+    },
+    {
+      "task_id": 10007,
+      "external_uid": null,
+      "video": "https://vk.com/video-53400615_456240338",
+      "code": "ТГ-пост 548",
+      "source_item_id": 548,
+      "note": "вложение текста поста в условие 0.77; пара сверена вручную"
+    },
+    {
+      "task_id": 98,
+      "external_uid": "wp:task:komlev:funktsii-v-python-sozdanie-sobstvennyh-funktsij:cq:0:3",
+      "video": "https://vk.com/video-53400615_456239917",
+      "code": "ТГ-пост 283",
+      "source_item_id": 283,
+      "note": "вложение текста поста в условие 0.86; пара сверена вручную"
+    },
+    {
+      "task_id": 154,
+      "external_uid": "wp:task:komlev:rabota-so-strokami-v-python:cq:0:3",
+      "video": "https://vk.com/video-53400615_456239938",
+      "code": "ТГ-пост 313",
+      "source_item_id": 313,
+      "note": "вложение текста поста в условие 0.86; пара сверена вручную"
+    },
+    {
+      "task_id": 104,
+      "external_uid": "wp:task:komlev:funktsii-v-python-sozdanie-sobstvennyh-funktsij:cq:0:9",
+      "video": "https://vk.com/video-53400615_456239910",
+      "code": "ТГ-пост 276",
+      "source_item_id": 276,
+      "note": "вложение текста поста в условие 0.83; пара сверена вручную"
+    },
+    {
+      "task_id": 104,
+      "external_uid": "wp:task:komlev:funktsii-v-python-sozdanie-sobstvennyh-funktsij:cq:0:9",
+      "video": "https://vk.com/video-53400615_456239871",
+      "code": "ТГ-пост 228",
+      "source_item_id": 228,
+      "note": "вложение текста поста в условие 0.83; пара сверена вручную"
+    },
+    {
+      "task_id": 10002,
+      "external_uid": null,
+      "video": "https://vk.com/video-53400615_456240104",
+      "code": "ТГ-пост 507",
+      "source_item_id": 507,
+      "note": "вложение текста поста в условие 0.71; пара сверена вручную"
+    },
+    {
+      "task_id": 237,
+      "external_uid": "wp:task:komlev:tsikly-v-python:cq:0:1",
+      "video": "https://vk.com/video-53400615_456240106",
+      "code": "ТГ-пост 509",
+      "source_item_id": 509,
+      "note": "вложение текста поста в условие 0.67; пара сверена вручную"
+    },
+    {
+      "task_id": 10008,
+      "external_uid": null,
+      "video": "https://vk.com/video-53400615_456240011",
+      "code": "ТГ-пост 405",
+      "source_item_id": 405,
+      "note": "вложение текста поста в условие 0.64; пара сверена вручную"
+    },
+    {
+      "task_id": 10006,
+      "external_uid": null,
+      "video": "https://vk.com/video-53400615_456239961",
+      "code": "ТГ-пост 353",
+      "source_item_id": 353,
+      "note": "вложение текста поста в условие 0.83; пара сверена вручную"
+    },
+    {
+      "task_id": 10009,
+      "external_uid": null,
+      "video": "https://vk.com/video-53400615_456240012",
+      "code": "ТГ-пост 406",
+      "source_item_id": 406,
+      "note": "вложение текста поста в условие 0.75; пара сверена вручную"
+    },
+    {
+      "task_id": 138,
+      "external_uid": "wp:task:komlev:rabota-so-strokami-v-python:9",
+      "video": "https://vk.com/video-53400615_456239919",
+      "code": "ТГ-пост 285",
+      "source_item_id": 285,
+      "note": "вложение текста поста в условие 0.60; пара сверена вручную"
+    },
+    {
+      "task_id": 138,
+      "external_uid": "wp:task:komlev:rabota-so-strokami-v-python:9",
+      "video": "https://vk.com/video-53400615_456240066",
+      "code": "ТГ-пост 464",
+      "source_item_id": 464,
+      "note": "вложение текста поста в условие 0.60; пара сверена вручную"
+    },
+    {
+      "task_id": 63,
+      "external_uid": "wp:task:komlev:chisla-v-python-i-operatsii-s-nimi:18",
+      "video": "https://vk.com/video-53400615_456240049",
+      "code": "ТГ-пост 444",
+      "source_item_id": 444,
+      "note": "вложение текста поста в условие 0.60; пара сверена вручную"
+    },
+    {
+      "task_id": 126,
+      "external_uid": "wp:task:komlev:pervaya-programma-na-python-osnovnye-konstruktsii:cq:0:4",
+      "video": "https://vk.com/video-53400615_456240040",
+      "code": "ТГ-пост 435",
+      "source_item_id": 435,
+      "note": "вложение текста поста в условие 0.57; пара сверена вручную"
+    },
+    {
+      "task_id": 59,
+      "external_uid": "wp:task:komlev:chisla-v-python-i-operatsii-s-nimi:14",
+      "video": "https://vk.com/video-53400615_456240053",
+      "code": "ТГ-пост 450",
+      "source_item_id": 450,
+      "note": "вложение текста поста в условие 0.56; пара сверена вручную"
+    },
+    {
+      "task_id": 375,
+      "external_uid": "wp:task:komlev:rabota-so-slovaryami-v-python:cq:0:0",
+      "video": "https://vk.com/video-53400615_456239973",
+      "code": "ТГ-пост 367",
+      "source_item_id": 367,
+      "note": "вложение текста поста в условие 0.56; пара сверена вручную"
+    },
+    {
+      "task_id": 309,
+      "external_uid": "wp:task:komlev:ispolzovanie-mnozhestv-set-v-python:26",
+      "video": "https://vk.com/video-53400615_456240035",
+      "code": "ТГ-пост 429",
+      "source_item_id": 429,
+      "note": "пограничная, принята оператором 07.09: числа переделаны (в разборе первые 10 простых и 11–20, в задании первых 5 и 13–29 плюс удаление чётных), приём тот же"
+    },
+    {
+      "task_id": 190,
+      "external_uid": "wp:task:komlev:uslovnye-konstruktsii-v-python:19",
+      "video": "https://vk.com/video-53400615_456240025",
+      "code": "ТГ-пост 419",
+      "source_item_id": 419,
+      "note": "пограничная, принята оператором 07.09: пост — теория «как получить цифры числа», задание — практика с пятью проверками"
+    }
+  ]
+}
