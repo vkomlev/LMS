@@ -1,0 +1,124 @@
+{
+  "_": "tsk-811, шаг 2: снять разбор задания, которое в авторской цепочке идёт РАНЬШЕ. Такой ролик не может содержать решения этого задания. Задания остаются без подсказок вовсе - решение оператора 07.09. Разборы более ПОЗДНИХ заданий (25_6 на заданиях 1-4) оставлены: запись на 34 МБ идёт по всей цепочке и по ходу показывает ранние шаги.",
+  "allow_empty": true,
+  "items": [
+    {
+      "task_id": 5066,
+      "external_uid": "lms:c151:vvod:04",
+      "title": "Подсчёт цепочек длины три",
+      "before": [
+        "https://vk.com/video-53400615_456239649",
+        "https://vk.com/video-53400615_456239660"
+      ],
+      "after": [],
+      "drop": [
+        "https://vk.com/video-53400615_456239649",
+        "https://vk.com/video-53400615_456239660"
+      ],
+      "drop_codes": [
+        "2",
+        "3"
+      ],
+      "idx": "4"
+    },
+    {
+      "task_id": 5069,
+      "external_uid": "lms:c151:vvod:07",
+      "title": "Частая буква после E",
+      "before": [
+        "https://vk.com/video-53400615_456239649",
+        "https://vk.com/video-53400615_456239660"
+      ],
+      "after": [],
+      "drop": [
+        "https://vk.com/video-53400615_456239649",
+        "https://vk.com/video-53400615_456239660"
+      ],
+      "drop_codes": [
+        "2",
+        "3"
+      ],
+      "idx": "7"
+    },
+    {
+      "task_id": 5119,
+      "external_uid": "lms:c152:vvod:07",
+      "title": "Максимум делителей до 500",
+      "before": [
+        "https://vk.com/video-53400615_456239445"
+      ],
+      "after": [],
+      "drop": [
+        "https://vk.com/video-53400615_456239445"
+      ],
+      "drop_codes": [
+        "5"
+      ],
+      "idx": "7"
+    },
+    {
+      "task_id": 5120,
+      "external_uid": "lms:c152:vvod:08",
+      "title": "Число с максимумом делителей",
+      "before": [
+        "https://vk.com/video-53400615_456239445"
+      ],
+      "after": [],
+      "drop": [
+        "https://vk.com/video-53400615_456239445"
+      ],
+      "drop_codes": [
+        "5"
+      ],
+      "idx": "8"
+    },
+    {
+      "task_id": 5125,
+      "external_uid": "lms:c152:vvod:13",
+      "title": "Разности пар сомножителей числа",
+      "before": [
+        "https://vk.com/video-53400615_456239173"
+      ],
+      "after": [],
+      "drop": [
+        "https://vk.com/video-53400615_456239173"
+      ],
+      "drop_codes": [
+        "9"
+      ],
+      "idx": "13"
+    },
+    {
+      "task_id": 5126,
+      "external_uid": "lms:c152:vvod:14",
+      "title": "Количество чисел с разностями до 11",
+      "before": [
+        "https://vk.com/video-53400615_456239173"
+      ],
+      "after": [],
+      "drop": [
+        "https://vk.com/video-53400615_456239173"
+      ],
+      "drop_codes": [
+        "9"
+      ],
+      "idx": "14"
+    },
+    {
+      "task_id": 5128,
+      "external_uid": "lms:c152:vvod:16",
+      "title": "Количество кратных 2023 чисел",
+      "before": [
+        "https://vk.com/video-53400615_456239171"
+      ],
+      "after": [],
+      "drop": [
+        "https://vk.com/video-53400615_456239171"
+      ],
+      "drop_codes": [
+        "6"
+      ],
+      "idx": "16"
+    }
+  ]
+}

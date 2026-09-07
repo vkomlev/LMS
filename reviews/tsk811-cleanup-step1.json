@@ -1,0 +1,177 @@
+{
+  "_": "tsk-811, шаг 1: снять разбор ЧУЖОГО вводного задания там, где у задания остаётся хотя бы одна подсказка, и поставить собственный разбор первым. Задания, которые после снятия остались бы совсем без подсказок, в этот шаг НЕ входят.",
+  "items": [
+    {
+      "task_id": 5063,
+      "external_uid": "lms:c151:vvod:01",
+      "title": "Максимальная серия букв Z",
+      "before": [
+        "https://vk.com/video-53400615_456239649",
+        "https://vk.com/video-53400615_456239733"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239733"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239649"
+      ],
+      "drop_codes": [
+        "2"
+      ],
+      "own_codes": []
+    },
+    {
+      "task_id": 5065,
+      "external_uid": "lms:c151:vvod:03",
+      "title": "Максимальная серия чередующихся символов",
+      "before": [
+        "https://vk.com/video-53400615_456239649",
+        "https://vk.com/video-53400615_456239733",
+        "https://vk.com/video-53400615_456239660"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239660",
+        "https://vk.com/video-53400615_456239733"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239649"
+      ],
+      "drop_codes": [
+        "2"
+      ],
+      "own_codes": [
+        "3"
+      ]
+    },
+    {
+      "task_id": 5067,
+      "external_uid": "lms:c151:vvod:05",
+      "title": "Максимальная цепочка из X и Y",
+      "before": [
+        "https://vk.com/video-53400615_456239649",
+        "https://vk.com/video-53400615_456239733"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239733"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239649"
+      ],
+      "drop_codes": [
+        "2"
+      ],
+      "own_codes": []
+    },
+    {
+      "task_id": 5068,
+      "external_uid": "lms:c151:vvod:06",
+      "title": "Максимальная цепочка по шаблону XYZ",
+      "before": [
+        "https://vk.com/video-53400615_456239649",
+        "https://vk.com/video-53400615_456239733",
+        "https://vk.com/video-53400615_456239420"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239420",
+        "https://vk.com/video-53400615_456239733"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239649"
+      ],
+      "drop_codes": [
+        "2"
+      ],
+      "own_codes": [
+        "6"
+      ]
+    },
+    {
+      "task_id": 5070,
+      "external_uid": "lms:c151:vvod:08",
+      "title": "Максимальная дистанция одинаковых символов",
+      "before": [
+        "https://vk.com/video-53400615_456239649",
+        "https://vk.com/video-53400615_456239660",
+        "https://vk.com/video-53400615_456239425"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239425"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239649",
+        "https://vk.com/video-53400615_456239660"
+      ],
+      "drop_codes": [
+        "2",
+        "3"
+      ],
+      "own_codes": [
+        "8"
+      ]
+    },
+    {
+      "task_id": 5071,
+      "external_uid": "lms:c151:vvod:09",
+      "title": "Длина фрагмента без XZZY",
+      "before": [
+        "https://vk.com/video-53400615_456239649",
+        "https://vk.com/video-53400615_456239733"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239733"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239649"
+      ],
+      "drop_codes": [
+        "2"
+      ],
+      "own_codes": []
+    },
+    {
+      "task_id": 5118,
+      "external_uid": "lms:c152:vvod:06",
+      "title": "Число с минимальным произведением делителей",
+      "before": [
+        "https://vk.com/video-53400615_456239445",
+        "https://vk.com/video-53400615_456239171",
+        "https://vk.com/video-53400615_456239172"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239171",
+        "https://vk.com/video-53400615_456239172"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239445"
+      ],
+      "drop_codes": [
+        "5"
+      ],
+      "own_codes": [
+        "6",
+        "8"
+      ]
+    },
+    {
+      "task_id": 5121,
+      "external_uid": "lms:c152:vvod:09",
+      "title": "Сортировка по максимальному делителю",
+      "before": [
+        "https://vk.com/video-53400615_456239445",
+        "https://vk.com/video-53400615_456239173"
+      ],
+      "after": [
+        "https://vk.com/video-53400615_456239173"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239445"
+      ],
+      "drop_codes": [
+        "5"
+      ],
+      "own_codes": [
+        "9"
+      ]
+    }
+  ]
+}
