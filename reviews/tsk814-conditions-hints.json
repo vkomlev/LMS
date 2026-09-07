@@ -1,0 +1,197 @@
+{
+  "_": "tsk-814, тема «Условные конструкции» (курс 111). Девятнадцать теоретических вопросов курса не имели ни одной подсказки. Уроки канала ПЕРЕЧИСЛЯЮТ ровно эти вопросы своим текстом («Вопросы: 1. Для чего нужен else 2. Может ли быть if без else 3. Сколько else может быть...»), то есть охват задан самим автором — тот же признак, что у шахматных разборов и у темы «строки». Найдено разворотом меры: для вопроса в одну строку считаем долю слов ВОПРОСА, покрытых уроком, а не наоборот.",
+  "items": [
+    {
+      "task_id": 194,
+      "external_uid": "wp:task:komlev:uslovnye-konstruktsii-v-python:cq:0:3",
+      "video": "https://vk.com/video-53400615_456239845",
+      "code": "ТГ-пост 200",
+      "source_item_id": 200,
+      "note": "урок «Условный оператор if». Автор перечисляет: для чего нужен if, для чего отступы, что такое подчинённые инструкции, могут ли у них быть свои подчинённые"
+    },
+    {
+      "task_id": 195,
+      "external_uid": "wp:task:komlev:uslovnye-konstruktsii-v-python:cq:0:4",
+      "video": "https://vk.com/video-53400615_456239845",
+      "code": "ТГ-пост 200",
+      "source_item_id": 200,
+      "note": "урок «Условный оператор if». Автор перечисляет: для чего нужен if, для чего отступы, что такое подчинённые инструкции, могут ли у них быть свои подчинённые"
+    },
+    {
+      "task_id": 196,
+      "external_uid": "wp:task:komlev:uslovnye-konstruktsii-v-python:cq:0:5",
+      "video": "https://vk.com/video-53400615_456239845",
+      "code": "ТГ-пост 200",
+      "source_item_id": 200,
+      "note": "урок «Условный оператор if». Автор перечисляет: для чего нужен if, для чего отступы, что такое подчинённые инструкции, могут ли у них быть свои подчинённые"
+    },
+    {
+      "task_id": 197,
+      "external_uid": "wp:task:komlev:uslovnye-konstruktsii-v-python:cq:1:0",
+      "video": "https://vk.com/video-53400615_456239845",
+      "code": "ТГ-пост 200",
+      "source_item_id": 200,
+      "note": "урок «Условный оператор if». Автор перечисляет: для чего нужен if, для чего отступы, что такое подчинённые инструкции, могут ли у них быть свои подчинённые"
+    },
+    {
+      "task_id": 191,
+      "external_uid": "wp:task:komlev:uslovnye-konstruktsii-v-python:cq:0:0",
+      "video": "https://vk.com/video-53400615_456239846",
+      "code": "ТГ-пост 201",
+      "source_item_id": 201,
+      "note": "урок «Логический тип данных. Операторы сравнения»: какие операторы сравнения, в чём отличие = и =="
+    },
+    {
+      "task_id": 192,
+      "external_uid": "wp:task:komlev:uslovnye-konstruktsii-v-python:cq:0:1",
+      "video": "https://vk.com/video-53400615_456239846",
+      "code": "ТГ-пост 201",
+      "source_item_id": 201,
+      "note": "урок «Логический тип данных. Операторы сравнения»: какие операторы сравнения, в чём отличие = и =="
+    },
+    {
+      "task_id": 193,
+      "external_uid": "wp:task:komlev:uslovnye-konstruktsii-v-python:cq:0:2",
+      "video": "https://vk.com/video-53400615_456239846",
+      "code": "ТГ-пост 201",
+      "source_item_id": 201,
+      "note": "урок «Логический тип данных. Операторы сравнения»: какие операторы сравнения, в чём отличие = и =="
+    },
+    {
+      "task_id": 198,
+      "external_uid": "wp:task:komlev:uslovnye-konstruktsii-v-python:cq:1:1",
+      "video": "https://vk.com/video-53400615_456239846",
+      "code": "ТГ-пост 201",
+      "source_item_id": 201,
+      "note": "урок «Логический тип данных. Операторы сравнения»: какие операторы сравнения, в чём отличие = и =="
+    },
+    {
+      "task_id": 199,
+      "external_uid": "wp:task:komlev:uslovnye-konstruktsii-v-python:cq:1:2",
+      "video": "https://vk.com/video-53400615_456239846",
+      "code": "ТГ-пост 201",
+      "source_item_id": 201,
+      "note": "урок «Логический тип данных. Операторы сравнения»: какие операторы сравнения, в чём отличие = и =="
+    },
+    {
+      "task_id": 191,
+      "external_uid": "wp:task:komlev:uslovnye-konstruktsii-v-python:cq:0:0",
+      "video": "https://vk.com/video-53400615_456239847",
+      "code": "ТГ-пост 202",
+      "source_item_id": 202,
+      "note": "урок «Преобразование различных типов данных к типу bool» — второй разбор к вопросу о значениях bool"
+    },
+    {
+      "task_id": 200,
+      "external_uid": "wp:task:komlev:uslovnye-konstruktsii-v-python:cq:2:0",
+      "video": "https://vk.com/video-53400615_456239848",
+      "code": "ТГ-пост 203",
+      "source_item_id": 203,
+      "note": "урок «Отступы в Python. Конструкция else»: для чего нужен else, может ли быть if без else, сколько else, какие отступы у else относительно if"
+    },
+    {
+      "task_id": 201,
+      "external_uid": "wp:task:komlev:uslovnye-konstruktsii-v-python:cq:2:1",
+      "video": "https://vk.com/video-53400615_456239848",
+      "code": "ТГ-пост 203",
+      "source_item_id": 203,
+      "note": "урок «Отступы в Python. Конструкция else»: для чего нужен else, может ли быть if без else, сколько else, какие отступы у else относительно if"
+    },
+    {
+      "task_id": 202,
+      "external_uid": "wp:task:komlev:uslovnye-konstruktsii-v-python:cq:2:2",
+      "video": "https://vk.com/video-53400615_456239848",
+      "code": "ТГ-пост 203",
+      "source_item_id": 203,
+      "note": "урок «Отступы в Python. Конструкция else»: для чего нужен else, может ли быть if без else, сколько else, какие отступы у else относительно if"
+    },
+    {
+      "task_id": 203,
+      "external_uid": "wp:task:komlev:uslovnye-konstruktsii-v-python:cq:2:3",
+      "video": "https://vk.com/video-53400615_456239848",
+      "code": "ТГ-пост 203",
+      "source_item_id": 203,
+      "note": "урок «Отступы в Python. Конструкция else»: для чего нужен else, может ли быть if без else, сколько else, какие отступы у else относительно if"
+    },
+    {
+      "task_id": 206,
+      "external_uid": "wp:task:komlev:uslovnye-konstruktsii-v-python:cq:3:1",
+      "video": "https://vk.com/video-53400615_456239849",
+      "code": "ТГ-пост 204",
+      "source_item_id": 204,
+      "note": "урок «Инструкция elif»: для чего нужен elif, может ли быть if без elif, сколько elif, какие отступы у elif"
+    },
+    {
+      "task_id": 207,
+      "external_uid": "wp:task:komlev:uslovnye-konstruktsii-v-python:cq:3:2",
+      "video": "https://vk.com/video-53400615_456239849",
+      "code": "ТГ-пост 204",
+      "source_item_id": 204,
+      "note": "урок «Инструкция elif»: для чего нужен elif, может ли быть if без elif, сколько elif, какие отступы у elif"
+    },
+    {
+      "task_id": 208,
+      "external_uid": "wp:task:komlev:uslovnye-konstruktsii-v-python:cq:3:3",
+      "video": "https://vk.com/video-53400615_456239849",
+      "code": "ТГ-пост 204",
+      "source_item_id": 204,
+      "note": "урок «Инструкция elif»: для чего нужен elif, может ли быть if без elif, сколько elif, какие отступы у elif"
+    },
+    {
+      "task_id": 209,
+      "external_uid": "wp:task:komlev:uslovnye-konstruktsii-v-python:cq:3:4",
+      "video": "https://vk.com/video-53400615_456239849",
+      "code": "ТГ-пост 204",
+      "source_item_id": 204,
+      "note": "урок «Инструкция elif»: для чего нужен elif, может ли быть if без elif, сколько elif, какие отступы у elif"
+    },
+    {
+      "task_id": 206,
+      "external_uid": "wp:task:komlev:uslovnye-konstruktsii-v-python:cq:3:1",
+      "video": "https://vk.com/video-53400615_456239851",
+      "code": "ТГ-пост 206",
+      "source_item_id": 206,
+      "note": "урок «Логические операторы and, or, not» — второй разбор той же группы вопросов про elif"
+    },
+    {
+      "task_id": 207,
+      "external_uid": "wp:task:komlev:uslovnye-konstruktsii-v-python:cq:3:2",
+      "video": "https://vk.com/video-53400615_456239851",
+      "code": "ТГ-пост 206",
+      "source_item_id": 206,
+      "note": "урок «Логические операторы and, or, not» — второй разбор той же группы вопросов про elif"
+    },
+    {
+      "task_id": 208,
+      "external_uid": "wp:task:komlev:uslovnye-konstruktsii-v-python:cq:3:3",
+      "video": "https://vk.com/video-53400615_456239851",
+      "code": "ТГ-пост 206",
+      "source_item_id": 206,
+      "note": "урок «Логические операторы and, or, not» — второй разбор той же группы вопросов про elif"
+    },
+    {
+      "task_id": 209,
+      "external_uid": "wp:task:komlev:uslovnye-konstruktsii-v-python:cq:3:4",
+      "video": "https://vk.com/video-53400615_456239851",
+      "code": "ТГ-пост 206",
+      "source_item_id": 206,
+      "note": "урок «Логические операторы and, or, not» — второй разбор той же группы вопросов про elif"
+    },
+    {
+      "task_id": 210,
+      "external_uid": "wp:task:komlev:uslovnye-konstruktsii-v-python:cq:4:0",
+      "video": "https://vk.com/video-53400615_456239850",
+      "code": "ТГ-пост 205",
+      "source_item_id": 205,
+      "note": "урок «Вложенные инструкции if»: может ли один if быть подчинённым другому, как узнать с каким if связан else"
+    },
+    {
+      "task_id": 211,
+      "external_uid": "wp:task:komlev:uslovnye-konstruktsii-v-python:cq:4:1",
+      "video": "https://vk.com/video-53400615_456239850",
+      "code": "ТГ-пост 205",
+      "source_item_id": 205,
+      "note": "урок «Вложенные инструкции if»: может ли один if быть подчинённым другому, как узнать с каким if связан else"
+    }
+  ]
+}
