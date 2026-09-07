@@ -1,0 +1,213 @@
+{
+  "_": "tsk-814, тема «Работа со строками» (курс 108). Девятнадцать теоретических вопросов курса не имели ни одной подсказки, хотя уроки по ним в канале есть. Общий проход их не находил из-за меры: он считал, сколько слов ПОСТА нашлось в задании, а вопрос в одну строку против урока на десять пунктов всегда даёт низкое число. Правильная мера здесь обратная — сколько слов ВОПРОСА покрыто уроком. Охват каждого урока заявлен самим автором: пост перечисляет вопросы, на которые отвечает (тот же признак, что у шахматных разборов). Практическая пара 284/293 -> #137 принята оператором как пограничная: задание расширено третьим пунктом, основа та же.",
+  "items": [
+    {
+      "task_id": 151,
+      "external_uid": "wp:task:komlev:rabota-so-strokami-v-python:cq:0:0",
+      "video": "https://vk.com/video-53400615_456239996",
+      "code": "ТГ-пост 390",
+      "source_item_id": 390,
+      "note": "урок «Строковый тип данных и способы создания строк. Одинарные, двойные и тройные кавычки» — вопросы перечислены самим автором"
+    },
+    {
+      "task_id": 152,
+      "external_uid": "wp:task:komlev:rabota-so-strokami-v-python:cq:0:1",
+      "video": "https://vk.com/video-53400615_456239996",
+      "code": "ТГ-пост 390",
+      "source_item_id": 390,
+      "note": "урок «Строковый тип данных и способы создания строк. Одинарные, двойные и тройные кавычки» — вопросы перечислены самим автором"
+    },
+    {
+      "task_id": 153,
+      "external_uid": "wp:task:komlev:rabota-so-strokami-v-python:cq:0:2",
+      "video": "https://vk.com/video-53400615_456239996",
+      "code": "ТГ-пост 390",
+      "source_item_id": 390,
+      "note": "урок «Строковый тип данных и способы создания строк. Одинарные, двойные и тройные кавычки» — вопросы перечислены самим автором"
+    },
+    {
+      "task_id": 154,
+      "external_uid": "wp:task:komlev:rabota-so-strokami-v-python:cq:0:3",
+      "video": "https://vk.com/video-53400615_456239776",
+      "code": "ТГ-пост 35",
+      "source_item_id": 35,
+      "note": "мини-урок «Что такое строка? Как обозначить начало и окончание? Многострочный текст. Служебные символы и экранирование»"
+    },
+    {
+      "task_id": 157,
+      "external_uid": "wp:task:komlev:rabota-so-strokami-v-python:cq:0:6",
+      "video": "https://vk.com/video-53400615_456239776",
+      "code": "ТГ-пост 35",
+      "source_item_id": 35,
+      "note": "мини-урок «Что такое строка? Как обозначить начало и окончание? Многострочный текст. Служебные символы и экранирование»"
+    },
+    {
+      "task_id": 155,
+      "external_uid": "wp:task:komlev:rabota-so-strokami-v-python:cq:0:4",
+      "video": "https://vk.com/video-53400615_456239997",
+      "code": "ТГ-пост 391",
+      "source_item_id": 391,
+      "note": "урок «Служебные символы: перенос строки, табуляция, произвольный символ, обратный слэш, экранирование»"
+    },
+    {
+      "task_id": 156,
+      "external_uid": "wp:task:komlev:rabota-so-strokami-v-python:cq:0:5",
+      "video": "https://vk.com/video-53400615_456239997",
+      "code": "ТГ-пост 391",
+      "source_item_id": 391,
+      "note": "урок «Служебные символы: перенос строки, табуляция, произвольный символ, обратный слэш, экранирование»"
+    },
+    {
+      "task_id": 158,
+      "external_uid": "wp:task:komlev:rabota-so-strokami-v-python:cq:0:7",
+      "video": "https://vk.com/video-53400615_456239777",
+      "code": "ТГ-пост 36",
+      "source_item_id": 36,
+      "note": "мини-урок по срезам: символ по индексу, индекс, нумерация, отрицательные индексы, срез, пропуск параметров, шаг"
+    },
+    {
+      "task_id": 159,
+      "external_uid": "wp:task:komlev:rabota-so-strokami-v-python:cq:0:8",
+      "video": "https://vk.com/video-53400615_456239777",
+      "code": "ТГ-пост 36",
+      "source_item_id": 36,
+      "note": "мини-урок по срезам: символ по индексу, индекс, нумерация, отрицательные индексы, срез, пропуск параметров, шаг"
+    },
+    {
+      "task_id": 160,
+      "external_uid": "wp:task:komlev:rabota-so-strokami-v-python:cq:0:9",
+      "video": "https://vk.com/video-53400615_456239777",
+      "code": "ТГ-пост 36",
+      "source_item_id": 36,
+      "note": "мини-урок по срезам: символ по индексу, индекс, нумерация, отрицательные индексы, срез, пропуск параметров, шаг"
+    },
+    {
+      "task_id": 161,
+      "external_uid": "wp:task:komlev:rabota-so-strokami-v-python:cq:0:10",
+      "video": "https://vk.com/video-53400615_456239777",
+      "code": "ТГ-пост 36",
+      "source_item_id": 36,
+      "note": "мини-урок по срезам: символ по индексу, индекс, нумерация, отрицательные индексы, срез, пропуск параметров, шаг"
+    },
+    {
+      "task_id": 162,
+      "external_uid": "wp:task:komlev:rabota-so-strokami-v-python:cq:0:11",
+      "video": "https://vk.com/video-53400615_456239777",
+      "code": "ТГ-пост 36",
+      "source_item_id": 36,
+      "note": "мини-урок по срезам: символ по индексу, индекс, нумерация, отрицательные индексы, срез, пропуск параметров, шаг"
+    },
+    {
+      "task_id": 163,
+      "external_uid": "wp:task:komlev:rabota-so-strokami-v-python:cq:0:12",
+      "video": "https://vk.com/video-53400615_456239777",
+      "code": "ТГ-пост 36",
+      "source_item_id": 36,
+      "note": "мини-урок по срезам: символ по индексу, индекс, нумерация, отрицательные индексы, срез, пропуск параметров, шаг"
+    },
+    {
+      "task_id": 164,
+      "external_uid": "wp:task:komlev:rabota-so-strokami-v-python:cq:0:13",
+      "video": "https://vk.com/video-53400615_456239777",
+      "code": "ТГ-пост 36",
+      "source_item_id": 36,
+      "note": "мини-урок по срезам: символ по индексу, индекс, нумерация, отрицательные индексы, срез, пропуск параметров, шаг"
+    },
+    {
+      "task_id": 165,
+      "external_uid": "wp:task:komlev:rabota-so-strokami-v-python:cq:0:14",
+      "video": "https://vk.com/video-53400615_456239777",
+      "code": "ТГ-пост 36",
+      "source_item_id": 36,
+      "note": "мини-урок по срезам: символ по индексу, индекс, нумерация, отрицательные индексы, срез, пропуск параметров, шаг"
+    },
+    {
+      "task_id": 166,
+      "external_uid": "wp:task:komlev:rabota-so-strokami-v-python:cq:0:15",
+      "video": "https://vk.com/video-53400615_456239782",
+      "code": "ТГ-пост 41",
+      "source_item_id": 41,
+      "note": "урок «Строковые методы и функции»: количество символов, подстрока, позиция, количество фрагментов, замена, проверки вхождения"
+    },
+    {
+      "task_id": 167,
+      "external_uid": "wp:task:komlev:rabota-so-strokami-v-python:cq:0:16",
+      "video": "https://vk.com/video-53400615_456239782",
+      "code": "ТГ-пост 41",
+      "source_item_id": 41,
+      "note": "урок «Строковые методы и функции»: количество символов, подстрока, позиция, количество фрагментов, замена, проверки вхождения"
+    },
+    {
+      "task_id": 168,
+      "external_uid": "wp:task:komlev:rabota-so-strokami-v-python:cq:0:17",
+      "video": "https://vk.com/video-53400615_456239782",
+      "code": "ТГ-пост 41",
+      "source_item_id": 41,
+      "note": "урок «Строковые методы и функции»: количество символов, подстрока, позиция, количество фрагментов, замена, проверки вхождения"
+    },
+    {
+      "task_id": 169,
+      "external_uid": "wp:task:komlev:rabota-so-strokami-v-python:cq:0:18",
+      "video": "https://vk.com/video-53400615_456239782",
+      "code": "ТГ-пост 41",
+      "source_item_id": 41,
+      "note": "урок «Строковые методы и функции»: количество символов, подстрока, позиция, количество фрагментов, замена, проверки вхождения"
+    },
+    {
+      "task_id": 170,
+      "external_uid": "wp:task:komlev:rabota-so-strokami-v-python:cq:0:19",
+      "video": "https://vk.com/video-53400615_456239782",
+      "code": "ТГ-пост 41",
+      "source_item_id": 41,
+      "note": "урок «Строковые методы и функции»: количество символов, подстрока, позиция, количество фрагментов, замена, проверки вхождения"
+    },
+    {
+      "task_id": 166,
+      "external_uid": "wp:task:komlev:rabota-so-strokami-v-python:cq:0:15",
+      "video": "https://vk.com/video-53400615_456239840",
+      "code": "ТГ-пост 194",
+      "source_item_id": 194,
+      "note": "второй, короткий разбор той же группы методов: len(), find(), rfind(), count(), replace()"
+    },
+    {
+      "task_id": 168,
+      "external_uid": "wp:task:komlev:rabota-so-strokami-v-python:cq:0:17",
+      "video": "https://vk.com/video-53400615_456239840",
+      "code": "ТГ-пост 194",
+      "source_item_id": 194,
+      "note": "второй, короткий разбор той же группы методов: len(), find(), rfind(), count(), replace()"
+    },
+    {
+      "task_id": 169,
+      "external_uid": "wp:task:komlev:rabota-so-strokami-v-python:cq:0:18",
+      "video": "https://vk.com/video-53400615_456239840",
+      "code": "ТГ-пост 194",
+      "source_item_id": 194,
+      "note": "второй, короткий разбор той же группы методов: len(), find(), rfind(), count(), replace()"
+    },
+    {
+      "task_id": 170,
+      "external_uid": "wp:task:komlev:rabota-so-strokami-v-python:cq:0:19",
+      "video": "https://vk.com/video-53400615_456239840",
+      "code": "ТГ-пост 194",
+      "source_item_id": 194,
+      "note": "второй, короткий разбор той же группы методов: len(), find(), rfind(), count(), replace()"
+    },
+    {
+      "task_id": 137,
+      "external_uid": "wp:task:komlev:rabota-so-strokami-v-python:8",
+      "video": "https://vk.com/video-53400615_456239918",
+      "code": "ТГ-пост 284",
+      "source_item_id": 284,
+      "note": "разбор «принимает строку и выводит первую и последнюю букву» — задание в LMS расширено третьим пунктом, основа та же (принято оператором)"
+    },
+    {
+      "task_id": 137,
+      "external_uid": "wp:task:komlev:rabota-so-strokami-v-python:8",
+      "video": "https://vk.com/video-53400615_456239927",
+      "code": "ТГ-пост 293",
+      "source_item_id": 293,
+      "note": "второй разбор того же задания"
+    }
+  ]
+}
