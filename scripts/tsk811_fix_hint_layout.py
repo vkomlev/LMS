@@ -143,7 +143,7 @@ async def main(apply: bool, plan_path: Path) -> None:
 
             print(f"\nБудет изменено: {len(todo)} заданий")
             for it, row in todo:
-                print(f"  #{it['task_id']} {it['external_uid']} «{(it['title'] or '')[:44]}»")
+                print(f"  #{it['task_id']} {it['external_uid']} «{(it.get('title') or '')[:44]}»")
                 first = it["after"][0] if it["after"] else None
                 for u in it["before"]:
                     tag = "СНЯТЬ  " if u in it["drop"] else ("ПЕРВЫМ " if u == first else "оставить")

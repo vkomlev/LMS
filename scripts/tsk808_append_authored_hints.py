@@ -21,7 +21,7 @@ vvod:01–09), поэтому у задания «Максимальная це�
 `reviews/tsk808-authored-hints.json`.
 
 Запуск: dry-run по умолчанию;
-        `DBCHECK_OK=1 python scripts/tsk808_append_authored_hints.py --apply`
+        `DBCHECK_OK=1 python scripts/tsk808_append_authored_hints.py [--plan <файл>] --apply`
 """
 from __future__ import annotations
 
@@ -40,7 +40,7 @@ if sys.platform == "win32":
         sys.stdout.reconfigure(encoding="utf-8")
 
 project_root = Path(__file__).resolve().parents[1]
-PLAN_PATH = project_root / "reviews" / "tsk808-authored-hints.json"
+DEFAULT_PLAN = project_root / "reviews" / "tsk808-authored-hints.json"
 
 SELECT_BEFORE = """
 SELECT id, external_uid, is_active,
@@ -85,8 +85,9 @@ def _dsn() -> str:
     return dsn
 
 
-async def main(apply: bool) -> None:
-    plan = json.loads(PLAN_PATH.read_text(encoding="utf-8"))["items"]
+async def main(apply: bool, plan_path: Path) -> None:
+    print(f"План: {plan_path.name}")
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))["items"]
     # у одного задания может быть два разбора (25_6 и 25_8 — оба про задание 6)
     per_task: dict[int, list[dict]] = defaultdict(list)
     for it in plan:
@@ -166,8 +167,14 @@ async def main(apply: bool) -> None:
 
 
 if __name__ == "__main__":
+    argv = sys.argv[1:]
+    path = DEFAULT_PLAN
+    if "--plan" in argv:
+        path = Path(argv[argv.index("--plan") + 1])
+        if not path.is_absolute():
+            path = project_root / path
     try:
-        asyncio.run(main("--apply" in sys.argv))
+        asyncio.run(main("--apply" in argv, path))
     except RuntimeError as exc:
         print(f"\n{exc}")
         sys.exit(0 if "DRY-RUN" in str(exc) else 1)
