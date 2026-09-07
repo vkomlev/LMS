@@ -10138,6 +10138,117 @@
         }
       }
     },
+    "/api/v1/tasks/{task_id}/hints": {
+      "patch": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Прикрепить или снять подсказки задания (tsk-808)",
+        "description": "Заменить списки подсказок в `task_content`, не трогая остальное.\n\nДо tsk-808 узнать, есть ли у задания видеоразбор, можно было только\nзапросом в базу: кабинет методиста поле подсказок не показывал вовсе.\nИз-за этого разбор задания 4406, опубликованный в ВК 13.02.2026, полгода\nне был прикреплён и заметил это оператор, а не проверка.",
+        "operationId": "patch_task_hints_api_v1_tasks__task_id__hints_patch",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Task Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskHintsPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Подсказки обновлены",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskRead"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Не аутентифицирован"
+          },
+          "403": {
+            "description": "Роль не позволяет"
+          },
+          "404": {
+            "description": "Задание не существует"
+          },
+          "422": {
+            "description": "Ссылка не похожа на адрес"
+          }
+        }
+      }
+    },
     "/api/v1/tasks/grading-criteria/queue": {
       "get": {
         "tags": [
@@ -65829,6 +65940,41 @@
           "items"
         ],
         "title": "TaskFindByExternalResponse"
+      },
+      "TaskHintsPatch": {
+        "properties": {
+          "hints_video": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hints Video"
+          },
+          "hints_text": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hints Text"
+          }
+        },
+        "type": "object",
+        "title": "TaskHintsPatch",
+        "description": "Подсказки задания: ссылки на видеоразборы и текстовые подсказки.\n\nОтдельно от `PATCH /tasks/{id}`, а не полем в `TaskManualPatch`, по одной\nпричине: тот обработчик ставит `content_provenance = manual_web` и тем\nсамым выводит условие и правило проверки из-под источника навсегда.\nПрикрепить разбор — не то же самое, что переписать условие: замораживать\nиз-за подсказки весь текст задания нельзя. Поэтому здесь пометка не\nставится.\n\nОт переиздания подсказка при этом защищена: правка `task_content` двигает\n`tasks.updated_at` (триггер `trg_task_set_updated_at`), а ContentBackbone\nсверяет её с датой своей публикации и такое задание не трогает.\n\nПередаётся только то, что меняем: `None` — «не трогать», пустой список —\n«снять все». `has_hints` не принимается, он считается сам."
       },
       "TaskHistoryAcceptedAnswer": {
         "properties": {

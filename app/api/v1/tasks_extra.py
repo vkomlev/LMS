@@ -1659,3 +1659,97 @@ async def clear_task_manual_edit(
         current_user.id,
     )
     return task
+
+
+# ---------------------------------------------------------------------------
+# tsk-808: подсказки задания из кабинета методиста
+# ---------------------------------------------------------------------------
+
+
+class TaskHintsPatch(BaseModel):
+    """Подсказки задания: ссылки на видеоразборы и текстовые подсказки.
+
+    Отдельно от `PATCH /tasks/{id}`, а не полем в `TaskManualPatch`, по одной
+    причине: тот обработчик ставит `content_provenance = manual_web` и тем
+    самым выводит условие и правило проверки из-под источника навсегда.
+    Прикрепить разбор — не то же самое, что переписать условие: замораживать
+    из-за подсказки весь текст задания нельзя. Поэтому здесь пометка не
+    ставится.
+
+    От переиздания подсказка при этом защищена: правка `task_content` двигает
+    `tasks.updated_at` (триггер `trg_task_set_updated_at`), а ContentBackbone
+    сверяет её с датой своей публикации и такое задание не трогает.
+
+    Передаётся только то, что меняем: `None` — «не трогать», пустой список —
+    «снять все». `has_hints` не принимается, он считается сам.
+    """
+
+    hints_video: Optional[List[str]] = None
+    hints_text: Optional[List[str]] = None
+
+
+@router.patch(
+    "/tasks/{task_id}/hints",
+    response_model=TaskRead,
+    summary="Прикрепить или снять подсказки задания (tsk-808)",
+    responses={
+        200: {"description": "Подсказки обновлены"},
+        401: {"description": "Не аутентифицирован"},
+        403: {"description": "Роль не позволяет"},
+        404: {"description": "Задание не существует"},
+        422: {"description": "Ссылка не похожа на адрес"},
+    },
+)
+async def patch_task_hints(
+    task_id: int,
+    payload: TaskHintsPatch = Body(...),
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(require_role("methodist", "admin")),
+) -> Any:
+    """Заменить списки подсказок в `task_content`, не трогая остальное.
+
+    До tsk-808 узнать, есть ли у задания видеоразбор, можно было только
+    запросом в базу: кабинет методиста поле подсказок не показывал вовсе.
+    Из-за этого разбор задания 4406, опубликованный в ВК 13.02.2026, полгода
+    не был прикреплён и заметил это оператор, а не проверка.
+    """
+    from app.models.tasks import Tasks  # noqa: PLC0415 — circular avoid
+
+    logger = logging.getLogger("api.tasks_extra")
+    result = await db.execute(select(Tasks).where(Tasks.id == task_id))
+    task = result.scalar_one_or_none()
+    if task is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Задание не найдено")
+
+    changed = payload.model_dump(exclude_unset=True)
+    if not changed:
+        return task
+
+    content = dict(task.task_content) if isinstance(task.task_content, dict) else {}
+    if "hints_video" in changed:
+        urls = [u.strip() for u in (changed["hints_video"] or []) if isinstance(u, str) and u.strip()]
+        bad = [u for u in urls if not u.startswith(("http://", "https://"))]
+        if bad:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                f"Не адрес видеоразбора: {'; '.join(bad[:3])}",
+            )
+        # Дубликат ссылки ученику показался бы двумя одинаковыми подсказками.
+        content["hints_video"] = list(dict.fromkeys(urls))
+    if "hints_text" in changed:
+        content["hints_text"] = [
+            t.strip() for t in (changed["hints_text"] or []) if isinstance(t, str) and t.strip()
+        ]
+    content["has_hints"] = bool(content.get("hints_text")) or bool(content.get("hints_video"))
+
+    task.task_content = content
+    await db.commit()
+    await db.refresh(task)
+    logger.info(
+        "tsk-808: подсказки задания %s обновлены пользователем %s (видео %d, текст %d)",
+        task_id,
+        current_user.id,
+        len(content.get("hints_video") or []),
+        len(content.get("hints_text") or []),
+    )
+    return task
