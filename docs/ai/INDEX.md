@@ -19,6 +19,7 @@
 - [design/teacher-queue-states.md](design/teacher-queue-states.md) — FSM очереди ручной проверки SA_COM
 - [audit-events-contract.md](audit-events-contract.md) — журнал `audit_event` (событийный, emit из кода)
 - [task-audit.md](task-audit.md) — журнал `task_audit` (триггерный, `tasks.course_id`/`is_active`) — как расследовать «куда делось задание» (tsk-113/114)
+- [task-result-audit.md](task-result-audit.md) — журнал `task_result_audit` (триггерный, `task_results.score`/`is_correct`) — как проследить и откатить правку оценки (tsk-803)
 
 ## Specs (исполняемые ТЗ)
 
@@ -32,6 +33,7 @@
 | Багфикс | [WORKFLOWS/bugfix.md](WORKFLOWS/bugfix.md) + [ERRORS.md](ERRORS.md) |
 | Изменение схемы БД | [data-model.md](data-model.md) + [WORKFLOWS/db-change.md](WORKFLOWS/db-change.md) |
 | «Куда делось/переехало задание» (инцидент вроде tsk-113) | [task-audit.md](task-audit.md) |
+| «Кто и когда правил оценку ученика», откат правки | [task-result-audit.md](task-result-audit.md) |
 | Новый агент, онбординг | [AGENTS.md](AGENTS.md) + [PROJECT_OVERRIDES.md](PROJECT_OVERRIDES.md) + [glossary.md](glossary.md) |
 | Phase Y-1 (auth-расширение) | [specs/tech-spec-Y1](../specs/2026-04-27-tech-spec-Y1-auth-extension.md) + [adr/0001](adr/0001-auth-passwordless-multi-identity.md) |
 | SA_COM / teacher review queue | [design/teacher-queue-states.md](design/teacher-queue-states.md) |

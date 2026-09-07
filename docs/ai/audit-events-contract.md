@@ -62,7 +62,7 @@ SELECT * FROM audit_event WHERE details->>'request_id' = 'abc-...';
 
 | Константа | event_type | Кто emit'ит | Когда | Обязательные поля `details` |
 |---|---|---|---|---|
-| `TEACHER_REVIEW_GRADED` | `teacher.review.graded` | `teacher_reviews.py` | Преподаватель проверил attempt (Y-4) | `task_id`, `score`, `max_score`, `is_correct` |
+| `TEACHER_REVIEW_GRADED` | `teacher.review.graded` | `teacher_reviews.py` | Преподаватель проверил attempt (Y-4) | `task_id`, `score`, `max_score`, `is_correct`, `previous_score`, `previous_is_correct` (tsk-803) |
 | `STUDENT_NOTIFICATION_CREATED` | `student.notification.created` | `me_notifications.py`, `notification_email_service.py` | Создана notification для студента (Y-4) | `kind`, `recipient_user_id` |
 | `STUDENT_NOTIFICATION_READ` | `student.notification.read` | `me_notifications.py` | Студент пометил прочитанным (Y-4) | `notification_id` |
 | `EMAIL_FAILED` | `email.failed` | `notification_email_service.py` | Resend API вернул ошибку | `to`, `error` |

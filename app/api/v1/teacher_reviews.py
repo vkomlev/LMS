@@ -239,6 +239,11 @@ async def review_grade(
     is_correct_v: bool = grade_data["is_correct"]
     comment_v: Optional[str] = grade_data["comment"]
     task_title: Optional[str] = grade_data["task_title"]
+    # tsk-803: состояние ДО оценки. Раньше в payload уходил жёсткий None, и
+    # «что было» не сохранялось ни в inbox, ни в audit_event — переоценку
+    # нельзя было ни объяснить, ни откатить.
+    previous_score: Optional[int] = grade_data.get("previous_score")
+    previous_is_correct: Optional[bool] = grade_data.get("previous_is_correct")
 
     # Y-6 notification kind: positive grade → 'sa_com_graded' (existing UX),
     # negative → 'task_returned_for_rework' (NEW, student inbox показывает
@@ -265,7 +270,8 @@ async def review_grade(
             "max_score": max_score,
             "is_correct": is_correct_v,
             "comment": comment_v,
-            "previous_score": None,
+            "previous_score": previous_score,
+            "previous_is_correct": previous_is_correct,
         },
         created_by=body.teacher_id,
     )
@@ -285,6 +291,10 @@ async def review_grade(
             "score": score,
             "max_score": max_score,
             "is_correct": is_correct_v,
+            # tsk-803: без прежнего значения событие отвечает «что стало», но
+            # не «что было» — откатить оценку по такому журналу нельзя.
+            "previous_score": previous_score,
+            "previous_is_correct": previous_is_correct,
             "comment_length": len(comment_v) if comment_v else 0,
             "derived_via": "review_pass_threshold_ratio",
         },

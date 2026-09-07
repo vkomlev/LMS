@@ -20,6 +20,7 @@ from typing import Any, Optional, Tuple
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db.audit_context import set_audit_actor
 from app.schemas.task_content import MANUAL_REVIEW_TASK_TYPES
 # tsk-575: файл вложения мог быть утрачен дефектом хранения — преподавателю
 # отдаём работу с пометкой, а не с рабочей на вид ссылкой в никуда.
@@ -983,8 +984,14 @@ async def grade_review(
     SA_COM/TA даже до grade.
 
     Возвращает dict с полями для caller'а: result_id, task_id, user_id,
-    user_email, score, max_score, is_correct, comment, task_title.
+    user_email, score, max_score, is_correct, previous_score,
+    previous_is_correct, comment, task_title.
     Caller отвечает за inbox INSERT, audit, email scheduling, commit.
+
+    tsk-803: `previous_score`/`previous_is_correct` — состояние ДО оценки, без
+    них правку нельзя ни объяснить ученику, ни откатить. Отдельно от этого
+    функция проставляет `app.audit_actor` для БД-триггера
+    `trg_task_result_audit_update` (журнал `task_result_audit`).
     """
     from app.core.config import Settings as _SettingsCls
     _settings = _SettingsCls()
@@ -1056,6 +1063,12 @@ async def grade_review(
     pass_ratio = float(_settings.review_pass_threshold_ratio)
     is_correct: bool = (float(score) / float(effective_max)) >= pass_ratio
 
+    # tsk-803: назвать источник правки БД-триггеру `trg_task_result_audit_update`
+    # (иначе `changed_by` останется NULL и штатная оценка через кабинет будет в
+    # журнале неотличима от прямого SQL). Ставится ПЕРЕД UPDATE: set_config
+    # с is_local=true живёт только до конца текущей транзакции.
+    await set_audit_actor(db, f"user:{teacher_id}")
+
     # Обновляем metrics.comment поверх существующих metrics (jsonb_set безопасен
     # для NULL через coalesce). comment может быть NULL — храним как JSON null.
     # Защита от legacy/тестовых данных, где metrics не-object (например, list).
@@ -1118,6 +1131,15 @@ async def grade_review(
         "score": score,
         "max_score": effective_max,
         "is_correct": is_correct,
+        # tsk-803: значения ДО оценки. До Y-6 caller подставлял в уведомление
+        # ученику жёсткий previous_score=None, и «что было» не сохранялось
+        # нигде — ни в inbox, ни в audit_event. Балл здесь не нулевой и не
+        # выдуманный: на submit проставляется optimistic-PASSED (Stage 1),
+        # поэтому у работы есть предыдущее состояние ещё до преподавателя.
+        "previous_score": int(_score) if _score is not None else None,
+        "previous_is_correct": (
+            bool(_existing_is_correct) if _existing_is_correct is not None else None
+        ),
         "comment": comment,
         "task_title": task_title,
         "course_id": course_id,
@@ -1218,6 +1240,9 @@ async def regrade_review(
         metrics_dict["comment"] = comment
     elif "comment" in metrics_dict:
         metrics_dict.pop("comment", None)
+
+    # tsk-803: тот же источник правки для БД-триггера, что и в grade_review.
+    await set_audit_actor(db, f"user:{actor_user_id}")
 
     await db.execute(
         text(
