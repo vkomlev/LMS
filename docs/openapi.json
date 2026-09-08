@@ -69442,6 +69442,17 @@
               }
             ],
             "description": "tsk-648: почему к этому ученику стоит подойти сегодня. `null` — свежих поводов нет. Участники в ответе уже отсортированы по очерёдности, пересортировывать на клиенте не нужно"
+          },
+          "ready_for_harder": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TeacherSummaryReadyForHarder"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "tsk-649: ученику пора дать сложнее. `null` — повода менять набор заданий нет; это НЕ оценка «слабый». В очерёдности `attention` не участвует: это разные вопросы"
           }
         },
         "type": "object",
@@ -69453,6 +69464,51 @@
           "missed_streak"
         ],
         "title": "TeacherSummaryParticipant"
+      },
+      "TeacherSummaryReadyForHarder": {
+        "properties": {
+          "tasks": {
+            "type": "integer",
+            "title": "Tasks",
+            "description": "Нелёгких заданий решено за окно (первая сдача по каждому)"
+          },
+          "first_try_ok": {
+            "type": "integer",
+            "title": "First Try Ok",
+            "description": "Из них верно с первой попытки"
+          },
+          "percent": {
+            "type": "integer",
+            "title": "Percent",
+            "description": "Доля верных с первой попытки, %"
+          },
+          "hard_tasks": {
+            "type": "integer",
+            "title": "Hard Tasks",
+            "description": "Сколько из заданий были уровня «Сложно»/«Проект». Часто 0–3: сложные вынесены в опциональный подкурс (tsk-347) и до них доходят единицы — по ним одним признак построить нельзя"
+          },
+          "window_days": {
+            "type": "integer",
+            "title": "Window Days",
+            "description": "Окно наблюдения в днях"
+          },
+          "detail": {
+            "type": "string",
+            "title": "Detail",
+            "description": "Готовая подпись под именем — факт, а не призыв (как у `attention`)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "tasks",
+          "first_try_ok",
+          "percent",
+          "hard_tasks",
+          "window_days",
+          "detail"
+        ],
+        "title": "TeacherSummaryReadyForHarder",
+        "description": "tsk-649: ученику пора дать сложнее.\n\nОбратная сторона `attention`: слабого видно по незачётам и заявкам помощи,\nа сильный не жалуется — он молча скучает. Признак не про скорость (два\nскоростных кандидата опровергнуты на боевых данных, tsk-589/tsk-646): он\nсчитает долю решённого С ПЕРВОЙ ПОПЫТКИ на НЕлёгких заданиях плюс\nотсутствие обращений за помощью на них же.\n\nНе означает «работа честная»: списывание у ИИ выглядит так же (tsk-646).\nРычаг под сигнал уже есть — выборка заданий по сложности на подкурс\n(tsk-314/tsk-553), дёргает его методист."
       },
       "TeacherWorkloadResponse": {
         "properties": {

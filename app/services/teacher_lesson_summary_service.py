@@ -41,6 +41,7 @@ from app.services import (
     lesson_occurrence_service,
     manual_progress_service,
 )
+from app.services.learning_gaps_service import real_student_results_filter
 from app.services.stuck_tasks_service import load_stuck_tasks
 from app.utils.task_title import humanize_task_title
 
@@ -98,6 +99,104 @@ _SCHOOL_TZ = ZoneInfo("Europe/Moscow")
 #: (медиана 65 часов), но у него разная длина на каждого ученика, а повод
 #: должен читаться одинаково у всей группы.
 _STUCK_LOOKBACK_DAYS = 7
+
+# --- tsk-649: «пора усложнить» ------------------------------------------------
+#
+# Обратная сторона сводки: слабого видно по незачётам и заявкам помощи, а
+# сильный не жалуется — он молча скучает. Признак отвечает на вопрос «кому
+# рычаг выборки заданий (tsk-314/tsk-553) пора дёрнуть в сторону сложного».
+#
+# ЧЕГО ЗДЕСЬ НЕТ — СКОРОСТИ, И ЭТО ПРОВЕРЕНО. Разведка tsk-589/tsk-646 по
+# боевой базе опровергла оба скоростных кандидата: доля сдач быстрее 30 секунд
+# у самых быстрых учеников доходит до 100 % и силы не означает (часть заданий
+# отвечается за секунды), а «проскакивает теорию» меряет темп простановки
+# отметок преподавателем, а не чтение ребёнка. Признак на скорости пометил бы
+# старательных.
+#
+# Уровни сложности: 3 NORMAL, 4 HARD, 5 PROJECT. «Лёгкие» (2) и «теорию» (1)
+# в базу признака не берём: после переоценки сложности (tsk-389) 66 % курса
+# стало лёгким, и доля верных на них не различает учеников вовсе.
+_HARDER_DIFFICULTY_IDS = (3, 4, 5)
+
+#: Окно наблюдения. Не «между занятиями», как у поводов подойти: «пора
+#: усложнить» — вывод об уровне человека, а не событие этой недели, и на окне в
+#: неделю нелёгких заданий у большинства просто не набирается.
+_HARDER_WINDOW_DAYS = 60
+
+#: Сколько нелёгких заданий должно быть решено, чтобы вообще судить. На проде
+#: (2026-09-09, окно 60 дней) планку берут 43 ученика из 81 активного.
+#:
+#: Планка стоит на НЕЛЁГКИХ, а не на «сложных» намеренно. Первым заходом
+#: признак строился на HARD — и оказался нечем питать: сложные вынесены в
+#: опциональный подкурс (tsk-347), за 60 дней по ним всего 212 первых сдач у
+#: 57 учеников, то есть по 2–3 задания на человека. «Три из трёх верно» — не
+#: доказательство силы, а совпадение.
+_HARDER_MIN_TASKS = 20
+
+#: Доля решённого С ПЕРВОЙ ПОПЫТКИ, начиная с которой ученику предлагается
+#: слишком простое. Распределение по проду среди учеников с достаточной
+#: выборкой: медиана 79 %, p75 85 %, p90 93 %. Порог 90 % — верхняя десятая
+#: часть: сигнал должен быть редким, иначе преподаватель перестанет его читать.
+_HARDER_FIRST_TRY_RATE = 0.90
+
+#: Самостоятельность: сколько заявок помощи и упоров в лимит попыток НА ТЕХ ЖЕ
+#: нелёгких заданиях допустимо на одно задание. 0.05 — одна заявка на двадцать
+#: заданий. Ноль был бы враньём в другую сторону: один вопрос за два месяца не
+#: отменяет того, что человек идёт сам, а на боевых данных именно так терялся
+#: ученик с 50 верными из 51.
+_HARDER_MAX_HELP_RATE = 0.05
+
+#: Считать «с первой попытки» по колонке `count_retry` НЕЛЬЗЯ: в боевом потоке
+#: сдачи она никогда не проставляется и всегда равна 0 (см. шапку модуля).
+#: Первая попытка определяется по факту — самая ранняя сдача ученика по этому
+#: заданию.
+#:
+#: `{real_student}` — фильтр «это сдача САМОГО ученика» из
+#: `learning_gaps_service`, единственное место, где живёт это правило. Мимо него
+#: в выборку попала бы ручная простановка преподавателя, а её на проде больше,
+#: чем настоящих сдач, и любая доля верных ушла бы в потолок.
+_READY_FOR_HARDER_SQL = """
+WITH firsts AS (
+    SELECT tr.user_id, tr.task_id, t.difficulty_id, tr.is_correct,
+           row_number() OVER (
+               PARTITION BY tr.user_id, tr.task_id ORDER BY tr.received_at
+           ) AS rn
+    FROM task_results tr
+    JOIN tasks t ON t.id = tr.task_id AND t.is_active
+    WHERE tr.user_id = ANY(:student_ids)
+      AND {real_student}
+      AND tr.received_at > now() - make_interval(days => :days)
+      AND t.difficulty_id = ANY(:difficulty_ids)
+),
+solved AS (
+    SELECT user_id,
+           COUNT(*) AS tasks,
+           COUNT(*) FILTER (WHERE is_correct) AS first_try_ok,
+           COUNT(*) FILTER (WHERE difficulty_id <> 3) AS hard_tasks
+    FROM firsts WHERE rn = 1 GROUP BY user_id
+),
+asked AS (
+    SELECT le.student_id, COUNT(*) AS episodes
+    FROM learning_events le
+    -- Проверка на число ВНУТРИ того же выражения, а не отдельным условием в
+    -- WHERE: порядок вычисления условий планировщик не обещает, и приведение
+    -- типа может выполниться раньше фильтра. `payload` — свободный jsonb, и
+    -- одно кривое событие уронило бы не признак, а панель занятия целиком, у
+    -- всей группы и посреди урока.
+    JOIN tasks t ON t.id = CASE
+                        WHEN le.payload->>'task_id' ~ '^[0-9]+$'
+                        THEN (le.payload->>'task_id')::int
+                    END
+                AND t.difficulty_id = ANY(:difficulty_ids)
+    WHERE le.student_id = ANY(:student_ids)
+      AND le.created_at > now() - make_interval(days => :days)
+      AND le.event_type IN ('help_requested', 'attempt_limit_reached')
+    GROUP BY le.student_id
+)
+SELECT s.user_id, s.tasks, s.first_try_ok, s.hard_tasks,
+       COALESCE(a.episodes, 0) AS help_episodes
+FROM solved s LEFT JOIN asked a ON a.student_id = s.user_id
+"""
 
 _participant_repo = LessonOccurrenceParticipantRepository()
 
@@ -534,6 +633,65 @@ async def _load_absence_followups(
     }
 
 
+async def _load_ready_for_harder(
+    db: AsyncSession, *, student_ids: list[int],
+) -> dict[int, dict[str, Any]]:
+    """Кому пора усложнить — один запрос на всю группу (tsk-649).
+
+    Возвращает только тех, кто признак прошёл: у остальных на экране не должно
+    быть ни пометки, ни намёка на неё. «Не сработало» тут значит «нет повода
+    менять человеку набор заданий», а не «слабый» — превращать отсутствие
+    признака в оценку нельзя.
+
+    Чего признак НЕ утверждает: что работа сделана честно. Списывание у ИИ
+    выглядит ровно так же — верно с первой попытки и без вопросов (tsk-646,
+    там же дыра с развёрнутыми ответами). Поэтому подпись говорит про задания,
+    а не про ученика, и решение остаётся за человеком.
+    """
+    if not student_ids:
+        return {}
+    rows = (await db.execute(
+        text(_READY_FOR_HARDER_SQL.format(
+            real_student=real_student_results_filter("tr"),
+        )),
+        {
+            "student_ids": student_ids,
+            "days": _HARDER_WINDOW_DAYS,
+            "difficulty_ids": list(_HARDER_DIFFICULTY_IDS),
+        },
+    )).mappings().all()
+
+    out: dict[int, dict[str, Any]] = {}
+    for r in rows:
+        tasks = int(r["tasks"])
+        if tasks < _HARDER_MIN_TASKS:
+            continue
+        first_try_ok = int(r["first_try_ok"])
+        if first_try_ok < tasks * _HARDER_FIRST_TRY_RATE:
+            continue
+        if int(r["help_episodes"]) > tasks * _HARDER_MAX_HELP_RATE:
+            continue
+        hard_tasks = int(r["hard_tasks"])
+        detail = (
+            f"с первой попытки {first_try_ok} из {tasks} непростых заданий "
+            f"за {_HARDER_WINDOW_DAYS} дней, помощи не просил"
+        )
+        if hard_tasks:
+            detail = (
+                f"{detail}; сложных среди них {hard_tasks} "
+                + _plural(hard_tasks, "задание", "задания", "заданий")
+            )
+        out[int(r["user_id"])] = {
+            "tasks": tasks,
+            "first_try_ok": first_try_ok,
+            "percent": round(100 * first_try_ok / tasks),
+            "hard_tasks": hard_tasks,
+            "window_days": _HARDER_WINDOW_DAYS,
+            "detail": detail,
+        }
+    return out
+
+
 def _build_attention(
     *,
     idle: Optional[dict[str, Any]],
@@ -785,7 +943,13 @@ async def get_occurrence_summary(
     # прошлом занятии берётся одним запросом на всю группу.
     idle_by_student = await _load_idle_on_lessons(db, pairs=prev_lesson_pairs)
     absence_asked = await _load_absence_followups(db, pairs=prev_lesson_pairs)
+    # tsk-649: «пора усложнить» живёт РЯДОМ с очерёдностью внимания, а не
+    # внутри неё. Повод подойти — про цену бездействия сегодня, и подмешать
+    # туда сильного ученика значит испортить смысл самого списка: он бы встал
+    # выше тех, кому действительно нужна помощь.
+    harder_by_student = await _load_ready_for_harder(db, student_ids=student_ids)
     for row in result_participants:
+        row["ready_for_harder"] = harder_by_student.get(row["student_id"])
         row["attention"] = _build_attention(
             idle=idle_by_student.get(row["student_id"]),
             stuck_items=stuck_by_student.get(row["student_id"], []),
