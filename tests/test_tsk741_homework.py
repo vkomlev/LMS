@@ -39,6 +39,21 @@ from app.services.auth.session_service import create_session
 UTC = timezone.utc
 _TAG = "tsk741hw"
 
+#: «Сегодня» для тестов темпа — константа, а не `datetime.now()`.
+#:
+#: Темп считается по НЕДЕЛЬНЫМ корзинам, и окно `weeks_window` строится от
+#: `since = now - weeks_window недель`: у новичка это ровно одна корзина —
+#: неделя, в которую попал `since`, то есть предыдущая. Вчерашняя работа
+#: попадает в неё, только если «вчера» — воскресенье, то есть если «сегодня»
+#: понедельник. Оба теста ниже написаны 07.09.2026 (понедельник) и зеленели
+#: только по понедельникам — класс дефекта tsk-606 (дата в фикстуре против
+#: часов внутри сервиса).
+#:
+#: ВАЖНО: константа фиксирует ТЕКУЩЕЕ поведение сервиса, а не желаемое.
+#: То, что работа этой недели в темп не входит, — дефект сервиса
+#: (`homework_volume_service._FACT_SQL`), см. `test_current_week_work_is_lost`.
+_PACE_NOW = datetime(2026, 9, 7, 12, 0, tzinfo=UTC)  # понедельник
+
 
 # ============================== Helpers ==============================
 
@@ -1483,7 +1498,7 @@ async def test_newcomer_pace_is_measured_over_weeks_he_has_been_here(db, monkeyp
     student_id, course_id = await _program_student(db, done_tasks=0, total_tasks=200)
     monkeypatch.setattr(settings_store, "get_str", _settings_with_program(course_id))
 
-    now = datetime.now(UTC)
+    now = _PACE_NOW
     tasks = (
         await db.execute(
             text("SELECT id FROM tasks WHERE course_id = :c LIMIT 30"), {"c": course_id}
@@ -1513,7 +1528,7 @@ async def test_lesson_work_counts_and_is_shown_separately(db, monkeypatch):
     student_id, course_id = await _program_student(db, done_tasks=0, total_tasks=60)
     monkeypatch.setattr(settings_store, "get_str", _settings_with_program(course_id))
 
-    now = datetime.now(UTC)
+    now = _PACE_NOW
     lesson_at = now - timedelta(days=1)
     teacher_id, _ = await _new_user(db, role="teacher", name="teacher")
     await _create_occurrence(
@@ -1539,6 +1554,48 @@ async def test_lesson_work_counts_and_is_shown_separately(db, monkeypatch):
 
     assert plan.fact_per_week == 10, "работа на занятии обязана входить в темп"
     assert plan.lesson_share == 0.6
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="Дефект сервиса: окно темпа кончается прошлым воскресеньем, работа "
+           "текущей недели в темп не входит ни в один день, кроме понедельника",
+)
+@pytest.mark.asyncio
+async def test_current_week_work_is_lost(db, monkeypatch):
+    """Та же работа, но «сегодня» вторник, — и темп обнуляется.
+
+    Тот же сценарий, что и в тесте выше, сдвинутый на один день. Оба теста
+    темпа зеленеют только по понедельникам, потому что окно `_FACT_SQL`
+    строится корзинами от `since = now - N недель` и последняя корзина
+    заканчивается прошлым воскресеньем: работа текущей недели не попадает
+    никуда. Это ровно тот прод-симптом, ради которого писался tsk-798
+    («делает 0» у ученицы, решившей 60 заданий за занятие).
+
+    Тест намеренно xfail(strict): почините сервис — он покраснеет и напомнит
+    себя удалить. Замер 08.09.2026: пн 10.0, вт-вс 0.0.
+    """
+    from app.core import settings_store
+
+    student_id, course_id = await _program_student(db, done_tasks=0, total_tasks=60)
+    monkeypatch.setattr(settings_store, "get_str", _settings_with_program(course_id))
+
+    now = _PACE_NOW + timedelta(days=1)  # вторник
+    tasks = (
+        await db.execute(
+            text("SELECT id FROM tasks WHERE course_id = :c ORDER BY id LIMIT 10"),
+            {"c": course_id},
+        )
+    ).scalars().all()
+    for task_id in tasks:
+        await _submit(
+            db, student_id=student_id, task_id=int(task_id), course_id=course_id,
+            is_correct=True, at=now - timedelta(days=1),
+        )
+
+    plan = await homework_volume_service.compute(db, student_id=student_id, now=now)
+
+    assert plan.fact_per_week == 10, "работа вчерашнего дня обязана входить в темп"
 
 
 @pytest.mark.asyncio

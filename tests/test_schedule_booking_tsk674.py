@@ -317,14 +317,24 @@ async def test_join_requires_filled_preference(db):
 
 
 @pytest.mark.asyncio
-async def test_join_rejects_dead_slot(db):
-    """Слот, который не доживёт до ближайшего занятия, не принимает запись."""
+async def test_join_rejects_dead_slot(db, monkeypatch):
+    """Слот, который не доживёт до ближайшего занятия, не принимает запись.
+
+    «Сегодня» задано константой и подставлено сервису. Исход проверки зависит
+    от дня недели, а `date.today()` в фикстуре против часов внутри сервиса —
+    это тест, который зеленеет при написании и краснеет в другой день недели
+    (класс дефекта tsk-606). Среда против понедельничного слота: ближайшее
+    занятие — через пять дней, дата окончания уже позади.
+    """
+    today = date(2026, 9, 9)  # среда
+    monkeypatch.setattr(schedule_booking_service, "_today_moscow", lambda: today)
+
     teacher_id = await _create_user(db, role="teacher")
     newcomer = await _create_user(db, role="student")
     await _fill_preference(db, newcomer, hours=[(0, 12, "preferred")])
     dead_id = await _create_slot(
         db, teacher_id, weekday=0, hour=12,
-        active_until=date.today() - timedelta(days=1),
+        active_until=today - timedelta(days=1),
     )
 
     with pytest.raises(DomainError) as exc:
