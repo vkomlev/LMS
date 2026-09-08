@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import logging
 import re
+import unicodedata
 from collections import Counter
 from typing import List, Optional, Set, Dict
 
@@ -745,6 +746,8 @@ class CheckingService:
             is_correct=is_correct,
             base_score=base_score,
             max_score=solution_rules.max_score,
+            value_raw=value_raw,
+            expected=[a.value for a in rules.accepted_answers] if rules else None,
         )
 
         return CheckResult(
@@ -1580,21 +1583,119 @@ class CheckingService:
         is_correct: bool,
         base_score: int,
         max_score: int,
+        value_raw: Optional[str] = None,
+        expected: Optional[List[str]] = None,
     ) -> Optional[CheckFeedback]:
         """
         Генерирует обратную связь для задач типа SA/SA_COM.
+
+        tsk-828: к «Ответ неверен» добавляется разбор — по тому же принципу, что у
+        табличных заданий (tsk-822): говорим о ФОРМЕ ответа, но никогда о его
+        значении. Подсказки выведены из 845 незачётных работ прода, а не придуманы:
+
+        * ожидается число, прислано не число — 40 работ (4.7%);
+        * эталон из нескольких значений, прислано другое количество — 39 (4.6%);
+        * ответ совпадает с эталоном, если не считать оформления (пробелы, регистр,
+          ё/е, запятая против точки) — 8 (0.9%). Здесь ученик решил ВЕРНО и потерял
+          балл на записи, так что подсказка ему не помощь, а извинение.
+
+        Остальным 89.7% сказать по-честному нечего: ответ просто другой, и любая
+        «подсказка» тут была бы разглашением. Такой ответ получает прежний текст.
         """
         if is_correct:
             general = "Отлично! Ваш ответ правильный."
         elif base_score > 0:
             general = f"Ваш ответ частично правильный. Набрано {base_score} из {max_score} баллов."
         else:
-            general = "Ответ неверен. Попробуйте еще раз."
+            general = f"Ответ неверен.{self._short_answer_hint(value_raw, expected)}"
 
         return CheckFeedback(
             general=general,
             by_option=None,
         )
+
+    #: Ответ целиком — число (в т.ч. дробное через точку или запятую).
+    _NUMBER_RE = re.compile(r"-?\d+(?:[.,]\d+)?")
+    #: Атомарное значение-слово: буквы без пробелов и знаков.
+    _WORD_RE = re.compile(r"[^\W\d_]+", re.UNICODE)
+
+    @classmethod
+    def _loose_key(cls, text: str) -> str:
+        """Ключ «без оформления»: пробелы, ё/е, десятичный разделитель.
+
+        Регистр здесь НЕ снимается намеренно. Если задание регистр игнорирует, в его
+        нормализации уже стоит ``lower`` — и до этой ветки ответ бы не дошёл. А если
+        не стоит, регистр значим: у код-заданий `print(I)` и `print(i)` — разные
+        переменные, и сказать про такой ответ «дело в записи, а не в решении» значит
+        соврать. Найдено прогоном по живым работам (задание 5500).
+        """
+        out = unicodedata.normalize("NFKC", text or "").strip().replace("ё", "е").replace("Ё", "Е")
+        return re.sub(r"\s+", "", out.replace(",", "."))
+
+    @classmethod
+    def _values_of(cls, text: str) -> List[str]:
+        return [part for part in re.split(r"\s+", (text or "").strip()) if part]
+
+    @classmethod
+    def _is_number(cls, text: str) -> bool:
+        return bool(cls._NUMBER_RE.fullmatch((text or "").strip()))
+
+    @classmethod
+    def _is_value_set(cls, etalon: str) -> bool:
+        """Эталон — НАБОР значений, а не фраза и не код.
+
+        Набором считаем только последовательность ЧИСЕЛ («10 164», «2 5 7»). Слова
+        сюда не входят, хотя поначалу входили: на живых работах это дало «в ответе
+        ожидается 2 значения» для эталона-фразы «подключить модуль» (задание 5468) —
+        подсказка, которая сбивает с толку, а не помогает. Пробел между словами
+        разделяет слова одной фразы, а не значения.
+        """
+        parts = cls._values_of(etalon)
+        if len(parts) < 2:
+            return False
+        return all(cls._is_number(p) for p in parts)
+
+    @classmethod
+    def _short_answer_hint(
+        cls, value_raw: Optional[str], expected: Optional[List[str]]
+    ) -> str:
+        """Подсказка о ФОРМЕ ответа. Пустая строка — сказать нечего (так чаще всего)."""
+        value = (value_raw or "").strip()
+        etalons = [e for e in (expected or []) if e]
+        if not value or not etalons:
+            return " Попробуйте еще раз."
+
+        # Ученик прав по существу — расходится только запись.
+        if any(cls._loose_key(value) == cls._loose_key(e) for e in etalons):
+            # Регистр здесь не называем: он не снимается (см. `_loose_key`), и
+            # советовать проверить то, что мы и не игнорировали, — ложный след.
+            return (
+                " Похоже, дело в записи ответа, а не в решении: проверьте пробелы, "
+                "букву «ё» и разделитель дробной части."
+            )
+
+        if all(cls._is_number(e) for e in etalons) and not cls._is_number(value):
+            return " В ответе ожидается число."
+
+        expected_counts = {
+            len(cls._values_of(e)) for e in etalons if cls._is_value_set(e)
+        }
+        if expected_counts:
+            got = len(cls._values_of(value))
+            if got not in expected_counts:
+                counts = sorted(expected_counts)
+                # «2 или 3 значения», а не «2 значения, 3 значения»: у задания может
+                # быть несколько эталонов разной длины, и слово склоняем один раз —
+                # по последнему числу.
+                head = " или ".join(str(n) for n in counts)
+                want = cls._plural(counts[-1], "значение", "значения", "значений")
+                want = want.replace(str(counts[-1]), head, 1)
+                return (
+                    f" В ответе ожидается {want}, "
+                    f"а получено {cls._plural(got, 'значение', 'значения', 'значений')}."
+                )
+
+        return " Попробуйте еще раз."
 
     def _generate_feedback_ta(
         self,
