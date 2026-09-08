@@ -499,44 +499,44 @@ SELECT (SELECT count(*) FROM course_tasks) + (SELECT count(*) FROM course_materi
 #: Завершённое ЗА НЕДЕЛЮ, по неделям — для медианы фактического темпа.
 #: Ручные зачёты отсечены общим правилом проекта, а не своей копией условия.
 _FACT_SQL = f"""
-WITH weeks AS (
-    SELECT generate_series(0, :weeks - 1) AS idx
-),
-task_done AS (
-    SELECT date_trunc('week', tr.submitted_at AT TIME ZONE 'Europe/Moscow') AS wk,
-           count(DISTINCT tr.task_id) AS n
-      FROM task_results tr
-      JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
-     WHERE tr.user_id = :student_id AND tr.is_correct = true
-       AND {real_student_results_filter('tr')}
-       AND tr.submitted_at >= :since
-     GROUP BY 1
-),
-material_done AS (
-    SELECT date_trunc('week', smp.completed_at AT TIME ZONE 'Europe/Moscow') AS wk,
-           count(DISTINCT smp.material_id) AS n
-      FROM student_material_progress smp
-     WHERE smp.student_id = :student_id AND smp.status = 'completed'
-       AND smp.completed_at IS NOT NULL
-       AND {real_student_material_filter('smp')}
-       AND smp.completed_at >= :since
-     GROUP BY 1
+WITH bounds AS (
+    -- Окна по семь дней, отсчитанные назад ОТ МОМЕНТА РАСЧЁТА, а не
+    -- календарные недели (tsk-819). Календарная нарезка бралась от `since`,
+    -- и последнее окно кончалось прошлым воскресеньем: работа текущей недели
+    -- не попадала ни в одно окно ни при каком дне недели, кроме понедельника.
+    -- У новичка окно всего одно — и оно приходилось на неделю, в которую он
+    -- ещё не занимался, то есть темп выходил нулевым (замер: пн 10, вт-вс 0).
+    --
+    -- CAST(...), а не `:since::timestamptz`: SQLAlchemy НЕ считает параметром
+    -- имя, за которым идёт двоеточие, и `:since` уехал бы в запрос буквально —
+    -- синтаксическая ошибка в неочевидном месте.
+    SELECT CAST(:since AS timestamptz)
+             + CAST(idx || ' weeks' AS interval) AS starts_at,
+           CAST(:since AS timestamptz)
+             + CAST((idx + 1) || ' weeks' AS interval) AS ends_at
+      FROM generate_series(0, :weeks - 1) AS idx
 )
-SELECT w.wk::date AS week,
-       COALESCE(td.n, 0) + COALESCE(md.n, 0) AS done
-  FROM (
-        -- CAST(...), а не `:since::timestamptz`: SQLAlchemy НЕ считает
-        -- параметром имя, за которым идёт двоеточие, и `:since` уехал бы в
-        -- запрос буквально — синтаксическая ошибка в неочевидном месте.
-        SELECT date_trunc(
-                   'week',
-                   (CAST(:since AS timestamptz) AT TIME ZONE 'Europe/Moscow')
-                   + CAST(idx || ' weeks' AS interval)
-               ) AS wk
-          FROM weeks
-       ) w
-  LEFT JOIN task_done td ON td.wk = w.wk
-  LEFT JOIN material_done md ON md.wk = w.wk
+SELECT b.starts_at::date AS week,
+       td.n + md.n AS done
+  FROM bounds b
+  LEFT JOIN LATERAL (
+        SELECT count(DISTINCT tr.task_id) AS n
+          FROM task_results tr
+          JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
+         WHERE tr.user_id = :student_id AND tr.is_correct = true
+           AND {real_student_results_filter('tr')}
+           AND tr.submitted_at >= b.starts_at
+           AND tr.submitted_at < b.ends_at
+       ) td ON true
+  LEFT JOIN LATERAL (
+        SELECT count(DISTINCT smp.material_id) AS n
+          FROM student_material_progress smp
+         WHERE smp.student_id = :student_id AND smp.status = 'completed'
+           AND smp.completed_at IS NOT NULL
+           AND {real_student_material_filter('smp')}
+           AND smp.completed_at >= b.starts_at
+           AND smp.completed_at < b.ends_at
+       ) md ON true
  ORDER BY 1
 """
 
@@ -644,6 +644,8 @@ async def compute(
     if first_at is not None:
         days = max((moment - first_at).days, 0)
         weeks_window = max(1, min(FACT_WEEKS, -(-days // 7) or 1))
+    # Окна по семь дней ровно замощают [since, moment]: последнее кончается
+    # моментом расчёта, а не прошлым воскресеньем (tsk-819).
     since = moment - timedelta(weeks=weeks_window)
 
     grade = (
