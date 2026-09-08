@@ -283,7 +283,17 @@ def _step(
     key: str, phase: str, title: str, action: str, students: list[dict[str, Any]],
     *, limit: int = _MAX_STUDENTS_PER_STEP,
 ) -> Optional[dict[str, Any]]:
-    """Шаг плана; `None`, если показывать нечего — пустой шаг не рисуется."""
+    """Шаг плана; `None`, если показывать нечего — пустой шаг не рисуется.
+
+    Список отдаётся ЦЕЛИКОМ, а `limit` говорит, сколько показать сразу
+    (tsk-830). Раньше лишние имена отбрасывались здесь, и «и ещё 4» на экране
+    нельзя было раскрыть в принципе: данных на клиенте не было. Замечание
+    оператора 08.09 — «„ещё“ не раскрывает список целиком».
+
+    Ограничение при этом остаётся: на уроке нужен короткий список, а не
+    таблица. Разница в том, что теперь это ограничение ПОКАЗА, снимаемое
+    нажатием, а не потеря данных.
+    """
     if not students:
         return None
     hidden = max(0, len(students) - limit)
@@ -292,7 +302,8 @@ def _step(
         "phase": phase,
         "title": title,
         "action": action,
-        "students": students[:limit],
+        "students": students,
+        "preview_count": min(limit, len(students)),
         "more_count": hidden,
     }
 

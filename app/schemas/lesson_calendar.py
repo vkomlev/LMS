@@ -557,9 +557,24 @@ class LessonPlanStep(BaseModel):
     phase: str = Field(description="start | during | wrapup")
     title: str = Field(description="Заголовок с числами: «Не сделана домашняя работа у 3 из 5»")
     action: str = Field(description="Что сделать словами: «Спросите, что не получилось»")
-    students: list[LessonPlanStudent] = Field(default_factory=list)
+    students: list[LessonPlanStudent] = Field(
+        default_factory=list,
+        description=(
+            "ВСЕ ученики шага, а не только видимые (tsk-830). Сколько показать "
+            "сразу — в `preview_count`; остальные раскрываются нажатием. До "
+            "08.09 лишние здесь отбрасывались, и «и ещё N» нельзя было "
+            "раскрыть в принципе — данных на клиенте не было"
+        ),
+    )
+    preview_count: int = Field(
+        default=0,
+        description=(
+            "Сколько имён показать сразу. Ограничение показа, а не данных: на "
+            "уроке нужен короткий список, но добраться до полного можно"
+        ),
+    )
     more_count: int = Field(
-        default=0, description="Сколько учеников не поместилось в шаг (список ограничен)"
+        default=0, description="Сколько учеников скрыто под «и ещё N»"
     )
 
 

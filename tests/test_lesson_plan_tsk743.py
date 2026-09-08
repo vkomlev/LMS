@@ -327,6 +327,45 @@ async def test_start_phase_shows_unfinished_homework_with_names(db, client):
 
 
 @pytest.mark.asyncio
+async def test_long_step_sends_everyone_and_says_how_many_to_show(db, client):
+    """Шаг отдаёт ВСЕХ учеников, а не первых N (tsk-830).
+
+    Замечание оператора 08.09: «„ещё“ не раскрывает список целиком». И не могло
+    — лишние имена отбрасывались на сервере, и раскрывать было нечего.
+    Ограничение осталось, но стало ограничением ПОКАЗА: `preview_count`
+    говорит, сколько показать сразу, а остальные лежат рядом.
+    """
+    teacher_id, token = await _new_user(db, role="teacher", name="t")
+    course_id = await _new_course(db, f"{_TAG} курс")
+    task_id = await _new_task(db, course_id=course_id, uid="hw")
+
+    now = datetime.now(UTC)
+    students: dict[int, str] = {}
+    for i in range(8):
+        student_id, _ = await _new_user(db, role="student", name=f"s{i}")
+        await _homework(
+            db, student_id=student_id, task_ids=[task_id],
+            issued_at=now - timedelta(days=3), due_at=now + timedelta(days=1),
+        )
+        students[student_id] = "confirmed"
+
+    occ_id = await _occurrence(
+        db, teacher_id=teacher_id, scheduled_at=now + timedelta(minutes=5),
+        students=students,
+    )
+
+    payload = (
+        await _get_plan(client, occ_id=occ_id, teacher_id=teacher_id, token=token)
+    ).json()
+
+    step = _step(payload, "homework")
+    assert step is not None, payload
+    assert len(step["students"]) == 8, "часть учеников потеряна на сервере"
+    assert step["preview_count"] < 8, "смысл короткого списка на уроке потерян"
+    assert step["more_count"] == 8 - step["preview_count"]
+
+
+@pytest.mark.asyncio
 async def test_absences_step_lists_unasked_and_disappears_after_followup(db, client):
     """Пропуски без объяснения: список собирается сам и схлопывается после
     отметки разговора.

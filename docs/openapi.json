@@ -53829,12 +53829,19 @@
               "$ref": "#/components/schemas/LessonPlanStudent"
             },
             "type": "array",
-            "title": "Students"
+            "title": "Students",
+            "description": "ВСЕ ученики шага, а не только видимые (tsk-830). Сколько показать сразу — в `preview_count`; остальные раскрываются нажатием. До 08.09 лишние здесь отбрасывались, и «и ещё N» нельзя было раскрыть в принципе — данных на клиенте не было"
+          },
+          "preview_count": {
+            "type": "integer",
+            "title": "Preview Count",
+            "description": "Сколько имён показать сразу. Ограничение показа, а не данных: на уроке нужен короткий список, но добраться до полного можно",
+            "default": 0
           },
           "more_count": {
             "type": "integer",
             "title": "More Count",
-            "description": "Сколько учеников не поместилось в шаг (список ограничен)",
+            "description": "Сколько учеников скрыто под «и ещё N»",
             "default": 0
           }
         },
