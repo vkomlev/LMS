@@ -19,9 +19,12 @@ from sqlalchemy import text
 from app.models.users import Users
 from app.services.auth import identity_link_service
 from app.services.learning_gaps_service import MIN_STUDENTS, MIN_SUBMISSIONS
+from app.services import topic_mastery_service as mastery
 from app.services.topic_mastery_service import (
     EASY_WRONG_RATE,
-    FAST_PACE_SECONDS,
+    FAST_PACE_RATIO,
+    MIN_PACE_SAMPLES_FOR_EASY,
+    MIN_TYPE_PACE_SAMPLES,
     SIGNAL_EASY,
     SIGNAL_HARD,
     SIGNAL_OK,
@@ -53,19 +56,32 @@ async def _course(db, title: str) -> int:
     return cid
 
 
-async def _task(db, course_id: int, stem: str = "Условие задания") -> int:
+async def _task(
+    db, course_id: int, stem: str = "Условие задания", task_type: str = "SA",
+) -> int:
     did = (await db.execute(text("SELECT id FROM difficulties ORDER BY id LIMIT 1"))).scalar()
     if did is None:
         pytest.skip("нет ни одной difficulty")
     res = await db.execute(text(
         "INSERT INTO tasks (task_content, course_id, difficulty_id, external_uid) "
-        "VALUES (jsonb_build_object('type','SA','stem', CAST(:s AS text)), :c, :d, :u) "
+        "VALUES (jsonb_build_object('type', CAST(:tt AS text), "
+        "                           'stem', CAST(:s AS text)), :c, :d, :u) "
         "RETURNING id"
-    ), {"s": stem, "c": course_id, "d": did,
+    ), {"s": stem, "tt": task_type, "c": course_id, "d": did,
         "u": f"mastery-{random.randint(10**8, 10**10)}"})
     tid = int(res.scalar_one())
     await db.commit()
     return tid
+
+
+def _unique_type() -> str:
+    """Тип задания, встречающийся ТОЛЬКО в этом тесте (tsk-846).
+
+    Признак «подозрительно лёгкая» сравнивает тему с медианой её типа по всей
+    базе. На общем типе (`SA`) результат зависел бы от данных соседних тестов —
+    тест то проходил бы, то нет, и объяснить это было бы нечем.
+    """
+    return f"T846_{random.randint(10**8, 10**10)}"
 
 
 async def _results(db, *, user_id: int, task_id: int, course_id: int, source: str,
@@ -114,22 +130,50 @@ def _find(overview: dict, course_id: int) -> dict | None:
 
 def test_high_error_rate_is_hard_regardless_of_pace():
     """Треть неверных — дефект контента независимо от скорости."""
-    assert classify_topic(0.4, None) == SIGNAL_HARD
-    assert classify_topic(0.4, 5) == SIGNAL_HARD
-    assert classify_topic(0.4, 900) == SIGNAL_HARD
+    assert classify_topic(0.4, None, 0) == SIGNAL_HARD
+    assert classify_topic(0.4, 0.2, 50) == SIGNAL_HARD
+    assert classify_topic(0.4, 3.0, 50) == SIGNAL_HARD
 
 
 def test_easy_needs_pace_not_just_low_errors():
     """Мало ошибок само по себе — это хорошая тема, а не подозрительная.
 
-    Подозрительной её делает скорость: ученик отвечает быстрее, чем успел бы
-    прочитать условие. Без темпа признак «лёгкая» не ставится вовсе — иначе
-    экран объявил бы браком каждую удачно сделанную тему.
+    Подозрительной её делает скорость ОТНОСИТЕЛЬНО таких же заданий (tsk-846).
+    Без отношения признак «лёгкая» не ставится вовсе — иначе экран объявил бы
+    браком каждую удачно сделанную тему.
     """
-    assert classify_topic(0.0, None) == SIGNAL_OK
-    assert classify_topic(0.0, 300) == SIGNAL_OK
-    assert classify_topic(0.0, FAST_PACE_SECONDS - 1) == SIGNAL_EASY
-    assert classify_topic(EASY_WRONG_RATE, FAST_PACE_SECONDS) == SIGNAL_EASY
+    assert classify_topic(0.0, None, 50) == SIGNAL_OK
+    assert classify_topic(0.0, 1.2, 50) == SIGNAL_OK
+    assert classify_topic(0.0, FAST_PACE_RATIO - 0.1, 50) == SIGNAL_EASY
+    assert classify_topic(EASY_WRONG_RATE, FAST_PACE_RATIO, 50) == SIGNAL_EASY
+
+
+def test_pace_source_literals_match_constants():
+    """Имена источников в SQL и в коде не должны разъехаться (tsk-846).
+
+    В запросе они записаны литералами ('real' / 'proxy') ради читаемости, а
+    решения по ним принимает Python через константы. Переименуют константу —
+    JOIN с базой сравнения молча перестанет находить строки, отношение станет
+    `None` у всех тем, и признак просто исчезнет. Без ошибки и без лога.
+    """
+    assert mastery.PACE_SOURCE_REAL == "real"
+    assert mastery.PACE_SOURCE_PROXY == "proxy"
+    assert "'real' AS source" in mastery._TYPE_BASE_CTE
+    assert "'proxy'" in mastery._TYPE_BASE_CTE
+    for sql in (mastery._OVERVIEW_SQL, mastery._TOPIC_TASKS_SQL):
+        assert "b.source = 'real'" in sql
+        assert "b.source = 'proxy'" in sql
+
+
+def test_easy_needs_enough_pace_samples():
+    """На двух наблюдениях «быстро» не значит ничего (tsk-846).
+
+    До этого условия из 22 тем, помеченных на проде подозрительно лёгкими, 20
+    стояли на 2–10 сдачах: экран предлагал методисту переделать материал по
+    двум точкам.
+    """
+    assert classify_topic(0.0, 0.2, MIN_PACE_SAMPLES_FOR_EASY - 1) == SIGNAL_OK
+    assert classify_topic(0.0, 0.2, MIN_PACE_SAMPLES_FOR_EASY) == SIGNAL_EASY
 
 
 # --- источник данных ---------------------------------------------------------
@@ -230,29 +274,111 @@ async def test_healthy_topic_is_in_the_overview(db):
         await _cleanup(db, students, [course])
 
 
+async def _pace_scene(db, *, fast_pace: int, slow_pace: int, fast_subs: int = 13):
+    """Две темы одного типа заданий: «обычная» (фон) и «быстрая» (проверяемая).
+
+    Фон нужен обязательно (tsk-846): признак сравнивает тему с медианой её типа
+    по всей базе, а тема, оставшаяся единственным источником данных, сама себе
+    норма — отношение вышло бы около единицы у чего угодно.
+    """
+    ttype = _unique_type()
+    background = await _course(db, "Освоение: обычный темп (фон)")
+    target = await _course(db, "Освоение: проверяемая тема")
+    bg_task = await _task(db, background, task_type=ttype)
+    target_task = await _task(db, target, task_type=ttype)
+    students = [await _student(db, f"mastery-scene{i}") for i in range(5)]
+    for sid in students[:3]:
+        await _results(db, user_id=sid, task_id=bg_task, course_id=background,
+                       source="spw_web", correct=13, wrong=0, pace_seconds=slow_pace)
+    for sid in students[3:]:
+        await _results(db, user_id=sid, task_id=target_task, course_id=target,
+                       source="spw_web", correct=fast_subs, wrong=0,
+                       pace_seconds=fast_pace)
+    return students, [background, target], target
+
+
 @pytest.mark.asyncio
 async def test_suspiciously_easy_topic_is_flagged(db):
-    """Ноль ошибок и двенадцать секунд на ответ — тоже дефект контента.
+    """Ноль ошибок и вчетверо быстрее обычного для таких заданий — дефект.
 
-    Проверено на проде: темы-квизы «Словарь новичка» и «Кто такой
-    AI-предприниматель» дают ровно такую картину. Ни один порог экрана
-    «Повторение» их не ловит.
+    Проверено на проде: тема «Раздел 2. Оценки: сколько баллов на какую» идёт
+    втрое быстрее ожидаемого при нуле ошибок. Ни один порог экрана
+    «Повторение» такое не ловит.
     """
-    course = await _course(db, "Освоение: подозрительно лёгкая")
-    task = await _task(db, course)
-    students = [await _student(db, f"mastery-easy{i}") for i in range(3)]
+    students, courses, target = await _pace_scene(db, fast_pace=15, slow_pace=60)
     try:
-        for sid in students:
-            await _results(db, user_id=sid, task_id=task, course_id=course,
-                           source="spw_web", correct=10, wrong=0,
-                           pace_seconds=FAST_PACE_SECONDS - 8)
-        topic = _find(await topic_overview(db, days=7), course)
+        topic = _find(await topic_overview(db, days=7), target)
         assert topic is not None
         assert topic["signal"] == SIGNAL_EASY, (
             f"лёгкая тема не помечена: {topic['signal']}, "
-            f"темп {topic['median_pace_seconds']}"
+            f"темп {topic['median_pace_seconds']}, отношение {topic['pace_ratio']}"
         )
+        assert topic["pace_ratio"] is not None and topic["pace_ratio"] < 1
+    finally:
+        await _cleanup(db, students, courses)
+
+
+@pytest.mark.asyncio
+async def test_fast_format_alone_is_not_a_defect(db):
+    """Тема ИЗ ТЕСТОВ быстра по своей природе — и это не повод её править.
+
+    Ровно тот дефект, ради которого заведена tsk-846: при абсолютном пороге
+    (15 с) тема, где задания отвечаются за девять секунд, помечалась
+    подозрительно лёгкой, хотя такие задания и решаются за секунды. Теперь она
+    сравнивается с себе подобными и остаётся благополучной.
+    """
+    students, courses, target = await _pace_scene(db, fast_pace=9, slow_pace=10)
+    try:
+        topic = _find(await topic_overview(db, days=7), target)
+        assert topic is not None
         assert topic["median_pace_seconds"] is not None
+        assert topic["median_pace_seconds"] < 15, "сцена должна быть быстрой в секундах"
+        assert topic["signal"] != SIGNAL_EASY, (
+            "быстрый ФОРМАТ задания принят за лёгкую тему: "
+            f"темп {topic['median_pace_seconds']} с, отношение {topic['pace_ratio']}"
+        )
+    finally:
+        await _cleanup(db, students, courses)
+
+
+@pytest.mark.asyncio
+async def test_easy_not_flagged_on_tiny_sample(db):
+    """Пять сдач одного ученика — не выборка, признак не ставится."""
+    students, courses, target = await _pace_scene(
+        db, fast_pace=15, slow_pace=60, fast_subs=4,
+    )
+    try:
+        topic = _find(await topic_overview(db, days=7), target)
+        assert topic is not None
+        assert topic["signal"] != SIGNAL_EASY, (
+            "признак поставлен по нескольким наблюдениям: "
+            f"отношение {topic['pace_ratio']}"
+        )
+    finally:
+        await _cleanup(db, students, courses)
+
+
+@pytest.mark.asyncio
+async def test_rare_task_type_gets_no_ratio(db):
+    """Тип задания без достаточной базы сравнения отношения не даёт.
+
+    Делить на «медиану» из одного наблюдения — значит объявить случайную
+    величину нормой. Тогда признак не ставится вовсе: не с чем сравнивать.
+    """
+    ttype = _unique_type()
+    course = await _course(db, "Освоение: редкий тип задания")
+    task = await _task(db, course, task_type=ttype)
+    students = [await _student(db, f"mastery-rare{i}") for i in range(2)]
+    try:
+        for sid in students:
+            await _results(db, user_id=sid, task_id=task, course_id=course,
+                           source="spw_web", correct=8, wrong=0, pace_seconds=5)
+        # Два ученика по восемь сдач дают 2 x 7 промежутков — ниже порога базы.
+        assert 2 * 7 < MIN_TYPE_PACE_SAMPLES, "сцена должна быть ниже порога базы"
+        topic = _find(await topic_overview(db, days=7), course)
+        assert topic is not None
+        assert topic["pace_ratio"] is None
+        assert topic["signal"] != SIGNAL_EASY
     finally:
         await _cleanup(db, students, [course])
 

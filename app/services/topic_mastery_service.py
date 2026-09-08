@@ -36,14 +36,27 @@ API полем `pace_source` ("real" | "proxy" | null): на 2026-09-09 реал
 прикладывается к МЕДИАНЕ темы или задания, а не к одной сдаче, и это другое
 распределение. Опорные цифры сняты по обоим и записаны у самих констант.
 
-**Чего порог по темпу не умеет и уметь не может (найдено при калибровке).**
-Реальный темп прежде всего меряет ФОРМАТ задания, а не его трудность: медиана
-по типам — выбор одного ответа 13 с, выбор нескольких 17 с, короткий ответ
-23 с, а развёрнутый 364 с, задача с решением 264 с, таблица 343 с. Отсюда
-медиана темы почти целиком определяется её составом: у тем, где 80 % и больше
-заданий с выбором ответа, медиана 12,5 с, где меньше 20 % — 182 с (в 15 раз).
-Единый порог по всем темам поэтому находит «тему из тестов», а не «слишком
-лёгкую тему»; признак `easy` читать только вместе с составом заданий.
+**Темп сравнивается с ОЖИДАЕМЫМ для такого задания, а не с общей секундой
+(tsk-846).** Абсолютный порог измерял формат, а не трудность: медиана по типам
+— выбор одного ответа 13 с, выбор нескольких 17 с, короткий ответ 23 с, задача
+с решением 264 с, таблица 343 с, развёрнутый ответ 364 с. Медиана темы поэтому
+определялась её составом: где 80 % и больше заданий с выбором — 12,5 с, где
+меньше 20 % — 182 с, разница в пятнадцать раз. Признак «подозрительно лёгкая
+тема» на едином пороге находил тему ИЗ ТЕСТОВ.
+
+Теперь каждое наблюдение делится на медиану СВОЕГО типа задания (и своего
+источника: у прокси свои базовые медианы, шкала другая), а признаком служит
+медиана этого отношения — `pace_ratio`. 0,5 значит «вдвое быстрее, чем такие
+задания решают обычно», 1,0 — «как обычно». Разброс сжимается с пятнадцатикратного
+до двукратного: по проду p10 0,59, медиана 1,04, p90 2,51.
+
+**Признак `easy` требует достаточной выборки темпа (tsk-846, решение оператора
+09.09).** Из 22 тем, помеченных «подозрительно лёгкими» до этой правки, 20
+стояли на 2–10 сдачах — по такой выборке нельзя предлагать методисту
+переделывать материал. Порог `MIN_PACE_SAMPLES_FOR_EASY` делает признак редким
+и настоящим: на 2026-09-09 он срабатывает у ОДНОЙ темы платформы. Это не
+поломка, а честная цена: тем с достаточной выборкой темпа 113 из 247, и среди
+них быстрая при нулевых ошибках ровно одна.
 """
 from __future__ import annotations
 
@@ -72,26 +85,39 @@ PACE_OUTLIER_CAP_SECONDS = 3600
 # опечатка на сорок сдач не делает тему требующей размышления.
 EASY_WRONG_RATE = 0.05
 
-# Порог «отвечает быстрее, чем успел бы прочитать условие» (tsk-579, пересчёт
-# на реальном сигнале; было 20 с от прокси-калибровки tsk-577).
+# Порог «эту тему проходят заметно быстрее, чем такие задания решают обычно»
+# (tsk-846; прежний абсолютный порог 15 с отменён — он мерил формат задания).
 #
-# Опорные цифры с прода, окно 90 дней, 2026-09-09:
-#   отдельные пары «открыл → сдал», 6 749 штук: p10 7 с, медиана 34 с, p90 572 с;
-#   МЕДИАНЫ ТЕМ (98 тем с достаточной выборкой): p10 11 с, p25 15 с, медиана
-#   23 с, p75 73 с, p90 195 с;
-#   МЕДИАНЫ ЗАДАНИЙ (188 заданий): p10 8 с, медиана 89 с, p90 472 с.
-# Порог берётся по распределению медиан ТЕМ — именно к ним он и прикладывается.
-# 15 с — нижняя четверть тем: ниже неё ответ приходит быстрее, чем читается
-# условие. Прежние 20 с приходились на середину распределения: «подозрительно
-# лёгкими» помечались 10 тем из 98 с реальным темпом и 43 из 247 со всеми
-# источниками — почти каждая шестая. Новый порог оставляет 4 и 23
-# соответственно: признак, срабатывающий часто, перестаёт быть признаком.
+# 0.7 — примерно «в полтора раза быстрее ожидаемого». Цифра не подогнана: в
+# распределении есть разрыв ровно здесь. Среди тем с достаточной выборкой темпа
+# и нулём ошибок отношения идут 0,35 — а дальше сразу плотная группа 0,85 · 0,90
+# · 0,91 · 0,91 · 0,93 · 1,03 · 1,07 … Первая — настоящая находка, остальные
+# нормальны. Порог проведён в пустоте между ними.
 #
-# Проверенная и опровергнутая догадка tsk-578: предполагалось, что реальное
-# время систематически МЕНЬШЕ прокси (прокси включает ещё и переход между
-# заданиями). На живых данных в одном окне медианы совпали: реальная 33,9 с
-# против прокси 33,7 с. Прокси не завышает темп, он просто меряет другое.
-FAST_PACE_SECONDS = 15
+# Опорное распределение по проду (окно 90 дней, 2026-09-09, 233 темы с
+# отношением): p05 0,44 · p10 0,59 · p25 0,79 · медиана 1,04 · p90 2,51.
+FAST_PACE_RATIO = 0.7
+
+# Сколько наблюдений должно быть у ТИПА задания, чтобы его медиана годилась в
+# базу сравнения. Тип с одной парой базой быть не может: делить на такую
+# «медиану» значит объявлять случайную величину нормой (на проде так выглядел
+# `SC_Qw` — 1 пара за окно). Наблюдения типов без базы в отношение не попадают
+# вовсе, а не приравниваются к общей медиане: приравнять — то же самое, что
+# вернуть отменённый абсолютный порог, только молча.
+MIN_TYPE_PACE_SAMPLES = 30
+
+# Сколько наблюдений темпа нужно теме/заданию, чтобы вообще ставить признак
+# «подозрительно лёгкая». Раньше условия не было — и из 22 помеченных тем 20
+# стояли на 2–10 сдачах: пометка предлагала методисту переделать материал по
+# двум наблюдениям. Решение оператора 09.09 — требовать выборку, даже ценой
+# того, что признак станет редким (на 2026-09-09 — одна тема на платформе).
+#
+# Цифра та же, что у перехода на реальный темп (`MIN_REAL_PACE_SAMPLES`), и по
+# той же причине: замер устойчивости tsk-579 показал, что на 8 наблюдениях
+# медиана темы отклоняется от полной на 41 % и переворачивает признак в 8
+# случаях из 49, на 12 — на 33 % и в 4 из 49.
+MIN_PACE_SAMPLES_FOR_EASY = 12
+
 # p90 медиан тем — 195 с. 180 с (три минуты) — «на этой теме заметно
 # застревают». Важно: решения по этому порогу сейчас не принимает НИКТО —
 # `classify_topic` его не спрашивает, фронт из блока `thresholds` его не читает.
@@ -123,18 +149,30 @@ SIGNAL_OK = "ok"
 SIGNAL_UNTOUCHED = "untouched"
 
 
-def classify_topic(wrong_rate: float, median_pace_seconds: float | None) -> str:
-    """Признак темы по доле ошибок и темпу.
+def classify_topic(
+    wrong_rate: float,
+    pace_ratio: float | None,
+    pace_samples: int = 0,
+) -> str:
+    """Признак темы по доле ошибок и темпу относительно ожидаемого.
 
     Доля ошибок главнее темпа и в одиночку достаточна для «сложной»: тема, где
     треть ответов неверна, — дефект контента независимо от того, быстро на ней
     ошибаются или медленно.
 
-    А вот «слишком лёгкая» без темпа не выводится. Малая доля ошибок сама по
-    себе нормальна и чаще всего означает хорошо сделанную тему; подозрительной
-    её делает именно скорость — ученик отвечает быстрее, чем успел бы прочитать
-    условие. Поэтому при неизвестном темпе (у ученика одна сдача в теме, второй
-    точки для промежутка нет) признак «лёгкая» не ставится вовсе.
+    А вот «слишком лёгкая» требует трёх условий сразу, и каждое стоило
+    отдельного разбора:
+
+    - мало ошибок — сама по себе величина нормальная и чаще означает хорошо
+      сделанную тему;
+    - `pace_ratio` заметно ниже единицы — то есть быстро НЕ вообще, а по
+      меркам таких же заданий (tsk-846: абсолютная секунда мерила формат);
+    - наблюдений темпа хватает, чтобы у слова «быстро» был смысл (tsk-846:
+      двадцать из двадцати двух прежних пометок стояли на 2–10 сдачах).
+
+    Не хватает любого — признак не ставится. `None` в `pace_ratio` (темп
+    неизвестен, или все задания темы редкого типа без базы сравнения) — это
+    «не по чему судить», а не «нормально».
     """
     # tsk-721: тот же порог, что у датчика пробелов, и берётся он оттуда же
     # функцией — иначе кабинет менял бы одно место из двух.
@@ -142,8 +180,9 @@ def classify_topic(wrong_rate: float, median_pace_seconds: float | None) -> str:
         return SIGNAL_HARD
     if (
         wrong_rate <= EASY_WRONG_RATE
-        and median_pace_seconds is not None
-        and median_pace_seconds <= FAST_PACE_SECONDS
+        and pace_ratio is not None
+        and pace_samples >= MIN_PACE_SAMPLES_FOR_EASY
+        and pace_ratio <= FAST_PACE_RATIO
     ):
         return SIGNAL_EASY
     return SIGNAL_OK
@@ -163,6 +202,10 @@ class TopicMastery:
     wrong_rate: float
     median_pace_seconds: float | None
     pace_source: str | None
+    #: tsk-846: во сколько раз темп темы отличается от ожидаемого для её
+    #: заданий. 0,5 — вдвое быстрее обычного, 1,0 — как обычно, `None` — не с
+    #: чем сравнивать (нет наблюдений или все задания редкого типа).
+    pace_ratio: float | None
     reliable: bool
     signal: str
 
@@ -170,6 +213,10 @@ class TopicMastery:
         d = asdict(self)
         d["correct_percent"] = round(self.correct_rate * 100)
         d["wrong_percent"] = round(self.wrong_rate * 100)
+        # Два знака: отношение — оценка, а не измерение, и «0.23133081935»
+        # в ответе обещает точность, которой у медианы по дюжине наблюдений
+        # нет. Тот же приём, что с процентами выше.
+        d["pace_ratio"] = _round_ratio(self.pace_ratio)
         return d
 
 
@@ -178,7 +225,8 @@ class TopicMastery:
 # сдачи по нему в базе остаются.
 _REAL_SUBS_CTE = """
 real_subs AS (
-    SELECT tr.user_id, tr.task_id, t.course_id, tr.received_at, tr.is_correct
+    SELECT tr.user_id, tr.task_id, t.course_id, tr.received_at, tr.is_correct,
+           t.task_content->>'type' AS task_type
     FROM task_results tr
     JOIN tasks t ON t.id = tr.task_id AND t.is_active
     WHERE {real_student}
@@ -197,7 +245,7 @@ real_subs AS (
 # сравнивать, и именно поэтому темп у темы с одной сдачей на ученика неизвестен.
 _PACE_CTE = """
 pace AS (
-    SELECT course_id, task_id,
+    SELECT course_id, task_id, task_type,
            EXTRACT(EPOCH FROM (
                received_at - LAG(received_at) OVER (
                    PARTITION BY user_id, course_id ORDER BY received_at
@@ -216,7 +264,7 @@ pace AS (
 # gap_seconds отсутствует, а не считается нулём или прокси-суррогатом.
 _REAL_PACE_CTE = """
 real_pace AS (
-    SELECT rs.course_id, rs.task_id,
+    SELECT rs.course_id, rs.task_id, rs.task_type,
            EXTRACT(EPOCH FROM (rs.received_at - opened.opened_at)) AS gap_seconds
     FROM real_subs rs
     CROSS JOIN LATERAL (
@@ -235,24 +283,72 @@ real_pace AS (
 PACE_SOURCE_REAL = "real"
 PACE_SOURCE_PROXY = "proxy"
 
+# tsk-846: с чем сравнивать темп. Медиана по ВСЕЙ платформе для каждой пары
+# (тип задания, источник) — она и есть «сколько такие задания обычно занимают».
+#
+# Источники считаются РАЗДЕЛЬНО, и это не перестраховка: у одного и того же
+# типа шкалы разные (выбор ответа — 13,4 с реального времени против 15,2 с
+# прокси; задача с решением — 264 с против 216 с). Смешать их значило бы
+# сравнивать тему с базой, снятой другим прибором.
+#
+# База живёт ВНУТРИ того же запроса, а не отдельным вызовом. Отдельный запрос
+# написать проще, но он повторяет самую дорогую часть работы — LATERAL по
+# каждой сдаче ради события `task_opened`. Замер на проде: отдельным запросом
+# база считалась 19,6 с, то есть экран методиста открывался бы двадцать секунд.
+_TYPE_BASE_CTE = """
+type_base AS (
+    SELECT task_type, source,
+           percentile_cont(0.5) WITHIN GROUP (ORDER BY gap_seconds) AS median_pace
+    FROM (
+        -- Значения источника здесь и в JOIN'ах ниже — те же строки, что
+        -- PACE_SOURCE_REAL / PACE_SOURCE_PROXY.
+        SELECT task_type, 'real' AS source, gap_seconds
+        FROM real_pace WHERE gap_seconds < :pace_cap
+        UNION ALL
+        SELECT task_type, 'proxy', gap_seconds
+        FROM pace WHERE gap_seconds IS NOT NULL AND gap_seconds < :pace_cap
+    ) observations
+    WHERE task_type IS NOT NULL
+    GROUP BY task_type, source
+    HAVING COUNT(*) >= :min_type_samples
+)
+"""
+
 _OVERVIEW_SQL = """
 WITH {real_subs},
 {pace},
 {real_pace},
+{type_base},
 topic_pace AS (
-    SELECT course_id,
-           percentile_cont(0.5) WITHIN GROUP (ORDER BY gap_seconds) AS median_pace
-    FROM pace
-    WHERE gap_seconds IS NOT NULL AND gap_seconds < :pace_cap
-    GROUP BY course_id
+    SELECT p.course_id,
+           percentile_cont(0.5) WITHIN GROUP (ORDER BY p.gap_seconds) AS median_pace,
+           -- tsk-846: отношение к ожидаемому для ЭТОГО типа задания. Наблюдения
+           -- типов без базы (редкий тип) дают NULL и в медиану отношения не
+           -- попадают — percentile_cont их игнорирует, поэтому считаем их
+           -- отдельным счётчиком, а не через COUNT(*).
+           percentile_cont(0.5) WITHIN GROUP (
+               ORDER BY p.gap_seconds / b.median_pace
+           ) AS median_ratio,
+           COUNT(b.median_pace) AS ratio_samples
+    FROM pace p
+    LEFT JOIN type_base b
+           ON b.task_type = p.task_type AND b.source = 'proxy'
+    WHERE p.gap_seconds IS NOT NULL AND p.gap_seconds < :pace_cap
+    GROUP BY p.course_id
 ),
 topic_real_pace AS (
-    SELECT course_id,
-           percentile_cont(0.5) WITHIN GROUP (ORDER BY gap_seconds) AS median_pace,
-           COUNT(*) AS real_samples
-    FROM real_pace
-    WHERE gap_seconds < :pace_cap
-    GROUP BY course_id
+    SELECT rp.course_id,
+           percentile_cont(0.5) WITHIN GROUP (ORDER BY rp.gap_seconds) AS median_pace,
+           percentile_cont(0.5) WITHIN GROUP (
+               ORDER BY rp.gap_seconds / b.median_pace
+           ) AS median_ratio,
+           COUNT(*) AS real_samples,
+           COUNT(b.median_pace) AS ratio_samples
+    FROM real_pace rp
+    LEFT JOIN type_base b
+           ON b.task_type = rp.task_type AND b.source = 'real'
+    WHERE rp.gap_seconds < :pace_cap
+    GROUP BY rp.course_id
 ),
 topic_tasks AS (
     SELECT course_id, COUNT(*) AS tasks_total
@@ -285,7 +381,11 @@ SELECT b.course_id,
        COALESCE(ts.students_mastered, 0) AS students_mastered,
        COALESCE(tt.tasks_total, 0) AS tasks_total,
        tp.median_pace AS proxy_median_pace,
+       tp.median_ratio AS proxy_median_ratio,
+       COALESCE(tp.ratio_samples, 0) AS proxy_ratio_samples,
        trp.median_pace AS real_median_pace,
+       trp.median_ratio AS real_median_ratio,
+       COALESCE(trp.ratio_samples, 0) AS real_ratio_samples,
        COALESCE(trp.real_samples, 0) AS real_samples
 FROM topic_base b
 JOIN courses c ON c.id = b.course_id
@@ -296,25 +396,63 @@ LEFT JOIN topic_real_pace trp ON trp.course_id = b.course_id
 """
 
 
-def _resolve_pace(row) -> tuple[float | None, str | None]:
+@dataclass(frozen=True)
+class Pace:
+    """Темп темы или задания: сколько, чем измерено и насколько это быстро.
+
+    `ratio` и `seconds` — разные вопросы, и оба нужны. Секунды методист читает
+    глазами («полторы минуты на задание»), отношение отвечает «а много это или
+    мало для ТАКИХ заданий» (tsk-846). Признак строится на отношении, подпись —
+    на секундах.
+    """
+
+    seconds: float | None
+    source: str | None
+    ratio: float | None
+    ratio_samples: int
+
+
+def _resolve_pace(row) -> Pace:
     """Выбрать источник темпа: реальный при достаточной выборке, иначе прокси.
 
     tsk-578: реальные пары «открыл → сдал» точнее прокси и достаточны меньшим
     числом (`MIN_REAL_PACE_SAMPLES` < `MIN_SUBMISSIONS`), поэтому при их
     достатке они полностью вытесняют прокси, а не усредняются с ним — смешивать
     точный сигнал с грубым значило бы портить первый вторым.
+
+    Отношение берётся ОТТУДА ЖЕ, откуда секунды: у прокси своя база сравнения.
+    Взять секунды у реального источника, а отношение у прокси значило бы
+    сравнить измерение одним прибором с нормой другого.
     """
     real_samples = int(row["real_samples"])
     if real_samples >= MIN_REAL_PACE_SAMPLES and row["real_median_pace"] is not None:
-        return float(row["real_median_pace"]), PACE_SOURCE_REAL
+        return Pace(
+            seconds=float(row["real_median_pace"]),
+            source=PACE_SOURCE_REAL,
+            ratio=_opt_float(row["real_median_ratio"]),
+            ratio_samples=int(row["real_ratio_samples"]),
+        )
     if row["proxy_median_pace"] is not None:
-        return float(row["proxy_median_pace"]), PACE_SOURCE_PROXY
-    return None, None
+        return Pace(
+            seconds=float(row["proxy_median_pace"]),
+            source=PACE_SOURCE_PROXY,
+            ratio=_opt_float(row["proxy_median_ratio"]),
+            ratio_samples=int(row["proxy_ratio_samples"]),
+        )
+    return Pace(seconds=None, source=None, ratio=None, ratio_samples=0)
+
+
+def _opt_float(value) -> float | None:
+    return None if value is None else float(value)
+
+
+def _round_ratio(value: float | None) -> float | None:
+    return None if value is None else round(value, 2)
 
 
 def _build_topic(row) -> TopicMastery:
     wrong_rate = float(row["wrong_rate"])
-    pace, pace_source = _resolve_pace(row)
+    pace = _resolve_pace(row)
     submissions = int(row["submissions"])
     students_reached = int(row["students_reached"])
     return TopicMastery(
@@ -326,13 +464,14 @@ def _build_topic(row) -> TopicMastery:
         tasks_total=int(row["tasks_total"]),
         correct_rate=1.0 - wrong_rate,
         wrong_rate=wrong_rate,
-        median_pace_seconds=pace,
-        pace_source=pace_source,
+        median_pace_seconds=pace.seconds,
+        pace_source=pace.source,
+        pace_ratio=pace.ratio,
         reliable=(
             submissions >= task_min_submissions()
             and students_reached >= task_min_students()
         ),
-        signal=classify_topic(wrong_rate, pace),
+        signal=classify_topic(wrong_rate, pace.ratio, pace.ratio_samples),
     )
 
 
@@ -351,9 +490,11 @@ async def topic_overview(db: AsyncSession, *, days: int = 90) -> dict:
         ),
         pace=_PACE_CTE,
         real_pace=_REAL_PACE_CTE,
+        type_base=_TYPE_BASE_CTE,
     )
     rows = (await db.execute(text(sql), {
         "days": days, "pace_cap": PACE_OUTLIER_CAP_SECONDS,
+        "min_type_samples": MIN_TYPE_PACE_SAMPLES,
     })).mappings().all()
 
     topics = [_build_topic(r) for r in rows]
@@ -380,9 +521,14 @@ async def topic_overview(db: AsyncSession, *, days: int = 90) -> dict:
             "min_students": task_min_students(),
             "hard_wrong_rate": task_error_rate(),
             "easy_wrong_rate": EASY_WRONG_RATE,
-            "fast_pace_seconds": FAST_PACE_SECONDS,
+            # tsk-846: `fast_pace_seconds` из блока УБРАН вместе с самой
+            # константой — абсолютной секунды больше нет, её место заняло
+            # отношение к ожидаемому для типа задания.
+            "fast_pace_ratio": FAST_PACE_RATIO,
             "slow_pace_seconds": SLOW_PACE_SECONDS,
             "min_real_pace_samples": MIN_REAL_PACE_SAMPLES,
+            "min_pace_samples_for_easy": MIN_PACE_SAMPLES_FOR_EASY,
+            "min_type_pace_samples": MIN_TYPE_PACE_SAMPLES,
         },
     }
 
@@ -391,20 +537,33 @@ _TOPIC_TASKS_SQL = """
 WITH {real_subs},
 {pace},
 {real_pace},
+{type_base},
 task_pace AS (
-    SELECT task_id,
-           percentile_cont(0.5) WITHIN GROUP (ORDER BY gap_seconds) AS median_pace
-    FROM pace
-    WHERE gap_seconds IS NOT NULL AND gap_seconds < :pace_cap
-    GROUP BY task_id
+    SELECT p.task_id,
+           percentile_cont(0.5) WITHIN GROUP (ORDER BY p.gap_seconds) AS median_pace,
+           percentile_cont(0.5) WITHIN GROUP (
+               ORDER BY p.gap_seconds / b.median_pace
+           ) AS median_ratio,
+           COUNT(b.median_pace) AS ratio_samples
+    FROM pace p
+    LEFT JOIN type_base b
+           ON b.task_type = p.task_type AND b.source = 'proxy'
+    WHERE p.gap_seconds IS NOT NULL AND p.gap_seconds < :pace_cap
+    GROUP BY p.task_id
 ),
 task_real_pace AS (
-    SELECT task_id,
-           percentile_cont(0.5) WITHIN GROUP (ORDER BY gap_seconds) AS median_pace,
-           COUNT(*) AS real_samples
-    FROM real_pace
-    WHERE gap_seconds < :pace_cap
-    GROUP BY task_id
+    SELECT rp.task_id,
+           percentile_cont(0.5) WITHIN GROUP (ORDER BY rp.gap_seconds) AS median_pace,
+           percentile_cont(0.5) WITHIN GROUP (
+               ORDER BY rp.gap_seconds / b.median_pace
+           ) AS median_ratio,
+           COUNT(*) AS real_samples,
+           COUNT(b.median_pace) AS ratio_samples
+    FROM real_pace rp
+    LEFT JOIN type_base b
+           ON b.task_type = rp.task_type AND b.source = 'real'
+    WHERE rp.gap_seconds < :pace_cap
+    GROUP BY rp.task_id
 ),
 task_base AS (
     SELECT task_id,
@@ -422,7 +581,11 @@ SELECT t.id AS task_id,
        COALESCE(b.students, 0) AS students,
        b.wrong_rate,
        tp.median_pace AS proxy_median_pace,
+       tp.median_ratio AS proxy_median_ratio,
+       COALESCE(tp.ratio_samples, 0) AS proxy_ratio_samples,
        trp.median_pace AS real_median_pace,
+       trp.median_ratio AS real_median_ratio,
+       COALESCE(trp.ratio_samples, 0) AS real_ratio_samples,
        COALESCE(trp.real_samples, 0) AS real_samples
 FROM tasks t
 LEFT JOIN task_base b ON b.task_id = t.id
@@ -440,23 +603,29 @@ async def topic_tasks(db: AsyncSession, *, course_id: int, days: int = 90) -> li
     частый ответ на вопрос «почему тему никто не проходит»: до задания просто не
     доходят. Убрать их значит спрятать самый однозначный сигнал.
     """
+    # Наблюдения берутся по ВСЕЙ платформе, хотя показываем одну тему: база
+    # сравнения (`type_base`) обязана быть общей, иначе задание сравнивалось бы
+    # с соседями по теме и отношение у любой темы вышло бы около единицы
+    # (tsk-846). Фильтр по теме стоит ниже, в отборе строк списка.
     sql = _TOPIC_TASKS_SQL.format(
         real_subs=_REAL_SUBS_CTE.format(
             real_student=real_student_results_filter("tr"),
-            course_filter="AND t.course_id = :course_id",
+            course_filter="",
         ),
         pace=_PACE_CTE,
         real_pace=_REAL_PACE_CTE,
+        type_base=_TYPE_BASE_CTE,
     )
     rows = (await db.execute(text(sql), {
         "days": days, "course_id": course_id, "pace_cap": PACE_OUTLIER_CAP_SECONDS,
+        "min_type_samples": MIN_TYPE_PACE_SAMPLES,
     })).mappings().all()
 
     out = []
     for r in rows:
         submissions = int(r["submissions"])
         wrong_rate = None if r["wrong_rate"] is None else float(r["wrong_rate"])
-        pace, pace_source = _resolve_pace(r)
+        pace = _resolve_pace(r)
         out.append({
             "task_id": int(r["task_id"]),
             "order_position": r["order_position"],
@@ -467,11 +636,12 @@ async def topic_tasks(db: AsyncSession, *, course_id: int, days: int = 90) -> li
             "students": int(r["students"]),
             "wrong_rate": wrong_rate,
             "wrong_percent": None if wrong_rate is None else round(wrong_rate * 100),
-            "median_pace_seconds": pace,
-            "pace_source": pace_source,
+            "median_pace_seconds": pace.seconds,
+            "pace_source": pace.source,
+            "pace_ratio": _round_ratio(pace.ratio),
             "signal": (
                 SIGNAL_UNTOUCHED if wrong_rate is None
-                else classify_topic(wrong_rate, pace)
+                else classify_topic(wrong_rate, pace.ratio, pace.ratio_samples)
             ),
         })
     return out
