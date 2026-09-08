@@ -50,11 +50,31 @@ project_root = Path(__file__).resolve().parents[1]
 
 GRADED_BY = 2  # Виктор Комлев — по чьему решению переписаны вердикты
 #: Работы найдены разбором tsk-828 (ответ = эталон с точностью до пробелов и «ё»).
-WORK_IDS = [4202, 9273, 11434, 15898, 16568, 16725, 17848, 17940, 18153, 18330, 18345, 21489]
+#: Последние две (16724, 17677) нашлись позже, при перепроверке всей базы новым
+#: движком, и дописаны отдельным прогоном — отсюда требование к идемпотентности ниже.
+WORK_IDS = [
+    4202, 9273, 11434, 15898, 16568, 16725, 17848, 17940, 18153, 18330, 18345, 21489,
+    16724, 17677,
+]
 COMMENT = (
     "tsk-829: ответ совпадал с эталоном с точностью до записи (пробелы, буква «ё») — "
     "ученик решил верно, балл потерян из-за нормализации. Решение оператора 08.09."
 )
+
+
+def _as_dict(raw: object) -> dict:
+    """jsonb из asyncpg приходит СТРОКОЙ, а не словарём.
+
+    Из-за этого первая версия проверки идемпотентности не видела уже записанную
+    историю пересчёта и падала на «балл уже 1» вместо того, чтобы пропустить работу.
+    """
+    if isinstance(raw, str):
+        try:
+            value = json.loads(raw)
+        except ValueError:
+            return {}
+        return value if isinstance(value, dict) else {}
+    return dict(raw) if isinstance(raw, dict) else {}
 
 
 def _dsn() -> str:
@@ -91,7 +111,20 @@ async def main(apply: bool) -> None:
             if len(rows) != len(WORK_IDS):
                 raise AssertionError(f"ожидал {len(WORK_IDS)} работ, нашёл {len(rows)}")
 
+            skipped = 0
             for r in rows:
+                metrics_now = _as_dict(r["metrics"])
+                already_ours = any(
+                    isinstance(e, dict) and str(e.get("comment", "")).startswith("tsk-829:")
+                    for e in (metrics_now.get("regrade_history") or [])
+                )
+                if already_ours:
+                    # Идемпотентность: список дописывался в два приёма (12 + 2), и
+                    # повторный прогон не должен ни падать, ни задваивать запись.
+                    print(f"  работа {r['id']}: уже переписана этим скриптом — пропускаю")
+                    skipped += 1
+                    continue
+
                 # Узкие проверки: переписываем только то, что и собирались.
                 if r["score"]:
                     raise AssertionError(f"работа {r['id']}: балл уже {r['score']}")
@@ -105,7 +138,7 @@ async def main(apply: bool) -> None:
                 if int(r["max_score"] or 0) != 1:
                     raise AssertionError(f"работа {r['id']}: max_score={r['max_score']}, ожидал 1")
 
-                metrics = dict(r["metrics"]) if isinstance(r["metrics"], dict) else {}
+                metrics = _as_dict(r["metrics"])
                 history = list(metrics.get("regrade_history") or [])
                 history.append({
                     "at": now.isoformat(),
@@ -139,8 +172,11 @@ async def main(apply: bool) -> None:
                     raise AssertionError(f"работа {c['id']}: пересчёт не применился")
                 if c["checked_by"] != GRADED_BY or not c["events"]:
                     raise AssertionError(f"работа {c['id']}: не записана причина пересчёта")
-            print(f"\nПроверка внутри транзакции: {len(check)}/{len(WORK_IDS)} переписаны, "
-                  "у каждой записана причина. OK")
+            print(
+                f"\nПроверка внутри транзакции: {len(check)}/{len(WORK_IDS)} работ зачтены, "
+                f"у каждой записана причина (в этом прогоне тронуто "
+                f"{len(check) - skipped}, пропущено уже переписанных {skipped}). OK"
+            )
 
             if not apply:
                 raise RuntimeError("DRY-RUN: откатываю (запусти с --apply при DBCHECK_OK=1)")
