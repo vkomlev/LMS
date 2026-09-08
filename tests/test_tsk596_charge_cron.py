@@ -33,13 +33,20 @@ from tests.test_tsk505_marketer_pricing import (
     _new_user,
     _price_course,
 )
+from tests.test_tsk511_charges_breaks import MONDAYS, MONTH_LAST_DAY, PERIOD
 
 pytestmark = pytest.mark.asyncio
 
-#: Сентябрь 2026 — месяц, в котором понедельников ровно 4, доли считаются
-#: предсказуемо. Дата «сегодня» внутри него передаётся тику явно.
-PERIOD = date(2026, 9, 1)
-TODAY = date(2026, 9, 15)
+#: Месяц расчёта берётся из tsk-511: он подбирается ЗАВЕДОМО БУДУЩИМ (tsk-795).
+#: Жёсткий `date(2026, 9, 1)` работал, пока сентябрь 2026 был впереди, и поехал
+#: 08.09: ученик здесь заводится сегодня, поэтому понедельник 07.09 попал в вычет
+#: «ещё не пришёл» — сумма стала 550000 × 3/4 = 412500. Будущий месяц не даёт ни
+#: `not_started`, ни `missing`, и полная сумма месяца остаётся полной.
+NEXT_PERIOD = charge_service.next_month(PERIOD)
+#: «Сегодня» для тика — середина расчётного месяца: тик выводит период из этой
+#: даты. Вычеты по ней не считаются (расчёт смотрит на реальный `now()`), она
+#: выбирает месяц.
+TODAY = MONDAYS[1]
 
 
 async def _slot(db, *, student_id: int, teacher_id: int, weekday: int, link_active: bool = True) -> int:
@@ -111,7 +118,7 @@ async def _rows_count(db, *, student_id: int, period: date = PERIOD) -> int:
 async def test_tick_creates_month_for_student_without_charge(db, db_session_factory):
     """Главный сценарий: строки месяца не было — проход её завёл.
 
-    Именно этого не хватало на проде: без прохода 1 сентября у 42 учеников не
+    Именно этого не хватало на проде: без прохода 1-го числа у 42 учеников не
     появилось бы ничего, потому что месяц заводился только руками.
     """
     env = await _paying_student(db, f"auto{random.randint(10**6, 10**7)}")
@@ -169,7 +176,7 @@ async def test_tick_does_not_rewrite_closed_month(db, db_session_factory):
             "INSERT INTO student_break (student_id, starts_on, ends_on, note) "
             "VALUES (:s, :a, :b, 'tsk-596 тест')"
         ),
-        {"s": env["student_id"], "a": PERIOD, "b": date(2026, 9, 30)},
+        {"s": env["student_id"], "a": PERIOD, "b": MONTH_LAST_DAY},
     )
     await db.commit()
 
@@ -185,7 +192,7 @@ async def test_tick_does_not_rewrite_closed_month(db, db_session_factory):
                 "SELECT amount_minor, source FROM charge_adjustment "
                 "WHERE student_id = :s AND period = :p AND origin_period = :o"
             ),
-            {"s": env["student_id"], "p": date(2026, 10, 1), "o": PERIOD},
+            {"s": env["student_id"], "p": NEXT_PERIOD, "o": PERIOD},
         )
     ).first()
     assert carried is not None, "расхождение закрытого месяца должно уйти поправкой вперёд"
