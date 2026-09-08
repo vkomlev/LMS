@@ -32,6 +32,8 @@ from app.services.attempt_attachments import (
     existing_attachment_ids,
     mark_missing_attachments,
 )
+from app.schemas.checking import StudentAnswer
+from app.schemas.task_content import TaskContent
 from app.services.checking_service import CheckingService
 from app.services.learning_events_service import get_hint_open_counts
 
@@ -110,7 +112,12 @@ async def _load_task_meta(db: AsyncSession, task_id: int) -> Optional[Dict[str, 
 
 
 async def _load_attempts(
-    db: AsyncSession, *, user_id: int, task_id: int, include_code_review: bool
+    db: AsyncSession,
+    *,
+    user_id: int,
+    task_id: int,
+    include_code_review: bool,
+    task_meta: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
     """Попытки ученика по заданию (неотменённые), в хронологическом порядке.
 
@@ -144,6 +151,16 @@ async def _load_attempts(
     # сдач ученика по заданию.
     existing = await existing_attachment_ids([r["answer_json"] for r in rows])
 
+    # tsk-823: правки задания спрашиваем ОДИН раз на всю историю — по тому же
+    # соображению, что и вложения выше (иначе запрос на каждую сдачу).
+    changed_map = (
+        await _tasks_changed_after(
+            db, task_id=task_id, submitted_ats=[r["submitted_at"] for r in rows]
+        )
+        if task_meta is not None
+        else {}
+    )
+
     attempts: List[Dict[str, Any]] = []
     for idx, r in enumerate(rows, start=1):
         attempt: Dict[str, Any] = {
@@ -161,6 +178,19 @@ async def _load_attempts(
             "checked_at": r["checked_at"],
             "manual": (r["source_system"] == _MANUAL_SOURCE),
         }
+        if task_meta is not None:
+            # Пересчитываем по СЫРОМУ ответу из БД, а не по `attempt["answer_json"]`:
+            # там уже проставлены пометки об утраченных вложениях (tsk-575).
+            attempt.update(
+                _attempt_review(
+                    task_meta=task_meta,
+                    answer_json=r["answer_json"],
+                    score=int(r["score"] or 0),
+                    is_correct=r["is_correct"],
+                    manual=(r["source_system"] == _MANUAL_SOURCE),
+                    changed_after=changed_map.get(r["submitted_at"], True),
+                )
+            )
         if include_code_review:
             # tsk-302: отчёт целиком — карточка показывает одну работу, и
             # преподавателю нужны замечания с обоснованием, а не значок.
@@ -225,6 +255,112 @@ async def _load_help_requests(
     return requests
 
 
+async def _tasks_changed_after(
+    db: AsyncSession, *, task_id: int, submitted_ats: List[Any]
+) -> Dict[Any, bool]:
+    """Для каждой сдачи — правили ли задание ПОСЛЕ неё.
+
+    Два источника, объединяются через ИЛИ (консервативно: если хоть один говорит
+    «правили», разбор не показываем):
+
+    * ``task_audit`` — точный признак: сменились ли ключи условия или эталона.
+      Ведётся с 2026-08-05, до этой даты слеп;
+    * ``tasks.updated_at`` — грубее (реагирует на любую правку, включая
+      подсказки), зато покрывает всю историю.
+
+    Порознь они дают 296 и 275 незачётных работ из 1636 — то есть ни один не
+    покрывает другого, отсюда объединение.
+    """
+    if not submitted_ats:
+        return {}
+    rows = (
+        await db.execute(
+            text(
+                "SELECT ta.changed_at FROM task_audit ta "
+                "WHERE ta.task_id = :task_id "
+                "  AND (ta.old_content_key IS DISTINCT FROM ta.new_content_key "
+                "       OR ta.old_answer_key IS DISTINCT FROM ta.new_answer_key)"
+            ),
+            {"task_id": task_id},
+        )
+    ).mappings().fetchall()
+    edits = [r["changed_at"] for r in rows if r["changed_at"] is not None]
+
+    updated_at = (
+        await db.execute(
+            text("SELECT updated_at FROM tasks WHERE id = :task_id"), {"task_id": task_id}
+        )
+    ).scalar()
+
+    result: Dict[Any, bool] = {}
+    for submitted_at in submitted_ats:
+        if submitted_at is None:
+            result[submitted_at] = True  # без времени сдачи судить не о чем
+            continue
+        by_audit = any(changed_at > submitted_at for changed_at in edits)
+        by_updated = updated_at is not None and updated_at > submitted_at
+        result[submitted_at] = by_audit or by_updated
+    return result
+
+
+def _attempt_review(
+    *,
+    task_meta: Dict[str, Any],
+    answer_json: Any,
+    score: int,
+    is_correct: Optional[bool],
+    manual: bool,
+    changed_after: bool,
+) -> Dict[str, Any]:
+    """Разбор одной прошлой попытки для блока истории (tsk-823).
+
+    Текст проверки нигде не хранится: в ``task_results`` лежат балл, вердикт и
+    ответ ученика, а обратная связь живёт только в HTTP-ответе на сдачу. Поэтому
+    в истории её ПЕРЕСЧИТЫВАЕМ по сохранённому ответу — и ровно поэтому нужны
+    предохранители, иначе ученику покажут разбор по правилам, которых он не видел:
+
+    1. **Задание правили после сдачи** (``changed_after``) — разбора нет, вместо
+       него пометка. Это не редкость: 22% всех работ и 296 незачётных из 1636.
+       Случай не выдуманный — в tsk-800 ученик дважды сдавал задание по условию,
+       которое сменилось у него под открытой вкладкой, и узнать об этом ему было
+       неоткуда;
+    2. **Пересчёт разошёлся с записанным вердиктом** — разбора нет. Так
+       отсекаются ручные зачёты преподавателя (балл стоит, а автопроверка тот же
+       ответ не засчитывает) и любые прочие расхождения, которых мы не предвидели.
+
+    :returns: ``{"review": текст | None, "review_stale": bool}``.
+    """
+    if changed_after:
+        return {"review": None, "review_stale": True}
+    if manual:
+        return {"review": None, "review_stale": False}
+
+    task_content_raw = task_meta.get("task_content")
+    if not isinstance(task_content_raw, dict) or not isinstance(answer_json, dict):
+        return {"review": None, "review_stale": False}
+
+    try:
+        content = TaskContent.model_validate(task_content_raw)
+        rules = _checking.build_solution_rules(
+            task_meta.get("solution_rules"), task_meta.get("max_score")
+        )
+        answer = StudentAnswer.model_validate(answer_json)
+        result = _checking.check_task(content, rules, answer)
+    except Exception:  # noqa: BLE001 — история не должна падать из-за одной старой строки
+        logger.warning(
+            "task_history: не удалось пересчитать разбор task_id=%s", task_meta.get("id"),
+            exc_info=True,
+        )
+        return {"review": None, "review_stale": False}
+
+    # Предохранитель 2: пересчёт обязан согласоваться с тем, что записано.
+    if bool(result.is_correct) != bool(is_correct) or int(result.score or 0) != int(score or 0):
+        return {"review": None, "review_stale": False}
+
+    general = result.feedback.general if result.feedback else None
+    return {"review": general or None, "review_stale": False}
+
+
 def _build_solution(task_meta: Dict[str, Any]) -> Dict[str, Any]:
     """Собрать блок правила проверки/эталона (ТОЛЬКО для преподавателя).
 
@@ -281,7 +417,11 @@ async def build_task_history(
         return None
 
     attempts = await _load_attempts(
-        db, user_id=user_id, task_id=task_id, include_code_review=include_solution
+        db,
+        user_id=user_id,
+        task_id=task_id,
+        include_code_review=include_solution,
+        task_meta=task_meta,
     )
     help_requests = await _load_help_requests(db, user_id=user_id, task_id=task_id)
     hints_total, hints_text, hints_video = await get_hint_open_counts(

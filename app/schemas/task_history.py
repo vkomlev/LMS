@@ -65,6 +65,22 @@ class TaskHistoryAttempt(BaseModel):
         default=False,
         description="True — зачтено вручную преподавателем (source_system=manual_teacher)",
     )
+    review: Optional[str] = Field(
+        default=None,
+        description=(
+            "tsk-823: разбор этой попытки — тот же текст проверки, что ученик видел "
+            "сразу после сдачи («Совпало 3 значения из 4»). В БД он не хранится, "
+            "поэтому пересчитывается по сохранённому ответу; None, если пересчёт "
+            "запрещён предохранителями (см. review_stale и manual)"
+        ),
+    )
+    review_stale: bool = Field(
+        default=False,
+        description=(
+            "tsk-823: задание правили ПОСЛЕ этой сдачи (условие или эталон), "
+            "поэтому разбор не показывается — он был бы по другим правилам"
+        ),
+    )
 
 
 class TaskHistoryHelpReply(BaseModel):
