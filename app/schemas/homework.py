@@ -28,6 +28,18 @@ class HomeworkItemRead(BaseModel):
         )
     )
     position: int = Field(description="Порядок в выдаче — учебный")
+    course_uid: Optional[str] = Field(
+        default=None,
+        description=(
+            "Код узла для ссылки на элемент: адрес урока — "
+            "`/courses/{course_uid}/task/{external_uid}`, числовых id для него "
+            "мало. `null` — у узла кода нет, пункт останется без ссылки"
+        ),
+    )
+    external_uid: Optional[str] = Field(
+        default=None,
+        description="Внешний код задания для той же ссылки; у материалов null",
+    )
 
 
 class HomeworkRead(BaseModel):

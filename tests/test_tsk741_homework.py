@@ -1491,6 +1491,85 @@ def _settings_with_program(course_id: int, kind: str = "ege"):
 
 
 @pytest.mark.asyncio
+async def test_content_added_after_the_topic_was_passed_is_not_homework(db):
+    """Задание, досыпанное в пройденную тему, домой не задаётся (tsk-838).
+
+    Находка оператора 08.09 на живом ученике: курс «Первая программа на Python»
+    пройден 21 июля, 7 сентября в него добавили два задания — и 8 сентября они
+    пришли ученице домой как долг по давно закрытой теме.
+
+    Правило tsk-692 такое содержимое ПРОЩАЕТ: движок его не предлагает и не
+    считает в прогрессе. Выдача про правило не знала — теперь знает, иначе
+    система требует то, что сама же считает необязательным.
+    """
+    student_id, course_id = await _student_with_program(db, materials=0, tasks=3)
+    now = datetime.now(UTC)
+
+    old_tasks = (
+        await db.execute(
+            text("SELECT id FROM tasks WHERE course_id = :c ORDER BY order_position"),
+            {"c": course_id},
+        )
+    ).scalars().all()
+    for task_id in old_tasks:
+        await _submit(
+            db, student_id=student_id, task_id=int(task_id), course_id=course_id,
+            is_correct=True, at=now - timedelta(days=45),
+        )
+    await db.commit()
+
+    # Тема пройдена — и только теперь в курс добавляют новое задание.
+    fresh = await _new_task(db, course_id=course_id, order_position=99)
+    await db.commit()
+
+    # Сначала убеждаемся, что правило вообще сработало на этих данных — иначе
+    # проверка ниже проходила бы просто потому, что прощать было нечего.
+    from app.services.content_grace_service import compute_graced_items
+
+    graced = await compute_graced_items(db, student_id, course_id)
+    assert fresh in graced.tasks, "правило tsk-692 не сработало — тест ничего не ловит"
+
+    picked = await homework_service._next_items(
+        db, student_id=student_id, limit=5,
+    )
+
+    assert fresh not in [i["item_id"] for i in picked], (
+        "домой ушло то, что система сама считает для этого ученика необязательным"
+    )
+
+
+@pytest.mark.asyncio
+async def test_items_carry_what_a_link_needs(db, monkeypatch):
+    """Состав выдачи несёт коды для ссылки на сам элемент (tsk-838).
+
+    Замечание оператора 08.09: пункты списка ДЗ не открывались нажатием — до
+    задания приходилось добираться через курс, вспоминая, где оно лежит. Адрес
+    урока строится из `course_uid` узла и `external_uid` задания, числовых id
+    для него мало.
+    """
+    student_id, course_id = await _student_with_program(db, materials=1, tasks=1)
+    await db.execute(
+        text("UPDATE courses SET course_uid = :u WHERE id = :c"),
+        {"u": f"{_TAG}-uid-{course_id}", "c": course_id},
+    )
+    await db.commit()
+
+    # Объём задаём явно: до срока два дня, и обычный расчёт взял бы один
+    # элемент — а нам нужны оба вида, у них разные поля ссылки.
+    homework = await homework_service.issue(
+        db, student_id=student_id, due_at=datetime.now(UTC) + timedelta(days=2),
+        source="teacher", volume_override=2,
+    )
+    await db.commit()
+
+    by_kind = {i["kind"]: i for i in homework["items"]}
+    assert by_kind["material"]["course_uid"] == f"{_TAG}-uid-{course_id}"
+    assert by_kind["material"]["external_uid"] is None, "у материала внешнего кода нет"
+    assert by_kind["task"]["course_uid"] == f"{_TAG}-uid-{course_id}"
+    assert by_kind["task"]["external_uid"], "без внешнего кода задание не открыть"
+
+
+@pytest.mark.asyncio
 async def test_newcomer_pace_is_measured_over_weeks_he_has_been_here(db, monkeypatch):
     """Темп новичка считается по его неделям, а не по трём (tsk-798, 07.09).
 

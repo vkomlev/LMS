@@ -61,6 +61,7 @@ async def _next_items(
     # Локальный импорт: `manual_progress_service` тянет движок и репозитории,
     # а этот модуль зовут из сводки преподавателя — цикла быть не должно.
     from app.services import manual_progress_service
+    from app.services.content_grace_service import compute_graced_items
 
     roots = (
         await db.execute(
@@ -80,12 +81,25 @@ async def _next_items(
         progress = await manual_progress_service.get_student_progress(
             db, student_id=student_id, course_id=int(course_id)
         )
+        # tsk-838: содержимое, добавленное в курс ПОСЛЕ того, как ученик прошёл
+        # тему, для него необязательно (правило tsk-692) — движок такие элементы
+        # не предлагает и не считает в прогрессе. Выдача про это правило не
+        # знала и клала их в домашнюю работу: ученица прошла «Первую программу»
+        # 21 июля, 7 сентября в курс досыпали два задания, и 8 сентября они
+        # пришли ей на дом как долг по пройденной теме.
+        graced = await compute_graced_items(db, student_id, int(course_id))
+
         for item in progress.get("items", []):
             if len(picked) >= limit:
                 break
             if item["item_type"] not in ("task", "material"):
                 continue
             if item["status"] in _DONE_STATUSES:
+                continue
+            item_id = int(item["item_id"])
+            if item["item_type"] == "task" and item_id in graced.tasks:
+                continue
+            if item["item_type"] == "material" and item_id in graced.materials:
                 continue
             if (
                 item["item_type"] == "task"
@@ -423,6 +437,11 @@ SELECT hi.id, hi.kind, hi.task_id, hi.material_id, hi.position,
        t.course_id AS task_course_id,
        m.title AS material_title,
        m.course_id AS material_course_id,
+       -- tsk-838: из чего клиент строит ссылку НА САМ элемент. Адрес урока —
+       -- `/courses/{course_uid}/task/{external_uid}`, то есть числовых id для
+       -- него мало: нужен `course_uid` узла и внешний код задания.
+       tc.course_uid AS task_course_uid,
+       mc.course_uid AS material_course_uid,
        -- Название задания живёт в jsonb `task_content`, отдельной колонки нет
        -- (`project_lms_task_title_lives_in_task_content`); стем и внешний код
        -- нужны `humanize_task_title` как запасные имена.
@@ -432,6 +451,8 @@ SELECT hi.id, hi.kind, hi.task_id, hi.material_id, hi.position,
   FROM homework_item hi
   LEFT JOIN tasks t ON t.id = hi.task_id
   LEFT JOIN materials m ON m.id = hi.material_id
+  LEFT JOIN courses tc ON tc.id = t.course_id
+  LEFT JOIN courses mc ON mc.id = m.course_id
  WHERE hi.homework_id = :hid
  ORDER BY hi.position
 """
@@ -456,9 +477,11 @@ async def _load_items(
                 row["task_external_uid"],
             )
             course_id = row["task_course_id"]
+            course_uid = row["task_course_uid"]
         else:
             title = row["material_title"]
             course_id = row["material_course_id"]
+            course_uid = row["material_course_uid"]
         items.append(
             {
                 "kind": row["kind"],
@@ -467,6 +490,13 @@ async def _load_items(
                 "title": title,
                 "done": bool(row["done"]),
                 "position": int(row["position"]),
+                # tsk-838: чтобы пункт списка открывался нажатием. Оба поля
+                # необязательны: узел мог остаться без `course_uid`, и тогда
+                # пункт просто не станет ссылкой — но и не исчезнет.
+                "course_uid": course_uid,
+                "external_uid": (
+                    row["task_external_uid"] if row["kind"] == "task" else None
+                ),
             }
         )
     return items
