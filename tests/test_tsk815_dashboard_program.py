@@ -11,12 +11,21 @@
 """
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 
 import pytest
 from sqlalchemy import text
 
 from app.services import homework_volume_service, student_dashboard_service
+
+
+#: «Сегодня» для расчётов — константа из тестов нормы (tsk-818/819): блок
+#: дашборда берёт тот же `homework_volume_service.compute`, и календарная
+#: сезонность у него та же. Десятикласснику альтернативные сроки показываются,
+#: только пока до его срока больше 400 дней: в марте `datetime.now(UTC)`
+#: обнулял их, и `test_non_graduate_gets_the_summer_argument` краснел при
+#: верном поведении сервиса.
+from tests.test_tsk741_homework import _PACE_NOW  # noqa: E402
 
 
 async def _student_on_program(db, monkeypatch, *, grade: int = 11,
@@ -40,7 +49,7 @@ async def test_program_block_answers_will_he_make_it(db, monkeypatch):
     student_id, _ = await _student_on_program(db, monkeypatch)
 
     block = await student_dashboard_service._program_progress(
-        db, student_id=student_id, now=datetime.now(UTC),
+        db, student_id=student_id, now=_PACE_NOW,
     )
 
     assert block is not None
@@ -59,7 +68,7 @@ async def test_numbers_match_the_teacher_summary(db, monkeypatch):
     цифрам. Поэтому блок берёт готовый расчёт, а не считает заново.
     """
     student_id, _ = await _student_on_program(db, monkeypatch)
-    now = datetime.now(UTC)
+    now = _PACE_NOW
 
     plan = await homework_volume_service.compute(db, student_id=student_id, now=now)
     block = await student_dashboard_service._program_progress(
@@ -79,7 +88,7 @@ async def test_forecast_needs_a_pace_and_stays_empty_without_one(db, monkeypatch
     Родитель прочитает дату как оценку, а не как «данных нет».
     """
     student_id, course_id = await _student_on_program(db, monkeypatch)
-    now = datetime.now(UTC)
+    now = _PACE_NOW
 
     empty = await student_dashboard_service._program_progress(
         db, student_id=student_id, now=now,
@@ -118,7 +127,7 @@ async def test_non_graduate_gets_the_summer_argument(db, monkeypatch):
     student_id, _ = await _student_on_program(db, monkeypatch, grade=10)
 
     block = await student_dashboard_service._program_progress(
-        db, student_id=student_id, now=datetime.now(UTC),
+        db, student_id=student_id, now=_PACE_NOW,
     )
 
     assert block["early_target_per_week"] is not None
@@ -138,7 +147,7 @@ async def test_student_outside_any_program_has_no_block(db, monkeypatch):
     student_id, _ = await _new_user(db)
 
     block = await student_dashboard_service._program_progress(
-        db, student_id=student_id, now=datetime.now(UTC),
+        db, student_id=student_id, now=_PACE_NOW,
     )
 
     assert block is None
