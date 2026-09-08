@@ -53,15 +53,38 @@ class TestExpectedOf:
 class TestCriterionIsRealCheckingCode:
     """Критерий расхождения — сам сервис проверки, со всеми его тонкостями."""
 
-    def test_nbsp_separators_do_not_match_plain_number(self) -> None:
-        """Неразрывный пробел остаётся разделителем: `2 102 556 498` ≠ `2102556498`.
+    def test_nbsp_separators_inside_one_number_match_since_tsk829(self) -> None:
+        """`2 102 556 498` (с NBSP) = `2102556498` — с tsk-829 это ЗАЧЁТ.
 
-        SQL-модель (`[[:punct:]]`) удаляла NBSP и давала ложное совпадение —
-        именно так в разбор попал result 4202, где вердикт был верен.
+        Поведение движка сменилось намеренно, и тест сменился вместе с ним. Раньше
+        он закреплял обратное: неразрывный пробел остаётся разделителем, а
+        SQL-модель (`[[:punct:]]`) удаляла NBSP и давала «ложное» совпадение —
+        именно так в разбор tsk-602 попал result 4202.
+
+        Разбор tsk-828 показал, что совпадение было не ложным: ученица записала то
+        же число с разрядными пробелами (их вставляет копирование из калькулятора),
+        то есть решила верно и потеряла балл на записи. Расхождение SQL-модели с
+        Python оказалось не ошибкой модели, а дефектом движка — tsk-829 его закрыл.
+
+        Критерий аудита не изменился: им остаётся НАСТОЯЩИЙ код проверки, а не
+        SQL-модель, — ради этого файл и заведён.
         """
         steps = ["trim", "lower", "strip_punctuation", "collapse_spaces"]
         answer = "2 102 556 498"
-        assert not CheckingService._matches_short_answer(answer, "2102556498", steps)
+        assert CheckingService._matches_short_answer(answer, "2102556498", steps)
+
+    def test_spaces_between_different_values_still_matter(self) -> None:
+        """Граница послабления tsk-829: `3 7` — два значения, а не число 37.
+
+        Эталонов-наборов такого вида на проде 311, и снятие пробелов между ними
+        было бы массовым ложным зачётом. Послабление одностороннее: слитный ответ
+        за набор значений не засчитывается.
+        """
+        steps = ["trim", "lower", "strip_punctuation", "collapse_spaces"]
+        assert not CheckingService._matches_short_answer("37", "3 7", steps)
+        assert not CheckingService._matches_short_answer(
+            "123456789", "1 2 3 4 5 6 7 8 9", steps
+        )
 
     def test_step_absent_means_punctuation_is_significant(self) -> None:
         """Без шага strip_punctuation двоеточие значимо — задание его и требует."""

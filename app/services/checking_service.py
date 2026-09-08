@@ -1389,7 +1389,36 @@ class CheckingService:
                 canon_accepted = cls._canon_code(accepted)
                 if canon_accepted is not None and canon_value == canon_accepted:
                     return True
-        return cls._normalize_text(value, steps) == cls._normalize_text(accepted, steps)
+        if cls._normalize_text(value, steps) == cls._normalize_text(accepted, steps):
+            return True
+        return cls._matches_spaced_number(value, accepted)
+
+    #: Одно целое число целиком (эталон, к которому применимо послабление ниже).
+    _WHOLE_NUMBER_RE = re.compile(r"\d+")
+    #: Пробельные разделители разрядов, включая неразрывный и узкий.
+    _SPACE_RE = re.compile(r"[\s   ]+")
+
+    @classmethod
+    def _matches_spaced_number(cls, value: str, accepted: str) -> bool:
+        """Число, записанное учеником с разрядными пробелами: «2 102 556 498».
+
+        Работает ТОЛЬКО в одну сторону: эталон — одно целое число без пробелов, а
+        ответ — то же число, разбитое пробелами (обычными, неразрывными, узкими —
+        их вставляет копирование из калькулятора и Excel).
+
+        Обратный случай (эталон «1 2 3 4 5», ответ «12345») намеренно НЕ
+        засчитывается, хотя тоже встречается на проде: там пробел разделяет РАЗНЫЕ
+        значения, и снятие пробелов засчитало бы «37» за ответ «3 7» — а таких
+        эталонов-наборов в базе 311. Односторонность и делает послабление
+        безопасным: эталон из одного числа не может распасться на несколько.
+        """
+        etalon = (accepted or "").strip()
+        if not cls._WHOLE_NUMBER_RE.fullmatch(etalon):
+            return False
+        raw = unicodedata.normalize("NFKC", value or "").strip()
+        if not cls._SPACE_RE.search(raw):
+            return False
+        return cls._SPACE_RE.sub("", raw) == etalon
 
     @staticmethod
     def _canon_code(value: str) -> Optional[str]:
@@ -1473,8 +1502,15 @@ class CheckingService:
 
         Шаг 'code_ast' здесь не обрабатывается (это не построчное преобразование,
         а способ сравнения) — он живёт в _matches_short_answer.
+
+        tsk-829: «ё» приводится к «е» ВСЕГДА, до всех шагов и независимо от них.
+        Ученик не обязан различать эти буквы на письме, а мы теряли на этом верные
+        ответы («небоскрёб» против эталона «небоскреб»). Применяется к обеим
+        сторонам сравнения, поэтому послабление симметрично и проверку не
+        ужесточает. Безопасность проверена по базе: заданий, где ответ — сама буква
+        «ё» или «е», ноль, так что различить их нам нигде не требуется.
         """
-        result = value
+        result = (value or "").replace("ё", "е").replace("Ё", "Е")
         if "trim" in steps:
             result = result.strip()
         if "lower" in steps:
@@ -1674,7 +1710,14 @@ class CheckingService:
                 "букву «ё» и разделитель дробной части."
             )
 
-        if all(cls._is_number(e) for e in etalons) and not cls._is_number(value):
+        # Число, записанное с разрядными пробелами, — тоже число: движок его теперь
+        # засчитывает (tsk-829), и советовать «ожидается число» автору «2 102 556 499»
+        # было бы ложным следом — он ошибся в самом числе, а не в его записи.
+        digits_only = cls._SPACE_RE.sub("", unicodedata.normalize("NFKC", value))
+        looks_numeric = cls._is_number(value) or (
+            bool(cls._SPACE_RE.search(value)) and cls._WHOLE_NUMBER_RE.fullmatch(digits_only)
+        )
+        if all(cls._is_number(e) for e in etalons) and not looks_numeric:
             return " В ответе ожидается число."
 
         expected_counts = {
