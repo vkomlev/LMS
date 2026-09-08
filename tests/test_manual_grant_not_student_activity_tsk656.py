@@ -242,18 +242,33 @@ async def test_last_position_empty_when_only_manual_grants(db):
 
 
 async def _lesson_with_student(db) -> dict:
-    """Идущее занятие получасом ранее и один подтверждённый участник."""
+    """Идущее занятие получасом ранее и один подтверждённый участник.
+
+    Время везде питоновское, а не `now()` в SQL. Это не вкусовщина: датчик
+    простоя берёт момент прохода питоновскими часами
+    (`lesson_idle_cron_service.lesson_idle_cron_tick`: `now =
+    datetime.now(timezone.utc)`) и по нему решает, идёт ли занятие. Пока
+    занятие заводилось часами базы, а сдача — часами питона, сцена держалась
+    на том, что обе стрелки показывают одно и то же. Стоит стрелкам
+    разойтись — например, в прогоне со сдвинутым «сегодня»
+    (`docs/ai/timeshift-lms.md`) — занятие уезжает в прошлое, датчик не видит
+    ни одного участника, и тест краснеет мимо своего предмета. Хуже того,
+    зеркальный `test_real_submission_during_lesson_keeps_student_alive`
+    в той же ситуации ЗЕЛЕНЕЛ: он проверяет отсутствие тревоги, а её нет и
+    тогда, когда занятия просто не видно.
+    """
     teacher_id = await _new_user(db, "idle-teacher")
     student_id = await _new_user(db, "idle-student")
     course_id = await _new_course(db)
+    now = datetime.now(UTC)
     occurrence_id = int(
         (
             await db.execute(
                 text(
                     "INSERT INTO lesson_occurrence (slot_id, teacher_id, scheduled_at, duration_minutes) "
-                    "VALUES (NULL, :t, now() - interval '30 minutes', 90) RETURNING id"
+                    "VALUES (NULL, :t, :start, 90) RETURNING id"
                 ),
-                {"t": teacher_id},
+                {"t": teacher_id, "start": now - timedelta(minutes=30)},
             )
         ).scalar()
     )
@@ -275,9 +290,9 @@ async def _lesson_with_student(db) -> dict:
     await db.execute(
         text(
             "INSERT INTO student_presence (student_id, last_seen_at, last_interaction_at, context) "
-            "VALUES (:s, now(), now() - interval '15 minutes', 'task')"
+            "VALUES (:s, :seen, :acted, 'task')"
         ),
-        {"s": student_id},
+        {"s": student_id, "seen": now, "acted": now - timedelta(minutes=15)},
     )
     await db.commit()
     return {
@@ -289,14 +304,21 @@ async def _lesson_with_student(db) -> dict:
 
 
 async def _worked_on_lesson(db, student_id: int, *, minutes_ago: int) -> None:
-    """Содержательное действие ученика — открытие задания N минут назад."""
+    """Содержательное действие ученика — открытие задания N минут назад.
+
+    Момент считается питоновскими часами — теми же, что у датчика
+    (см. `_lesson_with_student`).
+    """
     await db.execute(
         text(
             "INSERT INTO learning_events (student_id, event_type, payload, created_at) "
-            "VALUES (:s, 'task_opened', CAST(:p AS jsonb), "
-            "        now() - make_interval(mins => CAST(:ago AS int)))"
+            "VALUES (:s, 'task_opened', CAST(:p AS jsonb), :at)"
         ),
-        {"s": student_id, "p": '{"task_id": 1}', "ago": minutes_ago},
+        {
+            "s": student_id,
+            "p": '{"task_id": 1}',
+            "at": datetime.now(UTC) - timedelta(minutes=minutes_ago),
+        },
     )
     await db.commit()
 
