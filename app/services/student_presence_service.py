@@ -30,7 +30,12 @@ logger = logging.getLogger(__name__)
 #: Что открыто у ученика в момент пульса. Совпадает с CHECK-ограничением
 #: таблицы: незнакомое значение упало бы ошибкой на записи, поэтому лишнее
 #: сводим к ``other`` ещё на входе.
-ALLOWED_CONTEXTS = frozenset({"task", "material", "course", "other"})
+#:
+#: tsk-835: список нужно править ВМЕСТЕ со схемой `PresenceContext`, моделью и
+#: CHECK в БД — иначе новое значение проходит проверку тела запроса, а сюда
+#: доезжает как `other` и молча теряется. Ровно так и вышло с `video` при
+#: первом прогоне: эндпоинт отвечал 200, в таблице лежало `other`.
+ALLOWED_CONTEXTS = frozenset({"task", "material", "course", "video", "other"})
 
 
 def normalize_context(context: Optional[str]) -> str:

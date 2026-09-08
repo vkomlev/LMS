@@ -58685,6 +58685,7 @@
                   "task",
                   "material",
                   "course",
+                  "video",
                   "other"
                 ]
               },
@@ -58693,7 +58694,7 @@
               }
             ],
             "title": "Context",
-            "description": "Что открыто: task | material | course | other"
+            "description": "Что открыто: task | material | course | video | other. `video` — открыт видеоплеер (tsk-835): нажатия внутри плеера странице не видны, поэтому тишина здесь не означает простоя"
           },
           "course_id": {
             "anyOf": [

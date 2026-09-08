@@ -336,6 +336,41 @@ async def test_resolved_episode_reads_as_returned(db, db_session_factory, scene)
 
 
 @pytest.mark.asyncio
+async def test_presence_endpoint_accepts_video_context(client, db, scene):
+    """tsk-835: контекст `video` принимается и доходит до базы.
+
+    Кабинет шлёт его, пока на странице открыт видеоплеер. Без этого теста
+    схема, модель и CHECK в БД связаны только глазами: значение, разрешённое
+    в pydantic, но не в ограничении таблицы, упало бы уже на бою.
+    """
+    resp = await client.post(
+        "/api/v1/me/presence",
+        json={"interacted": False, "context": "video"},
+        cookies={"session": scene["student_token"]},
+    )
+    assert resp.status_code == 200, resp.text
+
+    row = (
+        await db.execute(
+            text("SELECT context FROM student_presence WHERE student_id = :s"),
+            {"s": scene["student_id"]},
+        )
+    ).mappings().fetchone()
+    assert row["context"] == "video"
+
+
+@pytest.mark.asyncio
+async def test_presence_endpoint_rejects_unknown_context(client, db, scene):
+    """Перечень закрытый: выдуманный контекст отвергается, а не пишется молча."""
+    resp = await client.post(
+        "/api/v1/me/presence",
+        json={"interacted": False, "context": "watching-tiktok"},
+        cookies={"session": scene["student_token"]},
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
 async def test_presence_endpoint_writes_pulse(client, db, scene):
     """POST /me/presence пишет строку присутствия и отвечает интервалом."""
     resp = await client.post(

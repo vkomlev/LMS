@@ -1,0 +1,446 @@
+diff --git a/app/db/migrations/versions/2026_09_08_tsk835_presence_context_video.py b/app/db/migrations/versions/2026_09_08_tsk835_presence_context_video.py
+new file mode 100644
+index 0000000..a1a1a5a
+--- /dev/null
++++ b/app/db/migrations/versions/2026_09_08_tsk835_presence_context_video.py
+@@ -0,0 +1,56 @@
++"""tsk-835: контекст присутствия «video» — просмотр видео не молчание.
++
++Датчик простоя (tsk-591) считает признаком жизни действие руками: касание,
++ввод, прокрутка. Видео в уроке встроено кросс-доменным плеером ВК
++(`vk.com/video_ext.php` в iframe), и нажатия внутри него до страницы не
++доходят вовсе — браузер их туда не пускает. Ученик двадцать минут смотрит
++разбор, ни одного события на странице нет, и через десять минут преподаватель
++получает «не появляется в кабинете».
++
++Это не теория: из 51 эпизода простоя на бою **21 пришёлся на просмотр видео**
++(ученик закрыл видеоматериал прямо в окне эпизода), из них 14 — «открыл и
++молчит». Уведомлений `student_idle` ушло 122, непрочитанными остались 99: сигнал
++и без того тонет, а две пятых его — ложь.
++
++Здесь только расширение перечня допустимых значений `student_presence.context`:
++кабинет начнёт присылать `video`, когда на странице открыт видеоплеер, а тик
++простоя по этому контексту тревогу «молчит» поднимать не будет. Данные не
++меняются, значений `video` в таблице пока нет.
++
++Откат безопасен ровно потому, что старых строк с `video` не существует: перед
++возвратом прежнего ограничения такие строки переводятся в `material` — это их
++честный смысл (видео и есть материал), и ни одна строка не теряется.
++"""
++from typing import Sequence, Union
++
++from alembic import op
++
++revision: str = "tsk835_presence_context_video"
++down_revision: Union[str, None] = "tsk813_task_order_unique"
++branch_labels: Union[str, Sequence[str], None] = None
++depends_on: Union[str, Sequence[str], None] = None
++
++_CONSTRAINT = "student_presence_context_check"
++_TABLE = "student_presence"
++
++
++def upgrade() -> None:
++    op.drop_constraint(_CONSTRAINT, _TABLE, type_="check")
++    op.create_check_constraint(
++        _CONSTRAINT,
++        _TABLE,
++        "context IS NULL OR context IN ('task', 'material', 'course', 'video', 'other')",
++    )
++
++
++def downgrade() -> None:
++    # Строки с новым значением не должны мешать возврату ограничения.
++    op.execute(
++        "UPDATE student_presence SET context = 'material' WHERE context = 'video'"
++    )
++    op.drop_constraint(_CONSTRAINT, _TABLE, type_="check")
++    op.create_check_constraint(
++        _CONSTRAINT,
++        _TABLE,
++        "context IS NULL OR context IN ('task', 'material', 'course', 'other')",
++    )
+diff --git a/app/models/student_presence.py b/app/models/student_presence.py
+index 446055e..0e96056 100644
+--- a/app/models/student_presence.py
++++ b/app/models/student_presence.py
+@@ -39,7 +39,7 @@ class StudentPresence(Base):
+         ),
+         PrimaryKeyConstraint("student_id", name="student_presence_pkey"),
+         CheckConstraint(
+-            "context IS NULL OR context IN ('task', 'material', 'course', 'other')",
++            "context IS NULL OR context IN ('task', 'material', 'course', 'video', 'other')",
+             name="student_presence_context_check",
+         ),
+         {"comment": "Живое присутствие ученика в кабинете: одна строка на ученика (tsk-591)"},
+diff --git a/app/schemas/presence.py b/app/schemas/presence.py
+index 9cc55e8..c38d7d2 100644
+--- a/app/schemas/presence.py
++++ b/app/schemas/presence.py
+@@ -12,7 +12,13 @@ from pydantic import BaseModel, Field
+ 
+ #: Что открыто у ученика. Список закрытый — это подпись под текстом события в
+ #: ленте преподавателя («открыто задание …»), а не свободная метка клиента.
+-PresenceContext = Literal["task", "material", "course", "other"]
++#:
++#: tsk-835: `video` — на странице открыт видеоплеер. Отдельно от `material`
++#: потому, что видео единственное, где человек может честно работать, не
++#: касаясь экрана: плеер ВК живёт в кросс-доменном iframe, и нажатия внутри
++#: него до страницы не доходят. Тик простоя по этому контексту тревогу
++#: «молчит» не поднимает.
++PresenceContext = Literal["task", "material", "course", "video", "other"]
+ 
+ 
+ class PresenceRequest(BaseModel):
+@@ -27,7 +33,12 @@ class PresenceRequest(BaseModel):
+         ),
+     )
+     context: Optional[PresenceContext] = Field(
+-        default=None, description="Что открыто: task | material | course | other"
++        default=None,
++        description=(
++            "Что открыто: task | material | course | video | other. "
++            "`video` — открыт видеоплеер (tsk-835): нажатия внутри плеера "
++            "странице не видны, поэтому тишина здесь не означает простоя"
++        ),
+     )
+     course_id: Optional[int] = Field(default=None, ge=1)
+     task_id: Optional[int] = Field(default=None, ge=1)
+diff --git a/app/services/lesson_idle_cron_service.py b/app/services/lesson_idle_cron_service.py
+index 439e285..b67ac55 100644
+--- a/app/services/lesson_idle_cron_service.py
++++ b/app/services/lesson_idle_cron_service.py
+@@ -35,6 +35,11 @@
+ * **Чтение — это работа.** Ученик, который читает длинный материал и листает
+   страницу, активен: взаимодействие приходит пульсом. Молчание 10 минут без
+   единого касания — уже не чтение.
++* **Просмотр видео — тоже работа, и он вообще не даёт касаний** (tsk-835).
++  Плеер ВК встроен кросс-доменным iframe, нажатия внутри него до страницы не
++  доходят: смотрящий разбор неотличим от отошедшего. Поэтому кабинет отдельно
++  сообщает контекст `video`, и по нему тревога «молчит» не поднимается. На
++  боевых данных этот случай давал 21 ложный эпизод из 51.
+ * **Один эпизод на один простой.** Событие создаётся один раз и живёт до
+   возвращения ученика; тик его не дублирует. Держит это частичный уникальный
+   индекс в БД, а не проверка в коде.
+@@ -220,6 +225,8 @@ def _where_text(p: _Participant) -> str:
+         return "открыто задание"
+     if p.context == "material":
+         return "открыт материал"
++    if p.context == "video":
++        return "открыто видео"
+     if p.context == "course":
+         return "открыт курс"
+     return "кабинет открыт"
+@@ -279,8 +286,10 @@ def classify(
+     1. Есть свежий признак жизни → активен, тревоги нет.
+     2. Ученик ещё не начинал работать на этом занятии → тревоги нет
+        (идёт объяснение / урок вообще не в кабинете).
+-    3. Пульса нет дольше порога → ``away`` («вне системы»).
+-    4. Пульс идёт, но признаков жизни нет дольше порога → ``idle``
++    3. Открыт видеоплеер → тревоги нет (tsk-835): нажатия внутри плеера
++       странице не видны, и тишина здесь ничего не значит.
++    4. Пульса нет дольше порога → ``away`` («вне системы»).
++    5. Пульс идёт, но признаков жизни нет дольше порога → ``idle``
+        («открыл задание и молчит»).
+     """
+     alive_at = p.alive_at
+@@ -299,6 +308,19 @@ def classify(
+             return "away"
+         return None
+ 
++    # tsk-835: у открытого видео тишина — это просмотр, а не простой.
++    # Плеер ВК живёт в кросс-доменном iframe: нажатия «пуск», «пауза»,
++    # перемотка происходят ВНУТРИ него, и до страницы браузер их не пускает.
++    # Ученик, честно смотрящий двадцатиминутный разбор, для датчика выглядит
++    # ровно как ученик, отошедший от экрана. Замер на бою: 21 эпизод простоя
++    # из 51 пришёлся на просмотр видео.
++    #
++    # Проверка стоит ЗДЕСЬ, после ветки `away`, а не выше: гасить надо только
++    # «пульс идёт, а человек не шевелится». Если вкладки не видно вовсе,
++    # ученик со страницы ушёл, и чем она была занята — уже неважно.
++    if p.context == "video":
++        return None
++
+     if alive_at is None or now - alive_at >= threshold:
+         return "idle"
+     return None
+diff --git a/app/services/student_presence_service.py b/app/services/student_presence_service.py
+index fee2169..058aa7b 100644
+--- a/app/services/student_presence_service.py
++++ b/app/services/student_presence_service.py
+@@ -30,7 +30,12 @@ logger = logging.getLogger(__name__)
+ #: Что открыто у ученика в момент пульса. Совпадает с CHECK-ограничением
+ #: таблицы: незнакомое значение упало бы ошибкой на записи, поэтому лишнее
+ #: сводим к ``other`` ещё на входе.
+-ALLOWED_CONTEXTS = frozenset({"task", "material", "course", "other"})
++#:
++#: tsk-835: список нужно править ВМЕСТЕ со схемой `PresenceContext`, моделью и
++#: CHECK в БД — иначе новое значение проходит проверку тела запроса, а сюда
++#: доезжает как `other` и молча теряется. Ровно так и вышло с `video` при
++#: первом прогоне: эндпоинт отвечал 200, в таблице лежало `other`.
++ALLOWED_CONTEXTS = frozenset({"task", "material", "course", "video", "other"})
+ 
+ 
+ def normalize_context(context: Optional[str]) -> str:
+diff --git a/docs/openapi.json b/docs/openapi.json
+index 5d897c1..7227373 100644
+--- a/docs/openapi.json
++++ b/docs/openapi.json
+@@ -58685,6 +58685,7 @@
+                   "task",
+                   "material",
+                   "course",
++                  "video",
+                   "other"
+                 ]
+               },
+@@ -58693,7 +58694,7 @@
+               }
+             ],
+             "title": "Context",
+-            "description": "Что открыто: task | material | course | other"
++            "description": "Что открыто: task | material | course | video | other. `video` — открыт видеоплеер (tsk-835): нажатия внутри плеера странице не видны, поэтому тишина здесь не означает простоя"
+           },
+           "course_id": {
+             "anyOf": [
+diff --git a/reviews/2026-09-08-tsk835-video-not-idle.md b/reviews/2026-09-08-tsk835-video-not-idle.md
+new file mode 100644
+index 0000000..7dc5867
+--- /dev/null
++++ b/reviews/2026-09-08-tsk835-video-not-idle.md
+@@ -0,0 +1,133 @@
++# tsk-835 — просмотр видео не считается простоем (review artifact)
++
++**Дата:** 2026-09-08
++**Задача:** [[tsk-835]], хвост калибровки [[tsk-648]]; чинит датчик [[tsk-591]]
++
++## Цель правки
++
++Замечание оператора: «Что делать с просмотром видео. Считать это простоем
++нельзя». В очерёдности внимания (tsk-648) это закрыли фильтром постфактум, но
++сам датчик остался прежним — а он шлёт уведомления преподавателю **во время**
++урока, где ложная тревога дороже.
++
++## Первопричина (по коду, подтверждена данными)
++
++Датчик считает признаком жизни действие руками: `pointerdown`, `keydown`,
++`wheel`, `touchstart`, `scroll` на странице кабинета. Видео встроено
++**кросс-доменным iframe** плеера ВК (`vk.com/video_ext.php`): «пуск», «пауза»,
++перемотка происходят внутри него, и браузер эти события в родительскую страницу
++не пускает. Смотрящий двадцатиминутный разбор неотличим от отошедшего.
++
++**Цена на бою:** 21 эпизод простоя из 51 пришёлся на просмотр видео (14 «открыл
++и молчит», 7 «вне системы»). Уведомлений `student_idle` — 122, непрочитанных 99.
++Видео не редкость: 332 видеоматериала (242 — ВК), за 30 дней их проходили
++1101 раз у 63 учеников.
++
++## Решение (вариант оператора: сначала простое)
++
++Кабинет отдельно сообщает контекст `video`, пока на странице открыт плеер;
++датчик по этому контексту не поднимает `idle`.
++
++| Файл | Что |
++|---|---|
++| `app/db/migrations/versions/2026_09_08_tsk835_presence_context_video.py` | CHECK на `student_presence.context` расширен значением `video` |
++| `app/models/student_presence.py`, `app/schemas/presence.py` | пятое значение контекста |
++| `app/services/lesson_idle_cron_service.py` | `classify` не поднимает `idle` при `context = 'video'`; подпись «открыто видео» |
++| SPW `lib/presence/video-presence.ts` (новый) | счётчик «сколько плееров на экране» |
++| SPW `VkVideoEmbed`, `YouTubeEmbed` | объявляют о себе, пока на экране |
++| SPW `use-presence-heartbeat.ts` | открытый плеер важнее адреса страницы |
++| SPW `HintPanel.tsx` | видео-подсказка рисуется только раскрытой (см. находку ревью) |
++| CB `contracts/lms-api.md`, `CHANGELOG.md` | контракт зафиксирован |
++
++**Границы, названные прямо:**
++
++- `away` не изменился. Пульса нет — вкладки не видно, ученик со страницы ушёл, и
++  чем она была занята, уже неважно. Проверка контекста стоит **после** ветки
++  `away`, и это закреплено тестом.
++- Текстовые материалы послабления не получили: длинный текст листают руками.
++- Цена решения: «включил видео и отошёл» тревоги не даст. Оператор об этом знает
++  — точное различение (слушать сам плеер) вынесено вторым шагом.
++
++## Находка ревью: свёрнутая видео-подсказка
++
++Первая версия объявляла «на странице открыто видео» **и для свёрнутых
++подсказок**: `<details>` прячет содержимое стилями, а React монтирует его в
++любом случае. Датчик замолчал бы на каждом задании с видео-подсказкой — таких
++**885 активных из 6610**, включая те, где подсказку никто не открывал.
++
++Исправлено: плеер рисуется, только пока подсказка раскрыта (заодно свёрнутая
++подсказка больше не грузит iframe ВК). Закреплено тестом
++`tests/unit/hint-video-presence-tsk835.test.tsx`.
++
++## Вторая находка ревью: значение терялось по дороге в базу
++
++Тест «контекст `video` доходит до таблицы» упал сразу: эндпоинт отвечал **200**,
++а в `student_presence.context` лежало **`other`**. Причина —
++`student_presence_service.ALLOWED_CONTEXTS`: свой список допустимых значений,
++который сводит незнакомое к `other` ещё до записи (чтобы не упереться в CHECK).
++Схему, модель и миграцию я поправил, а его — нет.
++
++Без этого теста правка выглядела бы рабочей во всём: кабинет шлёт `video`,
++сервер отвечает 200, миграция применена, — и не работала бы совсем, потому что
++датчик читал бы `other`. Список теперь помечен как связанный: править его надо
++вместе со схемой, моделью и CHECK.
++
++## Тесты
++
++LMS `tests/test_tsk591_lesson_idle_cron.py` (+2): контекст `video` доходит до
++таблицы (этот тест и поймал потерю значения); выдуманный контекст отвергается
++с 422, а не пишется молча.
++
++LMS `tests/test_tsk591_lesson_idle_classify.py` (+3):
++- открытый видеоплеер — тревоги нет;
++- **но пропавший пульс видео не прячет** — `away` по-прежнему поднимается
++  (этот тест поймал первую версию правки: проверка стояла выше ветки `away`);
++- текстовый материал по-прежнему даёт `idle`.
++
++SPW: `presence-heartbeat.test.tsx` (+2 — контекст `video` при открытом плеере,
++`material` без него), `hint-video-presence-tsk835.test.tsx` (+2).
++
++## Валидация (raw)
++
++```
++# LMS
++tests/test_tsk591_lesson_idle_classify.py + tests/test_tsk591_lesson_idle_cron.py
++  + tests/test_lesson_attention_tsk648.py: 42 passed
++mypy app/services/lesson_idle_cron_service.py app/schemas/presence.py \
++     app/models/student_presence.py: Success
++
++# Миграция (dev)
++alembic upgrade head → downgrade -1 → upgrade head — обратима
++alembic current: tsk835_presence_context_video (head)
++
++# SPW
++tsc --noEmit → без ошибок
++eslint HintPanel/VkVideoEmbed/YouTubeEmbed/video-presence → без замечаний
++vitest tests/unit/hint-video-presence-tsk835.test.tsx: 2 passed
++vitest tests/unit/presence-heartbeat.test.tsx: 11 passed
++```
++
++## Состояние боевой БД до выката (протокол /db-check)
++
++```
++student_presence: 98 строк, 72 kB
++CHECK student_presence_context_check: context IS NULL OR context IN
++  ('task','material','course','other')
++контексты в таблице: task 34, course 28, other 23, material 13
++alembic на проде: tsk813_task_order_unique
++```
++
++Значений `video` в таблице нет, миграция данные не трогает.
++
++## Rollback note
++
++`alembic downgrade -1` возвращает прежний CHECK, предварительно переводя строки
++с `video` в `material` (их честный смысл — видео и есть материал, ни одна строка
++не теряется). Код кабинета и датчика откатывается `git revert`.
++
++**Порядок выката: LMS (с миграцией) → SPW.** Промежуточное состояние «старый
++бэкенд + новый кабинет» не ломается, но и не работает: `normalize_context`
++сведёт незнакомый `video` к `other`, ответ будет 200, а тревоги о простое
++останутся прежними. То есть при обратном порядке выката правка просто молчала бы
++до выката второй половины — ровно тот случай, когда «задеплоено» и «работает»
++расходятся.
+diff --git a/tests/test_tsk591_lesson_idle_classify.py b/tests/test_tsk591_lesson_idle_classify.py
+index cb958e1..ea2f8ce 100644
+--- a/tests/test_tsk591_lesson_idle_classify.py
++++ b/tests/test_tsk591_lesson_idle_classify.py
+@@ -49,6 +49,51 @@ def _classify(p: _Participant):
+ 
+ # ── Тревоги быть не должно ───────────────────────────────────────────────────
+ 
++def test_open_video_is_not_idle():
++    """Открыт видеоплеер — тишина это просмотр, а не простой (tsk-835).
++
++    Плеер ВК встроен кросс-доменным iframe: «пуск», «пауза» и перемотка
++    происходят внутри него, и до страницы браузер эти события не пускает.
++    Ученик, смотрящий двадцатиминутный разбор, ничем не отличается от
++    отошедшего. На боевых данных так вышел 21 ложный эпизод из 51.
++    """
++    p = _p(
++        context="video",
++        last_action_at=_NOW - timedelta(minutes=25),
++        last_seen_at=_NOW - timedelta(seconds=30),
++        last_interaction_at=_NOW - timedelta(minutes=25),
++    )
++    assert _classify(p) is None
++
++
++def test_open_video_does_not_hide_away():
++    """Но пропавший пульс видео не прячет: «вне системы» — отдельный факт.
++
++    Гасим только «пульс идёт, а человек не шевелится». Если вкладки не видно
++    вовсе, ученик со страницы ушёл, и чем она была занята, уже неважно.
++    """
++    p = _p(
++        context="video",
++        last_action_at=_NOW - timedelta(minutes=25),
++        last_seen_at=_NOW - timedelta(minutes=20),
++        last_interaction_at=_NOW - timedelta(minutes=25),
++    )
++    assert _classify(p) == "away"
++
++
++def test_text_material_still_raises_idle():
++    """Текстовый материал послабления не получает: длинный текст листают
++    руками, и молчание десять минут на нём по-прежнему простой."""
++    p = _p(
++        context="material",
++        last_action_at=_NOW - timedelta(minutes=25),
++        last_seen_at=_NOW - timedelta(seconds=30),
++        last_interaction_at=_NOW - timedelta(minutes=25),
++    )
++    assert _classify(p) == "idle"
++
++
++
+ def test_working_student_is_not_idle():
+     """Сдал ответ минуту назад — работает."""
+     p = _p(
+diff --git a/tests/test_tsk591_lesson_idle_cron.py b/tests/test_tsk591_lesson_idle_cron.py
+index 0ef5aaf..1e866b5 100644
+--- a/tests/test_tsk591_lesson_idle_cron.py
++++ b/tests/test_tsk591_lesson_idle_cron.py
+@@ -335,6 +335,41 @@ async def test_resolved_episode_reads_as_returned(db, db_session_factory, scene)
+     assert "вернулся" in idle[0]["summary"]
+ 
+ 
++@pytest.mark.asyncio
++async def test_presence_endpoint_accepts_video_context(client, db, scene):
++    """tsk-835: контекст `video` принимается и доходит до базы.
++
++    Кабинет шлёт его, пока на странице открыт видеоплеер. Без этого теста
++    схема, модель и CHECK в БД связаны только глазами: значение, разрешённое
++    в pydantic, но не в ограничении таблицы, упало бы уже на бою.
++    """
++    resp = await client.post(
++        "/api/v1/me/presence",
++        json={"interacted": False, "context": "video"},
++        cookies={"session": scene["student_token"]},
++    )
++    assert resp.status_code == 200, resp.text
++
++    row = (
++        await db.execute(
++            text("SELECT context FROM student_presence WHERE student_id = :s"),
++            {"s": scene["student_id"]},
++        )
++    ).mappings().fetchone()
++    assert row["context"] == "video"
++
++
++@pytest.mark.asyncio
++async def test_presence_endpoint_rejects_unknown_context(client, db, scene):
++    """Перечень закрытый: выдуманный контекст отвергается, а не пишется молча."""
++    resp = await client.post(
++        "/api/v1/me/presence",
++        json={"interacted": False, "context": "watching-tiktok"},
++        cookies={"session": scene["student_token"]},
++    )
++    assert resp.status_code == 422
++
++
+ @pytest.mark.asyncio
+ async def test_presence_endpoint_writes_pulse(client, db, scene):
+     """POST /me/presence пишет строку присутствия и отвечает интервалом."""

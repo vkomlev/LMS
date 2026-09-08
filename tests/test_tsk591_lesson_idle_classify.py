@@ -49,6 +49,51 @@ def _classify(p: _Participant):
 
 # ── Тревоги быть не должно ───────────────────────────────────────────────────
 
+def test_open_video_is_not_idle():
+    """Открыт видеоплеер — тишина это просмотр, а не простой (tsk-835).
+
+    Плеер ВК встроен кросс-доменным iframe: «пуск», «пауза» и перемотка
+    происходят внутри него, и до страницы браузер эти события не пускает.
+    Ученик, смотрящий двадцатиминутный разбор, ничем не отличается от
+    отошедшего. На боевых данных так вышел 21 ложный эпизод из 51.
+    """
+    p = _p(
+        context="video",
+        last_action_at=_NOW - timedelta(minutes=25),
+        last_seen_at=_NOW - timedelta(seconds=30),
+        last_interaction_at=_NOW - timedelta(minutes=25),
+    )
+    assert _classify(p) is None
+
+
+def test_open_video_does_not_hide_away():
+    """Но пропавший пульс видео не прячет: «вне системы» — отдельный факт.
+
+    Гасим только «пульс идёт, а человек не шевелится». Если вкладки не видно
+    вовсе, ученик со страницы ушёл, и чем она была занята, уже неважно.
+    """
+    p = _p(
+        context="video",
+        last_action_at=_NOW - timedelta(minutes=25),
+        last_seen_at=_NOW - timedelta(minutes=20),
+        last_interaction_at=_NOW - timedelta(minutes=25),
+    )
+    assert _classify(p) == "away"
+
+
+def test_text_material_still_raises_idle():
+    """Текстовый материал послабления не получает: длинный текст листают
+    руками, и молчание десять минут на нём по-прежнему простой."""
+    p = _p(
+        context="material",
+        last_action_at=_NOW - timedelta(minutes=25),
+        last_seen_at=_NOW - timedelta(seconds=30),
+        last_interaction_at=_NOW - timedelta(minutes=25),
+    )
+    assert _classify(p) == "idle"
+
+
+
 def test_working_student_is_not_idle():
     """Сдал ответ минуту назад — работает."""
     p = _p(

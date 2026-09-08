@@ -12,7 +12,13 @@ from pydantic import BaseModel, Field
 
 #: Что открыто у ученика. Список закрытый — это подпись под текстом события в
 #: ленте преподавателя («открыто задание …»), а не свободная метка клиента.
-PresenceContext = Literal["task", "material", "course", "other"]
+#:
+#: tsk-835: `video` — на странице открыт видеоплеер. Отдельно от `material`
+#: потому, что видео единственное, где человек может честно работать, не
+#: касаясь экрана: плеер ВК живёт в кросс-доменном iframe, и нажатия внутри
+#: него до страницы не доходят. Тик простоя по этому контексту тревогу
+#: «молчит» не поднимает.
+PresenceContext = Literal["task", "material", "course", "video", "other"]
 
 
 class PresenceRequest(BaseModel):
@@ -27,7 +33,12 @@ class PresenceRequest(BaseModel):
         ),
     )
     context: Optional[PresenceContext] = Field(
-        default=None, description="Что открыто: task | material | course | other"
+        default=None,
+        description=(
+            "Что открыто: task | material | course | video | other. "
+            "`video` — открыт видеоплеер (tsk-835): нажатия внутри плеера "
+            "странице не видны, поэтому тишина здесь не означает простоя"
+        ),
     )
     course_id: Optional[int] = Field(default=None, ge=1)
     task_id: Optional[int] = Field(default=None, ge=1)

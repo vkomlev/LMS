@@ -39,7 +39,7 @@ class StudentPresence(Base):
         ),
         PrimaryKeyConstraint("student_id", name="student_presence_pkey"),
         CheckConstraint(
-            "context IS NULL OR context IN ('task', 'material', 'course', 'other')",
+            "context IS NULL OR context IN ('task', 'material', 'course', 'video', 'other')",
             name="student_presence_context_check",
         ),
         {"comment": "Живое присутствие ученика в кабинете: одна строка на ученика (tsk-591)"},
