@@ -52,6 +52,14 @@ _TAG = "tsk741hw"
 #: ВАЖНО: константа фиксирует ТЕКУЩЕЕ поведение сервиса, а не желаемое.
 #: То, что работа этой недели в темп не входит, — дефект сервиса
 #: (`homework_volume_service._FACT_SQL`), см. `test_current_week_work_is_lost`.
+#:
+#: Вторая причина фиксировать дату — НОРМА КЛАССА тоже зависит от календаря:
+#: с марта и до экзамена одиннадцатый класс переходит на отработку вариантов
+#: и норма падает с 20 до 6 (`TARGET_PER_WEEK_EXAM_SPRINT`), а альтернативные
+#: сроки десятикласснику показываются, только пока до его срока больше 400
+#: дней. Тесты, ожидающие 20 и наличие альтернатив, зеленели бы с сентября по
+#: февраль и краснели с марта — при верном поведении сервиса. Сентябрь взят
+#: как середина обычного учебного режима.
 _PACE_NOW = datetime(2026, 9, 7, 12, 0, tzinfo=UTC)  # понедельник
 
 
@@ -261,7 +269,9 @@ async def test_volume_has_floor_for_idle_student(db):
         await _new_task(db, course_id=course_id, order_position=pos)
     await _set_grade(db, student_id=student_id, grade=11)
 
-    plan = await homework_volume_service.compute(db, student_id=student_id)
+    plan = await homework_volume_service.compute(
+        db, student_id=student_id, now=_PACE_NOW,
+    )
     assert plan.fact_per_week == 0.0
     assert plan.volume_per_week == homework_volume_service.MIN_PER_WEEK
     assert plan.remaining_items == 39
@@ -282,7 +292,7 @@ async def test_grade_changes_the_target(db):
     52-58 в неделю у всех, всегда упиралось в потолок, и класс переставал
     влиять на объём вовсе. Этот тест держит исправление.
     """
-    now = datetime.now(UTC)
+    now = _PACE_NOW
     plans = {}
     for grade in (11, 10, 7):
         student_id, _ = await _new_user(db)
@@ -297,7 +307,9 @@ async def test_grade_changes_the_target(db):
                     is_correct=True, at=now - timedelta(days=(pos % 3) * 7 + 1),
                 )
         await _set_grade(db, student_id=student_id, grade=grade)
-        plans[grade] = await homework_volume_service.compute(db, student_id=student_id)
+        plans[grade] = await homework_volume_service.compute(
+            db, student_id=student_id, now=now,
+        )
 
     assert plans[11].target_per_week == 20
     assert plans[10].target_per_week == 12
@@ -333,7 +345,7 @@ async def test_volume_does_not_exceed_grade_target(db):
     student_id, _ = await _new_user(db)
     course_id = await _new_course(db, "huge")
     await _enroll(db, student_id=student_id, course_id=course_id)
-    now = datetime.now(UTC)
+    now = _PACE_NOW
     # Быстрый ученик: много верных сдач в каждой из трёх недель.
     for week in range(3):
         for pos in range(40):
@@ -346,7 +358,9 @@ async def test_volume_does_not_exceed_grade_target(db):
         await _new_task(db, course_id=course_id, order_position=pos)
     await _set_grade(db, student_id=student_id, grade=11)
 
-    plan = await homework_volume_service.compute(db, student_id=student_id)
+    plan = await homework_volume_service.compute(
+        db, student_id=student_id, now=now,
+    )
     assert plan.volume_per_week == plan.target_per_week == 20
     assert plan.volume_per_week <= homework_volume_service.MAX_PER_WEEK
     assert plan.pace_gap == 0, "человек и так делает норму — отставания нет"
@@ -1613,7 +1627,9 @@ async def test_non_graduate_sees_what_finishing_early_would_take(db, monkeypatch
     )
     monkeypatch.setattr(settings_store, "get_str", _settings_with_program(course_id))
 
-    plan = await homework_volume_service.compute(db, student_id=student_id)
+    plan = await homework_volume_service.compute(
+        db, student_id=student_id, now=_PACE_NOW,
+    )
 
     assert plan.early_target_per_week is not None
     assert plan.summer_target_per_week is not None
@@ -1722,7 +1738,9 @@ async def test_unreachable_norm_is_shown_honestly(db, monkeypatch):
     student_id, course_id = await _program_student(db, done_tasks=0, total_tasks=900)
     monkeypatch.setattr(settings_store, "get_str", _settings_with_program(course_id))
 
-    plan = await homework_volume_service.compute(db, student_id=student_id)
+    plan = await homework_volume_service.compute(
+        db, student_id=student_id, now=_PACE_NOW,
+    )
     assert plan.target_per_week > homework_volume_service.MAX_PER_WEEK
     # Выдача при этом остаётся посильной.
     assert plan.volume_per_week <= homework_volume_service.MAX_PER_WEEK
@@ -1771,6 +1789,8 @@ async def test_without_program_falls_back_to_grade_norm(db, monkeypatch):
     student_id, _ = await _student_with_program(db, materials=0, tasks=40)
     monkeypatch.setattr(settings_store, "get_str", lambda key: "")
 
-    plan = await homework_volume_service.compute(db, student_id=student_id)
+    plan = await homework_volume_service.compute(
+        db, student_id=student_id, now=_PACE_NOW,
+    )
     assert plan.program_kind is None
     assert plan.target_per_week == 20  # норма 11 класса
