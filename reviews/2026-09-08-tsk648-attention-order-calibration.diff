@@ -1,0 +1,468 @@
+diff --git a/app/services/teacher_lesson_summary_service.py b/app/services/teacher_lesson_summary_service.py
+index 45f6ead..7e25a54 100644
+--- a/app/services/teacher_lesson_summary_service.py
++++ b/app/services/teacher_lesson_summary_service.py
+@@ -57,19 +57,36 @@ MANUAL_SOURCE = "manual_teacher"
+ #: Публичная константа — переиспользуется ``student_dashboard_service`` (tsk-494).
+ DONE_STATUSES = ("PASSED", "COMPLETED", "SKIPPED")
+ 
+-#: tsk-648: поводы подойти к ученику, в порядке очерёдности. Порядок задан не
+-#: тяжестью события, а ценой бездействия ИМЕННО СЕГОДНЯ: молчавший на прошлом
+-#: занятии просидит впустую и это, стоящий на задании сам не сдвинется,
+-#: пропустивший отстал от темы. Ранг принадлежит поводу, а не ученику: это
+-#: очерёдность на одно занятие, а не оценка, которая копится.
++#: tsk-648: поводы подойти к ученику, в порядке очерёдности. Ранг принадлежит
++#: поводу, а не ученику: это очерёдность на одно занятие, а не оценка, которая
++#: копится.
++#:
++#: Порядок исправлен 08.09 по ответу преподавателей — сначала было наоборот,
++#: «молчал» стоял первым. Двое сказали одно и то же независимо: «застрял»
++#: важнее. Довод Екатерины Алексеевой: «молчал ещё насколько ты помнишь —
++#: человек смотрит видео по теории», а застрявший «может стесняться первым
++#: попросить помощи, но он эффективен». Светлана Коротких: «когда сидишь на
++#: занятии, как раз это и надо знать».
++#:
++#: Боевая база довод подтвердила буквально: из 51 эпизода простоя 28 случились
++#: на материале, и в 25 из них ученик закрыл этот материал прямо в окне
++#: «молчания» — то есть он его изучал (см. `_load_idle_on_lessons`).
+ _ATTENTION_ORDER = (
+-    "idle_last_lesson",
+     "stuck",
++    "idle_last_lesson",
+     "missed_last_lesson",
+     "homework_overdue",
+     "help_asked",
+ )
+ 
++#: С какого числа пропущенных подряд занятий пропуск становится поводом
++#: подойти. Решение оператора 08.09 по предложению Кирилла Ладесова: «ученики
++#: достаточно часто одно занятие пропускают». На боевой базе за две недели
++#: повод срабатывал 30 раз, из них 18 — ровно один пропуск. Одиночный пропуск
++#: не исчезает: он остаётся значком «Пропустил подряд: 1» в той же строке,
++#: просто не поднимает человека наверх списка.
++_MISSED_STREAK_FOR_ATTENTION = 2
++
+ #: Расписание школы ведётся по Москве — дату занятия в подписи показываем в нём
+ #: же. Сегодня занятия идут с 10 до 18 по Москве, и в UTC дата та же (проверено
+ #: по всем 136 занятиям базы), но подпись «пропустил 31.08» под занятием первого
+@@ -430,6 +447,17 @@ async def _load_idle_on_lessons(
+     занятием. Эпизод трёхнедельной давности не говорит, к кому подойти
+     сегодня, — а список, который копит такое, превращается в тот самый вечный
+     рейтинг, которого задача просила избежать.
++
++    **Эпизод, на котором ученик изучал материал, молчанием не считается.**
++    Замечание преподавателя (08.09): «молчал на прошлом занятии — это ещё
++    насколько ты помнишь, человек смотрит видео по теории». Проверка боевой
++    базы его подтвердила: из 51 эпизода 28 случились на материале, и в 25 из
++    них ученик закрыл материал прямо в окне эпизода. Датчик простоя (tsk-591)
++    считает бездействием отсутствие кликов, а просмотр ролика кликов и не
++    требует. Поэтому эпизод отбрасывается, если в его окне (плюс четверть часа
++    после — отметка прохождения приходит следом) есть закрытый материал.
++    Сам датчик не трогаем: там сигнал нужен по ходу занятия, здесь — повод
++    подойти на следующем.
+     """
+     if not pairs:
+         return {}
+@@ -443,8 +471,16 @@ async def _load_idle_on_lessons(
+                 "       sum(EXTRACT(EPOCH FROM ("
+                 "           COALESCE(resolved_at, detected_at) - silent_since"
+                 "       ))) AS silent_seconds "
+-                "FROM lesson_idle_episode "
++                "FROM lesson_idle_episode e "
+                 "WHERE occurrence_id = ANY(:occ_ids) AND student_id = ANY(:student_ids) "
++                # Ученик, закрывший материал в окне эпизода, всё это время его
++                # изучал — молчанием это считать нельзя (см. докстринг).
++                "  AND NOT EXISTS ( "
++                "      SELECT 1 FROM student_material_progress smp "
++                "      WHERE smp.student_id = e.student_id "
++                "        AND smp.completed_at BETWEEN e.silent_since "
++                "            AND COALESCE(e.resolved_at, e.detected_at) + interval '15 minutes' "
++                "  ) "
+                 "GROUP BY 1, 2"
+             ),
+             {"occ_ids": occurrence_ids, "student_ids": student_ids},
+@@ -517,15 +553,11 @@ def _build_attention(
+     на боевых данных за две недели повод был у 38 % участий.
+ 
+     ``absence_asked`` снимает повод «пропустил»: разговор про этот пропуск уже
+-    отмечен в плане занятия (tsk-743). Пропуск — самый частый повод (46 из 88
+-    случаев за две недели), и без такого снятия он вытеснил бы остальные.
++    отмечен в плане занятия (tsk-743). Пропуск — самый частый повод, и без
++    такого снятия он вытеснил бы остальные; с 08.09 к этому добавлен порог
++    ``_MISSED_STREAK_FOR_ATTENTION`` — одиночный пропуск виден значком в
++    строке, но наверх списка не поднимает.
+     """
+-    if idle:
+-        detail = f"молчал {idle['minutes']} мин на прошлом занятии"
+-        if idle["kind"] == "away":
+-            detail = f"{detail} (кабинет был закрыт)"
+-        return {"rank": 1, "reason": "idle_last_lesson", "detail": detail, "task_id": None}
+-
+     if stuck_items:
+         first = stuck_items[0]
+         # «Ошибся N раз», а не «N неверных попыток»: рядом с «попытки кончились»
+@@ -541,21 +573,26 @@ def _build_attention(
+             parts.append("попытки кончились")
+         detail = f"стоит на задании: {first['task_title']} — {', '.join(parts)}"
+         return {
+-            "rank": 2,
++            "rank": 1,
+             "reason": "stuck",
+             "detail": detail,
+             "task_id": first["task_id"],
+         }
+ 
+-    if missed_streak > 0 and not absence_asked:
+-        if missed_streak == 1 and prev_started_at is not None:
++    if idle:
++        detail = f"молчал {idle['minutes']} мин на прошлом занятии"
++        if idle["kind"] == "away":
++            detail = f"{detail} (кабинет был закрыт)"
++        return {"rank": 2, "reason": "idle_last_lesson", "detail": detail, "task_id": None}
++
++    if missed_streak >= _MISSED_STREAK_FOR_ATTENTION and not absence_asked:
++        detail = (
++            f"пропустил подряд: {missed_streak} "
++            + _plural(missed_streak, "занятие", "занятия", "занятий")
++        )
++        if prev_started_at is not None:
+             local_day = prev_started_at.astimezone(_SCHOOL_TZ).strftime("%d.%m")
+-            detail = f"пропустил прошлое занятие {local_day}"
+-        else:
+-            detail = (
+-                f"пропустил подряд: {missed_streak} "
+-                + _plural(missed_streak, "занятие", "занятия", "занятий")
+-            )
++            detail = f"{detail}, последнее — {local_day}"
+         return {
+             "rank": 3,
+             "reason": "missed_last_lesson",
+diff --git a/docs/qa/2026-09-08-tsk648-attention-order.md b/docs/qa/2026-09-08-tsk648-attention-order.md
+index 4e95060..0ec5867 100644
+--- a/docs/qa/2026-09-08-tsk648-attention-order.md
++++ b/docs/qa/2026-09-08-tsk648-attention-order.md
+@@ -213,3 +213,68 @@
+ `(occurrence_id, student_id)` без условия — есть только частичный
+ `WHERE resolved_at IS NULL`. Сейчас в таблице 49 строк и это неважно; при
+ росте до десятков тысяч индекс стоит добавить.
++
++---
++
++## 8. Калибровка по ответу преподавателей (08.09, вторая итерация)
++
++Оператор переслал вопросы из §4 преподавателям. Ответили трое, и ответы поменяли
++две вещи из трёх.
++
++### «Застрял» важнее, чем «молчал» — и данные это подтвердили
++
++> **Екатерина Алексеева:** «Моё мнение, молчал на прошлом занятии — это ещё
++> насколько ты помнишь, человек смотрит видео по теории. А вот если человек
++> застрял, то это важнее: может быть, он стесняется первым попросить помощи, но
++> по крайней мере он эффективен в плане занятий».
++>
++> **Светлана Коротких:** «По-моему, застрял на задании важнее — как раз когда
++> сидишь на занятии, это и надо знать».
++
++Двое сказали одно и то же независимо друг от друга. Порядок изменён: «стоит на
++задании» — первый повод, «молчал» — второй.
++
++**Довод про видео проверен по базе и оказался верным дословно.** Из 51 эпизода
++простоя **28 случились на материале**, и в **25** из них ученик закрыл этот
++материал прямо в окне «молчания»:
++
++| Вид эпизода | Всего | Закрыл материал | Сдал задание | Ничего не сделал |
++|---|---|---|---|---|
++| молчал, был на материале | 18 | **16** | 5 | 2 |
++| ушёл, был на материале | 10 | **9** | 0 | 1 |
++| ушёл, был на задании | 11 | 0 | 5 | 6 |
++| молчал, был на задании | 8 | 0 | 5 | 3 |
++
++Датчик простоя (tsk-591) считает бездействием отсутствие кликов, а просмотр
++ролика кликов и не требует. Поэтому эпизод, в окне которого ученик закрыл
++материал (плюс четверть часа — отметка приходит следом), поводом больше не
++считается. **Сам датчик не тронут:** во время занятия сигнал «сидит на теории
++двадцать минут» преподавателю нужен, здесь речь только о поводе подойти на
++следующем уроке.
++
++### Пропуски: остаются, но одиночный больше не поднимает наверх
++
++> **Екатерина Алексеева:** «Пропуски занятий оставляем однозначно».
++>
++> **Кирилл Ладесов:** «Может, стоит их показывать в этой сводной, только если
++> два подряд например? Так как достаточно часто ученики одно занятие
++> пропускают».
++
++Замер: за две недели повод «пропустил» срабатывал **30 раз, из них 18 — ровно
++один пропуск**; ещё 16 случаев уже снимались отметкой разговора.
++
++Решение оператора: **порог два подряд**. Противоречия с ответом Екатерины нет —
++пропуск из строки не исчезает, он остаётся значком «Пропустил подряд: 1»; просто
++одиночный пропуск не поднимает человека в начало списка.
++
++### Что это дало на боевых данных (34 занятия, 227 участий)
++
++| Повод | Было | Стало |
++|---|---|---|
++| стоит на задании | 4 | 4 |
++| молчал на прошлом занятии | 28 | **17** |
++| пропустил | 30 | **12** |
++| **всего по этим трём** | **62** | **33** |
++
++Список стал почти вдвое короче, и убрало из него ровно то, что преподаватели
++назвали шумом, — не трогая то, что они назвали важным.
+diff --git a/reviews/2026-09-08-tsk648-attention-order.md b/reviews/2026-09-08-tsk648-attention-order.md
+index d8f921b..97e4651 100644
+--- a/reviews/2026-09-08-tsk648-attention-order.md
++++ b/reviews/2026-09-08-tsk648-attention-order.md
+@@ -99,3 +99,43 @@ grep -rE "https?://(learn|api|tg)\.victor-komlev\.ru|https?://localhost:[0-9]+"
+ коммитов LMS и SPW (в любом порядке: старое поле фронт не требует, новое поле
+ старый фронт игнорирует). Промежуточное состояние «новый backend + старый
+ фронт» рабочее: изменится только порядок строк.
++
++---
++
++## Вторая итерация: калибровка по ответу преподавателей (08.09)
++
++Оператор переслал преподавателям вопросы из отчёта. Ответы поменяли поведение
++в трёх местах — форма ответа API при этом не изменилась, только расчёт.
++
++**Что изменено**
++
++1. **Ранги `stuck` и `idle_last_lesson` поменялись местами** (застрявший — 1,
++   молчавший — 2). Двое преподавателей сказали это независимо друг от друга.
++2. **Простой, в окне которого ученик закрыл материал, поводом не считается.**
++   Довод «человек смотрит видео по теории» проверен по базе: из 51 эпизода 28
++   на материале, в 25 из них материал закрыт прямо в окне эпизода. Датчик
++   простоя (tsk-591) не тронут — правка только в поводе подойти.
++3. **`missed_last_lesson` требует двух пропусков подряд**
++   (`_MISSED_STREAK_FOR_ATTENTION = 2`) — решение оператора по предложению
++   преподавателя. Одиночный пропуск остаётся числом `missed_streak` и значком в
++   строке, но наверх списка не поднимает.
++
++**Эффект на боевых данных** (34 занятия, 227 участий за две недели): 62 → 33
++срабатывания трёх поводов; «молчал» 28 → 17, «пропустил» 30 → 12.
++
++**Новые тесты** (`tests/test_lesson_attention_tsk648.py`, стало 11):
++
++- простой, закончившийся закрытием материала, — не повод (до вставки прогресса
++  повод есть, после — нет);
++- застрявший стоит в списке выше молчавшего;
++- два пропуска подряд — повод, один — нет (`missed_streak` при этом равен 1).
++
++**Валидация**
++
++```
++tests/test_lesson_attention_tsk648.py + tsk022_410 + tsk743: 45 passed
++mypy app/services/teacher_lesson_summary_service.py: Success
++```
++
++**Rollback note** — прежний: правка аддитивная, состояния не пишет, миграций
++нет. Откат `git revert`.
+diff --git a/tests/test_lesson_attention_tsk648.py b/tests/test_lesson_attention_tsk648.py
+index 57e50ed..d44db3a 100644
+--- a/tests/test_lesson_attention_tsk648.py
++++ b/tests/test_lesson_attention_tsk648.py
+@@ -20,8 +20,10 @@ from sqlalchemy import text
+ from app.models.lesson_occurrence import LessonOccurrence
+ from app.models.lesson_occurrence_participant import LessonOccurrenceParticipant
+ from tests.test_teacher_lesson_summary_tsk022_410 import (
++    _insert_material_progress,
+     _insert_task_result,
+     _new_course,
++    _new_material,
+     _new_task,
+     _new_user,
+ )
+@@ -95,8 +97,8 @@ async def _summary(client, *, occ_id: int, teacher_id: int, token: str) -> list[
+ 
+ 
+ @pytest.mark.asyncio
+-async def test_idle_on_previous_lesson_is_first_reason(db, client):
+-    """Молчал на прошлом занятии — повод номер один, с минутами в подписи."""
++async def test_idle_on_previous_lesson_is_a_reason(db, client):
++    """Молчал на прошлом занятии — повод второго ранга, с минутами в подписи."""
+     teacher_id, token = await _new_user(db, role="teacher", name="t648a")
+     student_id, _ = await _new_user(db, role="student", name="s648a")
+     now = datetime.now(UTC)
+@@ -115,7 +117,7 @@ async def test_idle_on_previous_lesson_is_first_reason(db, client):
+     (p,) = await _summary(client, occ_id=today, teacher_id=teacher_id, token=token)
+     assert p["attention"] is not None
+     assert p["attention"]["reason"] == "idle_last_lesson"
+-    assert p["attention"]["rank"] == 1
++    assert p["attention"]["rank"] == 2
+     assert "13 мин" in p["attention"]["detail"]
+ 
+ 
+@@ -144,6 +146,84 @@ async def test_idle_on_older_lesson_is_not_a_reason(db, client):
+     assert p["attention"] is None
+ 
+ 
++@pytest.mark.asyncio
++async def test_idle_while_studying_material_is_not_a_reason(db, client):
++    """Ученик, закрывший материал в окне «молчания», его изучал — не повод.
++
++    Замечание преподавателя (08.09): «молчал — это ещё насколько ты помнишь,
++    человек смотрит видео по теории». Датчик простоя (tsk-591) считает
++    бездействием отсутствие кликов, а просмотр ролика кликов не требует. На
++    боевой базе из 51 эпизода 28 случились на материале, и в 25 из них
++    материал был закрыт прямо в окне эпизода.
++    """
++    teacher_id, token = await _new_user(db, role="teacher", name="t648j")
++    student_id, _ = await _new_user(db, role="student", name="s648j")
++    now = datetime.now(UTC)
++    course_id = await _new_course(db, "tsk648 теория")
++    material_id = await _new_material(db, course_id=course_id, title="Видео про циклы")
++
++    prev_at = now - timedelta(days=3)
++    prev = await _occurrence(db, teacher_id=teacher_id, scheduled_at=prev_at)
++    await _join(db, occurrence_id=prev, student_id=student_id, status="confirmed")
++    await _idle_episode(
++        db, occurrence_id=prev, student_id=student_id,
++        silent_since=prev_at + timedelta(minutes=5),
++        resolved_at=prev_at + timedelta(minutes=22),
++    )
++    today = await _occurrence(db, teacher_id=teacher_id, scheduled_at=now + timedelta(hours=1))
++    await _join(db, occurrence_id=today, student_id=student_id)
++
++    (before,) = await _summary(client, occ_id=today, teacher_id=teacher_id, token=token)
++    assert before["attention"]["reason"] == "idle_last_lesson"
++
++    await _insert_material_progress(
++        db, student_id=student_id, material_id=material_id,
++        completed_at=prev_at + timedelta(minutes=21),
++    )
++
++    (after,) = await _summary(client, occ_id=today, teacher_id=teacher_id, token=token)
++    assert after["attention"] is None
++
++
++@pytest.mark.asyncio
++async def test_stuck_outranks_idle(db, client):
++    """Застрявший идёт раньше молчавшего — так решили преподаватели.
++
++    Двое сказали независимо одно и то же: когда ведёшь занятие, важнее знать,
++    кто стоит на задании. Молчание может оказаться просмотром теории.
++    """
++    teacher_id, token = await _new_user(db, role="teacher", name="t648k")
++    silent_id, _ = await _new_user(db, role="student", name="s648k1")
++    stuck_id, _ = await _new_user(db, role="student", name="s648k2")
++    now = datetime.now(UTC)
++    course_id = await _new_course(db, "tsk648 порядок")
++    task_id = await _new_task(db, course_id=course_id, uid="order")
++
++    prev_at = now - timedelta(days=2)
++    prev = await _occurrence(db, teacher_id=teacher_id, scheduled_at=prev_at)
++    await _join(db, occurrence_id=prev, student_id=silent_id, status="confirmed")
++    await _idle_episode(
++        db, occurrence_id=prev, student_id=silent_id,
++        silent_since=prev_at + timedelta(minutes=5),
++        resolved_at=prev_at + timedelta(minutes=30),
++    )
++    for i in range(3):
++        await _insert_task_result(
++            db, student_id=stuck_id, task_id=task_id, course_id=course_id,
++            is_correct=False, submitted_at=now - timedelta(days=1, minutes=i),
++        )
++
++    today = await _occurrence(db, teacher_id=teacher_id, scheduled_at=now + timedelta(hours=1))
++    await _join(db, occurrence_id=today, student_id=silent_id)
++    await _join(db, occurrence_id=today, student_id=stuck_id)
++
++    order = [
++        p["student_id"]
++        for p in await _summary(client, occ_id=today, teacher_id=teacher_id, token=token)
++    ]
++    assert order == [stuck_id, silent_id]
++
++
+ @pytest.mark.asyncio
+ async def test_stuck_task_reason_with_wrong_attempts(db, client):
+     """Три неверные попытки по одному заданию, задание не решено — «стоит»."""
+@@ -164,7 +244,7 @@ async def test_stuck_task_reason_with_wrong_attempts(db, client):
+ 
+     (p,) = await _summary(client, occ_id=today, teacher_id=teacher_id, token=token)
+     assert p["attention"]["reason"] == "stuck"
+-    assert p["attention"]["rank"] == 2
++    assert p["attention"]["rank"] == 1
+     assert p["attention"]["task_id"] == task_id
+     assert "ошибся 3 раза" in p["attention"]["detail"]
+ 
+@@ -209,8 +289,14 @@ async def test_attempt_limit_counts_only_while_task_unsolved(db, client):
+ 
+ 
+ @pytest.mark.asyncio
+-async def test_missed_previous_lesson_reason(db, client):
+-    """Пропустил прошлое занятие — третий по срочности повод."""
++async def test_missed_two_lessons_in_a_row_is_a_reason(db, client):
++    """Два пропуска подряд — повод; один пропуск — нет.
++
++    Решение оператора 08.09 по замечанию преподавателя: «ученики достаточно
++    часто одно занятие пропускают». На боевой базе за две недели повод
++    срабатывал 30 раз, из них 18 — ровно один пропуск. Одиночный пропуск
++    из строки не исчезает: `missed_streak` остаётся и рисуется значком.
++    """
+     teacher_id, token = await _new_user(db, role="teacher", name="t648e")
+     student_id, _ = await _new_user(db, role="student", name="s648e")
+     now = datetime.now(UTC)
+@@ -220,9 +306,18 @@ async def test_missed_previous_lesson_reason(db, client):
+     today = await _occurrence(db, teacher_id=teacher_id, scheduled_at=now + timedelta(hours=1))
+     await _join(db, occurrence_id=today, student_id=student_id)
+ 
+-    (p,) = await _summary(client, occ_id=today, teacher_id=teacher_id, token=token)
+-    assert p["attention"]["reason"] == "missed_last_lesson"
+-    assert p["attention"]["rank"] == 3
++    (one,) = await _summary(client, occ_id=today, teacher_id=teacher_id, token=token)
++    assert one["missed_streak"] == 1
++    assert one["attention"] is None
++
++    earlier = await _occurrence(db, teacher_id=teacher_id, scheduled_at=now - timedelta(days=11))
++    await _join(db, occurrence_id=earlier, student_id=student_id, status="no_show")
++
++    (two,) = await _summary(client, occ_id=today, teacher_id=teacher_id, token=token)
++    assert two["missed_streak"] == 2
++    assert two["attention"]["reason"] == "missed_last_lesson"
++    assert two["attention"]["rank"] == 3
++    assert "пропустил подряд: 2 занятия" in two["attention"]["detail"]
+ 
+ 
+ @pytest.mark.asyncio
+@@ -236,6 +331,8 @@ async def test_absence_reason_disappears_after_teacher_asked(db, client):
+     student_id, _ = await _new_user(db, role="student", name="s648i")
+     now = datetime.now(UTC)
+ 
++    earlier = await _occurrence(db, teacher_id=teacher_id, scheduled_at=now - timedelta(days=11))
++    await _join(db, occurrence_id=earlier, student_id=student_id, status="no_show")
+     prev = await _occurrence(db, teacher_id=teacher_id, scheduled_at=now - timedelta(days=4))
+     await _join(db, occurrence_id=prev, student_id=student_id, status="no_show")
+     today = await _occurrence(db, teacher_id=teacher_id, scheduled_at=now + timedelta(hours=1))
+@@ -256,9 +353,9 @@ async def test_absence_reason_disappears_after_teacher_asked(db, client):
+ 
+     (after,) = await _summary(client, occ_id=today, teacher_id=teacher_id, token=token)
+     assert after["attention"] is None
+-    # Само число пропусков подряд остаётся: разговор состоялся, занятие всё
+-    # равно пропущено, и в личной сводке это по-прежнему видно.
+-    assert after["missed_streak"] == 1
++    # Само число пропусков подряд остаётся: разговор состоялся, занятия всё
++    # равно пропущены, и в строке это по-прежнему видно.
++    assert after["missed_streak"] == 2
+ 
+ 
+ @pytest.mark.asyncio
+@@ -291,6 +388,8 @@ async def test_participants_sorted_by_attention_rank(db, client):
+     calm_id, _ = await _new_user(db, role="student", name="s648g3")
+     now = datetime.now(UTC)
+ 
++    older = await _occurrence(db, teacher_id=teacher_id, scheduled_at=now - timedelta(days=9))
++    await _join(db, occurrence_id=older, student_id=missed_id, status="no_show")
+     prev_at = now - timedelta(days=2)
+     prev = await _occurrence(db, teacher_id=teacher_id, scheduled_at=prev_at)
+     await _join(db, occurrence_id=prev, student_id=silent_id, status="confirmed")
+@@ -321,6 +420,8 @@ async def test_single_student_request_keeps_attention(db, client):
+     student_id, _ = await _new_user(db, role="student", name="s648h")
+     now = datetime.now(UTC)
+ 
++    older = await _occurrence(db, teacher_id=teacher_id, scheduled_at=now - timedelta(days=10))
++    await _join(db, occurrence_id=older, student_id=student_id, status="no_show")
+     prev = await _occurrence(db, teacher_id=teacher_id, scheduled_at=now - timedelta(days=3))
+     await _join(db, occurrence_id=prev, student_id=student_id, status="no_show")
+     today = await _occurrence(db, teacher_id=teacher_id, scheduled_at=now + timedelta(hours=1))

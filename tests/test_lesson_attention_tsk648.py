@@ -20,8 +20,10 @@ from sqlalchemy import text
 from app.models.lesson_occurrence import LessonOccurrence
 from app.models.lesson_occurrence_participant import LessonOccurrenceParticipant
 from tests.test_teacher_lesson_summary_tsk022_410 import (
+    _insert_material_progress,
     _insert_task_result,
     _new_course,
+    _new_material,
     _new_task,
     _new_user,
 )
@@ -95,8 +97,8 @@ async def _summary(client, *, occ_id: int, teacher_id: int, token: str) -> list[
 
 
 @pytest.mark.asyncio
-async def test_idle_on_previous_lesson_is_first_reason(db, client):
-    """Молчал на прошлом занятии — повод номер один, с минутами в подписи."""
+async def test_idle_on_previous_lesson_is_a_reason(db, client):
+    """Молчал на прошлом занятии — повод второго ранга, с минутами в подписи."""
     teacher_id, token = await _new_user(db, role="teacher", name="t648a")
     student_id, _ = await _new_user(db, role="student", name="s648a")
     now = datetime.now(UTC)
@@ -115,7 +117,7 @@ async def test_idle_on_previous_lesson_is_first_reason(db, client):
     (p,) = await _summary(client, occ_id=today, teacher_id=teacher_id, token=token)
     assert p["attention"] is not None
     assert p["attention"]["reason"] == "idle_last_lesson"
-    assert p["attention"]["rank"] == 1
+    assert p["attention"]["rank"] == 2
     assert "13 мин" in p["attention"]["detail"]
 
 
@@ -145,6 +147,84 @@ async def test_idle_on_older_lesson_is_not_a_reason(db, client):
 
 
 @pytest.mark.asyncio
+async def test_idle_while_studying_material_is_not_a_reason(db, client):
+    """Ученик, закрывший материал в окне «молчания», его изучал — не повод.
+
+    Замечание преподавателя (08.09): «молчал — это ещё насколько ты помнишь,
+    человек смотрит видео по теории». Датчик простоя (tsk-591) считает
+    бездействием отсутствие кликов, а просмотр ролика кликов не требует. На
+    боевой базе из 51 эпизода 28 случились на материале, и в 25 из них
+    материал был закрыт прямо в окне эпизода.
+    """
+    teacher_id, token = await _new_user(db, role="teacher", name="t648j")
+    student_id, _ = await _new_user(db, role="student", name="s648j")
+    now = datetime.now(UTC)
+    course_id = await _new_course(db, "tsk648 теория")
+    material_id = await _new_material(db, course_id=course_id, title="Видео про циклы")
+
+    prev_at = now - timedelta(days=3)
+    prev = await _occurrence(db, teacher_id=teacher_id, scheduled_at=prev_at)
+    await _join(db, occurrence_id=prev, student_id=student_id, status="confirmed")
+    await _idle_episode(
+        db, occurrence_id=prev, student_id=student_id,
+        silent_since=prev_at + timedelta(minutes=5),
+        resolved_at=prev_at + timedelta(minutes=22),
+    )
+    today = await _occurrence(db, teacher_id=teacher_id, scheduled_at=now + timedelta(hours=1))
+    await _join(db, occurrence_id=today, student_id=student_id)
+
+    (before,) = await _summary(client, occ_id=today, teacher_id=teacher_id, token=token)
+    assert before["attention"]["reason"] == "idle_last_lesson"
+
+    await _insert_material_progress(
+        db, student_id=student_id, material_id=material_id,
+        completed_at=prev_at + timedelta(minutes=21),
+    )
+
+    (after,) = await _summary(client, occ_id=today, teacher_id=teacher_id, token=token)
+    assert after["attention"] is None
+
+
+@pytest.mark.asyncio
+async def test_stuck_outranks_idle(db, client):
+    """Застрявший идёт раньше молчавшего — так решили преподаватели.
+
+    Двое сказали независимо одно и то же: когда ведёшь занятие, важнее знать,
+    кто стоит на задании. Молчание может оказаться просмотром теории.
+    """
+    teacher_id, token = await _new_user(db, role="teacher", name="t648k")
+    silent_id, _ = await _new_user(db, role="student", name="s648k1")
+    stuck_id, _ = await _new_user(db, role="student", name="s648k2")
+    now = datetime.now(UTC)
+    course_id = await _new_course(db, "tsk648 порядок")
+    task_id = await _new_task(db, course_id=course_id, uid="order")
+
+    prev_at = now - timedelta(days=2)
+    prev = await _occurrence(db, teacher_id=teacher_id, scheduled_at=prev_at)
+    await _join(db, occurrence_id=prev, student_id=silent_id, status="confirmed")
+    await _idle_episode(
+        db, occurrence_id=prev, student_id=silent_id,
+        silent_since=prev_at + timedelta(minutes=5),
+        resolved_at=prev_at + timedelta(minutes=30),
+    )
+    for i in range(3):
+        await _insert_task_result(
+            db, student_id=stuck_id, task_id=task_id, course_id=course_id,
+            is_correct=False, submitted_at=now - timedelta(days=1, minutes=i),
+        )
+
+    today = await _occurrence(db, teacher_id=teacher_id, scheduled_at=now + timedelta(hours=1))
+    await _join(db, occurrence_id=today, student_id=silent_id)
+    await _join(db, occurrence_id=today, student_id=stuck_id)
+
+    order = [
+        p["student_id"]
+        for p in await _summary(client, occ_id=today, teacher_id=teacher_id, token=token)
+    ]
+    assert order == [stuck_id, silent_id]
+
+
+@pytest.mark.asyncio
 async def test_stuck_task_reason_with_wrong_attempts(db, client):
     """Три неверные попытки по одному заданию, задание не решено — «стоит»."""
     teacher_id, token = await _new_user(db, role="teacher", name="t648c")
@@ -164,7 +244,7 @@ async def test_stuck_task_reason_with_wrong_attempts(db, client):
 
     (p,) = await _summary(client, occ_id=today, teacher_id=teacher_id, token=token)
     assert p["attention"]["reason"] == "stuck"
-    assert p["attention"]["rank"] == 2
+    assert p["attention"]["rank"] == 1
     assert p["attention"]["task_id"] == task_id
     assert "ошибся 3 раза" in p["attention"]["detail"]
 
@@ -209,8 +289,14 @@ async def test_attempt_limit_counts_only_while_task_unsolved(db, client):
 
 
 @pytest.mark.asyncio
-async def test_missed_previous_lesson_reason(db, client):
-    """Пропустил прошлое занятие — третий по срочности повод."""
+async def test_missed_two_lessons_in_a_row_is_a_reason(db, client):
+    """Два пропуска подряд — повод; один пропуск — нет.
+
+    Решение оператора 08.09 по замечанию преподавателя: «ученики достаточно
+    часто одно занятие пропускают». На боевой базе за две недели повод
+    срабатывал 30 раз, из них 18 — ровно один пропуск. Одиночный пропуск
+    из строки не исчезает: `missed_streak` остаётся и рисуется значком.
+    """
     teacher_id, token = await _new_user(db, role="teacher", name="t648e")
     student_id, _ = await _new_user(db, role="student", name="s648e")
     now = datetime.now(UTC)
@@ -220,9 +306,18 @@ async def test_missed_previous_lesson_reason(db, client):
     today = await _occurrence(db, teacher_id=teacher_id, scheduled_at=now + timedelta(hours=1))
     await _join(db, occurrence_id=today, student_id=student_id)
 
-    (p,) = await _summary(client, occ_id=today, teacher_id=teacher_id, token=token)
-    assert p["attention"]["reason"] == "missed_last_lesson"
-    assert p["attention"]["rank"] == 3
+    (one,) = await _summary(client, occ_id=today, teacher_id=teacher_id, token=token)
+    assert one["missed_streak"] == 1
+    assert one["attention"] is None
+
+    earlier = await _occurrence(db, teacher_id=teacher_id, scheduled_at=now - timedelta(days=11))
+    await _join(db, occurrence_id=earlier, student_id=student_id, status="no_show")
+
+    (two,) = await _summary(client, occ_id=today, teacher_id=teacher_id, token=token)
+    assert two["missed_streak"] == 2
+    assert two["attention"]["reason"] == "missed_last_lesson"
+    assert two["attention"]["rank"] == 3
+    assert "пропустил подряд: 2 занятия" in two["attention"]["detail"]
 
 
 @pytest.mark.asyncio
@@ -236,6 +331,8 @@ async def test_absence_reason_disappears_after_teacher_asked(db, client):
     student_id, _ = await _new_user(db, role="student", name="s648i")
     now = datetime.now(UTC)
 
+    earlier = await _occurrence(db, teacher_id=teacher_id, scheduled_at=now - timedelta(days=11))
+    await _join(db, occurrence_id=earlier, student_id=student_id, status="no_show")
     prev = await _occurrence(db, teacher_id=teacher_id, scheduled_at=now - timedelta(days=4))
     await _join(db, occurrence_id=prev, student_id=student_id, status="no_show")
     today = await _occurrence(db, teacher_id=teacher_id, scheduled_at=now + timedelta(hours=1))
@@ -256,9 +353,9 @@ async def test_absence_reason_disappears_after_teacher_asked(db, client):
 
     (after,) = await _summary(client, occ_id=today, teacher_id=teacher_id, token=token)
     assert after["attention"] is None
-    # Само число пропусков подряд остаётся: разговор состоялся, занятие всё
-    # равно пропущено, и в личной сводке это по-прежнему видно.
-    assert after["missed_streak"] == 1
+    # Само число пропусков подряд остаётся: разговор состоялся, занятия всё
+    # равно пропущены, и в строке это по-прежнему видно.
+    assert after["missed_streak"] == 2
 
 
 @pytest.mark.asyncio
@@ -291,6 +388,8 @@ async def test_participants_sorted_by_attention_rank(db, client):
     calm_id, _ = await _new_user(db, role="student", name="s648g3")
     now = datetime.now(UTC)
 
+    older = await _occurrence(db, teacher_id=teacher_id, scheduled_at=now - timedelta(days=9))
+    await _join(db, occurrence_id=older, student_id=missed_id, status="no_show")
     prev_at = now - timedelta(days=2)
     prev = await _occurrence(db, teacher_id=teacher_id, scheduled_at=prev_at)
     await _join(db, occurrence_id=prev, student_id=silent_id, status="confirmed")
@@ -321,6 +420,8 @@ async def test_single_student_request_keeps_attention(db, client):
     student_id, _ = await _new_user(db, role="student", name="s648h")
     now = datetime.now(UTC)
 
+    older = await _occurrence(db, teacher_id=teacher_id, scheduled_at=now - timedelta(days=10))
+    await _join(db, occurrence_id=older, student_id=student_id, status="no_show")
     prev = await _occurrence(db, teacher_id=teacher_id, scheduled_at=now - timedelta(days=3))
     await _join(db, occurrence_id=prev, student_id=student_id, status="no_show")
     today = await _occurrence(db, teacher_id=teacher_id, scheduled_at=now + timedelta(hours=1))
