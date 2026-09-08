@@ -936,6 +936,10 @@ class CheckingService:
 
         base_score = 0
         matched_value: Optional[str] = None
+        # tsk-822: лучшая пара (совпало рядов, всего рядов) — для обратной связи.
+        # Считается по тем же разборам, что и балл, и по тому эталону, к которому
+        # ответ ближе всего: эталонов может быть несколько и они разной длины.
+        best_rows: tuple[int, int] = (0, 0)
 
         # Регулярное выражение — паритет с SA: применяется к ответу, сведённому
         # к канонической однострочной записи (ячейки через один пробел).
@@ -958,6 +962,15 @@ class CheckingService:
                     order_matters=order_matters,
                     partial=solution_rules.scoring_mode == "partial",
                 )
+                best_rows = self._better_rows(
+                    best_rows,
+                    self._count_matching_rows(
+                        cells=cells,
+                        expected=expected,
+                        columns=columns,
+                        order_matters=order_matters,
+                    ),
+                )
                 # tsk-752: разбивка строк не решает судьбу зачёта там, где она
                 # ничего не разделяет. Ответ на объединённое задание 19-21 ученик
                 # пишет по строке НА ВОПРОС («244 / 247 248 / 252»), а эталон
@@ -975,15 +988,29 @@ class CheckingService:
                     and columns == 1
                     and not self._line_split_is_significant(expected)
                 ):
+                    flat = self._flat_cells(value_raw, rules.normalization)
                     score = max(
                         score,
                         self._score_table(
-                            cells=self._flat_cells(value_raw, rules.normalization),
+                            cells=flat,
                             expected=expected,
                             full_score=accepted.score,
                             columns=columns,
                             order_matters=order_matters,
                             partial=solution_rules.scoring_mode == "partial",
+                        ),
+                    )
+                    # tsk-822: ответ, разобранный этим путём, для обратной связи
+                    # тоже учитываем — иначе «совпало 0 из 4» встретило бы ученика,
+                    # который написал всё верно одной строкой и получил незачёт
+                    # по другой причине.
+                    best_rows = self._better_rows(
+                        best_rows,
+                        self._count_matching_rows(
+                            cells=flat,
+                            expected=expected,
+                            columns=columns,
+                            order_matters=order_matters,
                         ),
                     )
                 # tsk-383: TBL_COM не строже SA_COM на том же правиле — тот же
@@ -1026,6 +1053,8 @@ class CheckingService:
                 max_score=solution_rules.max_score,
                 cells_given=len(cells),
                 columns=columns,
+                rows_matched=best_rows[0],
+                rows_total=best_rows[1],
             ),
         )
 
@@ -1129,17 +1158,15 @@ class CheckingService:
         Returns:
             Начисленный балл (0..full_score).
         """
-        def rows(flat: List[str]) -> List[tuple[str, ...]]:
-            step = max(1, columns)
-            return [tuple(flat[i:i + step]) for i in range(0, len(flat), step)]
-
         if not expected:
             return 0
 
         if order_matters:
             exact = cells == expected
         else:
-            exact = Counter(rows(cells)) == Counter(rows(expected))
+            exact = Counter(CheckingService._table_rows(cells, columns)) == Counter(
+                CheckingService._table_rows(expected, columns)
+            )
 
         if exact:
             return full_score
@@ -1147,8 +1174,66 @@ class CheckingService:
             return 0
 
         # Частичный балл: доля совпавших рядов эталона.
-        expected_rows = rows(expected)
-        student_rows = rows(cells)
+        hit, total = CheckingService._count_matching_rows(
+            cells=cells, expected=expected, columns=columns, order_matters=order_matters
+        )
+        return int(full_score * hit / total) if total else 0
+
+    @staticmethod
+    def _better_rows(
+        current: tuple[int, int],
+        candidate: tuple[int, int],
+    ) -> tuple[int, int]:
+        """
+        Выбрать пару (совпало, всего), которая ближе к полному ответу.
+
+        Эталонов у задания может быть несколько, и они бывают разной длины,
+        поэтому сравниваем ДОЛЮ совпавших рядов, а не их число: «2 из 3» ближе,
+        чем «2 из 6». При равной доле берём пару с бо́льшим числом совпадений.
+
+        Начальное `(0, 0)` — «эталон ещё не смотрели», а не «ноль совпадений из
+        нуля»: без этой оговорки ответ, не совпавший НИ ОДНИМ рядом, терял и
+        число рядов эталона, и ученик не получал даже «ни одно значение не
+        совпало» — то есть ровно тот случай, ради которого правка и делалась.
+        """
+        if not current[1]:
+            return candidate
+
+        def key(pair: tuple[int, int]) -> tuple[float, int]:
+            hit, total = pair
+            return (hit / total if total else 0.0, hit)
+
+        return candidate if key(candidate) > key(current) else current
+
+    @staticmethod
+    def _table_rows(flat: List[str], columns: int) -> List[tuple[str, ...]]:
+        """Плоский список ячеек -> ряды по `columns` ячеек."""
+        step = max(1, columns)
+        return [tuple(flat[i:i + step]) for i in range(0, len(flat), step)]
+
+    @staticmethod
+    def _count_matching_rows(
+        cells: List[str],
+        expected: List[str],
+        columns: int,
+        order_matters: bool,
+    ) -> tuple[int, int]:
+        """
+        Сколько рядов эталона совпало с ответом.
+
+        Тот же счёт, что стоит за частичным баллом (`_score_table`), — вынесен
+        отдельно, потому что нужен ещё и обратной связи при `all_or_nothing`
+        (tsk-822): балл там не начисляется, а число совпавших рядов ученику
+        сообщается. Один источник счёта на оба применения, чтобы «совпало 3 из 4»
+        не разошлось с баллом, если режим оценивания когда-нибудь сменят.
+
+        Returns:
+            Пара (совпало рядов, всего рядов в эталоне).
+        """
+        expected_rows = CheckingService._table_rows(expected, columns)
+        if not expected_rows:
+            return 0, 0
+        student_rows = CheckingService._table_rows(cells, columns)
         if order_matters:
             hit = sum(
                 1
@@ -1156,9 +1241,8 @@ class CheckingService:
                 if i < len(student_rows) and student_rows[i] == row
             )
         else:
-            common = Counter(student_rows) & Counter(expected_rows)
-            hit = sum(common.values())
-        return int(full_score * hit / len(expected_rows))
+            hit = sum((Counter(student_rows) & Counter(expected_rows)).values())
+        return hit, len(expected_rows)
 
     def _generate_feedback_table(
         self,
@@ -1167,6 +1251,8 @@ class CheckingService:
         max_score: int,
         cells_given: int,
         columns: int,
+        rows_matched: Optional[int] = None,
+        rows_total: Optional[int] = None,
     ) -> Optional[CheckFeedback]:
         """
         Обратная связь по табличному ответу.
@@ -1174,6 +1260,28 @@ class CheckingService:
         При неверном ответе дополнительно сообщаем, сколько значений система
         разобрала. Ученику это нужно, чтобы отличить ошибку в вычислениях от
         ошибки ввода — раньше он не видел ни того, ни другого.
+
+        tsk-822: при `all_or_nothing` (а это все 306 активных TBL_COM) несколько
+        ответов оцениваются как один, и ученик не знал, ошибся он в одном месте
+        или во всех. Улика — tsk-800: ученик с третьей попытки начал перебирать
+        ряд, который с самого начала был верным, потому что вердикт «неверно»
+        накрывал всю таблицу целиком. Поэтому сообщаем **число** совпавших рядов
+        (`rows_matched` из `rows_total`), но НЕ какие именно: номер неверной
+        строки при трёх попытках позволял бы добить ответ перебором, не решая
+        задачу. Оценивание при этом не трогается — зачёт по-прежнему только за
+        полный ответ (решение оператора 08.09).
+
+        Частичный балл вместо этого не годится по арифметике: при `max_score = 1`
+        (а он такой у всех 306 активных TBL_COM) `partial` даёт `int(1 * 3/4) = 0`,
+        а если поднять `max_score` до числа рядов — включается
+        `PASSED при score/max_score >= 0.5` (`learning_engine_service`), то есть
+        зачёт по заданию ЕГЭ за половину верных строк.
+
+        Куда это сообщение НЕ доходит: TBL_COM входит в `COMMENT_TASK_TYPES`, и
+        гейт 2.3f роутера (`attempts.py`, tsk-419) затирает результат целиком,
+        если ученик сдал без комментария и без файла. Так и задумано — такой
+        ответ вообще не оценивается, и причина важнее подсчёта; зафиксировано
+        в `tests/test_table_feedback_router_tsk822.py`.
         """
         if is_correct:
             general = "Отлично! Ваш ответ правильный."
@@ -1191,10 +1299,56 @@ class CheckingService:
                     f"{cells_given} — ряды заполнены не до конца."
                 )
             general = (
-                f"Ответ неверен. Система разобрала {cells_given} значений.{rows_hint}"
+                f"Ответ неверен. Система разобрала "
+                f"{self._plural(cells_given, 'значение', 'значения', 'значений')}."
+                f"{self._matched_rows_hint(rows_matched, rows_total, columns)}{rows_hint}"
             )
 
         return CheckFeedback(general=general, by_option=None)
+
+    @staticmethod
+    def _plural(number: int, one: str, few: str, many: str) -> str:
+        """«1 значение», «3 значения», «5 значений» — число вместе со словом."""
+        tail_100 = number % 100
+        tail_10 = number % 10
+        if 11 <= tail_100 <= 14:
+            word = many
+        elif tail_10 == 1:
+            word = one
+        elif 2 <= tail_10 <= 4:
+            word = few
+        else:
+            word = many
+        return f"{number} {word}"
+
+    @classmethod
+    def _matched_rows_hint(
+        cls,
+        rows_matched: Optional[int],
+        rows_total: Optional[int],
+        columns: int,
+    ) -> str:
+        """
+        Фраза «совпало N из M» для неверного табличного ответа.
+
+        Молчим там, где фраза ничего не добавляет: эталон из одного ряда (там
+        «0 из 1» — то же самое, что «неверно»), совпали все ряды (ответ неверен
+        по другой причине — например, рядов больше, чем нужно) и неизвестное
+        число рядов (регексный путь, отсутствие эталона).
+        """
+        if rows_matched is None or not rows_total or rows_total < 2:
+            return ""
+        if rows_matched >= rows_total:
+            return ""
+        if columns > 1:
+            unit = ("строка", "строки", "строк")
+            nothing = " Ни одна строка не совпала с эталоном."
+        else:
+            unit = ("значение", "значения", "значений")
+            nothing = " Ни одно значение не совпало с эталоном."
+        if rows_matched == 0:
+            return nothing
+        return f" Совпало {cls._plural(rows_matched, *unit)} из {rows_total}."
 
     @classmethod
     def _matches_short_answer(
