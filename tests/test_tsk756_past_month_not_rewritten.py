@@ -25,7 +25,7 @@
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import text
@@ -42,12 +42,37 @@ from tests.test_tsk505_marketer_pricing import (
 
 pytestmark = pytest.mark.asyncio
 
-#: «Сегодня» тестов. Фиксированное, иначе смысл «прошедшего месяца» уезжал бы
-#: вместе с календарём: в первых числах и в конце месяца проверка означала бы
-#: разное.
-TODAY = date(2026, 9, 15)
-PAST = date(2026, 8, 1)
-CURRENT = date(2026, 9, 1)
+#: «Сегодня» тестов — по МОСКОВСКОЙ дате: расчёт сравнивает дни с
+#: `(now() AT TIME ZONE 'Europe/Moscow')::date`, а машина разработчика живёт в
+#: другом поясе. Ночью первого числа местная дата и московская расходятся, и
+#: «прошедший месяц» означал бы для теста и для базы разное.
+TODAY = datetime.now(timezone(timedelta(hours=3))).date()
+#: Месяц, который УЖЕ КОНЧИЛСЯ, и месяц, который идёт сейчас. Выводятся от
+#: сегодня, а не задаются числами (tsk-795, tsk-833): смысл проверок держится не
+#: на «августе 2026», а на отношении «этот месяц прошёл, тот идёт». Жёсткая пара
+#: `2026-08 / 2026-09` теряет это отношение молча — с наступлением октября
+#: CURRENT перестаёт быть текущим месяцем, слоты заводятся в прошлом, автопересчёт
+#: их не касается, и проверка зеленеет, уже ничего не проверяя.
+PAST = charge_service.month_start(charge_service.month_start(TODAY) - timedelta(days=1))
+CURRENT = charge_service.month_start(TODAY)
+#: Месяц ПЕРЕД прошедшим: с него ходит «старый» ученик, чтобы день его прихода не
+#: попадал внутрь расчётного месяца.
+BEFORE_PAST = charge_service.month_start(PAST - timedelta(days=1))
+#: Последний ДЕНЬ прошедшего месяца — граница действия «летней» сетки.
+PAST_LAST_DAY = charge_service.next_month(PAST) - timedelta(days=1)
+
+_PAST_MONDAYS = [
+    PAST + timedelta(days=i)
+    for i in range((PAST_LAST_DAY - PAST).days + 1)
+    if (PAST + timedelta(days=i)).weekday() == 0
+]
+#: Первый и последний понедельники прошедшего месяца. Слоты в тестах стоят на
+#: понедельник, поэтому и даты берутся понедельниками: с ПОСЛЕДНЕГО сетка даёт в
+#: месяце ровно одно занятие (роль прежнего `31.08.2026`), а ПЕРВЫЙ означает
+#: «человек ходил с начала месяца».
+FIRST_MONDAY = _PAST_MONDAYS[0]
+LAST_MONDAY = _PAST_MONDAYS[-1]
+assert PAST < CURRENT <= TODAY
 
 
 async def _slot(
@@ -163,18 +188,20 @@ async def test_slot_created_today_does_not_reach_last_month(db):
     август насчитал им занятие, которого не могло быть.
     """
     env = await _setup(db, "af")
-    # Слот заведён 31 августа: в августе он действует ровно один день.
+    # Слот заведён в последний понедельник: в этом месяце он действует один день.
     await _slot(
         db,
         student_id=env["student_id"],
         teacher_id=env["teacher_id"],
-        weekday=0,  # понедельник; 31.08.2026 — понедельник
-        active_from=date(2026, 8, 31),
+        weekday=0,  # понедельник — как и LAST_MONDAY
+        active_from=LAST_MONDAY,
     )
     counts = await charge_service.lesson_counts_for_month(
         db, student_id=env["student_id"], period=PAST
     )
-    assert counts.expected == 1, "август должен увидеть только 31-е, а не все понедельники"
+    assert counts.expected == 1, (
+        "прошедший месяц должен увидеть только последний понедельник, а не все"
+    )
 
 
 async def test_scheduled_day_without_a_lesson_is_not_billed(db):
@@ -189,7 +216,7 @@ async def test_scheduled_day_without_a_lesson_is_not_billed(db):
         student_id=env["student_id"],
         teacher_id=env["teacher_id"],
         weekday=0,
-        active_from=date(2026, 8, 31),
+        active_from=LAST_MONDAY,
     )
     counts = await charge_service.lesson_counts_for_month(
         db, student_id=env["student_id"], period=PAST
@@ -211,14 +238,14 @@ async def test_lesson_that_happened_is_billed(db):
         student_id=env["student_id"],
         teacher_id=env["teacher_id"],
         weekday=0,
-        active_from=date(2026, 8, 31),
+        active_from=LAST_MONDAY,
     )
     await _occurrence(
         db,
         slot_id=slot_id,
         teacher_id=env["teacher_id"],
         student_id=env["student_id"],
-        day=date(2026, 8, 31),
+        day=LAST_MONDAY,
     )
     counts = await charge_service.lesson_counts_for_month(
         db, student_id=env["student_id"], period=PAST
@@ -325,16 +352,16 @@ async def test_price_uses_schedule_of_the_month_being_billed(db):
             ("2 раза в неделю", 550000, "attendance_frequency", "2"),
         ],
     )
-    # В августе — один слот, он же и закончился вместе с месяцем.
+    # В прошедшем месяце — один слот, он же и закончился вместе с месяцем.
     await _slot(
         db,
         student_id=env["student_id"],
         teacher_id=env["teacher_id"],
         weekday=0,
-        active_from=date(2026, 7, 1),
-        active_until=date(2026, 8, 31),
+        active_from=BEFORE_PAST,
+        active_until=PAST_LAST_DAY,
     )
-    # С сентября — два: человек стал ходить чаще.
+    # С текущего месяца — два: человек стал ходить чаще.
     for weekday in (0, 2):
         await _slot(
             db,
@@ -351,8 +378,8 @@ async def test_price_uses_schedule_of_the_month_being_billed(db):
         row = next(r for r in rows if r.student_id == env["student_id"])
         return row.groups[0].price_minor
 
-    assert price_of(august) == 275000, "август — по августовской частоте"
-    assert price_of(september) == 550000, "сентябрь — по сентябрьской"
+    assert price_of(august) == 275000, "прошедший месяц — по его собственной частоте"
+    assert price_of(september) == 550000, "текущий — по сегодняшней"
 
 
 # ── сторож ─────────────────────────────────────────────────────────────────
@@ -475,14 +502,14 @@ async def test_a_missed_lesson_is_still_paid_for(db):
         student_id=env["student_id"],
         teacher_id=env["teacher_id"],
         weekday=0,
-        active_from=date(2026, 8, 31),
+        active_from=LAST_MONDAY,
     )
     await _occurrence(
         db,
         slot_id=slot_id,
         teacher_id=env["teacher_id"],
         student_id=env["student_id"],
-        day=date(2026, 8, 31),
+        day=LAST_MONDAY,
         status="no_show",
     )
     counts = await charge_service.lesson_counts_for_month(
@@ -501,29 +528,30 @@ async def test_recreated_slot_link_does_not_reset_the_join_date(db):
     суммы держала ручная цена, которая долю не применяет.
     """
     env = await _setup(db, "rejoin")
-    # Занятие в начале августа — человек уже ходил.
+    # Занятие в начале прошедшего месяца — человек уже ходил.
     old_slot = await _slot(
         db,
         student_id=env["student_id"],
         teacher_id=env["teacher_id"],
         weekday=0,
-        active_from=date(2026, 7, 1),
-        active_until=date(2026, 8, 31),
+        active_from=BEFORE_PAST,
+        active_until=PAST_LAST_DAY,
     )
     await _occurrence(
         db,
         slot_id=old_slot,
         teacher_id=env["teacher_id"],
         student_id=env["student_id"],
-        day=date(2026, 8, 3),
+        day=FIRST_MONDAY,
     )
     # А привязку к нынешнему слоту завели только в конце месяца.
     await db.execute(
         text(
-            "UPDATE lesson_slot_student SET created_at = '2026-08-31 12:00+03' "
+            "UPDATE lesson_slot_student "
+            "   SET created_at = CAST(:d AS date) + TIME '12:00' AT TIME ZONE 'Europe/Moscow' "
             " WHERE student_id = :u"
         ),
-        {"u": env["student_id"]},
+        {"u": env["student_id"], "d": PAST_LAST_DAY},
     )
     await db.commit()
 
@@ -548,14 +576,15 @@ async def test_a_lesson_later_than_the_link_does_not_cut_the_month(db):
         student_id=env["student_id"],
         teacher_id=env["teacher_id"],
         weekday=0,
-        active_from=date(2026, 8, 1),
+        active_from=PAST,
     )
     await db.execute(
         text(
-            "UPDATE lesson_slot_student SET created_at = '2026-08-01 12:00+03' "
+            "UPDATE lesson_slot_student "
+            "   SET created_at = CAST(:d AS date) + TIME '12:00' AT TIME ZONE 'Europe/Moscow' "
             " WHERE student_id = :u"
         ),
-        {"u": env["student_id"]},
+        {"u": env["student_id"], "d": PAST},
     )
     await db.commit()
     # Первое занятие только в конце месяца — раньше генератор не дошёл.
@@ -564,12 +593,12 @@ async def test_a_lesson_later_than_the_link_does_not_cut_the_month(db):
         slot_id=slot_id,
         teacher_id=env["teacher_id"],
         student_id=env["student_id"],
-        day=date(2026, 8, 31),
+        day=LAST_MONDAY,
     )
     counts = await charge_service.lesson_counts_for_month(
         db, student_id=env["student_id"], period=PAST
     )
-    assert counts.not_started == 0, "приход — 1 августа, по привязке"
+    assert counts.not_started == 0, "приход — первое число месяца, по привязке"
 
 
 async def test_manual_price_is_not_prorated_by_any_deduction(db):
@@ -586,7 +615,7 @@ async def test_manual_price_is_not_prorated_by_any_deduction(db):
         student_id=env["student_id"],
         teacher_id=env["teacher_id"],
         weekday=0,
-        active_from=date(2026, 8, 1),
+        active_from=PAST,
     )
     await charge_service.set_price_override(
         db,

@@ -14,7 +14,6 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import date
 
 import pytest
 from sqlalchemy import text
@@ -23,8 +22,25 @@ from sqlalchemy.pool import NullPool
 
 from app.core.config import Settings
 from app.services import charge_cron_service
+from tests.test_tsk511_charges_breaks import MONDAYS, PERIOD
 
 _TAG = "tsk596lock"
+
+#: Расчётный месяц берётся из tsk-511: он подбирается ЗАВЕДОМО БУДУЩИМ (tsk-795,
+#: tsk-833). Жёсткий `date(2026, 9, 1)` работал, пока сентябрь 2026 был впереди.
+#: Здесь месяц не про суммы, а про то, чтобы проход делал НАСТОЯЩУЮ работу:
+#: пересчёт прошедшего месяца автоматика пропускает целиком (`allow_past=False`),
+#: и лок сторожил бы пустой проход — проверка тихо перестала бы что-либо значить.
+#: «Сегодня» для тика — середина этого месяца: тик выводит период из этой даты.
+#:
+#: Побочное действие, о котором надо знать: модуль идёт БЕЗ транзакционной
+#: изоляции и коммитит, а тик по пути ставит снимки итогов всем месяцам ДО
+#: этой даты (`freeze_finished_months`). Горизонт снимков в dev-БД уезжает
+#: вперёд вместе с `PERIOD`. Это принято сознательно: снимок заполняет
+#: только пустое поле и ничего не портит, тогда как «текущий месяц» вместо
+#: будущего заставил бы уборку сносить настоящие начисления dev-БД за этот
+#: месяц, а не одни лишь строки, которые тик завёл сам.
+TODAY = MONDAYS[1]
 
 
 async def _seed(factory) -> dict:
@@ -104,7 +120,7 @@ async def _cleanup(factory, env: dict | None) -> None:
         )
         await db.execute(
             text("DELETE FROM student_monthly_charge WHERE period = :p"),
-            {"p": date(2026, 9, 1)},
+            {"p": PERIOD},
         )
         if env is not None:
             ids = [env["methodist_id"], env["teacher_id"], env["student_id"]]
@@ -137,7 +153,7 @@ async def test_notification_phase_is_not_duplicated_after_commit(monkeypatch):
     """
     engine = create_async_engine(Settings().database_url, poolclass=NullPool)
     factory = async_sessionmaker(engine, expire_on_commit=False)
-    today = date(2026, 9, 15)
+    today = TODAY
     rival: dict[str, dict] = {}
     real_notify = charge_cron_service._notify_methodists
     env = await _seed(factory)
@@ -200,7 +216,7 @@ async def test_two_workers_do_not_duplicate_notification():
     """
     engine = create_async_engine(Settings().database_url, poolclass=NullPool)
     factory = async_sessionmaker(engine, expire_on_commit=False)
-    today = date(2026, 9, 15)
+    today = TODAY
     env = await _seed(factory)
     try:
         first, second = await asyncio.gather(

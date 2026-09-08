@@ -23,7 +23,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 from sqlalchemy import text
@@ -34,13 +34,21 @@ from tests.test_tsk505_marketer_pricing import _enroll, _new_course, _new_group,
 
 pytestmark = pytest.mark.asyncio
 
-#: Расчётный месяц фиксирован намеренно: тест не должен зависеть от того, какое
-#: сегодня число (прогон первого числа иначе ломал бы «посреди месяца»).
-PERIOD = date(2026, 9, 1)
+#: Расчётный месяц — ЗАВЕДОМО БУДУЩИЙ, и это не украшение (tsk-795, tsk-833).
+#: Жёсткий `date(2026, 9, 1)` работал, пока сентябрь 2026 был впереди: с
+#: наступлением октября месяц стал прошедшим, а прошедший месяц автоматика не
+#: пересчитывает вовсе (`allow_past=False`, tsk-756). `recalculate_for_student`
+#: не завёл бы ни одной строки, и проверки сумм упали бы на `{} == {…}` —
+#: проверено сдвигом дат на месяц назад.
+#:
+#: Выводить месяц от `date.today()` обязательно и по прежней причине: смысл
+#: «посреди месяца» держится на том, что `MID` лежит ВНУТРИ периода, а не на
+#: конкретном числе календаря.
+PERIOD = charge_service.next_month(charge_service.month_start(date.today()))
 #: День смены тарифа — середина расчётного месяца.
-MID = date(2026, 9, 15)
+MID = PERIOD + timedelta(days=14)
 #: Дата начала прежней подписки — заведомо раньше первого числа периода.
-BEFORE = date(2026, 8, 1)
+BEFORE = charge_service.month_start(date.today())
 
 OLD_PRICE = 300_000
 NEW_PRICE = 150_000
