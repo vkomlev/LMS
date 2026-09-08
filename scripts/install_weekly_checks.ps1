@@ -80,10 +80,15 @@ $ErrorActionPreference = 'Stop'
 # Чек → имя задачи и время в понедельник. Имена — те же, что стояли до tsk-641.
 $plan = @(
     # Сверка с ContentBackbone идёт РАНЬШЕ всех и с большим запасом: она опрашивает
-    # кабинет по одному заданию (около полутора тысяч запросов, примерно двадцать
-    # минут). Поставить её рядом с остальными значило бы, что сводка в 09:45 уйдёт
-    # без её строки — то есть чек будет числиться молчащим каждую неделю (tsk-760).
-    [pscustomobject]@{ Check = 'cb-drift';            TaskName = 'LMS cb drift weekly';                    At = '08:40'; Default = $true;  Why = 'правки без пометки — их затрёт переиздание курса (tsk-760)'; LimitMinutes = 90 }
+    # кабинет по одному заданию. Поставить её рядом с остальными значило бы, что
+    # сводка в 09:45 уйдёт без её строки — то есть чек будет числиться молчащим
+    # каждую неделю (tsk-760).
+    # LimitMinutes 150: с tsk-849 в сверку вошли задания уроков (снимки партий
+    # CreateCourses), охват вырос с ~1360 запросов до ~5090 — полный прогон занимает
+    # около 70 минут вместо двадцати. Прежних 90 минут хватало бы впритык, а сводке
+    # в 09:45 нужен готовый итог. Ускорение (выдача заданий пачкой по курсу) вынесено
+    # отдельной задачей — после него сюда вернутся 90.
+    [pscustomobject]@{ Check = 'cb-drift';            TaskName = 'LMS cb drift weekly';                    At = '08:40'; Default = $true;  Why = 'правки без пометки — их затрёт переиздание курса (tsk-760)'; LimitMinutes = 150 }
     [pscustomobject]@{ Check = 'section-order';       TaskName = 'LMS - chek poryadka razdelov (tsk-237)'; At = '09:00'; Default = $true;  Why = 'порядок разделов курсов (tsk-237)' }
     [pscustomobject]@{ Check = 'ungradable';          TaskName = 'LMS ungradable tasks weekly';            At = '09:10'; Default = $true;  Why = 'задания, которые невозможно проверить (tsk-361)' }
     [pscustomobject]@{ Check = 'stale-verdicts';      TaskName = 'LMS stale verdicts weekly';              At = '09:20'; Default = $true;  Why = 'незачёты, устаревшие после правки эталона (tsk-636)' }
