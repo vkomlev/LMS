@@ -19,7 +19,7 @@
 NULL — бессрочно, как было до этой задачи; поэтому колонка nullable и без
 server_default, а существующие восемь строк остаются бессрочными.
 
-Rollback: `alembic downgrade tsk868_learning_time_session`. Колонка снимается;
+Rollback: `alembic downgrade tsk835_presence_context_video`. Колонка снимается;
 откат схемы делается вместе с откатом кода — расчёт месяца её читает.
 """
 from typing import Sequence, Union
@@ -28,7 +28,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "tsk866_price_override_ends_on"
-down_revision: Union[str, None] = "tsk868_learning_time_session"
+down_revision: Union[str, None] = "tsk835_presence_context_video"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
