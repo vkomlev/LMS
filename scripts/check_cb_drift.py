@@ -205,10 +205,15 @@ async def main(quiet: bool = False, uid_prefix: Optional[str] = None,
     marked = await already_marked(dsn, edited)
     unmarked = [uid for uid in edited if uid not in marked]
 
+    # «Отбраковано нами» держим отдельно от «в LMS нет»: это решение, а не
+    # потеря, и в сводке оно не должно выглядеть поводом для расследования
+    # (tsk-853 — 273 таких задания перепроверяли не раз).
+    dropped = counts.get("dropped_by_us", 0)
     print(
         f"Сверено заданий: {report.get('total', 0)}; "
         f"совпало {counts.get('same', 0)}, разошлось {len(edited)} "
         f"(из них уже помечено {len(marked)}), в LMS нет {counts.get('missing_in_lms', 0)}"
+        + (f", отбраковано нами {dropped}" if dropped else "")
     )
 
     if not unmarked and not unreadable:
