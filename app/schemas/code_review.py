@@ -67,6 +67,55 @@ class TextPasteSignal(BaseModel):
     evidence: Optional[str] = Field(None, description="Кусок текста, где след найден")
 
 
+class UnseenConstruct(BaseModel):
+    """
+    Одна конструкция, которой не было в пройденных этим учеником материалах (tsk-864).
+
+    Как и `TextPasteSignal`, это ФАКТ, а не мнение модели: конструкция найдена в
+    коде разбором синтаксиса, а её отсутствие — сверкой с текстом материалов,
+    которые ученик отметил пройденными. Поэтому у пометки есть строка кода:
+    преподаватель проверяет её глазами, не веря нам на слово.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    code: Optional[str] = Field(
+        None, description="Код конструкции: fstring | dunder | comprehension | …",
+        examples=["fstring"],
+    )
+    label: Optional[str] = Field(
+        None, description="Название человеческим языком", examples=['f-строка (`f"…"`)']
+    )
+    evidence: Optional[str] = Field(
+        None,
+        description="Строка кода ученика, где конструкция встретилась",
+        examples=['print(f"Привет, {name}!")'],
+    )
+
+
+class UnseenConstructs(BaseModel):
+    """
+    Итог сверки кода с пройденными материалами (tsk-864).
+
+    Секции нет вовсе, когда сверять не с чем: язык не Python, либо у ученика нет
+    ни одной отметки о пройденном материале. Пустой `items` при этом значит
+    обратное — сверили, и всё найденное в коде ученику уже объясняли. Разница
+    важна: тишина «проверено» и тишина «не проверялось» — разные вещи, и
+    показывать их одинаково значит вводить преподавателя в заблуждение.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    items: Optional[list[UnseenConstruct]] = Field(
+        None, description="Конструкции, которых не было в пройденном. Пустой список — все пройдены"
+    )
+    materials_seen: Optional[int] = Field(
+        None,
+        description="По скольким отмеченным пройденными материалам сверяли",
+        examples=[31],
+    )
+
+
 class CodeReviewLintMessage(BaseModel):
     """Одно замечание линтера."""
 
@@ -196,6 +245,15 @@ class CodeReviewReport(BaseModel):
             "Механические следы вставки в текстовой работе (tsk-646). Считаются "
             "регулярками, без модели, и остаются доступны, даже когда модель не "
             "ответила. Пустой список — следов нет; это не значит «писал сам»"
+        ),
+    )
+    unseen_constructs: Optional[UnseenConstructs] = Field(
+        None,
+        description=(
+            "tsk-864: конструкции из кода, которых нет ни в одном материале, "
+            "пройденном этим учеником. Считается у нас из данных, без модели, и "
+            "остаётся доступной, даже когда модель не ответила. Повод посмотреть "
+            "работу, а не вывод о списывании: конструкцию могли узнать и сами"
         ),
     )
     rubric_review: Optional[RubricReview] = Field(

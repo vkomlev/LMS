@@ -46,6 +46,7 @@ from app.services.code_review_service import (
 )
 from app.services import rubric_review_service
 from app.services import text_authorship_service as text_authorship
+from app.services import unseen_constructs_service
 
 logger = logging.getLogger("app.code_review_cron")
 
@@ -63,6 +64,9 @@ _PENDING_SQL = """
            tr.user_id,
            tr.attempt_id,
            tr.task_id,
+           -- tsk-864: тема, в которой сдана работа. Её материалы считаются
+           -- доступными ученику целиком — см. `unseen_constructs_service`.
+           t.course_id,
            tr.answer_json->'response'->>'value'   AS value,
            tr.answer_json->'response'->>'comment' AS comment,
            t.task_content->>'stem'                AS stem,
@@ -158,11 +162,17 @@ async def code_review_cron_tick(
     if not rows:
         return summary
 
+    # tsk-864: кэш пройденного на время прохода. Живёт ровно пачку: материалы
+    # за минуту не меняются, а между проходами могли бы. Четыре из семи сдач,
+    # с которых началась задача, принадлежали одному ученику — без кэша его
+    # материалы вычитывались бы из базы четыре раза подряд.
+    unseen_cache: Dict[Any, Any] = {}
+
     # Фаза 2 — работа. Открытой транзакции здесь нет: вызов модели идёт вне БД,
     # а каждый отчёт `_write` пишет и коммитит сам, своей короткой транзакцией.
     for row in rows:
-        (result_id, student_id, attempt_id, task_id, value, comment, stem,
-         attachments, attempts, backfill, code_snapshot, kind, body_text,
+        (result_id, student_id, attempt_id, task_id, course_id, value, comment,
+         stem, attachments, attempts, backfill, code_snapshot, kind, body_text,
          solution_rules) = row
 
         # tsk-646: развёрнутый письменный ответ разбирается другой рубрикой
@@ -213,6 +223,16 @@ async def code_review_cron_tick(
         static = await asyncio.to_thread(analyze_student_code_quality, code)
         static_ok = bool(static) and not static.get("error")
 
+        # tsk-864: конструкции, которых не было в пройденных этим учеником
+        # материалах. Считается ДО модели и независимо от неё — это факт о
+        # данных, а не мнение: при недоступной модели признак остаётся, ровно
+        # как статический анализ. Своя короткая сессия, потому что фаза 2 идёт
+        # без открытой транзакции (см. довод выше).
+        unseen = await _unseen_constructs(
+            factory, student_id=student_id, course_id=course_id, code=code,
+            cache=unseen_cache,
+        )
+
         verdict = await review_student_code(
             code, task_stem=stem, student_id=student_id,
         )
@@ -222,6 +242,8 @@ async def code_review_cron_tick(
             payload: Dict[str, Any] = {"status": "done", **verdict}
             if static_ok:
                 payload["static"] = static
+            if unseen is not None:
+                payload["unseen_constructs"] = unseen
             await _write(factory, result_id, payload, backfill=backfill)
             summary["reviewed"] += 1
             continue
@@ -252,6 +274,10 @@ async def code_review_cron_tick(
             if static_ok:
                 payload["static"] = static
                 payload["degraded"] = True
+            # Признак непройденной конструкции модели не требует — значит и при
+            # её отказе преподаватель получает его, а не пустой отчёт.
+            if unseen is not None:
+                payload["unseen_constructs"] = unseen
             await _write(factory, result_id, payload, backfill=backfill)
             # Считаем раздельно: в БД у деградированной работы `done`, и
             # называть её в логе провалом — врать самому себе при разборе.
@@ -264,6 +290,27 @@ async def code_review_cron_tick(
         summary["retried"], summary["failed"], summary["skipped"],
     )
     return summary
+
+
+async def _unseen_constructs(
+    factory: async_sessionmaker[AsyncSession],
+    *,
+    student_id: Optional[int],
+    course_id: Optional[int],
+    code: str,
+    cache: Dict[Any, Any],
+) -> Optional[Dict[str, Any]]:
+    """
+    Секция `unseen_constructs` для одной работы (tsk-864), своей короткой сессией.
+
+    `None` — сверять не с чем (не Python, ученик неизвестен, отметок о
+    материалах нет); тогда ключа в отчёте не будет вовсе, и панель
+    преподавателя не покажет проверку, которой не было.
+    """
+    async with factory() as db:
+        return await unseen_constructs_service.build_report(
+            db, student_id=student_id, course_id=course_id, code=code, cache=cache
+        )
 
 
 async def _process_text_row(

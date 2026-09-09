@@ -46574,6 +46574,17 @@
             "title": "Signals",
             "description": "Механические следы вставки в текстовой работе (tsk-646). Считаются регулярками, без модели, и остаются доступны, даже когда модель не ответила. Пустой список — следов нет; это не значит «писал сам»"
           },
+          "unseen_constructs": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UnseenConstructs"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "tsk-864: конструкции из кода, которых нет ни в одном материале, пройденном этим учеником. Считается у нас из данных, без модели, и остаётся доступной, даже когда модель не ответила. Повод посмотреть работу, а не вывод о списывании: конструкцию могли узнать и сами"
+          },
           "rubric_review": {
             "anyOf": [
               {
@@ -70531,6 +70542,97 @@
           "unread_count"
         ],
         "title": "UnreadBySenderItem"
+      },
+      "UnseenConstruct": {
+        "properties": {
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code",
+            "description": "Код конструкции: fstring | dunder | comprehension | …",
+            "examples": [
+              "fstring"
+            ]
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label",
+            "description": "Название человеческим языком",
+            "examples": [
+              "f-строка (`f\"…\"`)"
+            ]
+          },
+          "evidence": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence",
+            "description": "Строка кода ученика, где конструкция встретилась",
+            "examples": [
+              "print(f\"Привет, {name}!\")"
+            ]
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "UnseenConstruct",
+        "description": "Одна конструкция, которой не было в пройденных этим учеником материалах (tsk-864).\n\nКак и `TextPasteSignal`, это ФАКТ, а не мнение модели: конструкция найдена в\nкоде разбором синтаксиса, а её отсутствие — сверкой с текстом материалов,\nкоторые ученик отметил пройденными. Поэтому у пометки есть строка кода:\nпреподаватель проверяет её глазами, не веря нам на слово."
+      },
+      "UnseenConstructs": {
+        "properties": {
+          "items": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/UnseenConstruct"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Items",
+            "description": "Конструкции, которых не было в пройденном. Пустой список — все пройдены"
+          },
+          "materials_seen": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Materials Seen",
+            "description": "По скольким отмеченным пройденными материалам сверяли",
+            "examples": [
+              31
+            ]
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "UnseenConstructs",
+        "description": "Итог сверки кода с пройденными материалами (tsk-864).\n\nСекции нет вовсе, когда сверять не с чем: язык не Python, либо у ученика нет\nни одной отметки о пройденном материале. Пустой `items` при этом значит\nобратное — сверили, и всё найденное в коде ученику уже объясняли. Разница\nважна: тишина «проверено» и тишина «не проверялось» — разные вещи, и\nпоказывать их одинаково значит вводить преподавателя в заблуждение."
       },
       "UserAchievementCreate": {
         "properties": {
