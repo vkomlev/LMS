@@ -811,7 +811,8 @@ async def manual_pricing_state(db: AsyncSession, student_id: int) -> dict:
     prices = (
         await db.execute(
             text(
-                "SELECT o.group_id, g.name AS group_name, o.price_minor, o.note "
+                "SELECT o.group_id, g.name AS group_name, o.price_minor, o.note, "
+                "       o.ends_on "
                 "  FROM student_price_override o "
                 "  JOIN pricing_group g ON g.id = o.group_id "
                 " WHERE o.student_id = :sid ORDER BY g.name"
@@ -820,9 +821,21 @@ async def manual_pricing_state(db: AsyncSession, student_id: int) -> dict:
         )
     ).mappings().all()
 
+    # tsk-866: у цены есть срок. Истёкшая не применяется к текущему месяцу, даже
+    # если группа своя, — «действует сейчас» обязано означать то же самое, что
+    # видит расчёт (`charge_service._base_price_minor`), иначе экран смены тарифа
+    # пообещает договорённость, которой в деньгах уже нет.
+    current_period = date.today().replace(day=1)
     return {
         "monthly_amounts": [dict(r) for r in amounts],
         "group_prices": [
-            {**dict(r), "applies_now": int(r["group_id"]) in billing} for r in prices
+            {
+                **dict(r),
+                "applies_now": (
+                    int(r["group_id"]) in billing
+                    and (r["ends_on"] is None or r["ends_on"] >= current_period)
+                ),
+            }
+            for r in prices
         ],
     }

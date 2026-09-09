@@ -97,6 +97,13 @@ class PriceOverrideRead(BaseModel):
     group_name: str
     price_minor: int
     note: Optional[str] = None
+    ends_on: Optional[date] = Field(
+        default=None,
+        description=(
+            "Последний месяц действия цены; пусто — бессрочно. Цена применяется "
+            "к месяцу, если срок не раньше его первого числа (tsk-866)"
+        ),
+    )
 
 
 class PriceOverrideRequest(BaseModel):
@@ -104,6 +111,15 @@ class PriceOverrideRequest(BaseModel):
     group_id: int
     price_minor: int = Field(ge=0)
     note: Optional[str] = Field(default=None, max_length=500)
+    ends_on: Optional[date] = Field(
+        default=None,
+        description=(
+            "Последний месяц действия цены. Пусто — бессрочно: так и надо, если "
+            "это договорённость о цене. Временную фиксацию («сумма августа перед "
+            "выпуском») закрывайте датой — примечание словами уже один раз не "
+            "сработало, и цена пережила выпуск ученика (tsk-866)"
+        ),
+    )
 
 
 class ClosePeriodRequest(BaseModel):

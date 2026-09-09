@@ -68,17 +68,25 @@ class ManualMonthAmount(BaseModel):
 
 
 class ManualGroupPrice(BaseModel):
-    """Бессрочная цена ученика В ГРУППЕ — другая сущность, чем сумма месяца."""
+    """Персональная цена ученика В ГРУППЕ — другая сущность, чем сумма месяца."""
 
     group_id: int
     group_name: str
     price_minor: int = Field(..., description="Цена руками, в копейках")
     note: Optional[str] = None
+    ends_on: Optional[date] = Field(
+        default=None,
+        description=(
+            "Последний месяц действия цены; пусто — бессрочно (tsk-866). Выпуск "
+            "проставляет сюда день ухода"
+        ),
+    )
     applies_now: bool = Field(
         ...,
         description=(
-            "Действует ли она сейчас. False — группа покинута: цена лежит в базе "
-            "и оживёт при возврате на прежний тариф, но месяц по ней не считается"
+            "Действует ли она сейчас. False — группа покинута (цена лежит в базе "
+            "и оживёт при возврате на прежний тариф) либо истёк срок `ends_on`; "
+            "в обоих случаях месяц по ней не считается"
         ),
     )
 
@@ -199,6 +207,13 @@ class GraduationResult(BaseModel):
     escalated_to: list[int] = Field(
         default_factory=list,
         description="Кому ушла эскалация о долге; пусто — долга нет",
+    )
+    closed_price_overrides: int = Field(
+        default=0,
+        description=(
+            "Сколько персональных цен закрыто днём ухода (tsk-866). Цена "
+            "действует по месяц ухода включительно, со следующего не начисляется"
+        ),
     )
 
 

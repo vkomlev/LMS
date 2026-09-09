@@ -45,7 +45,12 @@ class StudentBreak(Base):
 
 
 class StudentPriceOverride(Base):
-    """Ручная цена ученика по тарифной группе. Снимается удалением строки."""
+    """Ручная цена ученика по тарифной группе.
+
+    Снимается удалением строки либо сроком: `ends_on` — последний месяц
+    действия (tsk-866). Второе мягче и не теряет след договорённости, поэтому
+    выпуск закрывает цену датой, а не стирает её.
+    """
 
     __tablename__ = "student_price_override"
 
@@ -55,6 +60,8 @@ class StudentPriceOverride(Base):
         ForeignKey("pricing_group.id", ondelete="CASCADE")
     )
     price_minor: Mapped[int] = mapped_column(Integer, nullable=False)
+    #: Последний месяц действия цены; NULL — бессрочно (tsk-866).
+    ends_on: Mapped[Date | None] = mapped_column(Date, nullable=True)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_by: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True

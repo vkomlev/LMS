@@ -44,6 +44,7 @@ __all__ = [
     "list_overrides",
     "set_price_override",
     "clear_price_override",
+    "close_price_overrides",
     "ChargeCounts",
     "charge_total_minor",
 ]
@@ -108,6 +109,16 @@ class ChargeCounts:
     missing: int = 0
     #: Занятий на днях ПОСЛЕ ухода ученика из школы (tsk-804).
     after_leave: int = 0
+    #: Дней месяца, в которые занятие ФАКТИЧЕСКИ было (tsk-866). Считается
+    #: независимо от сетки: занятия бывают и вне слотов — именно так и учились
+    #: те, ради кого ручная цена долю и не применяет. В саму долю не входит:
+    #: нужен там, где сетки нет вовсе и делить не на что (`_prorate`).
+    attended: int = 0
+    #: День ухода ученика из школы, если он ушёл (tsk-866). Тот же, по которому
+    #: считается `after_leave`: либо передан явно, либо из подписки на тариф без
+    #: права учиться. None — человек учится. Решает две вещи: применять ли долю
+    #: к ручной цене (`_is_proportional`) и что делать при пустой сетке.
+    left_on: Optional[date] = None
 
     @property
     def billable(self) -> int:
@@ -358,7 +369,14 @@ async def lesson_counts_for_period(
                              AND NOT EXISTS (
                                SELECT 1 FROM fact WHERE fact.day = days.day
                              )
-                       ) AS missing
+                       ) AS missing,
+                       -- tsk-866: занятий фактически было — независимо от
+                       -- сетки. Скалярным подзапросом, а не FILTER: счётчики
+                       -- выше считают дни СЕТКИ, а занятия бывают и вне её
+                       -- (у ушедших учеников сетки нет вовсе, и FILTER дал бы
+                       -- ноль там, где занятия шли шесть раз за месяц).
+                       (SELECT count(*) FROM fact) AS attended,
+                       (SELECT g.left_on FROM gone g) AS left_on
                   FROM days
                   JOIN slots ON (EXTRACT(ISODOW FROM days.day)::int - 1) = slots.weekday
                             AND (slots.active_from IS NULL
@@ -383,12 +401,14 @@ async def lesson_counts_for_period(
         not_started=int(row.not_started),
         missing=int(row.missing),
         after_leave=int(row.after_leave),
+        attended=int(row.attended),
+        left_on=row.left_on,
     )
 
 
 @dataclass
 class _MonthBase:
-    """База месяца и откуда она взялась. Второе решает, применять ли долю."""
+    """База месяца и откуда она взялась. Второе участвует в решении о доле."""
 
     minor: int
     from_override: bool
@@ -399,11 +419,12 @@ async def _base_price_minor(
 ) -> Optional[_MonthBase]:
     """База месяца: ручная цена группы, иначе расчёт по тарифу.
 
-    Ручная цена НЕ пропорционируется перерывом — договорённость с человеком не
-    должна тихо уезжать. Расчётная цена пропорционируется. Поэтому возвращается
-    не одно число, а пара «сколько» и «откуда»: раньше «откуда» спрашивали
-    вторым запросом (`_has_override`), и два места денежного контура могли
-    разойтись в ответе.
+    Ручная цена НЕ пропорционируется перерывом, пока человек учится, —
+    договорённость с ним не должна тихо уезжать. Расчётная цена
+    пропорционируется всегда, ручная — ещё и у ушедшего (tsk-866, решает
+    `_is_proportional`). Поэтому возвращается не одно число, а пара «сколько» и
+    «откуда»: раньше «откуда» спрашивали вторым запросом (`_has_override`), и
+    два места денежного контура могли разойтись в ответе.
 
     `period` обязателен: расчёт берёт группу подписки, действовавшей на первое
     число месяца, а не сегодняшнюю (контракт прав §7, tsk-585).
@@ -415,14 +436,22 @@ async def _base_price_minor(
     месяц выходит ДВА начисления. На боевых данных это ровно то, что дало в
     tsk-630 «45 строк вместо 41». Саму запись не трогаем: вернут ученика на
     прежний тариф — цена оживёт.
+
+    **У цены есть срок (tsk-866).** `ends_on` — последний месяц её действия:
+    цена применяется к месяцу, если срок пуст либо не раньше ПЕРВОГО ЧИСЛА
+    этого месяца. Граница именно по первому числу, а не по последнему дню:
+    цена помесячная, и месяц, в котором её закрыли, дорабатывает по ней
+    целиком — иначе закрытие цены задним числом переписало бы уже названную
+    человеку сумму текущего месяца. Со следующего месяца цены нет.
     """
     override = (
         await db.execute(
             text(
                 "SELECT price_minor FROM student_price_override "
-                "WHERE student_id = :s AND group_id = :g"
+                "WHERE student_id = :s AND group_id = :g "
+                "  AND (ends_on IS NULL OR ends_on >= :p)"
             ),
-            {"s": student_id, "g": group_id},
+            {"s": student_id, "g": group_id, "p": period},
         )
     ).first()
     if override is not None:
@@ -467,8 +496,42 @@ def _prorate(base_minor: int, counts: ChargeCounts) -> int:
     """
     if counts.expected <= 0:
         # Делить не на что — расписания нет. Доля не применяется.
+        #
+        # tsk-866: кроме одного случая — человек УЖЕ УШЁЛ, и за месяц у него не
+        # было ни одного занятия. Тогда это не «считаем по договорённости», а
+        # счёт за месяц, которого не было: сентябрь 2026 без единого занятия
+        # вышел двум выпускникам на 2 750 ₽ и 5 500 ₽ именно здесь.
+        #
+        # Смотрим на ФАКТ занятий, а не на сетку. У тех же двоих сетки не было
+        # ни в августе, ни в сентябре, но в августе занятий было шесть — и
+        # август оплачен верно. Обнуление по признаку «нет занятий по сетке»
+        # списало бы и его: невидимый недобор, который в tsk-756 чуть не стоил
+        # 16 500 ₽. Занимался и не заплатил — остаётся должником.
+        if counts.left_on is not None and counts.attended == 0:
+            return 0
         return base_minor
     return base_minor * counts.billable // counts.expected
+
+
+def _is_proportional(base: "_MonthBase", counts: ChargeCounts) -> bool:
+    """Применять ли к базе долю месяца.
+
+    Расчётная база пропорционируется всегда. Ручная — только у УШЕДШЕГО
+    (tsk-866): пока человек учится, его цена долю не применяет, потому что это
+    договорённость, и она не должна тихо уезжать от перерыва или смены сетки
+    (tsk-511, и она же спасла суммы в tsk-756). С уходом договорённость
+    кончается вместе с обучением — цена привязана к нему и без него теряет
+    основание (решение оператора 09.09.2026).
+
+    Что это меняет на живом примере: месяц, в котором ушедший ещё занимался,
+    считается долей за проведённые занятия, а месяц без занятий обнуляется
+    вычетами `missing` и `after_leave` — теми же, что работают у всех
+    остальных, без отдельного правила «ноль занятий значит ноль рублей».
+    Отказываться начислять ЛЮБОЙ месяц без занятий (вариант Б развилки) нельзя:
+    человек, платящий фиксированно и пропустивший месяц, перестал бы платить
+    молча.
+    """
+    return not base.from_override or counts.left_on is not None
 
 
 def is_past_period(period: date, *, today: Optional[date] = None) -> bool:
@@ -590,7 +653,17 @@ async def recalculate_student_group(
     counts = await lesson_counts_for_month(
         db, student_id=student_id, period=period, left_on=left_on
     )
-    calculated = base.minor if base.from_override else _prorate(base.minor, counts)
+    if _is_proportional(base, counts):
+        calculated = _prorate(base.minor, counts)
+        if base.from_override and calculated != base.minor:
+            logger.info(
+                "tsk-866: ручная цена ученика %s/%s за %s пропорционирована — он "
+                "ушёл %s: %s коп. вместо %s (занятий фактически %s)",
+                student_id, group_id, period, counts.left_on,
+                calculated, base.minor, counts.attended,
+            )
+    else:
+        calculated = base.minor
 
     existing = (
         await db.execute(
@@ -1083,6 +1156,10 @@ async def list_charges(db: AsyncSession, *, period: date) -> list[dict]:
                   LEFT JOIN student_price_override ovr
                          ON ovr.student_id = ch.student_id
                         AND ovr.group_id = ch.group_id
+                        -- tsk-866: истёкшая цена к этому месяцу не применяется,
+                        -- и показывать её как действующую значило бы объяснять
+                        -- сумму месяца тем, что в ней не участвовало.
+                        AND (ovr.ends_on IS NULL OR ovr.ends_on >= ch.period)
                   LEFT JOIN LATERAL (
                         SELECT sum(a.amount_minor) AS total,
                                string_agg(a.reason || ' (' ||
@@ -1330,7 +1407,7 @@ async def list_overrides(db: AsyncSession) -> list[dict]:
         await db.execute(
             text(
                 "SELECT o.id, o.student_id, u.full_name, o.group_id, pg.name AS group_name, "
-                "       o.price_minor, o.note "
+                "       o.price_minor, o.note, o.ends_on "
                 "  FROM student_price_override o "
                 "  JOIN users u ON u.id = o.student_id "
                 "  JOIN pricing_group pg ON pg.id = o.group_id "
@@ -1349,17 +1426,25 @@ async def set_price_override(
     price_minor: int,
     note: Optional[str],
     created_by: Optional[int],
+    ends_on: Optional[date] = None,
 ) -> None:
-    """Назначить ученику цену руками. Повторный вызов правит существующую."""
+    """Назначить ученику цену руками. Повторный вызов правит существующую.
+
+    `ends_on` — последний месяц действия цены, `None` — бессрочно (tsk-866).
+    Временную фиксацию («сумма августа перед выпуском») теперь можно закрыть
+    датой: раньше условие снятия жило только в примечании словами, и обе такие
+    цены пережили выпуск учеников, продолжая начислять месяц за месяцем.
+    """
     await db.execute(
         text(
             """
             INSERT INTO student_price_override
-                   (student_id, group_id, price_minor, note, created_by)
-            VALUES (:s, :g, :price, :note, :by)
+                   (student_id, group_id, price_minor, note, created_by, ends_on)
+            VALUES (:s, :g, :price, :note, :by, :ends_on)
             ON CONFLICT (student_id, group_id)
             DO UPDATE SET price_minor = EXCLUDED.price_minor,
                           note = EXCLUDED.note,
+                          ends_on = EXCLUDED.ends_on,
                           updated_at = now()
             """
         ),
@@ -1369,9 +1454,40 @@ async def set_price_override(
             "price": price_minor,
             "note": note,
             "by": created_by,
+            "ends_on": ends_on,
         },
     )
     await db.commit()
+
+
+async def close_price_overrides(
+    db: AsyncSession, *, student_id: int, ends_on: date
+) -> int:
+    """Закрыть все персональные цены ученика днём `ends_on` (tsk-866).
+
+    Не удаление: запись — след договорённости с человеком, а не производная
+    величина (тот же довод, что в `_carry_manual_amount` и в tsk-634). Закрытая
+    сроком цена остаётся видна в списке, и вернут ученика к занятиям — её
+    продлят осознанно, а не оживят молча.
+
+    Не коммитит: вызывается внутри выпуска, который обязан быть одним целым
+    (`graduation_service.apply`).
+
+    Уже закрытые более ранней датой не трогаются: если цену закрыли раньше
+    руками, уход не должен её продлевать.
+
+    Returns:
+        Сколько цен закрыто.
+    """
+    res = await db.execute(
+        text(
+            "UPDATE student_price_override "
+            "   SET ends_on = :d, updated_at = now() "
+            " WHERE student_id = :s AND (ends_on IS NULL OR ends_on > :d)"
+        ),
+        {"s": student_id, "d": ends_on},
+    )
+    return res.rowcount
 
 
 async def clear_price_override(

@@ -792,8 +792,11 @@ async def _infer_weekly_lessons_from_price(
     overrides = (
         await db.execute(
             text(
+                # tsk-866: истёкшая цена о СЕГОДНЯШНЕЙ частоте занятий не
+                # говорит ничего — это след прошлой договорённости.
                 "SELECT group_id, price_minor FROM student_price_override "
-                "WHERE student_id = :s"
+                "WHERE student_id = :s "
+                "  AND (ends_on IS NULL OR ends_on >= date_trunc('month', CURRENT_DATE)::date)"
             ),
             {"s": student_id},
         )
