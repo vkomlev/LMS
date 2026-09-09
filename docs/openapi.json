@@ -34858,6 +34858,96 @@
         }
       }
     },
+    "/api/v1/integrations/free-slots": {
+      "get": {
+        "tags": [
+          "integrations_leads"
+        ],
+        "summary": "Свободные окна расписания",
+        "description": "Дни недели и часы начала занятий, куда сейчас можно записаться. Пороги те же, что на экране записи ученика: слот, где больше восьми человек, в ответ не попадает. Преподаватель, номер слота и число учеников наружу не отдаются.",
+        "operationId": "read_free_slots_api_v1_integrations_free_slots_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FreeSlotsRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/subscriptions/plans": {
       "get": {
         "tags": [
@@ -50324,6 +50414,77 @@
         "type": "object",
         "title": "FeedbackReportListResponse",
         "description": "Список обращений."
+      },
+      "FreeSlotRead": {
+        "properties": {
+          "weekday": {
+            "type": "integer",
+            "maximum": 6.0,
+            "minimum": 0.0,
+            "title": "Weekday",
+            "description": "0=понедельник .. 6=воскресенье"
+          },
+          "start_time": {
+            "type": "string",
+            "format": "time",
+            "title": "Start Time",
+            "description": "Начало занятия по Москве, HH:MM"
+          },
+          "duration_minutes": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Duration Minutes"
+          },
+          "availability": {
+            "type": "string",
+            "enum": [
+              "free",
+              "partial",
+              "crowded"
+            ],
+            "title": "Availability",
+            "description": "free — мест много, partial — обычно, crowded — почти полно"
+          }
+        },
+        "type": "object",
+        "required": [
+          "weekday",
+          "start_time",
+          "duration_minutes",
+          "availability"
+        ],
+        "title": "FreeSlotRead",
+        "description": "Одно свободное окно для внешней системы (tsk-857).\n\nБез преподавателя, номера слота и числа учеников: наружу уходит только\n«в это время можно начать заниматься». Имена сотрудников и наполняемость\nгрупп — внутреннее дело школы, а читает это клиент на площадке."
+      },
+      "FreeSlotsRead": {
+        "properties": {
+          "slots": {
+            "items": {
+              "$ref": "#/components/schemas/FreeSlotRead"
+            },
+            "type": "array",
+            "title": "Slots"
+          },
+          "timezone": {
+            "type": "string",
+            "title": "Timezone",
+            "description": "Пояс, в котором названы часы"
+          },
+          "generated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Generated At",
+            "description": "Когда снят срез"
+          }
+        },
+        "type": "object",
+        "required": [
+          "slots",
+          "timezone",
+          "generated_at"
+        ],
+        "title": "FreeSlotsRead",
+        "description": "Свободные окна расписания целиком."
       },
       "GatewayPaymentStart": {
         "properties": {

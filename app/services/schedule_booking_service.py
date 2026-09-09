@@ -223,6 +223,44 @@ def _to_slot(row: dict[str, Any], match: str) -> BookableSlot:
     )
 
 
+async def get_free_slots(db: AsyncSession) -> dict[str, Any]:
+    """Свободные окна без привязки к ученику — для соседних систем (tsk-857).
+
+    Отбор тот же, что на экране записи: живой слот, час из сетки, не больше
+    восьми человек. Отличие одно — нет ученика, а значит нет ни сортировки по
+    его опросу, ни отметки «я уже здесь»: человек с площадки в школе ещё не
+    заведён.
+
+    Пороги намеренно берутся из тех же функций, что и запись. Слот, куда
+    ученик записаться не может, предлагать на площадке тем более нельзя, и
+    разъехаться эти два места не должны.
+    """
+    today = _today_moscow()
+    slots: list[dict[str, Any]] = []
+    for row in await _load_slots(db, student_id=0):
+        if not slot_is_alive(row["weekday"], row["active_until"], today):
+            continue
+        if not in_grid((row["weekday"], row["start_time"])):
+            continue
+        if not is_bookable_count(row["student_count"]):
+            continue
+        slots.append(
+            {
+                "weekday": row["weekday"],
+                "start_time": row["start_time"],
+                "duration_minutes": row["duration_minutes"],
+                "availability": availability_for(row["student_count"]),
+            }
+        )
+
+    slots.sort(key=lambda s: (s["weekday"], s["start_time"]))
+    return {
+        "slots": slots,
+        "timezone": GRID_TIMEZONE,
+        "generated_at": datetime.now(ZoneInfo(GRID_TIMEZONE)),
+    }
+
+
 async def get_bookable(db: AsyncSession, student_id: int) -> dict[str, Any]:
     """Что ученик видит на экране выбора времени.
 

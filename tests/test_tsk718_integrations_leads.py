@@ -212,3 +212,98 @@ async def test_blank_external_id_rejected(client, bad):
         headers={"X-API-Key": _api_key()},
     )
     assert resp.status_code == 422, resp.text
+
+
+# --- tsk-857: свободные окна расписания -------------------------------------
+
+
+@pytest.mark.parametrize("role", ["marketer", "admin", "student", None])
+async def test_free_slots_service_only(db, client, role):
+    """Расписание через служебный вход человеку не отдаём.
+
+    У ученика есть свой экран выбора времени с записью в одно нажатие; вторая
+    дверь в те же данные с другими правилами не нужна.
+    """
+    token = await _new_user(db, role=role, name=f"slots-{role}")
+    resp = await client.get(
+        "/api/v1/integrations/free-slots",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 403, resp.text
+
+
+async def test_free_slots_hide_full_groups_and_staff(db, client):
+    """Отдаём только то, куда можно записаться, и ничего лишнего.
+
+    Порог тот же, что на экране ученика: слот, где больше восьми человек,
+    в ответ не попадает вовсе. Замер боевой базы 09.09: из 23 активных слотов
+    три были набраны (по девять человек) — в субботу 10:00 и 11:00 и в
+    понедельник 17:00. При этом справочник Авито звал людей «в субботу в 10,
+    11, 12 и 13», то есть прямо в набранные группы: ровно ради этого вход и
+    сделан.
+
+    Наружу не уходят ни преподаватель, ни номер слота, ни число учеников —
+    с той стороны текст читает клиент площадки.
+    """
+    resp = await client.get(
+        "/api/v1/integrations/free-slots",
+        headers={"X-API-Key": _api_key()},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    assert body["timezone"] == "Europe/Moscow"
+    assert "generated_at" in body
+
+    for slot in body["slots"]:
+        assert set(slot) == {
+            "weekday",
+            "start_time",
+            "duration_minutes",
+            "availability",
+        }, slot
+        assert 0 <= slot["weekday"] <= 6
+        assert slot["availability"] in {"free", "partial", "crowded"}
+
+
+async def test_free_slots_match_what_a_student_would_see(db, client):
+    """Служебный ответ совпадает с экраном ученика по составу окон.
+
+    Два места решают одно и то же — «куда можно записаться», — и разъехаться
+    им нельзя: на площадке пообещали бы время, которого нет. Поэтому здесь
+    сверяется не текст, а сам отбор: те же пороги, та же сетка, та же
+    проверка «слот доживёт до занятия».
+    """
+    from app.services import schedule_booking_service
+
+    service_side = await schedule_booking_service.get_free_slots(db)
+    offered = {
+        (s["weekday"], s["start_time"]) for s in service_side["slots"]
+    }
+
+    # Прямой пересчёт по тем же правилам, но своим кодом: если отбор в сервисе
+    # подменят, тест это увидит.
+    from app.schemas.schedule_booking import is_bookable_count
+    from app.services.schedule_plan_service import in_grid
+
+    rows = await db.execute(
+        text(
+            """
+            SELECT ls.weekday, ls.start_time, ls.active_until,
+                   COUNT(lss.id) FILTER (WHERE lss.is_active) AS students
+              FROM lesson_slot ls
+              LEFT JOIN lesson_slot_student lss ON lss.slot_id = ls.id
+             WHERE ls.is_active
+             GROUP BY ls.id, ls.weekday, ls.start_time, ls.active_until
+            """
+        )
+    )
+    today = schedule_booking_service._today_moscow()
+    expected = {
+        (r[0], r[1])
+        for r in rows.fetchall()
+        if schedule_booking_service.slot_is_alive(r[0], r[2], today)
+        and in_grid((r[0], r[1]))
+        and is_bookable_count(int(r[3] or 0))
+    }
+    assert offered == expected

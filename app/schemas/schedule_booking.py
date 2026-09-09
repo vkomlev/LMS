@@ -76,6 +76,30 @@ def is_bookable_count(count: int) -> bool:
     return count <= BOOKING_MAX
 
 
+class FreeSlotRead(BaseModel):
+    """Одно свободное окно для внешней системы (tsk-857).
+
+    Без преподавателя, номера слота и числа учеников: наружу уходит только
+    «в это время можно начать заниматься». Имена сотрудников и наполняемость
+    групп — внутреннее дело школы, а читает это клиент на площадке.
+    """
+
+    weekday: int = Field(..., ge=0, le=6, description="0=понедельник .. 6=воскресенье")
+    start_time: time = Field(..., description="Начало занятия по Москве, HH:MM")
+    duration_minutes: int = Field(..., ge=1)
+    availability: SlotAvailability = Field(
+        ..., description="free — мест много, partial — обычно, crowded — почти полно"
+    )
+
+
+class FreeSlotsRead(BaseModel):
+    """Свободные окна расписания целиком."""
+
+    slots: list[FreeSlotRead]
+    timezone: str = Field(..., description="Пояс, в котором названы часы")
+    generated_at: datetime = Field(..., description="Когда снят срез")
+
+
 class BookableSlot(BaseModel):
     """Слот, который ученику показывают как вариант записи."""
 

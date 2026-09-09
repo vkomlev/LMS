@@ -24,7 +24,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_async_db, get_current_user
 from app.auth.current_user import CurrentUser
 from app.schemas.lead import ExternalLeadCreateRequest, ExternalLeadResponse
-from app.services import lead_service
+from app.schemas.schedule_booking import FreeSlotsRead
+from app.services import lead_service, schedule_booking_service
 
 router = APIRouter(prefix="/integrations", tags=["integrations_leads"])
 
@@ -84,3 +85,32 @@ async def ingest_lead(
         note=body.note,
     )
     return ExternalLeadResponse(lead_id=lead_id, created=created)
+
+
+@router.get(
+    "/free-slots",
+    response_model=FreeSlotsRead,
+    summary="Свободные окна расписания",
+    description=(
+        "Дни недели и часы начала занятий, куда сейчас можно записаться. "
+        "Пороги те же, что на экране записи ученика: слот, где больше восьми "
+        "человек, в ответ не попадает. Преподаватель, номер слота и число "
+        "учеников наружу не отдаются."
+    ),
+)
+async def read_free_slots(
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(_service_only),
+) -> FreeSlotsRead:
+    """Куда можно записать нового человека (tsk-857).
+
+    Первый потребитель — переписка Авито: там спрашивают «какие у вас часы», и
+    ответ на это устаревает быстрее любого другого факта. До сих пор он жил в
+    справочнике текстом и к 09.09 разошёлся с расписанием: справочник звал в
+    субботу «в 10, 11, 12 и 13», а в 10 и 11 группы были уже набраны.
+
+    Ответ намеренно обезличен: время и наполненность словом, без имён
+    преподавателей и числа учеников. С той стороны текст читает клиент.
+    """
+    data = await schedule_booking_service.get_free_slots(db)
+    return FreeSlotsRead(**data)
