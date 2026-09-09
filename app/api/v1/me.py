@@ -59,13 +59,19 @@ from app.schemas.me import (
     StreakRead,
     SyllabusStatesResponse,
 )
-from app.schemas.presence import PresenceRequest, PresenceResponse
+from app.schemas.presence import (
+    PresenceRequest,
+    PresenceResponse,
+    VideoProgressRequest,
+    VideoProgressResponse,
+)
 from app.schemas.retention import RetentionRead
 from app.schemas.task_history import TaskHistoryResponse
 from app.schemas.users import UserRead
 from app.services.parent_student_links_service import ParentStudentLinksService
 from app.services.student_teacher_links_service import StudentTeacherLinksService
 from app.services import (
+    learning_time_service,
     lesson_calendar_service,
     me_service,
     payment_service,
@@ -602,6 +608,45 @@ async def post_presence(
     )
     await db.commit()
     return PresenceResponse(next_ping_seconds=_settings.presence_ping_seconds)
+
+
+# ── POST /me/video-progress (tsk-868) ───────────────────────────────────────
+
+#: Как часто кабинет шлёт отчёт во время просмотра. Тридцать секунд — компромисс
+#: между точностью и болтливостью: плеер шлёт события по нескольку раз в
+#: секунду, и пересылать их все на сервер незачем.
+VIDEO_REPORT_SECONDS = 30
+
+
+@router.post("/video-progress", response_model=VideoProgressResponse)
+async def post_video_progress(
+    body: VideoProgressRequest,
+    current_user: CurrentUser = Depends(require_authenticated),
+    db: AsyncSession = Depends(get_async_db),
+) -> VideoProgressResponse:
+    """Сколько ролика ученик реально посмотрел (tsk-868).
+
+    Пульс присутствия (`/me/presence`) говорит лишь «плеер на экране» — этого
+    хватало, чтобы не поднимать ложную тревогу о простое (tsk-835), но не
+    хватает, чтобы отличить просмотренный разбор от брошенного на второй
+    минуте. Здесь пишется то, что видит сам плеер: проигранные секунды,
+    длительность и факт конца ролика.
+
+    Отчёт накопленный, поэтому повторная присылка того же значения безопасна:
+    сеанс просмотра не растёт от дублей.
+    """
+    await learning_time_service.record_video_progress(
+        db,
+        student_id=current_user.id,
+        video_id=body.video_id,
+        watched_seconds=body.watched_seconds,
+        duration_seconds=body.duration_seconds,
+        completed=body.completed,
+        material_id=body.material_id,
+        course_id=body.course_id,
+    )
+    await db.commit()
+    return VideoProgressResponse(next_report_seconds=VIDEO_REPORT_SECONDS)
 
 
 # ── GET /me/streak ──────────────────────────────────────────────────────────

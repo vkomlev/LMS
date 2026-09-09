@@ -54,3 +54,41 @@ class PresenceResponse(BaseModel):
             "сервер, чтобы менять частоту без выката кабинета."
         )
     )
+
+class VideoProgressRequest(BaseModel):
+    """Отчёт видеоплеера о просмотре (tsk-868).
+
+    Шлётся НАКОПЛЕННЫМ итогом, а не приращением: плеер живёт в кросс-доменном
+    iframe, связь с ним рвётся на любом сообщении, и «добавь десять секунд»
+    после потери пары отчётов дало бы недосчёт, который уже не восстановить.
+    """
+
+    video_id: str = Field(
+        max_length=128,
+        description="Идентификатор ролика у плеера: `-53400615_456240160` (ВК) или id (YouTube)",
+    )
+    watched_seconds: int = Field(
+        ge=0, le=24 * 3600,
+        description="Сколько секунд ролика реально проиграно с начала просмотра",
+    )
+    duration_seconds: Optional[int] = Field(
+        default=None, ge=0, le=24 * 3600,
+        description="Длительность ролика по данным плеера",
+    )
+    completed: bool = Field(
+        default=False,
+        description=(
+            "Плеер сообщил о конце ролика. Ставится по событию, а не по доле: "
+            "«досмотрел» и «доиграло, пока человек ушёл» — разные вещи"
+        ),
+    )
+    material_id: Optional[int] = Field(default=None, ge=1)
+    course_id: Optional[int] = Field(default=None, ge=1)
+
+
+class VideoProgressResponse(BaseModel):
+    """Ответ на отчёт — когда прислать следующий."""
+
+    next_report_seconds: int = Field(
+        description="Через сколько секунд слать следующий отчёт во время просмотра",
+    )

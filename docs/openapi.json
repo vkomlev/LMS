@@ -25488,6 +25488,106 @@
         }
       }
     },
+    "/api/v1/me/video-progress": {
+      "post": {
+        "tags": [
+          "me"
+        ],
+        "summary": "Post Video Progress",
+        "description": "Сколько ролика ученик реально посмотрел (tsk-868).\n\nПульс присутствия (`/me/presence`) говорит лишь «плеер на экране» — этого\nхватало, чтобы не поднимать ложную тревогу о простое (tsk-835), но не\nхватает, чтобы отличить просмотренный разбор от брошенного на второй\nминуте. Здесь пишется то, что видит сам плеер: проигранные секунды,\nдлительность и факт конца ролика.\n\nОтчёт накопленный, поэтому повторная присылка того же значения безопасна:\nсеанс просмотра не растёт от дублей.",
+        "operationId": "post_video_progress_api_v1_me_video_progress_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VideoProgressRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VideoProgressResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/me/streak": {
       "get": {
         "tags": [
@@ -71657,6 +71757,89 @@
           "type"
         ],
         "title": "ValidationError"
+      },
+      "VideoProgressRequest": {
+        "properties": {
+          "video_id": {
+            "type": "string",
+            "maxLength": 128,
+            "title": "Video Id",
+            "description": "Идентификатор ролика у плеера: `-53400615_456240160` (ВК) или id (YouTube)"
+          },
+          "watched_seconds": {
+            "type": "integer",
+            "maximum": 86400.0,
+            "minimum": 0.0,
+            "title": "Watched Seconds",
+            "description": "Сколько секунд ролика реально проиграно с начала просмотра"
+          },
+          "duration_seconds": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 86400.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Seconds",
+            "description": "Длительность ролика по данным плеера"
+          },
+          "completed": {
+            "type": "boolean",
+            "title": "Completed",
+            "description": "Плеер сообщил о конце ролика. Ставится по событию, а не по доле: «досмотрел» и «доиграло, пока человек ушёл» — разные вещи",
+            "default": false
+          },
+          "material_id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Material Id"
+          },
+          "course_id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Course Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "video_id",
+          "watched_seconds"
+        ],
+        "title": "VideoProgressRequest",
+        "description": "Отчёт видеоплеера о просмотре (tsk-868).\n\nШлётся НАКОПЛЕННЫМ итогом, а не приращением: плеер живёт в кросс-доменном\niframe, связь с ним рвётся на любом сообщении, и «добавь десять секунд»\nпосле потери пары отчётов дало бы недосчёт, который уже не восстановить."
+      },
+      "VideoProgressResponse": {
+        "properties": {
+          "next_report_seconds": {
+            "type": "integer",
+            "title": "Next Report Seconds",
+            "description": "Через сколько секунд слать следующий отчёт во время просмотра"
+          }
+        },
+        "type": "object",
+        "required": [
+          "next_report_seconds"
+        ],
+        "title": "VideoProgressResponse",
+        "description": "Ответ на отчёт — когда прислать следующий."
       },
       "VkCallbackRequest": {
         "properties": {
