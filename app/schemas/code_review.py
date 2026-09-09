@@ -298,6 +298,15 @@ class CodeReviewBadge(BaseModel):
             "о списывании"
         ),
     )
+    has_unseen_constructs: bool = Field(
+        False,
+        description=(
+            "tsk-864: в работе есть конструкция, которой не было в пройденных этим "
+            "учеником материалах. ОТДЕЛЬНОЕ поле, а не часть `ai_suspected`: это "
+            "факт о материалах, а не подозрение на нейросеть, и склеив их в один "
+            "флаг, список подписал бы ученику обвинение, которого признак не несёт"
+        ),
+    )
     degraded: bool = Field(
         False,
         description="Оценка неполная: модель была недоступна, есть только разбор линтера",
@@ -337,10 +346,26 @@ def build_code_review_badge(raw: Optional[Dict[str, Any]]) -> Optional[CodeRevie
     # Иначе работа, где следы вставки нашлись, а модель промолчала, выглядела
     # бы в ленте чистой — при том, что след как раз ПРОВЕРЯЕМ, а вердикт нет.
     signals = raw.get("signals")
+    # tsk-864: конструкция из непройденной темы поднимает СВОЙ флаг. Решение
+    # оператора 09.09 — показывать её и в списках, но подмешивать в
+    # `ai_suspected` нельзя: подпись того значка говорит «работа похожа на
+    # сделанную нейросетью», а признак утверждает совсем другое — что
+    # конструкцию этому ученику не объясняли. Ученик мог узнать её сам, и
+    # склейка превратила бы факт в обвинение ровно там, где вся задача про
+    # обратное. Список получает два разных значка и две разные подписи.
+    #
+    # `isinstance`, а не `or {}`: значок строится для КАЖДОЙ строки ленты, и
+    # один отчёт неожиданной формы уронил бы весь список целиком.
+    unseen = raw.get("unseen_constructs")
+    unseen_items = unseen.get("items") if isinstance(unseen, dict) else None
+    # Список, а не «что-нибудь непустое»: строка «нет» в `items` тоже
+    # правдива по `bool`, и значок зажёгся бы на пустом месте.
+    has_unseen = isinstance(unseen_items, list) and len(unseen_items) > 0
 
     return CodeReviewBadge(
         status=str(status),
         score=score,
         ai_suspected=(verdict == "ai_likely" or bool(signals)),
+        has_unseen_constructs=has_unseen,
         degraded=bool(raw.get("degraded")),
     )

@@ -363,6 +363,60 @@ def test_mark_is_not_declared_on_student_surfaces() -> None:
             )
 
 
+def test_badge_lights_its_own_flag_not_ai_suspicion() -> None:
+    """
+    В списках пометка поднимает СВОЙ флаг, а не «похоже на нейросеть» (tsk-864).
+
+    Решение оператора 09.09 — показывать признак и в ленте с прогрессом. Слить
+    его в `ai_suspected` было бы дёшево и неправильно: тот значок подписан
+    «работа похожа на сделанную нейросетью», а здесь утверждается совсем другое.
+    Ученик мог узнать конструкцию сам, и склейка превратила бы факт в обвинение
+    ровно в том месте, ради которого задача и делалась.
+    """
+    from app.schemas.code_review import build_code_review_badge
+
+    badge = build_code_review_badge({
+        "status": "done",
+        "code_quality": {"score": 8},
+        "ai_authorship": {"verdict": "ambiguous"},
+        "unseen_constructs": {
+            "items": [{"code": "fstring", "label": "f-строка", "evidence": "print(f'')"}],
+            "materials_seen": 31,
+        },
+    })
+    assert badge is not None
+    assert badge.has_unseen_constructs is True
+    assert badge.ai_suspected is False
+
+
+def test_badge_stays_dark_when_everything_is_covered() -> None:
+    """Сверили, всё пройдено — значок не зажигается: пустой список не повод."""
+    from app.schemas.code_review import build_code_review_badge
+
+    badge = build_code_review_badge({
+        "status": "done",
+        "code_quality": {"score": 8},
+        "unseen_constructs": {"items": [], "materials_seen": 50},
+    })
+    assert badge is not None and badge.has_unseen_constructs is False
+
+
+def test_badge_survives_report_of_unexpected_shape() -> None:
+    """
+    Отчёт неожиданной формы не роняет значок.
+
+    Значок строится для КАЖДОЙ строки ленты, а там их до сотни: одна кривая
+    запись положила бы преподавателю весь список, а не одну работу.
+    """
+    from app.schemas.code_review import build_code_review_badge
+
+    for junk in ([], "нет", 0, {"items": "нет"}):
+        badge = build_code_review_badge({
+            "status": "done", "code_quality": {"score": 8}, "unseen_constructs": junk,
+        })
+        assert badge is not None and badge.has_unseen_constructs is False, junk
+
+
 def test_report_schema_accepts_the_mark() -> None:
     """Отчёт со всеми полями пометки разбирается схемой, а не проваливается в extra."""
     from app.schemas.code_review import CodeReviewReport
