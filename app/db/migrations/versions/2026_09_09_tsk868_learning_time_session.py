@@ -1,7 +1,7 @@
 """tsk-868: сеансы работы ученика над элементом программы.
 
 Revision ID: tsk868_learning_time_session
-Revises: tsk835_presence_context_video
+Revises: tsk866_price_override_ends_on
 Create Date: 2026-09-09
 
 Зачем таблица. Время прохождения материала и задания нигде не сохранялось:
@@ -20,7 +20,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = "tsk868_learning_time_session"
-down_revision: Union[str, None] = "tsk835_presence_context_video"
+down_revision: Union[str, None] = "tsk866_price_override_ends_on"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
