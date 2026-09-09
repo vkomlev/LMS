@@ -285,6 +285,65 @@ async def test_threshold_never_shrinks_between_recalculations(db):
     assert stored[course_id] == generous.per_course[course_id]
 
 
+@pytest.mark.asyncio
+async def test_norm_counts_the_trimmed_program_not_the_full_one(db, monkeypatch):
+    """Норматив считается от подрезанной программы, а не от полного банка.
+
+    Замечание оператора 09.09. Объём под срок и темп режет этот сервис
+    (tsk-798), норму считает `homework_volume_service` (tsk-797) — они не были
+    связаны, и система требовала того, что сама же отменила: «нужно 41 в
+    неделю» при программе, спланированной на 30. Преподаватель читал разрыв
+    как «не дотягивает», хотя ученица шла ровно по плану; на проде так было у
+    40 учеников из 88, у половины — вдвое.
+    """
+    from app.core import settings_store
+    from app.services import homework_volume_service
+    from tests.test_tsk741_homework import _enroll, _set_grade
+
+    student_id = await _new_user(db)
+    course_id = await _new_course(db, "norm-vs-scope")
+    await _enroll(db, student_id=student_id, course_id=course_id)
+    await _set_grade(db, student_id=student_id, grade=11)
+    # Ядро маленькое, отработки много — её и подрежет бюджет.
+    await _fill_course(db, course_id, theory=20, easy=300, normal=300)
+
+    values = {
+        "homework_program_ege_courses": str(course_id),
+        "homework_program_oge_courses": "",
+        "homework_program_ege_deadline": "03-31",
+        "homework_program_oge_deadline": "04-30",
+        "homework_program_early_finish": "05-31",
+        "homework_program_summer_finish": "08-31",
+    }
+    monkeypatch.setattr(settings_store, "get_str", lambda key: values.get(key, ""))
+    # Плановый темп занижен намеренно: при боевых 25 в неделю шестьсот
+    # элементов помещаются в срок целиком, и резать было бы нечего.
+    original_int = settings_store.get_int
+    monkeypatch.setattr(
+        settings_store,
+        "get_int",
+        lambda key: 5 if key == "homework_program_planned_pace" else original_int(key),
+    )
+
+    plan = await homework_volume_service.compute(db, student_id=student_id)
+    program = await homework_volume_service.program_for_student(
+        db, student_id=student_id, grade=11, today=date.today(),
+    )
+    scope = await scope_service.compute_scope(
+        db, student_id=student_id, kind="ege", root_ids=[course_id],
+        deadline=program["deadline"], fact_per_week=plan.fact_per_week,
+    )
+
+    planned = scope.core_total + scope.drill_allowed
+    assert planned < program["remaining"], (
+        "программа не подрезана — тест не проверяет то, ради чего написан"
+    )
+    weeks = max((program["deadline"] - date.today()).days, 1) / 7.0
+    assert plan.target_per_week == int(-(-planned // weeks)), (
+        f"норматив {plan.target_per_week} посчитан не от плана ({planned})"
+    )
+
+
 async def _subcourse(db, root: int, title: str, *, priority: int | None,
                      theory: int = 0, easy: int = 0, normal: int = 0) -> int:
     """Подкурс-«номер ЕГЭ» с заданным приоритетом включения в программу."""

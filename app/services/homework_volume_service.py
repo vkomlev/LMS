@@ -387,6 +387,57 @@ def _course_ids(raw: str) -> list[int]:
     return result
 
 
+async def _scoped_remaining(
+    db: AsyncSession,
+    *,
+    student_id: int,
+    program: dict[str, Any],
+    fact_per_week: float,
+    today: date,
+) -> tuple[int, Optional[float]]:
+    """Сколько программы ученику РЕАЛЬНО спланировано: штуки и минуты (tsk-869).
+
+    Объём режется под срок и темп (`program_scope_service`, tsk-798): ядро —
+    теория и разбор номеров — проходится целиком, отработка берётся частью.
+    Норматив обязан считаться от этого числа, иначе система требует того, что
+    сама же отменила.
+
+    Возвращается пара: элементов и минут работы. Вторая нужна норме в минутах
+    (tsk-867) — у неё был ровно тот же дефект, и чинить его надо тем же числом,
+    иначе две единицы одной нормы разошлись бы между собой.
+
+    Минуты — `None`, когда вес не измерен (пустая телеметрия): тогда минутный
+    норматив остаётся на полном остатке, как было до 09.09.
+
+    **Ошибки расчёта НЕ глушатся.** Первая редакция ловила здесь любое
+    исключение и возвращала «считай по полному остатку» — так делать нельзя по
+    двум причинам. Ошибка запроса помечает транзакцию PostgreSQL сбойной, и
+    дальше в ЭТОЙ ЖЕ сессии любой запрос вернёт ошибку — то есть проглоченный
+    сбой всплыл бы в чужом коде и в чужих числах, где его никто не свяжет с
+    домашней работой. И вторая: молчаливая подмена нормы на завышенную — это
+    ровно тот дефект, который задача и чинит.
+
+    Импорт локальный: `program_scope_service` зовёт этот модуль за темпом и
+    сроком, а на уровне модуля вышло бы кольцо.
+    """
+    from app.services import program_scope_service
+
+    scope = await program_scope_service.compute_scope(
+        db,
+        student_id=student_id,
+        kind=program["kind"],
+        root_ids=program["root_ids"],
+        deadline=program["deadline"],
+        fact_per_week=fact_per_week,
+        today=today,
+    )
+
+    minutes: Optional[float] = None
+    if scope.core_minutes is not None and scope.drill_allowed_minutes is not None:
+        minutes = float(scope.core_minutes + scope.drill_allowed_minutes)
+    return scope.core_total + scope.drill_allowed, minutes
+
+
 def _weekly_for(remaining: int, deadline: date, today: date) -> int:
     """Сколько элементов в неделю нужно, чтобы пройти `remaining` к сроку."""
     days = (deadline - today).days
@@ -1053,9 +1104,27 @@ async def compute(
     sprint = False
     early_target = summer_target = None
     early_day = summer_day = None
+    # Вес подрезанной программы в минутах; None — вне программы или вес не
+    # измерен, тогда минутный норматив падает на полный остаток (как до 09.09).
+    scoped_minutes: Optional[float] = None
     if program is not None:
         remaining = program["remaining"]
         days_left = (program["deadline"] - moment.date()).days
+
+        # tsk-869: норматив считается от ПОДРЕЗАННОЙ программы, а не от полного
+        # остатка. Объём под срок и темп режет `program_scope_service`
+        # (tsk-798), норму считает этот модуль (tsk-797) — до 09.09 они не
+        # были связаны, и система требовала того, что сама же отменила: у Крук
+        # «нужно 41 в неделю» при программе, спланированной на 30. Разрыв в 11
+        # преподаватель читал как «не дотягивает», хотя ученица шла по плану.
+        # Расхождение было у 40 учеников из 88, у половины — вдвое.
+        remaining, scoped_minutes = await _scoped_remaining(
+            db,
+            student_id=student_id,
+            program=program,
+            fact_per_week=fact_per_week,
+            today=moment.date(),
+        )
 
         # Не выпускник — у него есть выбор, которого нет у одиннадцати-
         # классника: закончить программу за этот учебный год или прихватить
@@ -1112,7 +1181,14 @@ async def compute(
         if program is not None and remaining_minutes is not None:
             days_left = (program["deadline"] - moment.date()).days
             if days_left > 0:
-                target_minutes = remaining_minutes / max(days_left / 7.0, 1e-9)
+                # tsk-869: как и штучный, минутный норматив считается от
+                # ПОДРЕЗАННОЙ программы. Полный вес остатка (`remaining_minutes`)
+                # остаётся потолком выдачи ниже — «больше, чем осталось, не
+                # задашь», — но требовать по нему нельзя: этот объём ученику
+                # никто выдавать не собирается.
+                target_minutes = (
+                    scoped_minutes if scoped_minutes is not None else remaining_minutes
+                ) / max(days_left / 7.0, 1e-9)
             else:
                 # Срок программы прошёл — дальше отработка вариантов, и норма
                 # та же, что в штучном расчёте, только в своей единице.

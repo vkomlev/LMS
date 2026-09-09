@@ -1491,6 +1491,62 @@ def _settings_with_program(course_id: int, kind: str = "ege"):
 
 
 @pytest.mark.asyncio
+async def test_homework_takes_only_the_program_courses(db, monkeypatch):
+    """Домой идут ТОЛЬКО курсы программы подготовки (tsk-869).
+
+    Требование оператора 09.09. Раньше обход шёл по всем записям
+    `user_courses`, и в домашнюю работу попадало что угодно из соседних
+    курсов — на проде так уходили «Собираем Бот-Угадайку» и «Знакомство с
+    SQLite». К экзамену это не готовит, а место в недельном объёме занимает.
+    """
+    from app.core import settings_store
+
+    student_id, program_course = await _program_student(
+        db, done_tasks=0, total_tasks=5,
+    )
+    # Соседний курс — не из программы, но записан раньше по порядку.
+    other = await _new_course(db, "не-из-программы")
+    await _enroll(db, student_id=student_id, course_id=other)
+    await db.execute(
+        text(
+            "UPDATE user_courses SET order_number = 0 "
+            " WHERE user_id = :u AND course_id = :c"
+        ),
+        {"u": student_id, "c": other},
+    )
+    outsider = await _new_task(db, course_id=other, order_position=1)
+    await db.commit()
+
+    monkeypatch.setattr(
+        settings_store, "get_str", _settings_with_program(program_course)
+    )
+
+    picked = await homework_service._next_items(db, student_id=student_id, limit=10)
+
+    assert outsider not in [i["item_id"] for i in picked], (
+        "домой ушло задание из курса вне программы подготовки"
+    )
+    assert picked, "программные задания тоже пропали — обход сломан"
+
+
+@pytest.mark.asyncio
+async def test_student_outside_programs_still_gets_all_his_courses(db, monkeypatch):
+    """Ученик вне программ подготовки берёт домой все свои курсы, как раньше.
+
+    Для него «программа» — и есть его курсы, других ориентиров нет; пустая
+    выдача была бы регрессией для всех, кто не готовится к экзамену.
+    """
+    from app.core import settings_store
+
+    student_id, course_id = await _student_with_program(db, materials=1, tasks=3)
+    monkeypatch.setattr(settings_store, "get_str", lambda key: "")
+
+    picked = await homework_service._next_items(db, student_id=student_id, limit=5)
+
+    assert picked, "ученик вне программ остался без домашней работы"
+
+
+@pytest.mark.asyncio
 async def test_content_added_after_the_topic_was_passed_is_not_homework(db):
     """Задание, досыпанное в пройденную тему, домой не задаётся (tsk-838).
 

@@ -55,6 +55,32 @@ _DONE_STATUSES = ("PASSED", "COMPLETED", "SKIPPED")
 _UNASSIGNABLE_TASK_STATUSES = ("BLOCKED_LIMIT",)
 
 
+async def _program_roots(db: AsyncSession, *, student_id: int) -> list[int]:
+    """Корневые курсы программы подготовки ученика (tsk-869).
+
+    Пустой список — ученик вне программ ЕГЭ/ОГЭ; тогда домашнюю работу берут
+    из всех его курсов, как было раньше: других ориентиров у такого ученика
+    нет.
+
+    Программу определяет `homework_volume_service` — здесь она НЕ выбирается
+    заново, иначе «программа ученика» стала бы двумя разными ответами в двух
+    местах (у ОГЭшника, которому открыли материалы ЕГЭ, они разошлись бы
+    сразу).
+    """
+    program = await homework_volume_service.program_for_student(
+        db,
+        student_id=student_id,
+        grade=(
+            await db.execute(
+                text("SELECT school_grade FROM users WHERE id = :uid"),
+                {"uid": student_id},
+            )
+        ).scalar(),
+        today=datetime.now(timezone.utc).date(),
+    )
+    return list(program["root_ids"]) if program else []
+
+
 async def _next_items(
     db: AsyncSession,
     *,
@@ -91,16 +117,28 @@ async def _next_items(
     from app.services import manual_progress_service
     from app.services.content_grace_service import compute_graced_items
 
-    roots = (
-        await db.execute(
-            text(
-                "SELECT uc.course_id FROM user_courses uc "
-                " WHERE uc.user_id = :sid AND uc.is_active = true "
-                " ORDER BY uc.order_number ASC NULLS LAST, uc.course_id"
-            ),
-            {"sid": student_id},
+    # tsk-869: у ученика программы подготовки состав берётся ТОЛЬКО из её
+    # курсов. Раньше обход шёл по всем записям `user_courses`, и домой уходило
+    # что угодно из соседних курсов — на проде так попадали «Собираем
+    # Бот-Угадайку», «Знакомство с SQLite», вводные курсы школы. К экзамену
+    # это не готовит, а место в недельном объёме занимает.
+    #
+    # Вне программ подготовки поведение прежнее: там «программа ученика» — и
+    # есть все его курсы, других ориентиров нет.
+    roots = await _program_roots(db, student_id=student_id)
+    if not roots:
+        roots = list(
+            (
+                await db.execute(
+                    text(
+                        "SELECT uc.course_id FROM user_courses uc "
+                        " WHERE uc.user_id = :sid AND uc.is_active = true "
+                        " ORDER BY uc.order_number ASC NULLS LAST, uc.course_id"
+                    ),
+                    {"sid": student_id},
+                )
+            ).scalars().all()
         )
-    ).scalars().all()
 
     picked: list[dict[str, Any]] = []
     for course_id in roots:
