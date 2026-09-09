@@ -18,12 +18,16 @@
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_async_db, get_current_user
 from app.auth.current_user import CurrentUser
-from app.schemas.lead import ExternalLeadCreateRequest, ExternalLeadResponse
+from app.schemas.lead import (
+    ExternalLeadCreateRequest,
+    ExternalLeadResponse,
+    ExternalLeadStatusList,
+)
 from app.schemas.schedule_booking import FreeSlotsRead
 from app.services import lead_service, schedule_booking_service
 
@@ -114,3 +118,44 @@ async def read_free_slots(
     """
     data = await schedule_booking_service.get_free_slots(db)
     return FreeSlotsRead(**data)
+
+
+@router.get(
+    "/leads/external",
+    response_model=ExternalLeadStatusList,
+    summary="Внешние обращения источника: дошёл человек или нет",
+    description=(
+        "Для каждого обращения — привязан ли к лиду ученик. Ни имени, ни "
+        "контакта, ни переписки в ответе нет: спрашивающая система знает их и "
+        "так, а признак ей нужен ровно один."
+    ),
+)
+async def read_external_leads(
+    source: str = Query(
+        min_length=1,
+        max_length=64,
+        description="Система-источник, например avito_messenger",
+    ),
+    days: int = Query(
+        default=14,
+        ge=1,
+        le=365,
+        description="За сколько последних дней смотреть обращения",
+    ),
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(_service_only),
+) -> ExternalLeadStatusList:
+    """Кто из написавших на площадку дошёл до занятий, а кто потерялся (tsk-863).
+
+    Разговор на Авито в какой-то момент переезжает в мессенджер: оператор
+    отдаёт контакты и зовёт написать. Дальше площадка молчит — по её переписке
+    не отличить человека, который уже занимается, от того, кто пропал. Здесь
+    отличить можно, и признак один: привязан ли к лиду ученик.
+
+    Спрашивают отсюда, а не считают на своей стороне, потому что привязку
+    делает человек в кабинете маркетолога — знать о ней может только LMS.
+    """
+    leads = await lead_service.list_external_leads(
+        db, external_source=source.strip(), days=days
+    )
+    return ExternalLeadStatusList(source=source.strip(), days=days, leads=leads)

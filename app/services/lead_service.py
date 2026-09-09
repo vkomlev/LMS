@@ -7,7 +7,12 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.lead import LEAD_SOURCE_OTHER
-from app.schemas.lead import LeadRead, LeadSourceRead, StudentBrief
+from app.schemas.lead import (
+    ExternalLeadStatus,
+    LeadRead,
+    LeadSourceRead,
+    StudentBrief,
+)
 
 #: Колонки, которые правка лида имеет право трогать. Белый список, а не
 #: «что пришло, то и пишем»: имена полей доезжают до SET-части запроса, и
@@ -31,6 +36,7 @@ __all__ = [
     "unlink_student",
     "search_students",
     "ingest_external_lead",
+    "list_external_leads",
     "get_source_id_by_code",
 ]
 
@@ -350,3 +356,46 @@ async def _lead_exists(db: AsyncSession, lead_id: int) -> bool:
         await db.execute(text("SELECT 1 FROM leads WHERE id = :id"), {"id": lead_id})
     ).first()
     return row is not None
+
+
+async def list_external_leads(
+    db: AsyncSession,
+    *,
+    external_source: str,
+    days: int,
+) -> list[ExternalLeadStatus]:
+    """Внешние обращения источника с признаком «ученик уже привязан» (tsk-863).
+
+    Зачем это соседней системе. На Авито разговор в какой-то момент переезжает
+    в мессенджер: оператор отдаёт контакты и зовёт написать. Дошёл человек или
+    потерялся, в переписке площадки не видно вовсе — видно здесь, и ровно
+    одним признаком: привязан ли к лиду ученик. По нему AvitoManager отбирает
+    тех, кому стоит напомнить о себе.
+
+    Отдаём только то, что нужно для этого решения: внешний номер, номер лида,
+    признак привязки и когда лид заведён. Ни имени, ни контакта, ни переписки —
+    они у спрашивающего и так есть, а лишние личные данные незачем гонять
+    между системами.
+
+    :param days: за сколько последних дней смотреть. Обращения старше уже не
+        догоняют — разговор остыл.
+    """
+    rows = (
+        await db.execute(
+            text(
+                """
+                SELECT r.external_id,
+                       r.lead_id,
+                       (l.linked_student_id IS NOT NULL) AS linked,
+                       l.created_at
+                  FROM lead_external_ref r
+                  JOIN leads l ON l.id = r.lead_id
+                 WHERE r.source = :source
+                   AND l.created_at >= now() - make_interval(days => :days)
+                 ORDER BY l.created_at DESC
+                """
+            ),
+            {"source": external_source, "days": days},
+        )
+    ).all()
+    return [ExternalLeadStatus.model_validate(r, from_attributes=True) for r in rows]

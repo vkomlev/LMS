@@ -107,6 +107,30 @@ class ExternalLeadResponse(BaseModel):
     created: bool
 
 
+class ExternalLeadStatus(BaseModel):
+    """Одно внешнее обращение и его судьба (tsk-863).
+
+    `linked` отвечает на единственный вопрос спрашивающего: дошёл ли человек.
+    Ученик привязывается к лиду руками в кабинете, то есть признак означает
+    «человек добрался и его завели», а не «он что-то нажал».
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    external_id: str
+    lead_id: int
+    linked: bool
+    created_at: datetime
+
+
+class ExternalLeadStatusList(BaseModel):
+    """Ответ служебного чтения: обращения источника за окно."""
+
+    source: str
+    days: int
+    leads: list[ExternalLeadStatus]
+
+
 class LeadLinkRequest(BaseModel):
     student_id: int
 

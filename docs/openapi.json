@@ -34948,6 +34948,123 @@
         }
       }
     },
+    "/api/v1/integrations/leads/external": {
+      "get": {
+        "tags": [
+          "integrations_leads"
+        ],
+        "summary": "Внешние обращения источника: дошёл человек или нет",
+        "description": "Для каждого обращения — привязан ли к лиду ученик. Ни имени, ни контакта, ни переписки в ответе нет: спрашивающая система знает их и так, а признак ей нужен ровно один.",
+        "operationId": "read_external_leads_api_v1_integrations_leads_external_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "source",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "description": "Система-источник, например avito_messenger",
+              "title": "Source"
+            },
+            "description": "Система-источник, например avito_messenger"
+          },
+          {
+            "name": "days",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 365,
+              "minimum": 1,
+              "description": "За сколько последних дней смотреть обращения",
+              "default": 14,
+              "title": "Days"
+            },
+            "description": "За сколько последних дней смотреть обращения"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExternalLeadStatusList"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/subscriptions/plans": {
       "get": {
         "tags": [
@@ -50104,6 +50221,63 @@
         ],
         "title": "ExternalLeadResponse",
         "description": "Ответ служебного входа: номер лида и создан ли он именно сейчас."
+      },
+      "ExternalLeadStatus": {
+        "properties": {
+          "external_id": {
+            "type": "string",
+            "title": "External Id"
+          },
+          "lead_id": {
+            "type": "integer",
+            "title": "Lead Id"
+          },
+          "linked": {
+            "type": "boolean",
+            "title": "Linked"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "external_id",
+          "lead_id",
+          "linked",
+          "created_at"
+        ],
+        "title": "ExternalLeadStatus",
+        "description": "Одно внешнее обращение и его судьба (tsk-863).\n\n`linked` отвечает на единственный вопрос спрашивающего: дошёл ли человек.\nУченик привязывается к лиду руками в кабинете, то есть признак означает\n«человек добрался и его завели», а не «он что-то нажал»."
+      },
+      "ExternalLeadStatusList": {
+        "properties": {
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "days": {
+            "type": "integer",
+            "title": "Days"
+          },
+          "leads": {
+            "items": {
+              "$ref": "#/components/schemas/ExternalLeadStatus"
+            },
+            "type": "array",
+            "title": "Leads"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source",
+          "days",
+          "leads"
+        ],
+        "title": "ExternalLeadStatusList",
+        "description": "Ответ служебного чтения: обращения источника за окно."
       },
       "FeedbackReportCloseRequest": {
         "properties": {
