@@ -10,6 +10,35 @@ p90 — 122 (≈30), 18 человек не решили за месяц нич�
     факт   = медиана завершённых элементов за 3 полные недели
     объём  = clamp( min(цель, факт × 1.2), 3, 25 ), но не больше остатка программы
 
+**Единица нормы — МИНУТЫ РАБОТЫ, а не штуки** (решение оператора 09.09,
+[[tsk-867]]). Та же формула считается дважды: в минутах — по измеренному весу
+элемента (`task_effort_service`, [[tsk-851]]) — и в штуках, как раньше. Ведёт
+минутная, штучная осталась ограждением (см. ниже).
+
+Почему пришлось менять единицу. Элементы разновесные, и на боевых данных
+норма «20 элементов в неделю» означает 4 минуты (лёгкие с выбором ответа),
+5 минут (сложные с выбором) или 79 минут (лёгкие задачи с решением) — разброс
+в двадцать раз при одном и том же числе на экране. Замер выданных ДЗ за 30
+дней (164 выдачи, 09.09): медиана 9.6 минуты, p10 — 1.6, p90 — 64.3, максимум
+125. То есть «столько же, сколько в прошлый раз» до этой правки не значило
+ничего.
+
+**Штуки остались ограждением, и это не пережиток.** Бюджет времени в чистом
+виде даёт обратный перекос: серия заданий с выбором ответа по 12-15 секунд
+покрывает недельные 75 минут только на трёхстах штуках. Триста нажатий за
+вечер — не учебная работа, а марафон, поэтому набор ограничен И бюджетом
+времени, И прежним штучным потолком: что раньше кончится.
+
+**Мерить нечем — считаем по-старому и говорим об этом.** Пустая телеметрия
+(новая установка, окно без сдач) даёт `None` от измерителя. Подставлять вместо
+него число нельзя: посчиталась бы норма, которой никто не мерил. В этом случае
+`effort_measured=False`, минутные поля пустые, ведёт штучный расчёт.
+
+**Вес теории — прокси, а не измерение.** События «материал открыт» в системе
+нет (`MATERIAL_EFFORT_SECONDS_PROXY = 49 с` — медиана промежутка между
+соседними отметками). Настоящее измерение заводится отдельно ([[tsk-868]]);
+пока бюджет теории приблизителен, и на экране число подписано как оценка.
+
 **Почему цель задаётся классом напрямую, а не выводится из остатка программы.**
 Первая редакция считала `надо = остаток / (недель до экзамена × 0.85)` — и это
 не выдержало проверки на живых данных 01.09. Курс «ЕГЭ по информатике» — это
@@ -62,6 +91,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.services.learning_gaps_service import (
     real_student_material_filter,
     real_student_results_filter,
+)
+# tsk-867: вес элемента в секундах — измеритель, ничего не решающий сам.
+from app.services.task_effort_service import (
+    MATERIAL_EFFORT_SECONDS_PROXY,
+    EffortTable,
+    load_effort_table,
 )
 # tsk-741: «что вообще входит в программу» — одно правило на весь проект.
 from app.services.manual_progress_service import REQUIREMENT_LEVELS
@@ -126,6 +161,33 @@ ASSUMED_GRADE = 11
 #: Месяц и день основного периода экзаменов — начало июня.
 EXAM_MONTH = 6
 EXAM_DAY = 1
+
+# --- Норма в минутах работы (tsk-867) -------------------------------------
+#
+# Все четыре числа ниже — не новое продуктовое решение, а ПЕРЕВОД прежних
+# штучных норм в измеренную единицу. Множитель перевода взят с прода 09.09:
+# средний вес непройденного элемента программы ЕГЭ — 222 секунды (≈3.7 минуты)
+# при узком разбросе между учениками (215-281 с), потому что остаток у всех —
+# почти весь каталог. Отсюда 20 элементов ≈ 75 минут, 12 ≈ 45, 8 ≈ 30, 6 ≈ 20.
+#
+# Перевод сверен со вторым, независимым замером — фактическим темпом 88
+# учеников программы: медиана 5.5 элемента в неделю = 11.1 минуты, p90 — 37
+# элементов = 68.7 минуты. То есть переведённый потолок (90 минут) лежит выше
+# p90 живого темпа, а переведённый пол (10 минут) — около медианы, ровно как
+# было в штуках.
+
+#: Меньше этого на дом не задаём. Перевод прежних трёх элементов.
+MIN_MINUTES_PER_WEEK = 10
+#: Базовый потолок недельной выдачи в минутах — перевод прежних 25 элементов.
+#: Как и штучный, это потолок ДЛЯ ТЕХ, КТО СТОЛЬКО НЕ ДЕЛАЕТ: у работающего
+#: больше он поднимается до его собственного темпа (`minutes_ceiling_for`).
+MAX_MINUTES_PER_WEEK = 90
+#: Целевая недельная норма по классу в минутах — перевод TARGET_PER_WEEK_BY_GRADE.
+TARGET_MINUTES_BY_GRADE: dict[int, int] = {11: 75, 10: 45, 9: 45}
+#: Норма для тех, кто младше девятого класса (перевод восьми элементов).
+TARGET_MINUTES_JUNIOR = 30
+#: Норма выпускного класса на финише (перевод шести элементов).
+TARGET_MINUTES_EXAM_SPRINT = 20
 
 
 @dataclass(frozen=True)
@@ -211,6 +273,23 @@ class VolumePlan:
     #: Дата финиша с летними занятиями.
     summer_deadline: Optional[date] = None
 
+    # --- Норма в минутах работы (tsk-867) ---------------------------------
+    #: Вес элементов измерен, и минутные поля ниже заполнены. False — сдач в
+    #: окне телеметрии не было (новая установка, пустая база): норму ведёт
+    #: штучный расчёт, а минуты не показываются вовсе. Выдумывать вес нельзя —
+    #: по нему посчиталась бы норма, которой никто не мерил.
+    effort_measured: bool = False
+    #: Итоговая норма НА НЕДЕЛЮ В МИНУТАХ — то самое число, которым ведётся
+    #: выдача. None — мерить нечем.
+    minutes_per_week: Optional[int] = None
+    #: Сколько минут в неделю нужно ЭТОМУ ученику, чтобы успеть к сроку.
+    target_minutes_per_week: Optional[int] = None
+    #: Сколько минут в неделю человек работает сейчас (медиана по неделям).
+    fact_minutes_per_week: Optional[float] = None
+    #: Во сколько минут оценивается весь непройденный остаток программы.
+    #: Оценка, а не измерение: вес теории здесь — прокси ([[tsk-868]]).
+    remaining_minutes: Optional[int] = None
+
     def as_details(self) -> dict[str, Any]:
         """Снимок для `homework_assignment.volume_details` (JSON-совместимый)."""
         data = asdict(self)
@@ -240,6 +319,38 @@ def ceiling_for(fact_per_week: float) -> int:
     базового потолка, и он остаётся прежним (решение оператора 05.09).
     """
     return max(MAX_PER_WEEK, int(round(fact_per_week * GROWTH_FACTOR)))
+
+
+def minutes_ceiling_for(fact_minutes_per_week: float) -> int:
+    """Потолок недельной выдачи В МИНУТАХ для ученика с таким темпом.
+
+    Тот же принцип, что у штучного потолка (`ceiling_for`): базовый потолок
+    поднимается до собственного темпа человека с обычным шагом роста. Кто уже
+    работает по два часа в неделю, от двух часов не надорвётся, а срезать его
+    до полутора значит мешать ему успеть.
+    """
+    return max(
+        MAX_MINUTES_PER_WEEK, int(round(fact_minutes_per_week * GROWTH_FACTOR))
+    )
+
+
+def target_minutes_for(grade: Optional[int], today: Optional[date] = None) -> int:
+    """Целевая недельная норма класса В МИНУТАХ на эту дату.
+
+    Минутный близнец `target_per_week_for`: те же правила про неизвестный класс
+    и про мартовский спринт выпускников, только в измеренной единице. Обе
+    функции обязаны решать одинаково, поэтому спринт определяется здесь не
+    заново, а сравнением со штучной нормой — разъехавшись, они дали бы
+    ученику разную норму в зависимости от того, чем её меряют.
+    """
+    effective = grade if grade is not None else ASSUMED_GRADE
+    if target_per_week_for(grade, today) == TARGET_PER_WEEK_EXAM_SPRINT and (
+        grade is None or effective >= 11
+    ):
+        return TARGET_MINUTES_EXAM_SPRINT
+    if effective in TARGET_MINUTES_BY_GRADE:
+        return TARGET_MINUTES_BY_GRADE[effective]
+    return TARGET_MINUTES_JUNIOR
 
 
 def exam_date_for(grade: Optional[int], today: date) -> date:
@@ -540,6 +651,197 @@ SELECT b.starts_at::date AS week,
  ORDER BY 1
 """
 
+#: Остаток программы, РАЗЛОЖЕННЫЙ ПО РОДУ ЭЛЕМЕНТОВ (tsk-867). Вес живёт в
+#: Python (`task_effort_service`), а не в SQL: таблица весов снимается один раз
+#: на расчёт, и тащить её в каждый запрос значило бы считать телеметрию заново.
+#: Поэтому база отдаёт «сколько чего осталось», а минуты собираются наверху.
+#:
+#: `:root_ids` пуст (NULL) — корнями берутся все курсы ученика; заданы — только
+#: они. Два разных остатка нужны затем же, зачем в штучном расчёте: программа
+#: подготовки задаёт норму, а все курсы — потолок «больше, чем осталось, не
+#: задашь».
+_REMAINING_WEIGHTS_SQL = """
+WITH RECURSIVE roots AS (
+    SELECT unnest(CAST(:root_ids AS int[])) AS member_course_id
+    UNION
+    SELECT uc.course_id
+      FROM user_courses uc
+     WHERE uc.user_id = :student_id AND uc.is_active = true
+       AND CAST(:root_ids AS int[]) IS NULL
+),
+tree AS (
+    SELECT member_course_id FROM roots
+    UNION
+    SELECT cp.course_id
+      FROM tree t
+      JOIN course_parents cp ON cp.parent_course_id = t.member_course_id
+),
+course_tasks AS (
+    SELECT DISTINCT t.id, t.difficulty_id, t.task_content->>'type' AS task_type
+      FROM tasks t JOIN tree ON tree.member_course_id = t.course_id
+     WHERE COALESCE(t.is_active, true) AND t.requirement_level = ANY(:levels)
+),
+course_materials AS (
+    SELECT DISTINCT m.id
+      FROM materials m JOIN tree ON tree.member_course_id = m.course_id
+     WHERE COALESCE(m.is_active, true) AND m.requirement_level = ANY(:levels)
+),
+tasks_done AS (
+    SELECT DISTINCT tr.task_id AS id
+      FROM task_results tr
+      JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
+     WHERE tr.user_id = :student_id AND tr.is_correct = true
+       AND tr.task_id IN (SELECT id FROM course_tasks)
+    UNION
+    SELECT stp.task_id
+      FROM student_task_progress stp
+     WHERE stp.student_id = :student_id AND stp.status = 'skipped'
+       AND stp.task_id IN (SELECT id FROM course_tasks)
+),
+materials_done AS (
+    SELECT DISTINCT smp.material_id AS id
+      FROM student_material_progress smp
+     WHERE smp.student_id = :student_id AND smp.status IN ('completed', 'skipped')
+       AND smp.material_id IN (SELECT id FROM course_materials)
+)
+SELECT 'task' AS kind, ct.difficulty_id, ct.task_type, count(*) AS n
+  FROM course_tasks ct
+ WHERE ct.id NOT IN (SELECT id FROM tasks_done)
+ GROUP BY 1, 2, 3
+UNION ALL
+SELECT 'material', NULL::int, NULL::text, count(*)
+  FROM course_materials cm
+ WHERE cm.id NOT IN (SELECT id FROM materials_done)
+"""
+
+#: Сделанное ЗА НЕДЕЛЮ с разбивкой по роду элементов — для минутного темпа.
+#: Условия те же, что в `_FACT_SQL` (ручные зачёты отсечены общим правилом);
+#: разница только в группировке, поэтому недели без работы сюда не попадают —
+#: нули берутся из `_FACT_SQL`, который отдаёт полный список окон.
+_FACT_WEIGHTS_SQL = f"""
+WITH bounds AS (
+    SELECT CAST(:since AS timestamptz)
+             + CAST(idx || ' weeks' AS interval) AS starts_at,
+           CAST(:since AS timestamptz)
+             + CAST((idx + 1) || ' weeks' AS interval) AS ends_at
+      FROM generate_series(0, :weeks - 1) AS idx
+)
+SELECT b.starts_at::date AS week, 'task' AS kind,
+       t.difficulty_id, t.task_content->>'type' AS task_type,
+       count(DISTINCT tr.task_id) AS n
+  FROM bounds b
+  JOIN task_results tr
+    ON tr.user_id = :student_id AND tr.is_correct = true
+   AND {real_student_results_filter('tr')}
+   AND tr.submitted_at >= b.starts_at AND tr.submitted_at < b.ends_at
+  JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
+  JOIN tasks t ON t.id = tr.task_id
+ GROUP BY 1, 2, 3, 4
+UNION ALL
+-- Типы в UNION обязаны совпадать явно: голый NULL Postgres считает text и
+-- отказывается склеивать с integer-колонкой сложности.
+SELECT b.starts_at::date, 'material', NULL::int, NULL::text,
+       count(DISTINCT smp.material_id)
+  FROM bounds b
+  JOIN student_material_progress smp
+    ON smp.student_id = :student_id AND smp.status = 'completed'
+   AND smp.completed_at IS NOT NULL
+   AND {real_student_material_filter('smp')}
+   AND smp.completed_at >= b.starts_at AND smp.completed_at < b.ends_at
+ GROUP BY 1, 2, 3, 4
+"""
+
+
+def _seconds_for_rows(rows: list[Any], table: EffortTable) -> Optional[float]:
+    """Сумма веса строк «род × сложность × формат × сколько» в секундах.
+
+    `None` — таблица весов пуста (мерить нечем). Ноль строк при живой таблице
+    даёт 0.0, и это другое: «ничего не осталось» — законный ответ, а «нечем
+    мерить» — отказ считать.
+    """
+    if table.overall is None:
+        return None
+    total = 0.0
+    for row in rows:
+        count = int(row["n"] or 0)
+        if row["kind"] == "material":
+            total += MATERIAL_EFFORT_SECONDS_PROXY * count
+            continue
+        difficulty_id = row["difficulty_id"]
+        seconds = table.seconds_for(
+            difficulty_id=(
+                None if difficulty_id is None else int(difficulty_id)
+            ),
+            task_type=row["task_type"],
+        )
+        # `seconds_for` отступает до общей медианы, а она у живой таблицы есть
+        # всегда — None здесь означал бы, что таблица опустела между двумя
+        # запросами. Считаем такой элемент по общей медиане, а не пропускаем:
+        # пропуск занизил бы остаток молча.
+        total += (seconds if seconds is not None else table.overall) * count
+    return total
+
+
+async def weighted_remaining_seconds(
+    db: AsyncSession,
+    *,
+    student_id: int,
+    root_ids: Optional[list[int]],
+    table: EffortTable,
+) -> Optional[float]:
+    """Во сколько секунд работы оценивается непройденный остаток.
+
+    `root_ids=None` — все курсы ученика; список — только эти корни (программа
+    подготовки). `None` в ответе значит «мерить нечем», а не «ничего не
+    осталось».
+    """
+    rows = (
+        await db.execute(
+            text(_REMAINING_WEIGHTS_SQL),
+            {
+                "student_id": student_id,
+                "root_ids": root_ids,
+                "levels": list(REQUIREMENT_LEVELS),
+            },
+        )
+    ).mappings().all()
+    return _seconds_for_rows(list(rows), table)
+
+
+async def _weekly_minutes(
+    db: AsyncSession,
+    *,
+    student_id: int,
+    since: datetime,
+    weeks: int,
+    weeks_order: list[Any],
+    table: EffortTable,
+) -> Optional[list[float]]:
+    """Сколько минут работы пришлось на каждую неделю окна.
+
+    Недели без работы обязаны остаться в списке нулями: медиана считается по
+    ним же. Их порядок берётся из `weeks_order` — того самого списка окон, по
+    которому считается штучный темп, иначе две медианы разъехались бы окнами.
+    """
+    if table.overall is None:
+        return None
+    rows = (
+        await db.execute(
+            text(_FACT_WEIGHTS_SQL),
+            {"student_id": student_id, "since": since, "weeks": weeks},
+        )
+    ).mappings().all()
+
+    by_week: dict[Any, list[Any]] = {}
+    for row in rows:
+        by_week.setdefault(row["week"], []).append(row)
+    result: list[float] = []
+    for week in weeks_order:
+        seconds = _seconds_for_rows(by_week.get(week, []), table)
+        result.append((seconds or 0.0) / 60)
+    return result
+
+
 #: Когда ученик впервые что-то сделал. Нужно, чтобы не мерить темп новичка по
 #: неделям, которых у него ещё не было: медиана трёх недель у человека,
 #: занимающегося три дня, — это медиана [0, 0, N], то есть ноль. На проде это
@@ -665,16 +967,34 @@ async def compute(
     # у ученика бывают курсы вне программы.
     remaining = max(int(totals["total_items"]) - int(totals["done_items"]), 0)
 
-    weekly = [
-        int(r["done"])
-        for r in (
-            await db.execute(
-                text(_FACT_SQL),
-                {"student_id": student_id, "since": since, "weeks": weeks_window},
-            )
-        ).mappings()
-    ]
+    weekly_rows = (
+        await db.execute(
+            text(_FACT_SQL),
+            {"student_id": student_id, "since": since, "weeks": weeks_window},
+        )
+    ).mappings().all()
+    weekly = [int(r["done"]) for r in weekly_rows]
+    weeks_order = [r["week"] for r in weekly_rows]
     fact_per_week = float(statistics.median(weekly)) if weekly else 0.0
+
+    # tsk-867: тот же темп, измеренный в минутах работы. Таблица весов
+    # снимается ОДИН раз на расчёт: внутри неё LATERAL по всем сдачам окна,
+    # и снимать её на каждый элемент значило бы считать телеметрию заново.
+    effort_table = await load_effort_table(db)
+    effort_measured = effort_table.overall is not None
+    weekly_minutes = await _weekly_minutes(
+        db,
+        student_id=student_id,
+        since=since,
+        weeks=weeks_window,
+        weeks_order=weeks_order,
+        table=effort_table,
+    )
+    fact_minutes = (
+        float(statistics.median(weekly_minutes))
+        if weekly_minutes
+        else (0.0 if effort_measured else None)
+    )
 
     # Сколько из этого сделано НА ЗАНЯТИИ (требование оператора 07.09).
     # Работа на уроке в темп входила и раньше — это обычные сдачи, — но в
@@ -771,6 +1091,35 @@ async def compute(
             grade is None or grade >= 11
         )
 
+    # tsk-867: то же самое в минутах работы. Остаток взвешивается по ТЕМ ЖЕ
+    # корням, по которым посчитан штучный: программа задаёт норму, все курсы
+    # ученика — потолок «больше, чем осталось, не задашь».
+    remaining_seconds = (
+        await weighted_remaining_seconds(
+            db,
+            student_id=student_id,
+            root_ids=(program["root_ids"] if program is not None else None),
+            table=effort_table,
+        )
+        if effort_measured
+        else None
+    )
+    remaining_minutes = (
+        None if remaining_seconds is None else remaining_seconds / 60
+    )
+    target_minutes: Optional[float] = None
+    if effort_measured:
+        if program is not None and remaining_minutes is not None:
+            days_left = (program["deadline"] - moment.date()).days
+            if days_left > 0:
+                target_minutes = remaining_minutes / max(days_left / 7.0, 1e-9)
+            else:
+                # Срок программы прошёл — дальше отработка вариантов, и норма
+                # та же, что в штучном расчёте, только в своей единице.
+                target_minutes = float(TARGET_MINUTES_EXAM_SPRINT)
+        else:
+            target_minutes = float(target_minutes_for(grade, moment.date()))
+
     #: Растим не быстрее, чем на GROWTH_FACTOR от нынешнего темпа, но не ниже
     #: минимума: у человека с нулевым темпом факт×1.2 = 0, и без пола он не
     #: получил бы ничего — то есть механика молчала бы ровно там, где она
@@ -799,6 +1148,29 @@ async def compute(
     # то, чего нет, и пункты в ней окажутся невыполнимыми.
     volume = min(volume, remaining)
 
+    # tsk-867: та же формула в минутах — шаг в шаг со штучной, чтобы норма не
+    # зависела от того, чем её меряют. Ведёт минутная; штучная остаётся
+    # ограждением при наборе состава (см. `homework_service._next_items`).
+    minutes_volume: Optional[int] = None
+    if effort_measured and target_minutes is not None and fact_minutes is not None:
+        raw_minutes = min(
+            target_minutes,
+            max(fact_minutes * GROWTH_FACTOR, float(MIN_MINUTES_PER_WEEK)),
+        )
+        if penalty:
+            raw_minutes *= QUALITY_PENALTY
+        minutes_ceiling = minutes_ceiling_for(fact_minutes)
+        minutes_volume = int(round(max(
+            min(raw_minutes, float(minutes_ceiling)),
+            float(MIN_MINUTES_PER_WEEK),
+        )))
+        if catch_up > 1.0:
+            minutes_volume = int(round(min(
+                minutes_volume * catch_up, float(minutes_ceiling)
+            )))
+        if remaining_minutes is not None:
+            minutes_volume = min(minutes_volume, int(round(remaining_minutes)))
+
     #: Насколько человек не дотягивает до нормы своего класса. Считается по
     #: ФАКТУ, а не по выданному объёму: объём — это то, что мы задали, а
     #: отставание — то, что человек делает на самом деле.
@@ -807,7 +1179,18 @@ async def compute(
     #: Насколько хватит программы при нынешней норме. Считается по НОРМЕ, а не
     #: по факту: вопрос «когда ученику станет нечего задавать», а не «когда он
     #: всё пройдёт».
-    weeks_left = int(remaining // volume) if volume > 0 else None
+    #:
+    #: tsk-867: в минутах, когда вес измерен. Штучное «1342 элемента при норме
+    #: 12 — на 111 недель» и минутное «82 часа при 75 минутах — на 66 недель»
+    #: расходятся именно потому, что элементы разновесные; верно второе.
+    if (
+        minutes_volume is not None
+        and minutes_volume > 0
+        and remaining_minutes is not None
+    ):
+        weeks_left = int(remaining_minutes // minutes_volume)
+    else:
+        weeks_left = int(remaining // volume) if volume > 0 else None
     needs_more = remaining == 0 or (
         weeks_left is not None and weeks_left < PROGRAM_LOW_WEEKS
     )
@@ -839,6 +1222,17 @@ async def compute(
         early_deadline=early_day,
         summer_deadline=summer_day,
         pace_gap=pace_gap,
+        effort_measured=effort_measured,
+        minutes_per_week=minutes_volume,
+        target_minutes_per_week=(
+            int(round(target_minutes)) if target_minutes is not None else None
+        ),
+        fact_minutes_per_week=(
+            round(fact_minutes, 1) if fact_minutes is not None else None
+        ),
+        remaining_minutes=(
+            int(round(remaining_minutes)) if remaining_minutes is not None else None
+        ),
     )
 
 
@@ -856,3 +1250,16 @@ def volume_for_window(plan: VolumePlan, *, days: int) -> int:
         return 0
     scaled = plan.volume_per_week * max(days, 1) / 7.0
     return max(int(round(scaled)), 1)
+
+
+def minutes_for_window(plan: VolumePlan, *, days: int) -> Optional[int]:
+    """Бюджет времени на промежуток в `days` дней, в минутах.
+
+    `None` — вес не измерен: бюджета времени нет, и набирать состав придётся
+    по штукам (`volume_for_window`). Пола в одну минуту здесь нет намеренно:
+    пол выдачи — это «хотя бы один элемент», и он живёт там, где собирается
+    состав, а не в переводе недельной нормы в промежуток.
+    """
+    if plan.minutes_per_week is None or plan.minutes_per_week <= 0:
+        return None
+    return max(int(round(plan.minutes_per_week * max(days, 1) / 7.0)), 1)

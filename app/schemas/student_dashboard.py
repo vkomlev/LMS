@@ -169,6 +169,27 @@ class StudentDashboardProgramRead(BaseModel):
     )
     early_deadline: Optional[date] = None
     summer_deadline: Optional[date] = None
+    remaining_minutes: Optional[int] = Field(
+        default=None,
+        description=(
+            "Во сколько минут работы оценивается остаток программы (tsk-867). "
+            "Оценка, а не измерение: вес задания — медиана времени «открыл → "
+            "ответил» без чтения теории и без повторных попыток, а вес "
+            "материала пока прокси. null — вес мерить нечем"
+        ),
+    )
+    target_minutes_per_week: Optional[int] = Field(
+        default=None,
+        description="Сколько минут в неделю нужно, чтобы успеть к сроку",
+    )
+    fact_minutes_per_week: Optional[float] = Field(
+        default=None,
+        description=(
+            "Сколько минут в неделю выходит сейчас. Именно эти два числа "
+            "сравниваются в `on_track`: в штуках «делает 20 из нужных 20» "
+            "уживалось с двукратным отставанием по времени"
+        ),
+    )
 
 
 class StudentDashboardRead(BaseModel):

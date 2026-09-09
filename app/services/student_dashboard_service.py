@@ -104,8 +104,25 @@ from app.services.learning_gaps_service import (
     real_student_material_filter,
     real_student_results_filter,
 )
+# tsk-867: только ради аннотации — сам модуль импортируется лениво, чтобы не
+# тянуть измеритель в путь, где вес не нужен вовсе.
+from app.services.task_effort_service import EffortTable  # noqa: F401
 
 _METRIC_KEYS = ("tasks_completed", "theory_completed", "first_try", "help_requested")
+
+#: Дальше этого срока прогноз окончания не показывается вовсе (tsk-867).
+#:
+#: Расчёт в минутах честнее штучного, но у него появился новый способ выглядеть
+#: нелепо: ученик, который делает только лёгкие задания по двадцать секунд, при
+#: остатке в 87 часов получает финиш в 2061 году (замер на проде 09.09). Число
+#: арифметически верное и совершенно бесполезное: дата за горизонтом жизни
+#: курса не говорит родителю ничего, кроме «система сломалась».
+#:
+#: Пять лет — заведомо больше любой программы подготовки (самая длинная,
+#: с седьмого класса до ЕГЭ, укладывается в четыре) и заведомо меньше срока, на
+#: котором дата превращается в шутку. Что человек не успевает, видно по
+#: `on_track`, и это остаётся сказанным.
+FORECAST_HORIZON_WEEKS = 5 * 52
 
 #: Статусы участия, означающие ФАКТИЧЕСКУЮ явку.
 _ATTENDED_STATUSES = ("confirmed", "completed")
@@ -637,9 +654,24 @@ async def _program_progress(
 
     # Прогноз: при нынешнем темпе. Ноль темпа — предсказывать не по чему, и
     # выдуманная дата тут хуже пустого места: родитель принял бы её за оценку.
+    #
+    # tsk-867: считается В МИНУТАХ РАБОТЫ, когда вес измерен. В штуках прогноз
+    # врал в обе стороны: остаток «1342 элемента» при темпе «5.5 в неделю» —
+    # это 244 недели, если элементы одинаковые, но они разновесные, и у
+    # человека, идущего по тестам с выбором ответа, столько же элементов
+    # занимает вчетверо меньше времени. Штучный счёт остаётся запасным — на
+    # случай пустой телеметрии, где вес мерить нечем.
     forecast: Optional[date] = None
-    if plan.fact_per_week > 0:
+    weeks_needed: Optional[float] = None
+    if (
+        plan.fact_minutes_per_week is not None
+        and plan.fact_minutes_per_week > 0
+        and plan.remaining_minutes is not None
+    ):
+        weeks_needed = plan.remaining_minutes / plan.fact_minutes_per_week
+    elif plan.fact_per_week > 0:
         weeks_needed = plan.remaining_items / plan.fact_per_week
+    if weeks_needed is not None and weeks_needed <= FORECAST_HORIZON_WEEKS:
         forecast = now.date() + timedelta(days=int(weeks_needed * 7))
 
     return {
@@ -650,9 +682,21 @@ async def _program_progress(
         "fact_per_week": plan.fact_per_week,
         "lesson_share": plan.lesson_share,
         "forecast_date": forecast,
+        # tsk-867: то же самое в минутах работы — единица, в которой считается
+        # норма. Пусто — вес не измерен (пустая телеметрия).
+        "remaining_minutes": plan.remaining_minutes,
+        "target_minutes_per_week": plan.target_minutes_per_week,
+        "fact_minutes_per_week": plan.fact_minutes_per_week,
         # «Успевает» — по ФАКТУ, а не по выданному объёму: объём это то, что
         # мы задали, а вопрос родителя про то, что выходит на самом деле.
-        "on_track": plan.fact_per_week >= plan.target_per_week,
+        # Сравниваются минуты, когда они есть: в штуках «делает 20 из нужных
+        # 20» уживалось с двукратным отставанием по времени.
+        "on_track": (
+            plan.fact_minutes_per_week >= plan.target_minutes_per_week
+            if plan.fact_minutes_per_week is not None
+            and plan.target_minutes_per_week is not None
+            else plan.fact_per_week >= plan.target_per_week
+        ),
         "early_target_per_week": plan.early_target_per_week,
         "summer_target_per_week": plan.summer_target_per_week,
         "early_deadline": plan.early_deadline,
@@ -668,6 +712,7 @@ async def _load_course_pace_and_forecast(
     items: list[dict[str, Any]],
     now: datetime,
     pace_weeks: int,
+    effort_table: Optional["EffortTable"] = None,
 ) -> tuple[Optional[date], bool]:
     """(дата прогноза окончания | None, курс уже пройден целиком).
 
@@ -730,9 +775,114 @@ async def _load_course_pace_and_forecast(
     if pace_per_week <= 0:
         return None, False
 
-    weeks_left = remaining / pace_per_week
+    # tsk-867: срок считается в МИНУТАХ РАБОТЫ, когда вес измерен. Внутри
+    # одного курса разброс меньше, чем по всей программе, но он тот же по
+    # природе: теория узла идёт секунды, задача с решением — минуты, и курс,
+    # где осталась одна теория, заканчивается совсем не тогда, когда обещает
+    # деление штук на штуки.
+    weighted = await _course_forecast_weeks(
+        db,
+        student_id=student_id,
+        countable=countable,
+        since=since,
+        pace_weeks=pace_weeks,
+        now=now,
+        table=effort_table,
+    )
+    weeks_left = weighted if weighted is not None else remaining / pace_per_week
+    # Тот же горизонт, что у прогноза по программе: дата за пять лет — не
+    # предсказание, а повод усомниться в системе.
+    if weeks_left > FORECAST_HORIZON_WEEKS:
+        return None, False
     forecast_dt = now + timedelta(weeks=weeks_left)
     return forecast_dt.date(), False
+
+
+async def _course_forecast_weeks(
+    db: AsyncSession,
+    *,
+    student_id: int,
+    countable: list[dict[str, Any]],
+    since: datetime,
+    pace_weeks: int,
+    now: datetime,
+    table: Optional["EffortTable"] = None,
+) -> Optional[float]:
+    """Сколько недель до конца курса ПО ВРЕМЕНИ РАБОТЫ (tsk-867).
+
+    `None` — считать нечем: вес не измерен либо за окно ученик не сделал в
+    этом курсе ничего. Тогда вызывающий остаётся на штучном счёте; выдумывать
+    вес нельзя, иначе родителю показалась бы дата, посчитанная из ничего.
+    """
+    from app.services.task_effort_service import (
+        MATERIAL_EFFORT_SECONDS_PROXY,
+        effort_for_tasks,
+        load_effort_table,
+    )
+
+    if table is None:
+        table = await load_effort_table(db)
+    if table.overall is None:
+        return None
+
+    task_ids = [i["item_id"] for i in countable if i["item_type"] == "task"]
+    weights = await effort_for_tasks(db, task_ids=task_ids, table=table)
+
+    def _seconds(item: dict[str, Any]) -> float:
+        if item["item_type"] == "material":
+            return MATERIAL_EFFORT_SECONDS_PROXY
+        return float(weights.get(item["item_id"]) or table.overall or 0.0)
+
+    remaining_seconds = sum(
+        _seconds(i) for i in countable if i["status"] not in DONE_STATUSES
+    )
+    if remaining_seconds <= 0:
+        return None
+
+    # Темп — вес того, что ученик закрыл САМ за окно. Список пройденного
+    # берётся из уже посчитанных `items`: отдельный запрос дал бы второй ответ
+    # на вопрос «что сделано», а расходиться этим двум ответам нельзя.
+    done_ids = {
+        i["item_id"]
+        for i in countable
+        if i["item_type"] == "task" and i["status"] in DONE_STATUSES
+    }
+    recent_tasks = set(
+        (
+            await db.execute(
+                text(
+                    "SELECT DISTINCT tr.task_id FROM task_results tr "
+                    "WHERE tr.user_id = :sid AND tr.is_correct = true "
+                    f"  AND {real_student_results_filter('tr')} "
+                    "  AND tr.task_id = ANY(:ids) AND tr.submitted_at >= :since"
+                ),
+                {"sid": student_id, "ids": sorted(done_ids), "since": since},
+            )
+        ).scalars().all()
+    )
+    material_ids = [i["item_id"] for i in countable if i["item_type"] == "material"]
+    recent_materials = int(
+        (
+            await db.execute(
+                text(
+                    "SELECT COUNT(DISTINCT smp.material_id) "
+                    "  FROM student_material_progress smp "
+                    " WHERE smp.student_id = :sid AND smp.status = 'completed' "
+                    f"   AND {real_student_material_filter('smp')} "
+                    "   AND smp.material_id = ANY(:ids) AND smp.completed_at >= :since"
+                ),
+                {"sid": student_id, "ids": material_ids, "since": since},
+            )
+        ).scalar()
+        or 0
+    )
+    done_seconds = sum(
+        float(weights.get(tid) or table.overall or 0.0) for tid in recent_tasks
+    ) + recent_materials * MATERIAL_EFFORT_SECONDS_PROXY
+    pace_seconds_per_week = done_seconds / pace_weeks
+    if pace_seconds_per_week <= 0:
+        return None
+    return remaining_seconds / pace_seconds_per_week
 
 
 async def get_student_dashboard(
@@ -762,6 +912,12 @@ async def get_student_dashboard(
         raise ValueError("period_from/period_to должны быть timezone-aware")
     now = datetime.now(period_to.tzinfo)
     settings = Settings()
+    # tsk-867: вес элементов — один снимок на весь экран. Прогноз по каждому
+    # курсу считается в минутах работы, и снимать таблицу на курс значило бы
+    # пересчитывать телеметрию по пять-десять раз за одно открытие дашборда.
+    from app.services.task_effort_service import load_effort_table
+
+    effort_table = await load_effort_table(db)
 
     period_total = await load_homework_window(
         db, student_id=student_id, window_from=period_from, window_to=period_to,
@@ -875,6 +1031,10 @@ async def get_student_dashboard(
             items=items,
             now=now,
             pace_weeks=settings.student_forecast_pace_weeks,
+            # tsk-867: таблица весов снимается ОДИН раз на дашборд. Внутри неё
+            # LATERAL по всем сдачам окна: снимать её на каждый курс ученика
+            # значило бы считать телеметрию по пять-десять раз за один экран.
+            effort_table=effort_table,
         )
 
         courses.append({

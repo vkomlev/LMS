@@ -37,6 +37,13 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services import homework_volume_service, program_scope_service
+# tsk-867: вес элемента — состав набирается до бюджета времени, а не до штук.
+from app.services.task_effort_service import (
+    MATERIAL_EFFORT_SECONDS_PROXY,
+    EffortTable,
+    effort_for_tasks,
+    load_effort_table,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -49,14 +56,35 @@ _UNASSIGNABLE_TASK_STATUSES = ("BLOCKED_LIMIT",)
 
 
 async def _next_items(
-    db: AsyncSession, *, student_id: int, limit: int
+    db: AsyncSession,
+    *,
+    student_id: int,
+    limit: int,
+    minutes_budget: Optional[int] = None,
+    effort_table: Optional[EffortTable] = None,
 ) -> list[dict[str, Any]]:
-    """Следующие `limit` незавершённых элементов программы ученика.
+    """Следующие незавершённые элементы программы ученика — до бюджета.
 
     Идёт по корневым курсам в порядке `user_courses.order_number` и внутри
     каждого — по учебному порядку дерева (`manual_progress_service.
     get_student_progress`). Дорого (обход дерева), но выдача бывает раз в
     занятие на ученика; чтение готового ДЗ этот путь не трогает вовсе.
+
+    **Набор идёт до БЮДЖЕТА ВРЕМЕНИ** (`minutes_budget`, tsk-867), а `limit` —
+    ограждение сверху по штукам. Ограничения работают вместе, и кончается
+    набор по тому, которое сработает раньше:
+
+    * без ограждения серия заданий с выбором ответа по 12-15 секунд набрала бы
+      недельные 75 минут только на трёхстах штуках — это не учебная работа;
+    * без бюджета времени двадцать задач с решением дают 79 минут там, где
+      двадцать тестов дают четыре, — то есть ровно тот разброс, ради которого
+      задача и заводилась.
+
+    Первый элемент берётся всегда, даже если он один перекрывает бюджет:
+    выдача без состава бессмысленна, а «задача на 40 минут» — это законный
+    состав из одного пункта, а не ошибка расчёта.
+
+    `minutes_budget=None` (вес не измерен) — набор по штукам, как раньше.
     """
     # Локальный импорт: `manual_progress_service` тянет движок и репозитории,
     # а этот модуль зовут из сводки преподавателя — цикла быть не должно.
@@ -113,7 +141,72 @@ async def _next_items(
                     "title": item.get("title"),
                 }
             )
-    return picked
+
+    if minutes_budget is None or effort_table is None or not picked:
+        return picked
+    return _trim_to_budget(
+        picked,
+        minutes_budget=minutes_budget,
+        weights=await effort_for_tasks(
+            db,
+            task_ids=[i["item_id"] for i in picked if i["kind"] == "task"],
+            table=effort_table,
+        ),
+        table=effort_table,
+    )
+
+
+async def _items_minutes(
+    db: AsyncSession, *, items: list[dict[str, Any]], table: EffortTable
+) -> int:
+    """Во сколько минут работы оценивается состав выдачи.
+
+    Оценка, а не обещание: вес задания — медиана времени «открыл → ответил»
+    без чтения теории и без повторных попыток, а вес материала вовсе прокси
+    ([[tsk-868]]). Поэтому на экране число подписано «≈».
+    """
+    weights = await effort_for_tasks(
+        db,
+        task_ids=[i["item_id"] for i in items if i["kind"] == "task"],
+        table=table,
+    )
+    seconds = 0.0
+    for item in items:
+        if item["kind"] == "material":
+            seconds += MATERIAL_EFFORT_SECONDS_PROXY
+        else:
+            seconds += weights.get(item["item_id"]) or table.overall or 0.0
+    return int(round(seconds / 60))
+
+
+def _trim_to_budget(
+    picked: list[dict[str, Any]],
+    *,
+    minutes_budget: int,
+    weights: dict[int, Optional[float]],
+    table: EffortTable,
+) -> list[dict[str, Any]]:
+    """Обрезать набранный список по бюджету времени (tsk-867).
+
+    Элемент, которого нет в таблице весов (задание удалено между обходом и
+    взвешиванием), считается по общей медиане, а не пропускается: пропуск
+    занизил бы бюджет молча и пустил бы в выдачу лишний пункт.
+    """
+    budget_seconds = minutes_budget * 60.0
+    spent = 0.0
+    result: list[dict[str, Any]] = []
+    for item in picked:
+        if item["kind"] == "material":
+            cost = MATERIAL_EFFORT_SECONDS_PROXY
+        else:
+            cost = weights.get(item["item_id"]) or table.overall or 0.0
+        # Первый пункт берётся всегда: выдача без состава бессмысленна, а одна
+        # задача на сорок минут — законный состав, а не ошибка расчёта.
+        if result and spent + cost > budget_seconds:
+            break
+        result.append(item)
+        spent += cost
+    return result
 
 
 async def issue(
@@ -165,18 +258,43 @@ async def issue(
 
     plan = await homework_volume_service.compute(db, student_id=student_id, now=moment)
     days = max((due_at - moment).days, 1)
-    volume = (
-        int(volume_override)
-        if volume_override is not None
-        else homework_volume_service.volume_for_window(plan, days=days)
-    )
+    minutes_budget = homework_volume_service.minutes_for_window(plan, days=days)
+
+    # tsk-867: ведёт БЮДЖЕТ ВРЕМЕНИ, штуки остаются ограждением. Ограждением
+    # служит штучный ПОТОЛОК, а не штучная норма: норма посчитана из того же
+    # «факт × 1.2», что и минутная, и взяв её, мы бы отдали ведущую роль
+    # обратно штукам — то есть не изменили бы ничего.
+    #
+    # Явное число преподавателя отменяет бюджет времени целиком: он сказал
+    # «задай двенадцать», и получить в ответ четыре — не то, о чём он просил.
+    if volume_override is not None:
+        volume, minutes_budget = int(volume_override), None
+    elif minutes_budget is not None:
+        volume = max(
+            int(round(
+                homework_volume_service.ceiling_for(plan.fact_per_week)
+                * max(days, 1) / 7.0
+            )),
+            1,
+        )
+    else:
+        volume = homework_volume_service.volume_for_window(plan, days=days)
     if volume <= 0:
         raise ValueError(
             "Программа пройдена: ученик идёт с опережением, и задавать больше "
             "нечего. Добавьте ему курс — тогда домашняя работа появится снова."
         )
 
-    items = await _next_items(db, student_id=student_id, limit=volume)
+    effort_table = (
+        await load_effort_table(db) if minutes_budget is not None else None
+    )
+    items = await _next_items(
+        db,
+        student_id=student_id,
+        limit=volume,
+        minutes_budget=minutes_budget,
+        effort_table=effort_table,
+    )
     if not items:
         raise ValueError(
             "Программа пройдена: ученик идёт с опережением, и задавать больше "
@@ -196,6 +314,14 @@ async def issue(
     details["window_days"] = days
     if volume_override is not None:
         details["volume_override"] = int(volume_override)
+    # tsk-867: снимок бюджета и фактического веса состава. Пересчитывать вес
+    # при чтении нельзя: таблица весов живая, и «сколько минут было задано»
+    # менялось бы задним числом при каждом открытии экрана.
+    if minutes_budget is not None and effort_table is not None:
+        details["minutes_budget"] = minutes_budget
+        details["planned_minutes"] = await _items_minutes(
+            db, items=items, table=effort_table
+        )
 
     homework_id = (
         await db.execute(
@@ -214,7 +340,11 @@ async def issue(
                 "source": source,
                 "by": issued_by,
                 "occ": occurrence_id,
-                "vol": volume,
+                # Сколько ЗАДАНО, а не сколько разрешал расчёт: при бюджете
+                # времени (tsk-867) штучный лимит — только ограждение, и набор
+                # почти всегда кончается раньше него. Расчётное число осталось
+                # в `volume_details.requested_volume`.
+                "vol": len(items),
                 "details": json.dumps(details, ensure_ascii=False),
                 "note": note,
             },
@@ -529,6 +659,10 @@ async def get_current(
 
     items = await _load_items(db, homework_id=int(row["id"]), student_id=student_id)
     done = sum(1 for i in items if i["done"])
+    raw_details = row["volume_details"]
+    planned_minutes = (
+        raw_details.get("planned_minutes") if isinstance(raw_details, dict) else None
+    )
     return {
         "id": int(row["id"]),
         "student_id": int(row["student_id"]),
@@ -538,6 +672,10 @@ async def get_current(
         "issued_by": row["issued_by"],
         "occurrence_id": row["occurrence_id"],
         "planned_volume": int(row["planned_volume"]),
+        # tsk-867: во сколько минут работы оценён состав В МОМЕНТ ВЫДАЧИ.
+        # None — выдача сделана до перехода на бюджет времени либо вес тогда
+        # не был измерен; экран в этом случае обходится без оценки.
+        "planned_minutes": planned_minutes,
         "volume_details": row["volume_details"],
         "note": row["note"],
         "items": items,

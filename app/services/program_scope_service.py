@@ -49,6 +49,13 @@ from typing import Any, Optional
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+# tsk-867: вес элемента в секундах — измеритель, ничего не решающий сам.
+from app.services.task_effort_service import (
+    MATERIAL_EFFORT_SECONDS_PROXY,
+    EffortTable,
+    load_effort_table,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -103,6 +110,19 @@ class ProgramScope:
     #: выброшено: либо ядро поместилось, либо приоритеты не размечены.
     excluded_courses: frozenset[int] = frozenset()
 
+    # --- Бюджет в минутах работы (tsk-867) --------------------------------
+    #: Вес элементов измерен, и бюджет считался в минутах. False — телеметрия
+    #: пуста, и всё посчитано по-старому, в штуках.
+    effort_measured: bool = False
+    #: Темп, на который рассчитан план, в минутах работы в неделю.
+    planned_pace_minutes: Optional[int] = None
+    #: Во сколько минут оценивается несокращаемая часть программы.
+    core_minutes: Optional[int] = None
+    #: Во сколько минут оценивается весь тренажёр.
+    drill_minutes: Optional[int] = None
+    #: Сколько минут тренажёра помещается в срок.
+    drill_allowed_minutes: Optional[int] = None
+
     @property
     def drill_ratio(self) -> float:
         """Какая доля тренажёра достаётся ученику (0..1)."""
@@ -129,7 +149,12 @@ WITH RECURSIVE tree AS (
       JOIN course_parents cp ON cp.parent_course_id = t.member_course_id
 ),
 course_tasks AS (
-    SELECT DISTINCT t.id, t.course_id, COALESCE(d.code, 'NORMAL') AS code
+    SELECT DISTINCT t.id, t.course_id, COALESCE(d.code, 'NORMAL') AS code,
+           -- tsk-867: род задания нужен, чтобы взвесить его в минутах работы.
+           -- Вес живёт в Python (`task_effort_service`): таблица весов
+           -- снимается один раз на расчёт, и тащить её в SQL значило бы
+           -- считать телеметрию заново на каждый подкурс.
+           t.difficulty_id, t.task_content->>'type' AS task_type
       FROM tasks t
       JOIN tree ON tree.member_course_id = t.course_id
       LEFT JOIN difficulties d ON d.id = t.difficulty_id
@@ -146,6 +171,9 @@ tasks_done AS (
      WHERE stp.student_id = :student_id AND stp.status = 'skipped'
 )
 SELECT ct.course_id,
+       -- Разбивка по роду задания (tsk-867): те же счётчики, что и раньше, но
+       -- в разрезе (сложность, формат) — иначе их нечем взвесить.
+       ct.difficulty_id, ct.task_type,
        (SELECT c.program_priority FROM courses c WHERE c.id = ct.course_id)
            AS program_priority,
        count(*) FILTER (
@@ -162,7 +190,7 @@ SELECT ct.course_id,
        ) AS drill_done,
        count(*) FILTER (WHERE ct.id IN (SELECT id FROM tasks_done)) AS done_any
   FROM course_tasks ct
- GROUP BY ct.course_id
+ GROUP BY ct.course_id, ct.difficulty_id, ct.task_type
 """
 
 #: Непройденных материалов программы. Отдельным запросом, а не колонкой в
@@ -205,6 +233,38 @@ def planned_pace_for(fact_per_week: float) -> int:
     return max(base, int(round(fact_per_week * GROWTH_FACTOR)))
 
 
+def planned_minutes_for(fact_minutes_per_week: float) -> int:
+    """Тот же темп, но в минутах работы (tsk-867).
+
+    Минутный близнец `planned_pace_for`: базовое ожидание школы, поднятое до
+    собственного темпа ученика. Планировать программу в штуках нельзя ровно по
+    той же причине, по которой нельзя задавать в штуках домашнюю работу:
+    «двадцать элементов» — это и четыре минуты, и семьдесят девять.
+    """
+    from app.core import settings_store
+    from app.services.homework_volume_service import GROWTH_FACTOR
+
+    base = settings_store.get_int("homework_program_planned_minutes")
+    return max(base, int(round(fact_minutes_per_week * GROWTH_FACTOR)))
+
+
+def _share_minutes(
+    per_course_minutes: dict[int, float], allowed_minutes: float
+) -> dict[int, float]:
+    """Разложить бюджет тренажёра В МИНУТАХ по подкурсам (tsk-867).
+
+    Пропорционально их весу, как и штучный `_split_budget`, но без раздачи
+    остатка: минуты дробные, целочисленного остатка здесь не возникает, а
+    округление делается один раз — при переводе минут в порог выборки, где оно
+    и имеет смысл (порог считается в заданиях).
+    """
+    total = sum(per_course_minutes.values())
+    if total <= 0 or allowed_minutes >= total:
+        return dict(per_course_minutes)
+    share = allowed_minutes / total
+    return {cid: minutes * share for cid, minutes in per_course_minutes.items()}
+
+
 def _split_budget(
     per_course_drill: dict[int, int], drill_allowed: int
 ) -> dict[int, int]:
@@ -237,12 +297,16 @@ def _split_budget(
 
 
 def _trim_core(
-    core_by_course: dict[int, int],
+    core_by_course: dict[int, float],
     priority_by_course: dict[int, Optional[int]],
-    budget: int,
+    budget: float,
     started: Optional[set[int]] = None,
-) -> tuple[set[int], int]:
+) -> tuple[set[int], float]:
     """Какие подкурсы выпадают, когда бюджета не хватает даже на ядро.
+
+    Размер подкурса и бюджет меряются одной единицей — минутами работы, когда
+    вес измерен, и штуками, когда мерить нечем (tsk-867). Сама логика отбора
+    от единицы не зависит: важен порядок приоритетов, а не то, чем считать.
 
     Решение оператора 05.09: резать **по номерам ЕГЭ** — выбрасывать номер
     целиком, а не куски из каждого. Половина разбора каждого номера не готовит
@@ -296,6 +360,25 @@ def _trim_core(
     return excluded, kept_size
 
 
+def _seconds_for(
+    table: Optional[EffortTable], difficulty_id: Any, task_type: Any
+) -> float:
+    """Вес задания такого рода в секундах; 0.0 — мерить нечем (tsk-867).
+
+    Ноль здесь безопасен: при пустой таблице весь расчёт идёт по штукам, и
+    минутные суммы не используются вовсе. Подставлять вместо измерения
+    выдуманное число нельзя — по нему посчитался бы объём программы, которого
+    никто не мерил.
+    """
+    if table is None or table.overall is None:
+        return 0.0
+    seconds = table.seconds_for(
+        difficulty_id=None if difficulty_id is None else int(difficulty_id),
+        task_type=task_type,
+    )
+    return float(seconds if seconds is not None else table.overall)
+
+
 async def compute_scope(
     db: AsyncSession,
     *,
@@ -305,6 +388,8 @@ async def compute_scope(
     deadline: date,
     fact_per_week: float,
     today: Optional[date] = None,
+    effort_table: Optional[EffortTable] = None,
+    fact_minutes_per_week: Optional[float] = None,
 ) -> ProgramScope:
     """Посчитать, что из программы помещается ученику в срок.
 
@@ -320,11 +405,21 @@ async def compute_scope(
         deadline: к какому дню программу нужно закончить.
         fact_per_week: фактический недельный темп ученика.
         today: дата расчёта; None — сегодня.
+        effort_table: таблица весов (tsk-867); None — снимается здесь же.
+            Передаётся снаружи, когда расчёт уже её снял: внутри таблицы
+            LATERAL по всем сдачам окна, и снимать её дважды за один пересчёт
+            плана значит считать телеметрию заново.
+        fact_minutes_per_week: фактический темп в минутах; None — считать не
+            из чего, и объём программы посчитается по-старому, в штуках.
 
     Returns:
         `ProgramScope` — объём и всё, из чего он сложился.
     """
     moment = today or date.today()
+    # Вес нужен, только если есть с чем его сравнивать: без минутного темпа
+    # ученика бюджет всё равно считался бы в штуках.
+    if effort_table is None and fact_minutes_per_week is not None:
+        effort_table = await load_effort_table(db)
     rows = (
         await db.execute(
             text(_SCOPE_SQL),
@@ -353,20 +448,77 @@ async def compute_scope(
     }
     materials_left = sum(materials_by_course.values())
 
-    per_course_drill = {
-        int(r["course_id"]): int(r["drill_left"])
-        for r in rows
-        if int(r["drill_left"]) > 0
+    # Строки пришли в разрезе (подкурс, сложность, формат) — сворачиваем их и
+    # в штуки (как раньше), и в минуты работы (tsk-867).
+    per_course_drill: dict[int, int] = {}
+    per_course_drill_minutes: dict[int, float] = {}
+    per_course_core: dict[int, int] = {}
+    per_course_core_minutes: dict[int, float] = {}
+    drill_done: dict[int, int] = {}
+    started: set[int] = set()
+    priority_by_course: dict[int, Optional[int]] = {}
+    for r in rows:
+        cid = int(r["course_id"])
+        priority_by_course[cid] = (
+            int(r["program_priority"]) if r["program_priority"] is not None else None
+        )
+        core_left, drill_left = int(r["core_left"]), int(r["drill_left"])
+        drill_done[cid] = drill_done.get(cid, 0) + int(r["drill_done"])
+        if int(r["done_any"]) > 0:
+            started.add(cid)
+        seconds = _seconds_for(effort_table, r["difficulty_id"], r["task_type"])
+        if core_left:
+            per_course_core[cid] = per_course_core.get(cid, 0) + core_left
+            per_course_core_minutes[cid] = (
+                per_course_core_minutes.get(cid, 0.0) + core_left * seconds / 60
+            )
+        if drill_left:
+            per_course_drill[cid] = per_course_drill.get(cid, 0) + drill_left
+            per_course_drill_minutes[cid] = (
+                per_course_drill_minutes.get(cid, 0.0) + drill_left * seconds / 60
+            )
+
+    materials_minutes = {
+        cid: n * MATERIAL_EFFORT_SECONDS_PROXY / 60
+        for cid, n in materials_by_course.items()
     }
-    core_tasks_left = sum(int(r["core_left"]) for r in rows)
+    core_tasks_left = sum(per_course_core.values())
     core_total = core_tasks_left + materials_left
+    core_minutes = sum(per_course_core_minutes.values()) + sum(
+        materials_minutes.values()
+    )
     drill_total = sum(per_course_drill.values())
+    drill_minutes = sum(per_course_drill_minutes.values())
 
     weeks_left = max((deadline - moment).days, 0) / 7.0
     planned_pace = planned_pace_for(fact_per_week)
     budget = int(planned_pace * weeks_left)
 
-    core_trimmed = budget < core_total
+    # tsk-867: считаем в минутах, когда вес измерен. `budget_units`,
+    # `core_units` и `drill_units` — одна и та же величина в выбранной
+    # единице: логика отбора ниже от единицы не зависит, а числа зависят
+    # сильно (у тренажёра из тестов с выбором ответа минут втрое меньше, чем
+    # даёт пропорция по штукам).
+    effort_measured = effort_table is not None and effort_table.overall is not None
+    planned_pace_minutes = (
+        planned_minutes_for(fact_minutes_per_week or 0.0) if effort_measured else None
+    )
+    if effort_measured and planned_pace_minutes is not None:
+        budget_units = planned_pace_minutes * weeks_left
+        core_units = core_minutes
+        per_course_core_units: dict[int, float] = dict(per_course_core_minutes)
+        per_course_materials_units: dict[int, float] = dict(materials_minutes)
+        per_course_drill_units: dict[int, float] = dict(per_course_drill_minutes)
+    else:
+        budget_units = float(budget)
+        core_units = float(core_total)
+        per_course_core_units = {cid: float(n) for cid, n in per_course_core.items()}
+        per_course_materials_units = {
+            cid: float(n) for cid, n in materials_by_course.items()
+        }
+        per_course_drill_units = {cid: float(n) for cid, n in per_course_drill.items()}
+
+    core_trimmed = budget_units < core_units
     excluded: set[int] = set()
     if core_trimmed:
         # Ядро не помещается — режем его ПО НОМЕРАМ (решение оператора 05.09).
@@ -374,56 +526,83 @@ async def compute_scope(
         # номер, выбрасываем и его теорию, иначе ученик получил бы разбор
         # темы, задания по которой ему всё равно не покажут.
         core_by_course = {
-            int(r["course_id"]): int(r["core_left"])
-            + materials_by_course.get(int(r["course_id"]), 0)
-            for r in rows
-        }
-        for cid, n in materials_by_course.items():
-            core_by_course.setdefault(cid, n)
-        priority_by_course = {
-            int(r["course_id"]): (
-                int(r["program_priority"])
-                if r["program_priority"] is not None
-                else None
-            )
-            for r in rows
+            cid: per_course_core_units.get(cid, 0.0)
+            + per_course_materials_units.get(cid, 0.0)
+            for cid in set(per_course_core_units) | set(per_course_materials_units)
         }
         for cid in core_by_course:
             priority_by_course.setdefault(cid, None)
 
-        started = {
-            int(r["course_id"]) for r in rows if int(r["done_any"]) > 0
-        }
-        excluded, core_total = _trim_core(
-            core_by_course, priority_by_course, budget, started=started
+        excluded, kept_units = _trim_core(
+            core_by_course, priority_by_course, budget_units, started=started
         )
         # Выпавшие подкурсы уходят из программы целиком — вместе со своим
         # тренажёром: задавать отработку по номеру, который не проходим, незачем.
         for cid in excluded:
             per_course_drill.pop(cid, None)
+            per_course_drill_minutes.pop(cid, None)
+            per_course_drill_units.pop(cid, None)
+            per_course_core.pop(cid, None)
+            per_course_core_minutes.pop(cid, None)
+            materials_by_course.pop(cid, None)
+            materials_minutes.pop(cid, None)
         drill_total = sum(per_course_drill.values())
+        drill_minutes = sum(per_course_drill_minutes.values())
+        core_total = sum(per_course_core.values()) + sum(materials_by_course.values())
+        core_minutes = sum(per_course_core_minutes.values()) + sum(
+            materials_minutes.values()
+        )
+        core_units = kept_units
         # Признак остаётся поднятым, даже если после резки всё поместилось:
         # преподаватель обязан знать, что программа этого ученика короче.
 
-    drill_allowed = max(budget - core_total, 0)
+    drill_allowed_units = max(budget_units - core_units, 0.0)
+    drill_total_units = sum(per_course_drill_units.values())
 
     # Совсем тонкий слой отработки бесполезен: курс без практики — это не
     # облегчённая программа, а другая. Ниже порога выборку не включаем вовсе,
     # а честно поднимаем core_trimmed: разговор тут не про объём тренажёра.
-    if drill_total > 0 and 0 < drill_allowed < drill_total * MIN_DRILL_RATIO:
-        drill_allowed = int(drill_total * MIN_DRILL_RATIO)
+    if (
+        drill_total_units > 0
+        and 0 < drill_allowed_units < drill_total_units * MIN_DRILL_RATIO
+    ):
+        drill_allowed_units = drill_total_units * MIN_DRILL_RATIO
 
-    allowed = min(drill_allowed, drill_total)
+    allowed_units = min(drill_allowed_units, drill_total_units)
     # Порог, который получит движок, — ПОЛНЫЙ размер выборки подкурса, вместе с
     # уже решёнными заданиями: сэмплер трактует его именно так. Считаем же мы
     # бюджет по остатку, поэтому решённые прибавляются здесь. Не прибавь их —
     # ученик, прошедший половину тренажёра, получил бы порог меньше того, что
     # уже сделал, и часть его работы выпала бы из программы.
-    drill_done = {int(r["course_id"]): int(r["drill_done"]) for r in rows}
+    #
+    # tsk-867: бюджет делится в минутах, а порог движку нужен в ЗАДАНИЯХ —
+    # перевод идёт по среднему весу задания ИМЕННО ЭТОГО подкурса. Общий
+    # средний вес тут не годится: в «Задании 27» одно задание идёт девять
+    # минут, в «Задании 1» — двенадцать секунд, и один делитель на всех вернул
+    # бы тот же перекос, ради которого задача и заводилась.
+    if effort_measured:
+        shared = _share_minutes(per_course_drill_units, allowed_units)
+        per_course_threshold: dict[int, int] = {}
+        for cid, minutes in shared.items():
+            tasks_left = per_course_drill.get(cid, 0)
+            course_minutes = per_course_drill_minutes.get(cid, 0.0)
+            if tasks_left <= 0 or course_minutes <= 0:
+                continue
+            per_task = course_minutes / tasks_left
+            per_course_threshold[cid] = min(
+                int(minutes / per_task), tasks_left
+            )
+    else:
+        per_course_threshold = _split_budget(
+            {cid: per_course_drill[cid] for cid in per_course_drill},
+            int(allowed_units),
+        )
+
     per_course = {
         cid: threshold + drill_done.get(cid, 0)
-        for cid, threshold in _split_budget(per_course_drill, allowed).items()
+        for cid, threshold in per_course_threshold.items()
     }
+    allowed = sum(per_course_threshold.values())
 
     return ProgramScope(
         kind=kind,
@@ -436,6 +615,13 @@ async def compute_scope(
         core_trimmed=core_trimmed,
         per_course=per_course,
         excluded_courses=frozenset(excluded),
+        effort_measured=effort_measured,
+        planned_pace_minutes=planned_pace_minutes,
+        core_minutes=int(round(core_minutes)) if effort_measured else None,
+        drill_minutes=int(round(drill_minutes)) if effort_measured else None,
+        drill_allowed_minutes=(
+            int(round(allowed_units)) if effort_measured else None
+        ),
     )
 
 
@@ -556,12 +742,23 @@ async def refresh_for_student(
         deadline=program["deadline"],
         fact_per_week=plan.fact_per_week,
         today=moment.date(),
+        # tsk-867: минутный темп уже посчитан в плане — по нему бюджет
+        # программы и считается. None значит «вес мерить нечем», и тогда
+        # объём программы остаётся штучным.
+        fact_minutes_per_week=plan.fact_minutes_per_week,
     )
     merged = await store_scope(db, student_id=student_id, scope=scope)
     logger.info(
-        "tsk-798: план ученика %s (%s): ядро %s, тренажёр %s из %s, темп %s%s",
+        "tsk-798: план ученика %s (%s): ядро %s, тренажёр %s из %s, темп %s%s%s",
         student_id, scope.kind, scope.core_total, scope.drill_allowed,
         scope.drill_total, scope.planned_pace,
+        (
+            f"; в минутах: ядро {scope.core_minutes}, тренажёр "
+            f"{scope.drill_allowed_minutes} из {scope.drill_minutes}, темп "
+            f"{scope.planned_pace_minutes}"
+            if scope.effort_measured
+            else "; вес не измерен, считано в штуках"
+        ),
         ", ядро не помещается" if scope.core_trimmed else "",
     )
     return ProgramScope(
@@ -575,6 +772,11 @@ async def refresh_for_student(
         core_trimmed=scope.core_trimmed,
         per_course=merged,
         excluded_courses=scope.excluded_courses,
+        effort_measured=scope.effort_measured,
+        planned_pace_minutes=scope.planned_pace_minutes,
+        core_minutes=scope.core_minutes,
+        drill_minutes=scope.drill_minutes,
+        drill_allowed_minutes=scope.drill_allowed_minutes,
     )
 
 

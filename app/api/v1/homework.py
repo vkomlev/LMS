@@ -115,6 +115,9 @@ async def get_homework_volume(
             root_ids=program["root_ids"],
             deadline=program["deadline"],
             fact_per_week=plan.fact_per_week,
+            # tsk-867: объём программы считается в минутах работы — тем же
+            # темпом, что и норма ДЗ. None значит «вес мерить нечем».
+            fact_minutes_per_week=plan.fact_minutes_per_week,
         )
         dropped: list[str] = []
         if scope.excluded_courses:
