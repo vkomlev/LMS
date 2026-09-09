@@ -394,6 +394,8 @@ async def _scoped_remaining(
     program: dict[str, Any],
     fact_per_week: float,
     today: date,
+    effort_table: Optional[EffortTable] = None,
+    fact_minutes_per_week: Optional[float] = None,
 ) -> tuple[int, Optional[float]]:
     """Сколько программы ученику РЕАЛЬНО спланировано: штуки и минуты (tsk-869).
 
@@ -430,6 +432,8 @@ async def _scoped_remaining(
         deadline=program["deadline"],
         fact_per_week=fact_per_week,
         today=today,
+        effort_table=effort_table,
+        fact_minutes_per_week=fact_minutes_per_week,
     )
 
     minutes: Optional[float] = None
@@ -1124,6 +1128,13 @@ async def compute(
             program=program,
             fact_per_week=fact_per_week,
             today=moment.date(),
+            # Вес и минутный темп передаются готовыми: без них `compute_scope`
+            # не грузит таблицу весов вовсе и возвращает минуты пустыми — тогда
+            # минутный норматив молча падал бы на полный остаток, то есть
+            # дефект остался бы жив в одной из двух единиц (замечено на проде
+            # сразу после выката: штучный стал 30, минутный остался 156).
+            effort_table=effort_table if effort_measured else None,
+            fact_minutes_per_week=fact_minutes if effort_measured else None,
         )
 
         # Не выпускник — у него есть выбор, которого нет у одиннадцати-

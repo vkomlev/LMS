@@ -307,6 +307,21 @@ async def test_norm_counts_the_trimmed_program_not_the_full_one(db, monkeypatch)
     # Ядро маленькое, отработки много — её и подрежет бюджет.
     await _fill_course(db, course_id, theory=20, easy=300, normal=300)
 
+    # Вес заданий должен быть ИЗМЕРЕН, иначе минутная половина проверки ниже
+    # молча пропустится — а именно в ней и жил дефект. Пары «открыл → сдал»
+    # ставит отдельный ученик-донор на отдельном задании: у самого проверяемого
+    # они попали бы и в темп, и в остаток программы.
+    from tests.test_homework_minutes_tsk867 import _calibrate
+
+    donor_id = await _new_user(db)
+    donor_course = await _new_course(db, "norm-vs-scope-donor")
+    donor_task = await _new_task(db, course_id=donor_course, code="EASY", pos=1)
+    await db.commit()
+    await _calibrate(
+        db, donor_id=donor_id, task_id=donor_task,
+        course_id=donor_course, seconds=300,
+    )
+
     values = {
         "homework_program_ege_courses": str(course_id),
         "homework_program_oge_courses": "",
@@ -329,9 +344,16 @@ async def test_norm_counts_the_trimmed_program_not_the_full_one(db, monkeypatch)
     program = await homework_volume_service.program_for_student(
         db, student_id=student_id, grade=11, today=date.today(),
     )
+    # Те же параметры, что у настоящего расчёта: с измеренным весом объём
+    # режется по бюджету ВРЕМЕНИ, и без веса тест сравнивал бы норму с
+    # объёмом, посчитанным по другим правилам.
+    from app.services.task_effort_service import load_effort_table
+
     scope = await scope_service.compute_scope(
         db, student_id=student_id, kind="ege", root_ids=[course_id],
         deadline=program["deadline"], fact_per_week=plan.fact_per_week,
+        effort_table=await load_effort_table(db),
+        fact_minutes_per_week=plan.fact_minutes_per_week,
     )
 
     planned = scope.core_total + scope.drill_allowed
@@ -342,6 +364,24 @@ async def test_norm_counts_the_trimmed_program_not_the_full_one(db, monkeypatch)
     assert plan.target_per_week == int(-(-planned // weeks)), (
         f"норматив {plan.target_per_week} посчитан не от плана ({planned})"
     )
+
+    # И то же самое в минутах. Первая редакция правки этого НЕ делала:
+    # `compute_scope` грузит таблицу весов, только если ему передан минутный
+    # темп, — без него минуты возвращались пустыми, и минутный норматив молча
+    # падал на полный остаток. На проде сразу после выката штучный стал 30, а
+    # минутный остался 156, то есть дефект выжил в одной из двух единиц.
+    if plan.effort_measured:
+        assert scope.core_minutes is not None, (
+            "объём вернул пустые минуты — вес не передали, норматив уедет "
+            "на полный остаток"
+        )
+        scoped_minutes = scope.core_minutes + (scope.drill_allowed_minutes or 0)
+        assert plan.target_minutes_per_week == int(
+            round(scoped_minutes / weeks)
+        ), (
+            f"минутный норматив {plan.target_minutes_per_week} посчитан не от "
+            f"плана ({scoped_minutes} мин)"
+        )
 
 
 async def _subcourse(db, root: int, title: str, *, priority: int | None,
