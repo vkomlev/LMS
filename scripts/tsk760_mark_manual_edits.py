@@ -40,6 +40,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import asyncpg
 from dotenv import load_dotenv
@@ -78,12 +79,28 @@ def _provenance(reason: str) -> dict[str, Any]:
     }
 
 
-async def run(input_path: Path, *, apply: bool, reason: str, limit: int | None) -> int:
-    load_dotenv(_ROOT / ".env")
-    dsn = (os.environ.get("DATABASE_URL") or "").replace("postgresql+asyncpg://", "postgresql://")
+def _prod_dsn() -> str:
+    """DSN боевой базы из `.mcp.json` (пароль не печатаем).
+
+    Нужен отдельным путём, потому что `DATABASE_URL` в локальном `.env` смотрит
+    на dev-копию (localhost/Learn). Она — старый снимок прода, поэтому счётчики
+    сходятся и подмену легко не заметить: пометки лягут не туда (tsk-853).
+    """
+    mcp = json.loads((_ROOT / ".mcp.json").read_text(encoding="utf-8"))
+    return str(mcp["mcpServers"]["learn_prod_db"]["args"][-1])
+
+
+async def run(input_path: Path, *, apply: bool, reason: str, limit: int | None, prod: bool = False) -> int:
+    if prod:
+        dsn = _prod_dsn()
+    else:
+        load_dotenv(_ROOT / ".env")
+        dsn = (os.environ.get("DATABASE_URL") or "").replace("postgresql+asyncpg://", "postgresql://")
     if not dsn:
         print("ERROR: DATABASE_URL не задан", file=sys.stderr)
         return 2
+    _host = urlparse(dsn)
+    print(f"База: {_host.username}@{_host.hostname}:{_host.port or 5432}{_host.path}\n")
 
     uids = load_uids(input_path)
     if limit is not None:
@@ -182,9 +199,14 @@ def main() -> int:
         help="что записать в content_provenance.reason",
     )
     ap.add_argument("--limit", type=int, default=None, help="ограничить число заданий (проба)")
+    ap.add_argument(
+        "--prod",
+        action="store_true",
+        help="боевая база из .mcp.json вместо DATABASE_URL из .env (тот смотрит на dev-копию)",
+    )
     args = ap.parse_args()
     return asyncio.run(
-        run(Path(args.input), apply=args.apply, reason=args.reason, limit=args.limit)
+        run(Path(args.input), apply=args.apply, reason=args.reason, limit=args.limit, prod=args.prod)
     )
 
 
