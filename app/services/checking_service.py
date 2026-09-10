@@ -305,7 +305,18 @@ class CheckingService:
                     base_score = int(
                         solution_rules.max_score * num_correct / len(correct_set)
                     )
-            is_correct = base_score == solution_rules.max_score
+            # tsk-905: раньше здесь стояло `base_score == max_score`, а этот
+            # порог достижим, просто отметив ВСЕ верные варианты — не важно,
+            # отмечены ли вдобавок неверные. Из-за этого общий блок штрафов
+            # ниже (сработал бы только при `not is_correct`) пропускал
+            # extra_wrong_mc целиком: «отметить всё» гарантированно давало
+            # полный балл. Добавлено требование точного совпадения множеств —
+            # штраф за лишние варианты теперь действительно применяется
+            # (см. пересчёт is_correct после штрафов ниже, консистентность
+            # с final_score).
+            is_correct = (
+                base_score == solution_rules.max_score and user_set == correct_set
+            )
 
         # custom: используем custom_scoring_config для расширенной логики
         else:  # "custom"
@@ -331,6 +342,18 @@ class CheckingService:
         
         # Не даём уйти в отрицательные или сверх max_score
         final_score = max(0, min(base_score - penalty, solution_rules.max_score))
+
+        # tsk-905: в partial-режиме is_correct должен отражать РЕЗУЛЬТАТ
+        # после штрафов, а не промежуточный base_score — иначе на заданиях
+        # без реального extra_wrong_mc (штраф 0) «отметить всё» давало бы
+        # final_score == max_score, но is_correct=False (несовпадение
+        # множеств выше), и ученик увидел бы полный балл при статусе
+        # «неверно». all_or_nothing/custom не трогаем — там is_correct уже
+        # согласован с final_score по построению (penalty=0, когда
+        # is_correct=True, потому что wrong_selected пуст при точном
+        # совпадении множеств).
+        if solution_rules.scoring_mode == "partial":
+            is_correct = final_score == solution_rules.max_score
 
         details = CheckResultDetails(
             correct_options=list(correct_set) or None,
