@@ -360,6 +360,19 @@ def _trim_core(
     return excluded, kept_size
 
 
+def _material_seconds(table: Optional[EffortTable]) -> float:
+    """Вес одного материала в секундах; 0.0 — мерить нечем (tsk-904).
+
+    Та же логика, что у `_seconds_for`: при пустой таблице расчёт идёт по
+    штукам, и минутные суммы не используются. Когда таблица есть, вес берётся
+    из телеметрии сеансов, а прежняя заглушка в 49 секунд остаётся запасным
+    вариантом внутри самой таблицы.
+    """
+    if table is None or table.overall is None:
+        return 0.0
+    return table.material_effort_seconds()
+
+
 def _seconds_for(
     table: Optional[EffortTable], difficulty_id: Any, task_type: Any
 ) -> float:
@@ -479,7 +492,7 @@ async def compute_scope(
             )
 
     materials_minutes = {
-        cid: n * MATERIAL_EFFORT_SECONDS_PROXY / 60
+        cid: n * _material_seconds(effort_table) / 60
         for cid, n in materials_by_course.items()
     }
     core_tasks_left = sum(per_course_core.values())

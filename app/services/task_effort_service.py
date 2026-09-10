@@ -116,6 +116,28 @@ GROUP BY GROUPING SETS ((difficulty_id, task_type), (task_type), ())
 """
 
 
+#: Время ТЕОРИИ по телеметрии сеансов (tsk-868). Отдельный источник: у
+#: заданий вес считается по паре «открыл → сдал» в `task_results`, а у
+#: материала сдачи нет вовсе — есть только измеренный сеанс.
+#:
+#: Видео и текст пока считаются вместе. На замере 11.09 их медианы совпали
+#: (176 и 178 секунд при 87 и 18 наблюдениях), а разделение при восемнадцати
+#: наблюдениях было бы разделением шума.
+_MATERIAL_EFFORT_SQL = """
+SELECT count(*) AS samples,
+       percentile_cont(0.5) WITHIN GROUP (
+           ORDER BY least(seconds, :cap)
+       ) AS median_seconds
+  FROM learning_time_session
+ WHERE item_type IN ('video', 'material')
+   AND started_at >= now() - make_interval(days => :days)
+   AND seconds BETWEEN :floor AND :cap
+"""
+
+#: Короче этого сеанс не считается чтением: страницу открыли и ушли.
+MATERIAL_SESSION_FLOOR_SECONDS = 5
+
+
 @dataclass(frozen=True)
 class EffortTable:
     """Таблица весов: сколько секунд занимает задание того или иного рода.
@@ -132,6 +154,10 @@ class EffortTable:
     overall: Optional[float]
     window_days: int
     samples: int
+    #: tsk-904: измеренный вес теории. `None` — наблюдений мало, и тогда
+    #: зовущий берёт прежнюю заглушку (`MATERIAL_EFFORT_SECONDS_PROXY`).
+    material_seconds: Optional[float] = None
+    material_samples: int = 0
 
     def seconds_for(
         self, *, difficulty_id: Optional[int], task_type: Optional[str],
@@ -149,6 +175,21 @@ class EffortTable:
         if by_type is not None:
             return by_type
         return self.overall
+
+    def material_effort_seconds(self) -> float:
+        """Сколько секунд занимает один материал.
+
+        Измеренное значение, когда наблюдений хватает; иначе прежняя заглушка.
+        Заглушка занижала вес вчетверо: 49 секунд против измеренных 176 — она
+        и ставилась как «медиана промежутка между сдачами», то есть мерила не
+        чтение, а паузу между заданиями.
+        """
+        if (
+            self.material_seconds is not None
+            and self.material_samples >= MIN_CELL_SAMPLES
+        ):
+            return self.material_seconds
+        return MATERIAL_EFFORT_SECONDS_PROXY
 
     def minutes_for(
         self, *, difficulty_id: Optional[int], task_type: Optional[str],
@@ -197,13 +238,29 @@ async def load_effort_table(
             overall = median
             total = samples
 
+    material_row = (await db.execute(text(_MATERIAL_EFFORT_SQL), {
+        "days": days,
+        "cap": PACE_OUTLIER_CAP_SECONDS,
+        "floor": MATERIAL_SESSION_FLOOR_SECONDS,
+    })).mappings().first()
+    material_samples = int(material_row["samples"] or 0) if material_row else 0
+    material_seconds = (
+        float(material_row["median_seconds"])
+        if material_row and material_row["median_seconds"] is not None
+        else None
+    )
+
     logger.info(
-        "вес заданий: ячеек %s, форматов %s, наблюдений %s за %s дн.",
+        "вес заданий: ячеек %s, форматов %s, наблюдений %s за %s дн.; "
+        "вес теории: %s с по %s наблюдениям",
         len(by_cell), len(by_type), total, days,
+        None if material_seconds is None else round(material_seconds),
+        material_samples,
     )
     return EffortTable(
         by_cell=by_cell, by_type=by_type, overall=overall,
         window_days=days, samples=total,
+        material_seconds=material_seconds, material_samples=material_samples,
     )
 
 

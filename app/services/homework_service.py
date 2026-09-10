@@ -301,7 +301,8 @@ async def _items_minutes(
     seconds = 0.0
     for item in items:
         if item["kind"] == "material":
-            seconds += MATERIAL_EFFORT_SECONDS_PROXY
+            # tsk-904: измеренный вес теории, когда наблюдений хватает.
+            seconds += table.material_effort_seconds()
         else:
             seconds += weights.get(item["item_id"]) or table.overall or 0.0
     return int(round(seconds / 60))
@@ -325,7 +326,7 @@ def _trim_to_budget(
     result: list[dict[str, Any]] = []
     for item in picked:
         if item["kind"] == "material":
-            cost = MATERIAL_EFFORT_SECONDS_PROXY
+            cost = table.material_effort_seconds()
         else:
             cost = weights.get(item["item_id"]) or table.overall or 0.0
         # Первый пункт берётся всегда: выдача без состава бессмысленна, а одна

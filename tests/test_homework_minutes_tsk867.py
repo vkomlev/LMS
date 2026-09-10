@@ -680,3 +680,62 @@ async def test_behind_student_gets_a_bigger_growth_step(db):
 
     # Медленного увеличенный шаг не задевает: базовый потолок всё равно выше.
     assert ceiling_for(5, on_track=False) == ceiling_for(5, on_track=True)
+
+
+# ══════════ tsk-904: вес теории измеряется, а не берётся из заглушки ══════════
+
+
+async def test_material_weight_comes_from_telemetry_when_measured(db):
+    """Вес материала берётся из сеансов, когда наблюдений хватает.
+
+    Заглушка в 49 секунд ставилась как «медиана промежутка между сдачами» —
+    то есть мерила паузу между заданиями, а не чтение. На боевых данных
+    11.09 измеренная медиана сеанса теории — 176 секунд, вчетверо больше.
+    Отсюда разрыв, который заметил оператор: у ученицы 2 ч 14 мин просмотра
+    видео за неделю входили в норматив как семь минут.
+    """
+    from app.services.task_effort_service import (
+        MATERIAL_EFFORT_SECONDS_PROXY,
+        MIN_CELL_SAMPLES,
+        EffortTable,
+    )
+
+    empty = EffortTable(
+        by_cell={}, by_type={}, overall=30.0, window_days=30, samples=100,
+    )
+    assert empty.material_effort_seconds() == MATERIAL_EFFORT_SECONDS_PROXY
+
+    thin = EffortTable(
+        by_cell={}, by_type={}, overall=30.0, window_days=30, samples=100,
+        material_seconds=176.0, material_samples=MIN_CELL_SAMPLES - 1,
+    )
+    assert thin.material_effort_seconds() == MATERIAL_EFFORT_SECONDS_PROXY, (
+        "на выборке ниже порога взяли измерение — это шум, а не вес"
+    )
+
+    measured = EffortTable(
+        by_cell={}, by_type={}, overall=30.0, window_days=30, samples=100,
+        material_seconds=176.0, material_samples=MIN_CELL_SAMPLES,
+    )
+    assert measured.material_effort_seconds() == 176.0
+
+
+async def test_measured_theory_weight_reaches_the_plan(db):
+    """Измеренный вес доходит до расчёта нормы, а не остаётся в таблице.
+
+    Проверяем через сам расчёт: остаток программы в минутах обязан вырасти,
+    когда теория дорожает. Без этого правка осталась бы косметикой в
+    измерителе.
+    """
+    from app.services.task_effort_service import EffortTable
+    from app.services.homework_volume_service import _seconds_for_rows
+
+    rows = [{"kind": "material", "difficulty_id": None, "task_type": None, "n": 10}]
+    cheap = EffortTable(
+        by_cell={}, by_type={}, overall=30.0, window_days=30, samples=100,
+    )
+    rich = EffortTable(
+        by_cell={}, by_type={}, overall=30.0, window_days=30, samples=100,
+        material_seconds=176.0, material_samples=100,
+    )
+    assert _seconds_for_rows(rows, rich) > _seconds_for_rows(rows, cheap) * 3

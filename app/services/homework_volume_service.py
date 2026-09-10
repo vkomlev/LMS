@@ -861,7 +861,10 @@ def _seconds_for_rows(rows: list[Any], table: EffortTable) -> Optional[float]:
     for row in rows:
         count = int(row["n"] or 0)
         if row["kind"] == "material":
-            total += MATERIAL_EFFORT_SECONDS_PROXY * count
+            # tsk-904: измеренный вес теории. Заглушка занижала его вчетверо
+            # (49 секунд против измеренных 176), и остаток программы в минутах
+            # выходил меньше настоящего — а из него считается норма.
+            total += table.material_effort_seconds() * count
             continue
         difficulty_id = row["difficulty_id"]
         seconds = table.seconds_for(
