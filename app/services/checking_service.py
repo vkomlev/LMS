@@ -32,6 +32,24 @@ _BETWEEN_DIGITS_RE = re.compile(r"(?<=\d)[^\w\s](?=\d)")
 # иначе «кто то» стало бы засчитываться за «кто-то».
 _INWORD_RE = re.compile(r"(?<=[^\W\d_])['’\-](?=[^\W\d_])", flags=re.UNICODE)
 
+# tsk-899: операторы сравнения/логики C-подобного кода (Arduino/C++), которые
+# strip_punctuation стирает как пунктуацию, когда code_ast не смог разобрать
+# ответ как Python и сравнение откатывается на текст. Без защиты `x > 90` и
+# `x < 90` после нормализации становятся одинаковым «x 90» — код с ПОЛНОСТЬЮ
+# ОБРАТНОЙ логикой засчитывается как верный. Порядок важен: двухсимвольные
+# операторы проверяются раньше односимвольных, иначе `>=` рассыплется на `>` и `=`.
+_CODE_OPERATOR_RE = re.compile(r"<=|>=|==|!=|&&|\|\||[<>]")
+_CODE_OPERATOR_PLACEHOLDERS: Dict[str, str] = {
+    "<=": " opCMPLE ",
+    ">=": " opCMPGE ",
+    "==": " opCMPEQ ",
+    "!=": " opCMPNE ",
+    "&&": " opAND ",
+    "||": " opOR ",
+    "<": " opCMPLT ",
+    ">": " opCMPGT ",
+}
+
 
 class CheckingService:
     """
@@ -1371,9 +1389,14 @@ class CheckingService:
 
         AST — дополнительный путь к зачёту, а не замена текстовому. Если хотя бы
         одна сторона не разбирается как Python (фрагмент вроде 'for i in range(10):',
-        ответ не на Python вроде '.env', опечатка ученика) — сравнение падает
-        обратно на текстовую нормализацию, то есть ведёт себя как до правки.
-        Поэтому режим не может ужесточить проверку, только спасти валидный ответ.
+        ответ не на Python вроде '.env', опечатка ученика, ЛЮБОЙ C-подобный код —
+        Arduino/C++) — сравнение падает на текстовую нормализацию, но с
+        операторами сравнения/логики (`<`/`>`/`==`/`!=`/`&&`/`||`), защищёнными
+        от `strip_punctuation` (tsk-899): без защиты они стирались как
+        пунктуация, и `x > 90` было неотличимо от `x < 90` — код с обратной
+        логикой засчитывался как верный. Это ЕДИНСТВЕННОЕ направление, в
+        котором режим ужесточает (не ослабляет) проверку по сравнению с чистым
+        `_normalize_text`.
 
         Args:
             value: Сырой ответ ученика.
@@ -1389,9 +1412,44 @@ class CheckingService:
                 canon_accepted = cls._canon_code(accepted)
                 if canon_accepted is not None and canon_value == canon_accepted:
                     return True
+            # tsk-899: AST не разобрал хотя бы одну сторону как Python — почти
+            # всегда значит C-подобный код (Arduino/C++). Откат на обычный
+            # _normalize_text здесь ЗАПРЕЩЁН: strip_punctuation стирает `<`/`>`/
+            # `==` как пунктуацию, и код с обратной логикой сравнения проходит
+            # как верный (см. тело задачи). Операторы защищены плейсхолдерами
+            # ДО strip_punctuation — для остальных 2000+ заданий без code_ast
+            # это ветвление не выполняется вовсе, их поведение не меняется.
+            protected_value = cls._protect_code_operators(value)
+            protected_accepted = cls._protect_code_operators(accepted)
+            if cls._normalize_text(protected_value, steps) == cls._normalize_text(
+                protected_accepted, steps
+            ):
+                return True
+            return cls._matches_spaced_number(value, accepted)
         if cls._normalize_text(value, steps) == cls._normalize_text(accepted, steps):
             return True
         return cls._matches_spaced_number(value, accepted)
+
+    @classmethod
+    def _protect_code_operators(cls, value: str) -> str:
+        """
+        Заменяет операторы сравнения/логики C-подобного кода на именованные
+        плейсхолдеры (`opCMPGT` и т.п.), состоящие только из букв — они
+        переживают `strip_punctuation` невредимыми, в отличие от исходных
+        символов `<`, `>`, `=`. Используется ТОЛЬКО в откате `code_ast` на
+        текстовое сравнение (tsk-899); достаточно, чтобы один и тот же оператор
+        на обеих сторонах сравнения давал один и тот же плейсхолдер — сам текст
+        плейсхолдера не имеет значения, важно только различие operator1 != operator2.
+
+        Args:
+            value: Сырой текст (ответ ученика или эталон).
+
+        Returns:
+            Текст с операторами, замененными на защищённые плейсхолдеры.
+        """
+        return _CODE_OPERATOR_RE.sub(
+            lambda m: _CODE_OPERATOR_PLACEHOLDERS[m.group(0)], value or ""
+        )
 
     #: Одно целое число целиком (эталон, к которому применимо послабление ниже).
     _WHOLE_NUMBER_RE = re.compile(r"\d+")
