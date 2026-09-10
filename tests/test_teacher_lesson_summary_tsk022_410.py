@@ -1001,3 +1001,51 @@ async def test_current_lesson_stops_at_the_end_of_the_lesson(db, client):
     assert p["current_lesson"]["tasks_completed"] == 1, (
         "в итоги урока попало сделанное после его конца"
     )
+
+
+@pytest.mark.asyncio
+async def test_service_course_work_is_not_counted(db, client):
+    """Служебные курсы в счётчиках сводки не участвуют (tsk-893).
+
+    На проде 10.09 панель показывала «заданий решено: 60» рядом с «Python для
+    ЕГЭ: 0%» — и обе цифры были правдой: все шестьдесят пришли из «С чего
+    начать» и «Что за экзамен». Преподаватель читает такую панель как
+    отличную работу по программе.
+    """
+    teacher_id, token = await _new_user(db, role="teacher", name="teach")
+    student_id, _ = await _new_user(db, role="student", name="stud")
+    await _link_student_teacher(db, student_id=student_id, teacher_id=teacher_id)
+
+    study_id = await _new_course(db, f"{_TAG}-893-учебный")
+    service_id = await _new_course(db, f"{_TAG}-893-служебный")
+    await db.execute(
+        text("UPDATE courses SET is_service = true WHERE id = :c"), {"c": service_id}
+    )
+    await db.commit()
+    study_task = await _new_task(db, course_id=study_id, uid="893-study")
+    service_task = await _new_task(db, course_id=service_id, uid="893-service")
+
+    now = datetime.now(UTC)
+    occ_id = await _create_occurrence_with_participant(
+        db, student_id=student_id, teacher_id=teacher_id,
+        scheduled_at=now - timedelta(minutes=30), duration_minutes=60,
+    )
+    for task_id in (study_task, service_task):
+        await _insert_task_result(
+            db, student_id=student_id, task_id=task_id, course_id=study_id,
+            is_correct=True, submitted_at=now - timedelta(minutes=10),
+        )
+
+    resp = await client.get(
+        f"/api/v1/teacher/lesson-occurrences/{occ_id}/summary",
+        params={"teacher_id": teacher_id},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200, resp.text
+    p = resp.json()["participants"][0]
+    assert p["homework"]["tasks_completed"] == 1, (
+        "в счёт попало задание служебного курса"
+    )
+    assert p["current_lesson"]["tasks_completed"] == 1, (
+        "в итоги урока попало задание служебного курса"
+    )

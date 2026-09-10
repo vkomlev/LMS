@@ -41,7 +41,11 @@ from app.services import (
     lesson_occurrence_service,
     manual_progress_service,
 )
-from app.services.learning_gaps_service import real_student_results_filter
+from app.services.learning_gaps_service import (
+    SERVICE_COURSES_CTE,
+    non_service_course_filter,
+    real_student_results_filter,
+)
 from app.services.stuck_tasks_service import load_stuck_tasks
 from app.utils.task_title import humanize_task_title
 
@@ -346,12 +350,21 @@ async def load_homework_window(
     completed_row = (
         await db.execute(
             text(
-                "WITH first_success AS ( "
+                # tsk-893: служебные курсы (`is_service`, tsk-877) в счёт не
+                # идут. У новичка все первые сдачи — из «С чего начать» и «Что
+                # за экзамен»: на проде 10.09 панель показывала «заданий
+                # решено: 60» рядом с «Python для ЕГЭ: 0%», и обе цифры были
+                # правдой. Преподаватель читает это как отличную работу по
+                # программе, а человек прошёл вводные курсы.
+                f"WITH RECURSIVE {SERVICE_COURSES_CTE}, "
+                "first_success AS ( "
                 "    SELECT DISTINCT ON (tr.task_id) tr.task_id, tr.submitted_at "
                 "    FROM task_results tr "
                 "    JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL "
+                "    JOIN tasks t ON t.id = tr.task_id "
                 "    WHERE tr.user_id = :student_id AND tr.is_correct = true "
                 "      AND tr.source_system IS DISTINCT FROM :manual_source "
+                f"      AND {non_service_course_filter('t')} "
                 "      AND tr.submitted_at >= COALESCE(:window_from, '-infinity'::timestamptz) "
                 "      AND tr.submitted_at <= :window_to "
                 "    ORDER BY tr.task_id, tr.submitted_at ASC "
@@ -394,12 +407,16 @@ async def load_homework_window(
     materials_completed = (
         await db.execute(
             text(
-                "SELECT COUNT(*) AS cnt FROM student_material_progress "
-                "WHERE student_id = :student_id AND status = 'completed' "
-                "  AND completed_at IS NOT NULL "
-                "  AND source IS DISTINCT FROM :manual_source "
-                "  AND completed_at >= COALESCE(:window_from, '-infinity'::timestamptz) "
-                "  AND completed_at <= :window_to"
+                # tsk-893: то же и по теории — служебные курсы не в счёт.
+                f"WITH RECURSIVE {SERVICE_COURSES_CTE} "
+                "SELECT COUNT(*) AS cnt FROM student_material_progress smp "
+                "JOIN materials m ON m.id = smp.material_id "
+                "WHERE smp.student_id = :student_id AND smp.status = 'completed' "
+                "  AND smp.completed_at IS NOT NULL "
+                "  AND smp.source IS DISTINCT FROM :manual_source "
+                f"  AND {non_service_course_filter('m')} "
+                "  AND smp.completed_at >= COALESCE(:window_from, '-infinity'::timestamptz) "
+                "  AND smp.completed_at <= :window_to"
             ),
             {
                 "student_id": student_id,
