@@ -77,6 +77,26 @@ class Courses(Base):
             "{enabled, threshold, easy_ratio}. NULL/enabled=false = все задания."
         ),
     )
+    is_exam: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default=text("false"),
+        comment=(
+            "tsk-873: курс подготовки к экзамену. Ставится ТОЛЬКО корневым "
+            "курсам: подкурс входит в разные программы, и свойство "
+            "принадлежит программе, а не ему. Признак «пора усложнить» "
+            "(tsk-649) к таким курсам не применяется — там правит срок"
+        ),
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default=text("true"),
+        comment=(
+            "tsk-873: курс в работе. Выключенный не показывается в формах, не "
+            "попадает в подбор и недоступен через API до снятия признака"
+        ),
+    )
     program_priority: Mapped[Optional[int]] = mapped_column(
         SmallInteger,
         nullable=True,

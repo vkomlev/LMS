@@ -167,6 +167,21 @@ WITH firsts AS (
       AND {real_student}
       AND tr.received_at > now() - make_interval(days => :days)
       AND t.difficulty_id = ANY(:difficulty_ids)
+      -- tsk-873: задания курсов подготовки в признак не идут. Там правит СРОК,
+      -- а объём и состав уже подбираются автоматически (tsk-798): на замере
+      -- 09.09 у всех четверых, кого признак назвал сильными, банк заданий был
+      -- отдан целиком — методисту показывали рычаг, выкрученный до упора.
+      -- Признак смотрит вверх по дереву: помечается КОРЕНЬ программы, а
+      -- решает ученик задание подкурса.
+      AND NOT EXISTS (
+          WITH RECURSIVE up AS (
+              SELECT t.course_id AS id
+              UNION
+              SELECT cp.parent_course_id
+                FROM up JOIN course_parents cp ON cp.course_id = up.id
+          )
+          SELECT 1 FROM up JOIN courses c ON c.id = up.id WHERE c.is_exam
+      )
 ),
 solved AS (
     SELECT user_id,

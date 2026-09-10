@@ -157,6 +157,40 @@ async def test_strong_student_is_marked(db, client):
 
 
 @pytest.mark.asyncio
+async def test_exam_program_never_triggers_the_mark(db, client):
+    """Курсы подготовки признак не питают (tsk-873).
+
+    Требование оператора 10.09: на экзаменационных курсах правит СРОК, а объём
+    и состав уже подбираются автоматически (tsk-798). На замере 09.09 у всех
+    четверых, кого признак назвал сильными, банк заданий был отдан целиком —
+    методисту показывали рычаг, выкрученный до упора.
+
+    Признак смотрит вверх по дереву: помечается КОРЕНЬ программы, а ученик
+    решает задание подкурса.
+    """
+    teacher_id, token, student_id, course_id, occ_id = await _setup(db, "exam")
+    root_id = await _new_course(db, f"{_TAG}-exam-root")
+    await db.execute(
+        text("INSERT INTO course_parents (parent_course_id, course_id) VALUES (:p, :c)"),
+        {"p": root_id, "c": course_id},
+    )
+    await db.execute(
+        text("UPDATE courses SET is_exam = true WHERE id = :c"), {"c": root_id}
+    )
+    await db.commit()
+
+    await _solve_many(
+        db, student_id=student_id, course_id=course_id,
+        count=_HARDER_MIN_TASKS, difficulty_id=_NORMAL,
+    )
+
+    row = await _summary_row(client, occ_id=occ_id, teacher_id=teacher_id, token=token)
+    assert row["ready_for_harder"] is None, (
+        "признак сработал на программе подготовки — методисту нечего крутить"
+    )
+
+
+@pytest.mark.asyncio
 async def test_small_sample_stays_silent(db, client):
     """На выборке ниже порога признака нет: «три из трёх» — совпадение.
 
