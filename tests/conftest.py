@@ -23,6 +23,24 @@ load_dotenv(dotenv_path=project_root / ".env", encoding="utf-8-sig")
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
+# tsk-872: своя база на прогон. Подмена `DATABASE_URL` обязана произойти ДО
+# импорта приложения: `Settings()` и глобальный движок `app.db.session` читают
+# окружение один раз, на импорте. После неё во временную базу смотрят все три
+# пути разом — фикстуры с общей транзакцией, модули со своим движком
+# (`SELF_MANAGED_CONNECTION_MODULES`) и подпроцессы alembic внутри тестов.
+#
+# Импорт короткого имени `run_database`, а не `tests.run_database`, — намеренно:
+# pytest импортирует этот conftest ДВАЖДЫ (как `conftest` при разборе командной
+# строки и как `tests.conftest` при сборе). Через пакет получались два разных
+# модуля с двумя кешами, то есть две созданные базы за прогон, из которых
+# убиралась одна. Короткое имя даёт один модуль в `sys.modules` на процесс.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from run_database import PROD_DB_SIGNATURES, provision_run_database  # noqa: E402
+
+_run_db = provision_run_database(os.environ.get("DATABASE_URL", ""))
+if _run_db.active:
+    os.environ["DATABASE_URL"] = _run_db.dsn
+
 from app.core.config import Settings
 from app.api.main import app
 from app.db.session import get_async_db
@@ -51,7 +69,25 @@ _logger = logging.getLogger(__name__)
 # должен сам тестовый прогон — рантайм-проверка по РЕАЛЬНОМУ DSN, а не по тексту
 # команды. Проверяется до создания любого движка/сессии, отказ — для всей сессии
 # pytest сразу, а не только для тестов, которые эту фикстуру используют явно.
-_PROD_DB_SIGNATURES: tuple[str, ...] = ("5.42.107.253", "lms_prod")
+#
+# tsk-872: сигнатуры переехали в `tests/run_database.py` — там они нужны ещё
+# раньше, до создания базы прогона. Источник один, чтобы список не разъехался.
+
+
+def pytest_report_header(config: "pytest.Config") -> str:
+    """Строка в шапке прогона: в какой базе он идёт (tsk-872)."""
+    return f"tsk-872: {_run_db.note}"
+
+
+def pytest_sessionfinish(session: "pytest.Session", exitstatus: int) -> None:
+    """Удалить временную базу прогона (tsk-872).
+
+    Именно здесь, а не в `atexit`: на выходе интерпретатора уже нельзя
+    запускать потоки, а разрешение адреса в asyncpg на Windows идёт через
+    пул потоков. Не сработало (процесс убили) — базу подберёт уборка сирот
+    следующего прогона.
+    """
+    _run_db.drop()
 
 
 def pytest_configure(config: "pytest.Config") -> None:
@@ -63,10 +99,10 @@ def pytest_configure(config: "pytest.Config") -> None:
     if os.environ.get("ALLOW_PROD_TESTS", "").strip().lower() in {"1", "true", "yes"}:
         return
     low = (_settings.database_url or "").lower()
-    if any(sig.lower() in low for sig in _PROD_DB_SIGNATURES):
+    if any(sig.lower() in low for sig in PROD_DB_SIGNATURES):
         raise pytest.UsageError(
             "tsk-467: DATABASE_URL похож на БОЕВУЮ БД LMS (host/role совпадает с "
-            f"{_PROD_DB_SIGNATURES}). Тесты пишут напрямую и без отката "
+            f"{PROD_DB_SIGNATURES}). Тесты пишут напрямую и без отката "
             "(SELF_MANAGED_CONNECTION_MODULES) — прогон против прода запрещён. "
             "Осознанно нужно прод — установи ALLOW_PROD_TESTS=1 явно."
         )
@@ -183,7 +219,16 @@ def _cleanup_test_artifacts():
     - Snapshot — `now()` PG-сервера на старте сессии; sweep удаляет
       строки `created_at >= snapshot`. Это позволяет работать с
       таблицами, где `id` UUID (например, `guest_session`).
+
+    tsk-872: когда прогон идёт в своей временной базе, уборка не нужна вовсе —
+    база удаляется целиком в конце. Лишний проход по девяти таблицам не только
+    тратит время, но и мешает разбору с `LMS_TEST_DB_KEEP=1`: сохранённая база
+    должна остаться такой, какой её оставили тесты.
     """
+    if _run_db.active:
+        yield
+        return
+
     snapshot_ts = asyncio.run(_snapshot_ts())
     _logger.info("test-artifacts sweep snapshot_ts: %s", snapshot_ts)
     yield
