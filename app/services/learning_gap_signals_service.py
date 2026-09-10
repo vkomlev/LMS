@@ -28,8 +28,42 @@ from app.services.learning_gaps_service import (
     find_topic_gaps,
     real_student_results_filter,
 )
+from app.services.schedule_preference_service import (
+    EXCLUDED_PLAN_CODES,
+    NOT_COUNTED_PLAN_CODES,
+)
 
 logger = logging.getLogger(__name__)
+
+#: Тариф не входит в «реальных, действующих учеников» — тот же список кодов,
+#: что уже решён оператором для охвата расписания (tsk-674/tsk-712): выпускник
+#: (`alumni`) отучился, демо (`demo`) — ещё не ученик школы, тест (`test`) —
+#: учётка для проверки кабинета, а не для аналитики. Список того же смысла,
+#: что «реальная сдача» (`real_student_results_filter`) выше по цепочке, но по
+#: другой оси: та фильтрует ПРОИСХОЖДЕНИЕ строки, эта — КТО ученик по тарифу.
+#: Общий источник правды импортом, а не второй копией списка кодов (tsk-891).
+_NON_COUNTED_PLAN_CODES: tuple[str, ...] = EXCLUDED_PLAN_CODES + NOT_COUNTED_PLAN_CODES
+
+
+def real_student_plan_filter(student_alias: str) -> str:
+    """SQL-условие «у ученика нет тарифа test/demo/alumni» (`NOT EXISTS`).
+
+    Тест и выпускник давали ложные карточки на дашборде качества обучения
+    (tsk-891, живая жалоба оператора 2026-09-10): Пряхин Михаил (`test`, без
+    тарифной группы — он же вне охвата начислений по tsk-596) и Оля Омельченко
+    (`alumni`) регулярно попадали в «риск ухода», хотя школа с них либо не
+    берёт денег, либо человек уже закончил. Человек без действующей подписки
+    (`ends_on IS NULL` строки нет вовсе) в фильтр не попадает — отсутствие
+    тарифа само по себе не повод выкинуть его из сигналов.
+    """
+    codes = ", ".join(f"'{c}'" for c in _NON_COUNTED_PLAN_CODES)
+    return f"""NOT EXISTS (
+        SELECT 1 FROM student_subscription ss
+        JOIN subscription_plan sp ON sp.id = ss.plan_id
+        WHERE ss.student_id = {student_alias}
+          AND ss.ends_on IS NULL
+          AND sp.code IN ({codes})
+    )"""
 
 # Пороги для одного ученика отдельные от тем: у человека выборка всегда меньше,
 # и требовать от неё той же статистики бессмысленно.
@@ -162,6 +196,9 @@ reviewed AS (
     WHERE tr.code_review->>'status' = 'done'
       AND tr.received_at > now() - make_interval(days => :days)
       AND {real_student}
+      -- tsk-891: тест/демо/выпускник не идут в счётчик вовсе — они не
+      -- реальные ученики школы, сигнал им заводить незачем.
+      AND {real_student_plan}
 ),
 -- Когда по этой паре в последний раз ЗАКРЫВАЛИ такой сигнал. Работы, сданные
 -- до этого момента, человек уже разобрал — считать их заново значит поднимать
@@ -228,7 +265,10 @@ async def find_ai_authorship_gaps(
         min_flagged = _setting_int("ai_signal_min_flagged_works", AI_MIN_FLAGGED_WORKS)
     if min_share is None:
         min_share = _setting_float("ai_signal_min_flagged_share", AI_MIN_FLAGGED_SHARE)
-    sql = _AI_AUTHORSHIP_SQL.format(real_student=real_student_results_filter("tr"))
+    sql = _AI_AUTHORSHIP_SQL.format(
+        real_student=real_student_results_filter("tr"),
+        real_student_plan=real_student_plan_filter("tr.user_id"),
+    )
     rows = (await db.execute(text(sql), {
         "days": days, "min_flagged": min_flagged,
         "min_share": min_share, "limit": limit,
@@ -346,6 +386,10 @@ WHERE u.is_active
   AND NOT EXISTS (SELECT 1 FROM lesson_occurrence lo WHERE lo.teacher_id = u.id)
   AND NOT EXISTS (SELECT 1 FROM lesson_occurrence_teacher lt WHERE lt.teacher_id = u.id)
   AND NOT EXISTS (SELECT 1 FROM lesson_slot_teacher st WHERE st.teacher_id = u.id)
+  -- tsk-891: тест/демо/выпускник не считаются «затихшими» — они не реальные
+  -- действующие ученики школы (живой случай: Пряхин Михаил, тариф test, без
+  -- тарифной группы, и Оля Омельченко, тариф alumni, регулярно попадали сюда).
+  AND {real_student_plan}
   -- Занятия шли, и он не был ни на одном.
   AND l.attended = 0
   -- И сам в кабинете за это время не работал ни разу.
@@ -422,7 +466,10 @@ async def find_dropout_risk(
     преподаватель узнаёт постфактум — по данным августа он узнавал бы на
     2–4 недели раньше.
     """
-    sql = _DROPOUT_RISK_SQL.format(real_student=real_student_results_filter("tr"))
+    sql = _DROPOUT_RISK_SQL.format(
+        real_student=real_student_results_filter("tr"),
+        real_student_plan=real_student_plan_filter("u.id"),
+    )
     rows = (await db.execute(text(sql), {
         "days": days if days is not None else dropout_window_days(),
         "limit": limit,
