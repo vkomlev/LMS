@@ -265,7 +265,13 @@ async def test_volume_has_floor_for_idle_student(db):
         db, student_id=student_id, now=_PACE_NOW,
     )
     assert plan.fact_per_week == 0.0
-    assert plan.volume_per_week == homework_volume_service.MIN_PER_WEEK
+    # tsk-909: пол — половина нормы класса, а не `MIN_PER_WEEK`. Прежние три
+    # элемента при норме двадцать и были «механика молчит»: на проде 11.09 у
+    # Хантанова при норме 90 минут задавалось 10.
+    assert plan.volume_per_week == round(
+        plan.target_per_week * homework_volume_service.TARGET_FLOOR_SHARE
+    )
+    assert plan.volume_per_week > homework_volume_service.MIN_PER_WEEK
     assert plan.remaining_items == 39
     assert plan.grade == 11 and plan.grade_assumed is False
     # Норма класса видна, даже когда объём до неё не дотягивает: разрыв — это и
@@ -777,8 +783,11 @@ async def test_program_running_out_is_visible_in_advance(db):
     await _set_grade(db, student_id=student_id, grade=11)
 
     plan = await homework_volume_service.compute(db, student_id=student_id)
-    # Норма 3 (пол, темпа нет), остатка 6 — хватит на две недели.
-    assert plan.weeks_of_program_left == 2
+    # tsk-909: норма — половина нормы класса (10), но больше остатка задать
+    # нельзя, поэтому выдача упирается в сами 6 элементов: программы хватит
+    # ровно на неделю. До подъёма пола норма была 3, и хватало на две.
+    assert plan.volume_per_week == plan.remaining_items == 6
+    assert plan.weeks_of_program_left == 1
     assert plan.needs_more_program is True
 
 

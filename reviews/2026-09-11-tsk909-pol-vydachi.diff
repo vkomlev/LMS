@@ -1,0 +1,119 @@
+diff --git a/app/services/homework_volume_service.py b/app/services/homework_volume_service.py
+index 84924cf..22872de 100644
+--- a/app/services/homework_volume_service.py
++++ b/app/services/homework_volume_service.py
+@@ -130,6 +130,20 @@ GROWTH_FACTOR = 1.2
+ #: (Крук делает 57 минут при нужных 90), и выдача, которую невозможно сделать,
+ #: обесценивает саму механику — тот же довод, что стоит за потолком.
+ BEHIND_GROWTH_FACTOR = 1.5
++
++#: Пол недельной выдачи — доля от нормы (tsk-909, решение оператора 11.09).
++#:
++#: Шаг роста считается от СОБСТВЕННОГО темпа ученика, и у того, кто дома почти
++#: не работает, он упирается в ноль: Хантанову при норме 90 минут задавалось
++#: 10, Костенкову 15, Тоинову 19. Механика молчала ровно там, где нужнее
++#: всего, — и «домашняя работа сделана» у такого ученика значило полтора
++#: процента недели.
++#:
++#: Половина, а не вся норма: выдача, которую заведомо не сделать, обесценивает
++#: механику — тот же довод, что стоит за потолком и за шагом роста. Половина
++#: заметно поднимает планку (те же трое получают 45 минут вместо 10-19), но
++#: остаётся выполнимой.
++TARGET_FLOOR_SHARE = 0.5
+ #: Целевая недельная норма по классу, элементов программы.
+ #: 11 класс — выпускной, полный ход: столько нужно, чтобы пройти базовый курс
+ #: (797 заданий) за 39 недель до июня. 10 класс — год в запасе, 9 класс — ОГЭ
+@@ -1283,8 +1297,19 @@ async def compute(
+     #: нужнее всего (18 из 60 за месяц не решили ни одного задания).
+     #:
+     #: tsk-896: тому, кто не успевает, шаг больше (`BEHIND_GROWTH_FACTOR`).
++    #: tsk-909: и не ниже половины нормы — см. `TARGET_FLOOR_SHARE`.
+     growth = GROWTH_FACTOR if on_track else BEHIND_GROWTH_FACTOR
+-    raw = min(float(target), max(fact_per_week * growth, float(MIN_PER_WEEK)))
++    raw = min(
++        float(target),
++        max(
++            fact_per_week * growth,
++            target * TARGET_FLOOR_SHARE,
++            float(MIN_PER_WEEK),
++        ),
++    )
++    # Штраф за качество идёт ПОСЛЕ пола и потому сильнее его: пол защищает от
++    # «задали полтора процента недели», а штраф — сознательное снижение тому,
++    # кто гонит с ошибками, и отменять его полом значило бы отменить его вовсе.
+     penalty = correct_ratio is not None and correct_ratio < QUALITY_THRESHOLD
+     if penalty:
+         raw *= QUALITY_PENALTY
+@@ -1327,9 +1352,16 @@ async def compute(
+             home_target = max(
+                 target_minutes * (1.0 - lesson_share), float(MIN_MINUTES_PER_WEEK)
+             )
++        # tsk-909: пол — от ДОМАШНЕЙ нормы, а не от недельной: у того, кто
++        # успевает, часть недели закрывается на занятии, и половина от целого
++        # была бы для него не полом, а надбавкой поверх вычета.
+         raw_minutes = min(
+             home_target,
+-            max(fact_minutes * growth, float(MIN_MINUTES_PER_WEEK)),
++            max(
++                fact_minutes * growth,
++                home_target * TARGET_FLOOR_SHARE,
++                float(MIN_MINUTES_PER_WEEK),
++            ),
+         )
+         if penalty:
+             raw_minutes *= QUALITY_PENALTY
+diff --git a/tests/test_homework_minutes_tsk867.py b/tests/test_homework_minutes_tsk867.py
+index 871c4e1..2458711 100644
+--- a/tests/test_homework_minutes_tsk867.py
++++ b/tests/test_homework_minutes_tsk867.py
+@@ -33,6 +33,7 @@ from sqlalchemy import text
+ from app.models.users import Users
+ from app.services import homework_service, homework_volume_service
+ from app.services.auth import identity_link_service
++from app.services.homework_volume_service import MIN_PER_WEEK
+ from app.services.task_effort_service import MIN_CELL_SAMPLES, load_effort_table
+ 
+ UTC = timezone.utc
+@@ -682,6 +683,42 @@ async def test_behind_student_gets_a_bigger_growth_step(db):
+     assert ceiling_for(5, on_track=False) == ceiling_for(5, on_track=True)
+ 
+ 
++async def test_weak_student_gets_at_least_half_of_the_norm(db):
++    """Кто дома почти не работает, получает не «факт × 1.5», а половину нормы.
++
++    Замер 11.09: шаг роста считается от собственного темпа ученика, и у того,
++    кто дома не работает вовсе, он упирается в ноль. Хантанову при норме 90
++    минут задавалось 10, Костенкову 15, Тоинову 19 — механика молчала ровно
++    там, где нужнее всего. Решение оператора: поднять пол до половины нормы.
++
++    Проверяется штучная шкала: у нового ученика телеметрии нет, вес не
++    измерен — и это тот самый случай, ради которого пол вводился.
++    """
++    from app.services.homework_volume_service import TARGET_FLOOR_SHARE, compute
++
++    student_id = await _student(db, "floor-909")
++    course_id = await _course(db)
++    try:
++        difficulty_id = await _difficulty(db)
++        await _tasks(
++            db, course_id=course_id, task_type=_unique_type(), count=40,
++            difficulty_id=difficulty_id,
++        )
++        await _enroll(db, student_id=student_id, course_id=course_id)
++
++        plan = await compute(db, student_id=student_id)
++
++        assert plan.fact_per_week == 0.0
++        # Ровно половина нормы: «факт × шаг роста» здесь ноль, а прежний пол
++        # (MIN_PER_WEEK = 3) дал бы три элемента при норме в двадцать.
++        assert plan.volume_per_week == round(
++            plan.target_per_week * TARGET_FLOOR_SHARE
++        )
++        assert plan.volume_per_week > MIN_PER_WEEK
++    finally:
++        await _cleanup(db, user_ids=[student_id], course_ids=[course_id])
++
++
+ # ══════════ tsk-904: вес теории измеряется, а не берётся из заглушки ══════════
+ 
+ 

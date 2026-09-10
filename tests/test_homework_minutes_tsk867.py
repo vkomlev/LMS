@@ -33,6 +33,7 @@ from sqlalchemy import text
 from app.models.users import Users
 from app.services import homework_service, homework_volume_service
 from app.services.auth import identity_link_service
+from app.services.homework_volume_service import MIN_PER_WEEK
 from app.services.task_effort_service import MIN_CELL_SAMPLES, load_effort_table
 
 UTC = timezone.utc
@@ -680,6 +681,42 @@ async def test_behind_student_gets_a_bigger_growth_step(db):
 
     # Медленного увеличенный шаг не задевает: базовый потолок всё равно выше.
     assert ceiling_for(5, on_track=False) == ceiling_for(5, on_track=True)
+
+
+async def test_weak_student_gets_at_least_half_of_the_norm(db):
+    """Кто дома почти не работает, получает не «факт × 1.5», а половину нормы.
+
+    Замер 11.09: шаг роста считается от собственного темпа ученика, и у того,
+    кто дома не работает вовсе, он упирается в ноль. Хантанову при норме 90
+    минут задавалось 10, Костенкову 15, Тоинову 19 — механика молчала ровно
+    там, где нужнее всего. Решение оператора: поднять пол до половины нормы.
+
+    Проверяется штучная шкала: у нового ученика телеметрии нет, вес не
+    измерен — и это тот самый случай, ради которого пол вводился.
+    """
+    from app.services.homework_volume_service import TARGET_FLOOR_SHARE, compute
+
+    student_id = await _student(db, "floor-909")
+    course_id = await _course(db)
+    try:
+        difficulty_id = await _difficulty(db)
+        await _tasks(
+            db, course_id=course_id, task_type=_unique_type(), count=40,
+            difficulty_id=difficulty_id,
+        )
+        await _enroll(db, student_id=student_id, course_id=course_id)
+
+        plan = await compute(db, student_id=student_id)
+
+        assert plan.fact_per_week == 0.0
+        # Ровно половина нормы: «факт × шаг роста» здесь ноль, а прежний пол
+        # (MIN_PER_WEEK = 3) дал бы три элемента при норме в двадцать.
+        assert plan.volume_per_week == round(
+            plan.target_per_week * TARGET_FLOOR_SHARE
+        )
+        assert plan.volume_per_week > MIN_PER_WEEK
+    finally:
+        await _cleanup(db, user_ids=[student_id], course_ids=[course_id])
 
 
 # ══════════ tsk-904: вес теории измеряется, а не берётся из заглушки ══════════
