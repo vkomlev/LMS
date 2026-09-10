@@ -173,6 +173,13 @@ WITH firsts AS (
       -- отдан целиком — методисту показывали рычаг, выкрученный до упора.
       -- Признак смотрит вверх по дереву: помечается КОРЕНЬ программы, а
       -- решает ученик задание подкурса.
+      --
+      -- tsk-877: и задания СЛУЖЕБНЫХ курсов — тех, что объясняют устройство
+      -- сервиса или экзамена, а не учат предмету. Живая проверка 10.09: у
+      -- Машталер признак держался на 24 заданиях, и все 24 были из «С чего
+      -- начать: кабинет» и «Что за экзамен» — по два вопроса уровня NORMAL в
+      -- каждом из 12 разделов. Порог в 20 нелёгких заданий закрывался
+      -- служебным набором в одиночку, одинаковым у всей школы.
       AND NOT EXISTS (
           WITH RECURSIVE up AS (
               SELECT t.course_id AS id
@@ -180,7 +187,8 @@ WITH firsts AS (
               SELECT cp.parent_course_id
                 FROM up JOIN course_parents cp ON cp.course_id = up.id
           )
-          SELECT 1 FROM up JOIN courses c ON c.id = up.id WHERE c.is_exam
+          SELECT 1 FROM up JOIN courses c ON c.id = up.id
+           WHERE c.is_exam OR c.is_service
       )
 ),
 solved AS (

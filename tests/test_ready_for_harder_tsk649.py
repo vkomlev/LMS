@@ -191,6 +191,44 @@ async def test_exam_program_never_triggers_the_mark(db, client):
 
 
 @pytest.mark.asyncio
+async def test_service_course_never_triggers_the_mark(db, client):
+    """Служебные курсы признак не питают (tsk-877).
+
+    Живая проверка 10.09 показала, чем он кормился на самом деле: у одной
+    ученицы признак держался на 24 заданиях, и ВСЕ 24 были из «С чего начать:
+    кабинет» и «Что за экзамен» — по два вопроса уровня NORMAL в каждом из 12
+    разделов. Порог в 20 нелёгких заданий закрывался служебным набором в
+    одиночку, и набор этот одинаков у всей школы. Система советовала
+    преподавателю «добавить сложности», опираясь на вопрос «что есть в
+    верхнем меню кабинета».
+
+    Как и у экзаменационных, признак ставится КОРНЮ, а решает ученик задание
+    подкурса.
+    """
+    teacher_id, token, student_id, course_id, occ_id = await _setup(db, "service")
+    root_id = await _new_course(db, f"{_TAG}-service-root")
+    await db.execute(
+        text("INSERT INTO course_parents (parent_course_id, course_id) VALUES (:p, :c)"),
+        {"p": root_id, "c": course_id},
+    )
+    await db.execute(
+        text("UPDATE courses SET is_service = true WHERE id = :c"), {"c": root_id}
+    )
+    await db.commit()
+
+    await _solve_many(
+        db, student_id=student_id, course_id=course_id,
+        count=_HARDER_MIN_TASKS, difficulty_id=_NORMAL,
+    )
+
+    row = await _summary_row(client, occ_id=occ_id, teacher_id=teacher_id, token=token)
+    assert row["ready_for_harder"] is None, (
+        "признак сработал на служебном курсе — совет опирается на вопросы "
+        "про устройство кабинета, а не на учебную работу"
+    )
+
+
+@pytest.mark.asyncio
 async def test_small_sample_stays_silent(db, client):
     """На выборке ниже порога признака нет: «три из трёх» — совпадение.
 

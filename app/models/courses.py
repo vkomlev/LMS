@@ -97,6 +97,18 @@ class Courses(Base):
             "попадает в подбор и недоступен через API до снятия признака"
         ),
     )
+    is_service: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default=text("false"),
+        comment=(
+            "tsk-877: служебный курс — не учит предмету, а объясняет "
+            "устройство сервиса и экзамена либо меряет вход. Его задания не "
+            "идут в аналитические признаки: 24 вопроса про кабинет в одиночку "
+            "закрывали порог «пора усложнить». Учебные вводные курсы этим "
+            "признаком НЕ помечаются"
+        ),
+    )
     program_priority: Mapped[Optional[int]] = mapped_column(
         SmallInteger,
         nullable=True,
