@@ -59,7 +59,11 @@ _TEMPLATE_LOCK_KEY = 872_000_001
 # tsk-467: сигнатуры боевой БД LMS. Здесь они нужны раньше, чем в
 # `pytest_configure`: создавать базы на проде нельзя даже с
 # `ALLOW_PROD_TESTS=1` (тот override существует для read-only проверки).
-PROD_DB_SIGNATURES: tuple[str, ...] = ("5.42.107.253", "lms_prod")
+#
+# tsk-885: сам список переехал в `app/core/db_targets.py` — он нужен не только
+# прогону тестов, но и разовым скриптам чистки, а копия правила разъезжается.
+# Имя здесь сохранено: на него смотрит `tests/conftest.py`.
+from app.core.db_targets import PROD_DB_SIGNATURES  # noqa: E402
 
 # База прогона на процесс — одна (см. `provision_run_database`).
 _provisioned: "RunDatabase | None" = None

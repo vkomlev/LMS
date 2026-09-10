@@ -12,6 +12,12 @@ student_*, access_requests, social_posts, user_achievements.
 - product_event — пуст, не трогаем.
 - notifications.modified_by (FK NO ACTION) — занулить у тестовых до удаления users.
 
+ОСТОРОЖНО (tsk-885). Отбор здесь — «все пользователи, КРОМЕ трёх названных».
+На боевой базе это означает «удалить школу»: список составлялся, когда живых
+учётных записей было три, а сейчас одних учеников под сотню. Скрипт отказывает
+работать на боевом подключении (`assert_not_prod`), но полагаться на это как
+на единственную защиту нельзя — сверяйте `DATABASE_URL` перед запуском.
+
 Запуск:
     python scripts/cleanup_test_artifacts.py            # dry-run (ROLLBACK)
     python scripts/cleanup_test_artifacts.py --apply    # боевой COMMIT
@@ -32,8 +38,12 @@ load_dotenv(project_root / ".env", encoding="utf-8-sig")
 
 from sqlalchemy import text  # noqa: E402
 
+from app.core.db_targets import assert_not_prod  # noqa: E402
 from app.db.session import async_session_factory  # noqa: E402
 
+#: Кого оставляем. Список из трёх номеров верен только для dev-базы времён
+#: Y-1: на боевой это «все, кроме троих», то есть удаление школы. Отсюда
+#: `assert_not_prod` ниже.
 REAL_USER_IDS = (2, 3, 142)
 
 TABLES_FOR_BEFORE_AFTER = [
@@ -73,6 +83,7 @@ async def count_rows(db, tables: list[str]) -> dict[str, int]:
 
 
 async def main(apply: bool) -> int:
+    assert_not_prod(what="очистка тестовых артефактов")
     mode = "APPLY (COMMIT)" if apply else "DRY-RUN (ROLLBACK)"
     print(f"=== Cleanup test artifacts — {mode} ===")
     real_csv = ",".join(str(i) for i in REAL_USER_IDS)

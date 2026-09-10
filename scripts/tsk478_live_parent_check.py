@@ -61,11 +61,19 @@ async def setup(student_id: int) -> None:
         return
 
 
-async def cleanup(student_id: int) -> None:
+async def cleanup(student_id: int, apply: bool) -> None:
+    """Убрать тестовых родителей этой проверки.
+
+    Скрипт работает НА ПРОДЕ намеренно, поэтому удаление идёт двумя шагами
+    (tsk-885): сначала показываем, кого нашли по маске, и только с `--apply`
+    удаляем. Маска узкая (тег задачи + домен `example.invalid`), но признак
+    авторства не доказывает, а `users` уходят каскадом вместе со всем, что на
+    них ссылается.
+    """
     async for db in get_async_db():
         rows = (
             await db.execute(
-                text("SELECT id FROM users WHERE email LIKE :pat"),
+                text("SELECT id, full_name, email FROM users WHERE email LIKE :pat"),
                 {"pat": f"{_TAG}-%@example.invalid"},
             )
         ).fetchall()
@@ -73,9 +81,20 @@ async def cleanup(student_id: int) -> None:
         if not ids:
             print("nothing to clean up")
             return
+        print(f"Найдено тестовых пользователей: {len(ids)}")
+        for row in rows:
+            print(f"  #{row[0]}  {row[1]}  {row[2]}")
+        if not apply:
+            print("\nЭто предпросмотр. Удалить: добавить --apply")
+            return
         await db.execute(text("DELETE FROM users WHERE id = ANY(:ids)"), {"ids": ids})
         await db.commit()
-        print(f"deleted test users: {ids}")
+        left = (
+            await db.execute(
+                text("SELECT count(*) FROM users WHERE id = ANY(:ids)"), {"ids": ids}
+            )
+        ).scalar()
+        print(f"deleted test users: {ids} | осталось строк: {left}")
         return
 
 
@@ -83,12 +102,15 @@ async def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("action", choices=["setup", "cleanup"])
     parser.add_argument("--student-id", type=int, required=True)
+    parser.add_argument(
+        "--apply", action="store_true", help="удалить найденное (для cleanup)"
+    )
     args = parser.parse_args()
 
     if args.action == "setup":
         await setup(args.student_id)
     else:
-        await cleanup(args.student_id)
+        await cleanup(args.student_id, args.apply)
 
 
 if __name__ == "__main__":
