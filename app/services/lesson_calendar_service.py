@@ -32,7 +32,7 @@ from app.repos.lesson_calendar_repository import (
     LessonSlotTeacherRepository,
     OperatingHoursRepository,
 )
-from app.services import roles_service
+from app.services import alumni_enrollment_guard, roles_service
 from app.utils.exceptions import DomainError
 
 logger = logging.getLogger(__name__)
@@ -528,6 +528,12 @@ async def _attach_student_to_slot(
     existing = await _slot_student_repo.get(db, slot_id=slot_id, student_id=student_id)
     if existing is not None and existing.is_active:
         return existing
+
+    # tsk-894: отказ ровно там, где связь СОЗДАЁТСЯ (в т.ч. реактивация ранее
+    # снятой строки) — уже активного участника (ветка выше) не трогаем.
+    await alumni_enrollment_guard.assert_not_alumni(
+        db, student_id, action="добавление в слот расписания"
+    )
 
     if existing is not None:
         existing.is_active = True

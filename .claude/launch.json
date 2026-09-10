@@ -1,0 +1,23 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "lms-api-dev",
+      "runtimeExecutable": "D:/Work/LMS/.venv/Scripts/python.exe",
+      "runtimeArgs": [
+        "-m", "uvicorn", "app.api.main:app",
+        "--app-dir", "D:/Work/LMS",
+        "--env-file", "D:/Work/LMS/.env",
+        "--host", "127.0.0.1", "--port", "8000"
+      ],
+      "port": 8000
+    },
+    {
+      "name": "spw-dev",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "port": 3000,
+      "autoPort": true
+    }
+  ]
+}

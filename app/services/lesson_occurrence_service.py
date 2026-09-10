@@ -32,7 +32,12 @@ from app.repos.lesson_calendar_repository import (
     LessonSlotRepository,
     LessonSlotTeacherRepository,
 )
-from app.services import audit_service, homework_service, lesson_calendar_service
+from app.services import (
+    alumni_enrollment_guard,
+    audit_service,
+    homework_service,
+    lesson_calendar_service,
+)
 from app.services.lesson_occurrence_generator_service import iter_occurrence_datetimes
 from app.utils.exceptions import DomainError
 
@@ -521,6 +526,9 @@ async def create_ad_hoc_occurrence(
     """
     await lesson_calendar_service.ensure_user_has_role(db, student_id, "student")
     await lesson_calendar_service.ensure_user_has_role(db, teacher_id, "teacher")
+    await alumni_enrollment_guard.assert_not_alumni(
+        db, student_id, action="запись на занятие (ad-hoc)"
+    )
 
     within_hours = await lesson_calendar_service.is_within_operating_hours(
         db, scheduled_at=scheduled_at, duration_minutes=duration_minutes
@@ -592,6 +600,10 @@ async def add_participant_to_occurrence(
     )
     if existing is not None:
         return existing
+
+    await alumni_enrollment_guard.assert_not_alumni(
+        db, student_id, action="добавление к идущему занятию (преподаватель)"
+    )
 
     overlap = await _participant_repo.has_student_overlap(
         db,
@@ -672,6 +684,10 @@ async def join_occurrence_as_student(
     )
     if existing is not None:
         return occurrence, existing
+
+    await alumni_enrollment_guard.assert_not_alumni(
+        db, student_id, action="присоединение к занятию (ученик)"
+    )
 
     if occurrence.scheduled_at <= datetime.now(timezone.utc):
         raise DomainError("Занятие уже началось или прошло", status_code=409)

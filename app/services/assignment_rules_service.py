@@ -26,7 +26,11 @@ from typing import Any, Optional
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services import course_activity_service, course_dependencies_enrollment_service
+from app.services import (
+    alumni_enrollment_guard,
+    course_activity_service,
+    course_dependencies_enrollment_service,
+)
 from app.utils.exceptions import DomainError
 
 logger = logging.getLogger(__name__)
@@ -140,6 +144,12 @@ async def assign_course_to_student(
         # уже зафиксирован своим коммитом).
         await course_activity_service.assert_courses_active(
             db, [resolved_course_id], action=f"назначение курса ({source})"
+        )
+        # tsk-894: тот же отказ для ученика-выпускника — новую связь заводить
+        # незачем ни правилу, ни ручному назначению учителем. Мягкий провал
+        # автоправила ловит это исключение ровно так же, как и tsk-886 выше.
+        await alumni_enrollment_guard.assert_not_alumni(
+            db, student_id, action=f"назначение курса ({source})"
         )
         # order_number проставит триггер trg_set_user_course_order_number.
         await db.execute(

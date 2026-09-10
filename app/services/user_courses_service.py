@@ -10,7 +10,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.user_courses import UserCourses
 from app.repos.user_courses_repo import UserCoursesRepository
-from app.services import course_activity_service, course_dependencies_enrollment_service
+from app.services import (
+    alumni_enrollment_guard,
+    course_activity_service,
+    course_dependencies_enrollment_service,
+)
 from app.services.base import BaseService
 from app.utils.exceptions import DomainError
 
@@ -92,6 +96,11 @@ class UserCoursesService(BaseService[UserCourses]):
             # зависимостей: иначе побочные вставки делаются впустую.
             await course_activity_service.assert_courses_active(
                 db, [int(course_id)], action="зачисление ученика на курс"
+            )
+            # tsk-894: та же логика для ученика-выпускника — новую связь
+            # ученик↔курс заводить незачем, обучение уже закрыто.
+            await alumni_enrollment_guard.assert_not_alumni(
+                db, int(user_id), action="зачисление ученика на курс"
             )
             await course_dependencies_enrollment_service.ensure_dependencies_assigned(
                 db, student_id=int(user_id), course_ids=[int(course_id)]
@@ -203,6 +212,13 @@ class UserCoursesService(BaseService[UserCourses]):
             [int(c) for c in course_ids if int(c) not in existing],
             action="пакетное зачисление ученика на курсы",
         )
+        # tsk-894: пакетная привязка — тот же выпускник, что и одиночная.
+        # Проверяем, только если пачка что-то реально добавит (см. комментарий
+        # выше про `existing`): иначе отказывали бы там, где новой связи нет.
+        if len(existing) < len(course_ids):
+            await alumni_enrollment_guard.assert_not_alumni(
+                db, int(user_id), action="пакетное зачисление ученика на курсы"
+            )
         await course_dependencies_enrollment_service.ensure_dependencies_assigned(
             db, student_id=user_id, course_ids=course_ids
         )
