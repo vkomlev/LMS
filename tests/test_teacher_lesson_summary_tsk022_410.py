@@ -575,6 +575,16 @@ async def test_summary_course_progress_percent(db, client):
     await _enroll_student(db, student_id=student_id, course_id=course_id)
     task_a = await _new_task(db, course_id=course_id, uid="a")
     await _new_task(db, course_id=course_id, uid="b")
+    # tsk-907: задания существовали ДО сдачи. Иначе срабатывает правило
+    # tsk-692 — содержимое, добавленное после прохождения темы, не долг, — и
+    # второе задание перестаёт считаться. В бою задания появляются раньше
+    # работы по ним; порядок «сдал, потом создали» бывает только в тесте.
+    await db.execute(
+        text("UPDATE tasks SET created_at = now() - interval '7 days' "
+             " WHERE course_id = :c"),
+        {"c": course_id},
+    )
+    await db.commit()
 
     now = datetime.now(UTC)
     occ_id = await _create_occurrence_with_participant(
@@ -1100,3 +1110,63 @@ async def test_service_course_work_is_counted_separately(db, client):
         "работа во вводном курсе потерялась — панель скажет «на занятии: 0»"
     )
     assert p["homework"]["service_completed"] == 2
+
+
+@pytest.mark.asyncio
+async def test_progress_ignores_content_added_after_the_topic_was_passed(db, client):
+    """Прощённое не идёт ни в процент, ни в «сейчас» (tsk-907).
+
+    Правило tsk-692: содержимое, добавленное в курс ПОСЛЕ того, как ученик
+    прошёл тему, для него необязательно. Кабинет ученика соблюдал его с самого
+    начала, сводка преподавателя — нет, и показывала другую правду про того же
+    человека.
+
+    Замер 11.09 у Дениса Ильина: «Python для ЕГЭ 96%, сейчас делает
+    „Приветствие по имени“». На деле курс пройден целиком (455 из 455), а
+    двадцать один незакрытый пункт — задания, досыпанные в уже пройденные
+    темы. Реплика оператора: «он точно его делать не будет и возвращаться».
+    """
+    teacher_id, token = await _new_user(db, role="teacher", name="teach")
+    student_id, _ = await _new_user(db, role="student", name="stud")
+    course_id = await _new_course(db, f"{_TAG}-907")
+    await _link_student_teacher(db, student_id=student_id, teacher_id=teacher_id)
+    await _enroll_student(db, student_id=student_id, course_id=course_id)
+
+    old_task = await _new_task(db, course_id=course_id, uid="907-old")
+    await db.execute(
+        text("UPDATE tasks SET created_at = now() - interval '30 days' WHERE id = :i"),
+        {"i": old_task},
+    )
+    await db.commit()
+
+    now = datetime.now(UTC)
+    # Тема пройдена: единственное задание сдано верно.
+    await _insert_task_result(
+        db, student_id=student_id, task_id=old_task, course_id=course_id,
+        is_correct=True, submitted_at=now - timedelta(days=10),
+    )
+    # А потом методист досыпал в неё ещё одно.
+    fresh_task = await _new_task(db, course_id=course_id, uid="907-fresh")
+
+    occ_id = await _create_occurrence_with_participant(
+        db, student_id=student_id, teacher_id=teacher_id,
+        scheduled_at=now + timedelta(hours=1),
+    )
+    resp = await client.get(
+        f"/api/v1/teacher/lesson-occurrences/{occ_id}/summary",
+        params={"teacher_id": teacher_id},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200, resp.text
+    p = resp.json()["participants"][0]
+    progress = next(
+        (c for c in p["course_progress"] if c["course_id"] == course_id), None
+    )
+    assert progress is not None, p["course_progress"]
+    assert progress["percent_complete"] == 100, (
+        "досыпанное задание опустило процент у того, кто тему уже прошёл"
+    )
+    assert progress["current_item_title"] is None, (
+        "прощённое задание предложено как следующий шаг"
+    )
+    assert all(b["task_id"] != fresh_task for b in (p["blocked_tasks"] or []))

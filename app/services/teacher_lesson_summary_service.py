@@ -41,6 +41,7 @@ from app.services import (
     lesson_occurrence_service,
     manual_progress_service,
 )
+from app.services.content_grace_service import compute_graced_items
 from app.services.learning_gaps_service import (
     SERVICE_COURSES_CTE,
     non_service_course_filter,
@@ -576,7 +577,27 @@ async def _load_course_progress_and_blocked(
         data = await manual_progress_service.get_student_progress(
             db, student_id=student_id, course_id=course_id,
         )
-        items = data["items"]
+        # tsk-907: содержимое, добавленное в курс ПОСЛЕ того, как ученик прошёл
+        # тему, для него необязательно (правило tsk-692). Кабинет ученика это
+        # правило соблюдает с самого начала (`me_service`), сводка
+        # преподавателя — нет, и показывала другую правду про того же человека.
+        #
+        # Замер 11.09 у Дениса Ильина: «Python для ЕГЭ 96%, сейчас делает
+        # „Приветствие по имени“». На деле курс пройден ЦЕЛИКОМ (455 из 455), а
+        # 21 незакрытый пункт — задания, досыпанные в уже пройденные темы.
+        # Реплика оператора: «он точно его делать не будет и возвращаться».
+        graced = await compute_graced_items(db, student_id, course_id)
+        items = [
+            i
+            for i in data["items"]
+            if not (
+                (i["item_type"] == "task" and int(i["item_id"]) in graced.tasks)
+                or (
+                    i["item_type"] == "material"
+                    and int(i["item_id"]) in graced.materials
+                )
+            )
+        ]
         countable = [i for i in items if i["item_type"] != "course"]
         done = sum(1 for i in countable if i["status"] in DONE_STATUSES)
         total = len(countable)
