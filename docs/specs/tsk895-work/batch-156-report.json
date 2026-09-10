@@ -1,0 +1,144 @@
+{
+  "3240": {
+    "computed": 109,
+    "expected": "109"
+  },
+  "4818": {
+    "computed": "101101 1101110 100100010011 110110000000",
+    "expected": "101101 1101110 100100010011 110110000000"
+  },
+  "4819": {
+    "computed": "4 5 5 4",
+    "expected": "4 5 5 4"
+  },
+  "4820": {
+    "computed": "N/A - общий шаблон без конкретного S, manual_review",
+    "expected": "(нет эталона в БД)"
+  },
+  "4821": {
+    "computed": "N/A - общий шаблон без конкретного S, manual_review",
+    "expected": "(нет эталона в БД)"
+  },
+  "3451": {
+    "computed": 55,
+    "expected": "55"
+  },
+  "3450": {
+    "computed": 45,
+    "expected": "45"
+  },
+  "2149": {
+    "computed": 19,
+    "expected": "19"
+  },
+  "2150": {
+    "computed": 35,
+    "expected": "35"
+  },
+  "2151": {
+    "computed": "reps=1:128  reps=2:32  reps=3:16",
+    "expected": "32",
+    "note": "неоднозначно сколько раз повторяется шаг 2 - см. заметки"
+  },
+  "4129": {
+    "computed": 86,
+    "expected": "86"
+  },
+  "4555": {
+    "computed": 411,
+    "expected": "411"
+  },
+  "9502": {
+    "computed": 14,
+    "expected": "14"
+  },
+  "9559": {
+    "computed": 26,
+    "expected": "26"
+  },
+  "2152": {
+    "computed": 709,
+    "expected": "709"
+  },
+  "2154": {
+    "computed": 31,
+    "expected": "31"
+  },
+  "2069": {
+    "computed": 238,
+    "expected": "238"
+  },
+  "2070": {
+    "computed": 35,
+    "expected": "35"
+  },
+  "2282": {
+    "computed": 46,
+    "expected": "46"
+  },
+  "2281": {
+    "computed": 163,
+    "expected": "163"
+  },
+  "2283": {
+    "computed": 96,
+    "expected": "96"
+  },
+  "2289": {
+    "computed": 16,
+    "expected": "16"
+  },
+  "2288": {
+    "computed": 109,
+    "expected": "109"
+  },
+  "2285": {
+    "computed": 2057,
+    "expected": "2057"
+  },
+  "2286": {
+    "computed": 6,
+    "expected": "6"
+  },
+  "2068": {
+    "computed": 2,
+    "expected": "2"
+  },
+  "2153": {
+    "computed": 9,
+    "expected": "9"
+  },
+  "2155": {
+    "computed": 10,
+    "expected": "10"
+  },
+  "2156": {
+    "computed": [
+      79,
+      2795
+    ],
+    "expected": "79",
+    "note": "нет примера в условии - трактовка буквальная, см. заметки"
+  },
+  "2284": {
+    "computed": 1067,
+    "expected": "1067"
+  },
+  "4556": {
+    "computed": 66,
+    "expected": "66"
+  },
+  "2287": {
+    "computed": 1803,
+    "expected": "1803"
+  },
+  "3106": {
+    "computed": 243,
+    "expected": "243"
+  },
+  "3289": {
+    "computed": "reps=1:84  reps=2:41  reps=3:21  reps=4:11",
+    "expected": "41",
+    "note": "нет примера в условии, число повторений неясно - см. заметки"
+  }
+}
