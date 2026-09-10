@@ -101,6 +101,13 @@ async def _ensure_can_assign(
         200: {"description": "Курс назначен (или уже был назначен)"},
         403: {"description": "Недостаточно прав"},
         404: {"description": "Ученик или курс не найден"},
+        409: {
+            "description": (
+                "Курс выведен из работы (`courses.is_active = false`, tsk-886) "
+                "и ученик на нём ещё не числится. Повторное назначение уже "
+                "зачисленного по-прежнему возвращает 200 с `already_enrolled=true`."
+            )
+        },
     },
 )
 async def assign_course_to_student_endpoint(
@@ -161,6 +168,8 @@ async def assign_course_to_student_endpoint(
         "Только **корневые** курсы (без родителя в `course_parents`): подкурс "
         "графа не открывается ученику в отрыве от родителя, назначать его "
         "отдельно бессмысленно.\n\n"
+        "Курсы вне работы (`is_active=false`, tsk-886) в выдачу не попадают: "
+        "назначить их нельзя, сервер отказал бы 409-м.\n\n"
         "Read-only, гейт по роли (`teacher`/`methodist`/`admin` или сервисный токен) — "
         "доступен по cookie-сессии учителя в браузере (в отличие от `/courses/search`, "
         "который требует X-API-Key и ищет по всему графу, включая подкурсы)."
@@ -177,5 +186,9 @@ async def search_courses_for_teacher_endpoint(
     current_user: CurrentUser = Depends(require_role("teacher", "methodist", "admin")),
 ) -> List[CourseRead]:
     """Найти корневые курсы по названию/коду для селектора ручного назначения."""
-    courses = await courses_service.search_root_courses(db, query=q, limit=limit)
+    # tsk-886: это форма ВЫБОРА курса — выведенные из работы курсы в ней не
+    # показываем: назначить их всё равно нельзя, сервер откажет 409-м.
+    courses = await courses_service.search_root_courses(
+        db, query=q, limit=limit, only_active=True
+    )
     return [CourseRead.model_validate(course) for course in courses]

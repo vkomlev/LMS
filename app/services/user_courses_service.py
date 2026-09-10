@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from typing import Optional, List, Dict
 
+from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.user_courses import UserCourses
 from app.repos.user_courses_repo import UserCoursesRepository
-from app.services import course_dependencies_enrollment_service
+from app.services import course_activity_service, course_dependencies_enrollment_service
 from app.services.base import BaseService
 from app.utils.exceptions import DomainError
 
@@ -85,6 +86,13 @@ class UserCoursesService(BaseService[UserCourses]):
                     status_code=_DUPLICATE_STATUS,
                     payload=keys,
                 )
+            # tsk-886: курс вне работы новых записей не принимает. Проверка
+            # стоит ПОСЛЕ отсечения дубля (повторное назначение ничего не
+            # создаёт — отказывать там не за что) и ДО доназначения
+            # зависимостей: иначе побочные вставки делаются впустую.
+            await course_activity_service.assert_courses_active(
+                db, [int(course_id)], action="зачисление ученика на курс"
+            )
             await course_dependencies_enrollment_service.ensure_dependencies_assigned(
                 db, student_id=int(user_id), course_ids=[int(course_id)]
             )
@@ -175,6 +183,26 @@ class UserCoursesService(BaseService[UserCourses]):
         :param course_ids: Список ID курсов для привязки.
         :return: Список созданных связей пользователя с курсами.
         """
+        # tsk-886: отказываем, только если выключенный курс ученику ЕЩЁ НЕ
+        # назначен. Уже назначенный курс пачка и так пропускает — новой связи
+        # там не появляется, и разворачивать из-за него всю операцию значило бы
+        # ломать чтение того, что уже есть.
+        existing = set(
+            (
+                await db.execute(
+                    text(
+                        "SELECT course_id FROM user_courses "
+                        "WHERE user_id = :uid AND course_id = ANY(:cids)"
+                    ),
+                    {"uid": int(user_id), "cids": [int(c) for c in course_ids]},
+                )
+            ).scalars().all()
+        )
+        await course_activity_service.assert_courses_active(
+            db,
+            [int(c) for c in course_ids if int(c) not in existing],
+            action="пакетное зачисление ученика на курсы",
+        )
         await course_dependencies_enrollment_service.ensure_dependencies_assigned(
             db, student_id=user_id, course_ids=course_ids
         )

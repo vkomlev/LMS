@@ -26,7 +26,7 @@ from typing import Any, Optional
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services import course_dependencies_enrollment_service
+from app.services import course_activity_service, course_dependencies_enrollment_service
 from app.utils.exceptions import DomainError
 
 logger = logging.getLogger(__name__)
@@ -129,6 +129,18 @@ async def assign_course_to_student(
     already_enrolled = existing.fetchone() is not None
 
     if not already_enrolled:
+        # tsk-886: курс вне работы новых записей не принимает — ни от руки
+        # преподавателя, ни от правила автоназначения. Проверка ВНУТРИ ветки
+        # «связи ещё нет»: уже зачисленного ученика повторный вызов не трогает,
+        # и отказывать там не за что.
+        #
+        # Правилу автоназначения отказ не страшен: все три его вызова стоят под
+        # `except Exception` с мягким провалом — сработает предупреждение в
+        # журнале, а учебный поток не порвётся (ответ ученика к этому моменту
+        # уже зафиксирован своим коммитом).
+        await course_activity_service.assert_courses_active(
+            db, [resolved_course_id], action=f"назначение курса ({source})"
+        )
         # order_number проставит триггер trg_set_user_course_order_number.
         await db.execute(
             text(

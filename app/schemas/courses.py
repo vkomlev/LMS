@@ -161,6 +161,17 @@ class CourseRead(BaseModel):
         description="Доступен ли курс гостям без регистрации (Phase Y-5).",
         examples=[False, True],
     )
+    is_active: bool = Field(
+        default=True,
+        description=(
+            "Курс в работе (tsk-886). `false` — курс выведен из работы: он не "
+            "предлагается в формах выбора, не попадает в подбор домашней "
+            "работы и не принимает новых записей (зачисление, закрепление "
+            "преподавателя, начало попытки). Уже существующее — история, "
+            "прогресс, открытая попытка — остаётся видимым и рабочим."
+        ),
+        examples=[True, False],
+    )
 
     model_config = ConfigDict(from_attributes=True)
 

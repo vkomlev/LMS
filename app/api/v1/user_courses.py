@@ -52,7 +52,11 @@ _PEOPLE_WRITE_GATE = require_role("methodist", "admin")
         },
         403: {"description": "Invalid or missing API Key"},
         409: {
-            "description": "Связь уже существует (студент уже привязан к курсу)",
+            "description": (
+                "Связь уже существует (студент уже привязан к курсу) ЛИБО курс "
+                "выведен из работы (`courses.is_active = false`, tsk-886) — "
+                "новых записей он не принимает."
+            ),
             "content": {
                 "application/json": {
                     "example": {

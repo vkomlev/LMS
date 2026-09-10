@@ -180,6 +180,7 @@ class CoursesService(BaseService[Courses]):
         query: str,
         limit: int = 20,
         offset: int = 0,
+        only_active: bool = False,
     ) -> List[Courses]:
         """
         Поиск ТОЛЬКО среди корневых курсов (title/course_uid ILIKE) — подкурсы
@@ -190,10 +191,12 @@ class CoursesService(BaseService[Courses]):
         :param query: поисковый запрос (title/course_uid).
         :param limit: максимум результатов.
         :param offset: смещение.
+        :param only_active: не показывать курсы вне работы (`is_active=false`,
+            tsk-886) — включается там, где курс ВЫБИРАЮТ для назначения.
         :return: Список найденных корневых курсов.
         """
         return await self.repo.search_root_courses(
-            db, query=query, limit=limit, offset=offset
+            db, query=query, limit=limit, offset=offset, only_active=only_active
         )
 
     async def validate_hierarchy(

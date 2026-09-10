@@ -1,0 +1,1286 @@
+diff --git a/app/api/v1/attempts.py b/app/api/v1/attempts.py
+index 765188d..1a151b6 100644
+--- a/app/api/v1/attempts.py
++++ b/app/api/v1/attempts.py
+@@ -237,6 +237,15 @@ async def _enrich_attempt_with_learning_fields(
+     response_model=AttemptRead,
+     status_code=status.HTTP_201_CREATED,
+     summary="Создать попытку прохождения теста/набора задач",
++    responses={
++        409: {
++            "description": (
++                "Курс попытки (или корень навигации) выведен из работы "
++                "(`courses.is_active = false`, tsk-886) — новую попытку в нём "
++                "не начать. Уже открытая попытка при этом продолжает работать."
++            )
++        },
++    },
+ )
+ async def create_attempt(
+     payload: AttemptCreate = Body(
+@@ -263,6 +272,18 @@ async def create_attempt(
+ 
+     Используется существующий AttemptsService.create_attempt.
+     """
++    # tsk-886: в курсе вне работы новую попытку не начать. Проверяется и узел
++    # задания, и корень навигации: каскада между ними нет (подкурс живёт под
++    # несколькими родителями), поэтому «выключен» у каждого свой.
++    from app.services import course_activity_service
++
++    await course_activity_service.assert_course_active_for_student(
++        db,
++        student_id=payload.user_id,
++        course_id=payload.course_id,
++        action="создание попытки",
++    )
++
+     # tsk-264: корень определяем и здесь, а не только в start-or-get-attempt.
+     # Попытка с пустым корнем не расходует лимит ни в одном курсе, поэтому без
+     # резолва этот эндпоинт стал бы способом выдать себе бесконечные попытки.
+@@ -279,6 +300,12 @@ async def create_attempt(
+             raise HTTPException(
+                 status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+             ) from exc
++        await course_activity_service.assert_course_active_for_student(
++            db,
++            student_id=payload.user_id,
++            course_id=root_course_id,
++            action="создание попытки (корень)",
++        )
+     attempt = await attempts_service.create_attempt(
+         db=db,
+         user_id=payload.user_id,
+diff --git a/app/api/v1/courses_extra.py b/app/api/v1/courses_extra.py
+index 5f98969..0ee944f 100644
+--- a/app/api/v1/courses_extra.py
++++ b/app/api/v1/courses_extra.py
+@@ -1205,15 +1205,28 @@ class CourseCardPatch(BaseModel):
+     course_uid: Optional[str] = Field(
+         None, description="Внешний код курса (уникален)", examples=["wp:python-ege"]
+     )
++    is_active: Optional[bool] = Field(
++        None,
++        description=(
++            "Курс в работе (tsk-886). `false` выводит курс из работы: он "
++            "пропадает из форм выбора и подбора домашней работы и перестаёт "
++            "принимать новые записи. Уже начатое не трогается."
++        ),
++        examples=[True, False],
++    )
+ 
+ 
+ @router.patch(
+     "/courses/{course_id}/card",
+     response_model=CourseRead,
+-    summary="Правка карточки курса (название, описание, доступ, код)",
++    summary="Правка карточки курса (название, описание, доступ, код, работа)",
+     description=(
+         "Изменить то, что видно в карточке курса. Структура графа правится "
+         "отдельным путём `PATCH /courses/{course_id}/structure`.\n\n"
++        "`is_active=false` выводит курс из работы (tsk-886): он пропадает из "
++        "форм выбора и подбора домашней работы и перестаёт принимать новые "
++        "записи. Каскада нет — подкурсы выключенного корня остаются в работе: "
++        "подкурс входит и в другие программы.\n\n"
+         "Отличие от общего `PATCH /courses/{course_id}`: тот висит на legacy "
+         "`?api_key=` и браузеру недоступен. Перекрывать его узкой схемой нельзя "
+         "— у него шире контракт, которым пользуются ТГ-боты."
+diff --git a/app/api/v1/learning.py b/app/api/v1/learning.py
+index 1c243ee..08ae7b0 100644
+--- a/app/api/v1/learning.py
++++ b/app/api/v1/learning.py
+@@ -61,6 +61,7 @@ from app.services import graduation_service
+ from app.services import lesson_attendance_service
+ # tsk-301: единственная дверь прав подписки — своей проверки здесь быть не должно.
+ from app.services import entitlements_service
++from app.services import course_activity_service
+ from app.services.attempts_service import AttemptsService
+ from app.services.tasks_service import TasksService
+ from app.services.materials_service import MaterialsService
+@@ -409,7 +410,17 @@ async def task_skip(
+ @router.post(
+     "/tasks/{task_id}/start-or-get-attempt",
+     response_model=StartOrGetAttemptResponse,
+-    responses=_PAYMENT_403,
++    responses={
++        **_PAYMENT_403,
++        409: {
++            "description": (
++                "Курс задания (или корень навигации) выведен из работы "
++                "(`courses.is_active = false`, tsk-886) — НОВУЮ попытку в нём "
++                "не начать. Уже открытая незавершённая попытка возвращается "
++                "как обычно: начатое ученик дорешает."
++            )
++        },
++    },
+     summary="Начать попытку или вернуть текущую незавершённую (идемпотентно)",
+ )
+ async def start_or_get_attempt(
+@@ -503,6 +514,18 @@ async def start_or_get_attempt(
+             source_system=existing.source_system,
+         )
+ 
++    # tsk-886: НОВУЮ попытку в курсе вне работы не начать. Проверка стоит после
++    # ветки «есть незавершённая попытка» намеренно: уже начатое не трогаем —
++    # ученик дорешает то, что открыл до вывода курса из работы. Проверяются оба
++    # узла — сам курс задания и корень навигации: каскада между ними нет.
++    await course_activity_service.assert_course_active_for_student(
++        db, student_id=body.student_id, course_id=course_id,
++        action="начало попытки",
++    )
++    await course_activity_service.assert_course_active_for_student(
++        db, student_id=body.student_id, course_id=root_course_id,
++        action="начало попытки (корень)",
++    )
+     attempt = await attempts_service.create_attempt(
+         db=db,
+         user_id=body.student_id,
+diff --git a/app/api/v1/teacher_assignments.py b/app/api/v1/teacher_assignments.py
+index 829ab2f..4200b78 100644
+--- a/app/api/v1/teacher_assignments.py
++++ b/app/api/v1/teacher_assignments.py
+@@ -101,6 +101,13 @@ async def _ensure_can_assign(
+         200: {"description": "Курс назначен (или уже был назначен)"},
+         403: {"description": "Недостаточно прав"},
+         404: {"description": "Ученик или курс не найден"},
++        409: {
++            "description": (
++                "Курс выведен из работы (`courses.is_active = false`, tsk-886) "
++                "и ученик на нём ещё не числится. Повторное назначение уже "
++                "зачисленного по-прежнему возвращает 200 с `already_enrolled=true`."
++            )
++        },
+     },
+ )
+ async def assign_course_to_student_endpoint(
+@@ -161,6 +168,8 @@ async def assign_course_to_student_endpoint(
+         "Только **корневые** курсы (без родителя в `course_parents`): подкурс "
+         "графа не открывается ученику в отрыве от родителя, назначать его "
+         "отдельно бессмысленно.\n\n"
++        "Курсы вне работы (`is_active=false`, tsk-886) в выдачу не попадают: "
++        "назначить их нельзя, сервер отказал бы 409-м.\n\n"
+         "Read-only, гейт по роли (`teacher`/`methodist`/`admin` или сервисный токен) — "
+         "доступен по cookie-сессии учителя в браузере (в отличие от `/courses/search`, "
+         "который требует X-API-Key и ищет по всему графу, включая подкурсы)."
+@@ -177,5 +186,9 @@ async def search_courses_for_teacher_endpoint(
+     current_user: CurrentUser = Depends(require_role("teacher", "methodist", "admin")),
+ ) -> List[CourseRead]:
+     """Найти корневые курсы по названию/коду для селектора ручного назначения."""
+-    courses = await courses_service.search_root_courses(db, query=q, limit=limit)
++    # tsk-886: это форма ВЫБОРА курса — выведенные из работы курсы в ней не
++    # показываем: назначить их всё равно нельзя, сервер откажет 409-м.
++    courses = await courses_service.search_root_courses(
++        db, query=q, limit=limit, only_active=True
++    )
+     return [CourseRead.model_validate(course) for course in courses]
+diff --git a/app/api/v1/teacher_courses.py b/app/api/v1/teacher_courses.py
+index 20bbcdc..435e58f 100644
+--- a/app/api/v1/teacher_courses.py
++++ b/app/api/v1/teacher_courses.py
+@@ -148,6 +148,13 @@ async def list_course_teachers(
+                 }
+             }
+         },
++        409: {
++            "description": (
++                "Курс вложен в другой (закреплять можно только за корневым) "
++                "ЛИБО курс выведен из работы (`courses.is_active = false`, "
++                "tsk-886) и связи ещё нет."
++            )
++        },
+         403: {"description": "Invalid or missing API Key"},
+     },
+ )
+@@ -384,6 +391,13 @@ async def list_all_teacher_courses(
+                 }
+             }
+         },
++        409: {
++            "description": (
++                "Курс вложен в другой (закреплять можно только за корневым) "
++                "ЛИБО курс выведен из работы (`courses.is_active = false`, "
++                "tsk-886) и связи ещё нет."
++            )
++        },
+         403: {"description": "Invalid or missing API Key"},
+     },
+ )
+diff --git a/app/api/v1/user_courses.py b/app/api/v1/user_courses.py
+index 714e89a..1071b5a 100644
+--- a/app/api/v1/user_courses.py
++++ b/app/api/v1/user_courses.py
+@@ -52,7 +52,11 @@ _PEOPLE_WRITE_GATE = require_role("methodist", "admin")
+         },
+         403: {"description": "Invalid or missing API Key"},
+         409: {
+-            "description": "Связь уже существует (студент уже привязан к курсу)",
++            "description": (
++                "Связь уже существует (студент уже привязан к курсу) ЛИБО курс "
++                "выведен из работы (`courses.is_active = false`, tsk-886) — "
++                "новых записей он не принимает."
++            ),
+             "content": {
+                 "application/json": {
+                     "example": {
+diff --git a/app/api/v1/user_courses_extra.py b/app/api/v1/user_courses_extra.py
+index 616a67d..3e5adb0 100644
+--- a/app/api/v1/user_courses_extra.py
++++ b/app/api/v1/user_courses_extra.py
+@@ -266,6 +266,13 @@ async def get_user_courses_endpoint(
+         404: {
+             "description": "Пользователь не найден",
+         },
++        409: {
++            "description": (
++                "Курс вложен в другой (зачислять можно только на корневой) "
++                "ЛИБО курс выведен из работы (`courses.is_active = false`, "
++                "tsk-886). В обоих случаях не зачисляется НИ ОДИН курс пачки."
++            )
++        },
+         403: {"description": "Invalid or missing API Key"},
+     },
+ )
+diff --git a/app/repos/courses_repo.py b/app/repos/courses_repo.py
+index 8dc17ae..4bd95fa 100644
+--- a/app/repos/courses_repo.py
++++ b/app/repos/courses_repo.py
+@@ -184,6 +184,7 @@ class CoursesRepository(BaseRepository[Courses]):
+         query: str,
+         limit: int = 20,
+         offset: int = 0,
++        only_active: bool = False,
+     ) -> List[Courses]:
+         """
+         Поиск ТОЛЬКО среди корневых курсов (без родителя) по title/course_uid (ILIKE).
+@@ -202,16 +203,22 @@ class CoursesRepository(BaseRepository[Courses]):
+             return val.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+ 
+         pattern = f"%{_escape_like(query)}%"
++        conditions = [
++            t_course_parents.c.course_id.is_(None),
++            or_(
++                Courses.title.ilike(pattern, escape="\\"),
++                Courses.course_uid.ilike(pattern, escape="\\"),
++            ),
++        ]
++        # tsk-886: `only_active` — для форм, где курс ВЫБИРАЮТ. Значение по
++        # умолчанию оставлено прежним (искать всё), чтобы поиск «покажи, что у
++        # нас есть» не начал молча прятать выведенные курсы.
++        if only_active:
++            conditions.append(Courses.is_active.is_(True))
+         stmt = (
+             select(Courses)
+             .outerjoin(t_course_parents, Courses.id == t_course_parents.c.course_id)
+-            .where(
+-                t_course_parents.c.course_id.is_(None),
+-                or_(
+-                    Courses.title.ilike(pattern, escape="\\"),
+-                    Courses.course_uid.ilike(pattern, escape="\\"),
+-                ),
+-            )
++            .where(*conditions)
+             .order_by(Courses.title)
+             .offset(offset)
+             .limit(limit)
+diff --git a/app/schemas/courses.py b/app/schemas/courses.py
+index 84be0bb..09e6447 100644
+--- a/app/schemas/courses.py
++++ b/app/schemas/courses.py
+@@ -161,6 +161,17 @@ class CourseRead(BaseModel):
+         description="Доступен ли курс гостям без регистрации (Phase Y-5).",
+         examples=[False, True],
+     )
++    is_active: bool = Field(
++        default=True,
++        description=(
++            "Курс в работе (tsk-886). `false` — курс выведен из работы: он не "
++            "предлагается в формах выбора, не попадает в подбор домашней "
++            "работы и не принимает новых записей (зачисление, закрепление "
++            "преподавателя, начало попытки). Уже существующее — история, "
++            "прогресс, открытая попытка — остаётся видимым и рабочим."
++        ),
++        examples=[True, False],
++    )
+ 
+     model_config = ConfigDict(from_attributes=True)
+ 
+diff --git a/app/services/assignment_rules_service.py b/app/services/assignment_rules_service.py
+index 0655d70..7bf8937 100644
+--- a/app/services/assignment_rules_service.py
++++ b/app/services/assignment_rules_service.py
+@@ -26,7 +26,7 @@ from typing import Any, Optional
+ from sqlalchemy import text
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+-from app.services import course_dependencies_enrollment_service
++from app.services import course_activity_service, course_dependencies_enrollment_service
+ from app.utils.exceptions import DomainError
+ 
+ logger = logging.getLogger(__name__)
+@@ -129,6 +129,18 @@ async def assign_course_to_student(
+     already_enrolled = existing.fetchone() is not None
+ 
+     if not already_enrolled:
++        # tsk-886: курс вне работы новых записей не принимает — ни от руки
++        # преподавателя, ни от правила автоназначения. Проверка ВНУТРИ ветки
++        # «связи ещё нет»: уже зачисленного ученика повторный вызов не трогает,
++        # и отказывать там не за что.
++        #
++        # Правилу автоназначения отказ не страшен: все три его вызова стоят под
++        # `except Exception` с мягким провалом — сработает предупреждение в
++        # журнале, а учебный поток не порвётся (ответ ученика к этому моменту
++        # уже зафиксирован своим коммитом).
++        await course_activity_service.assert_courses_active(
++            db, [resolved_course_id], action=f"назначение курса ({source})"
++        )
+         # order_number проставит триггер trg_set_user_course_order_number.
+         await db.execute(
+             text(
+diff --git a/app/services/courses_service.py b/app/services/courses_service.py
+index 6396391..cddd103 100644
+--- a/app/services/courses_service.py
++++ b/app/services/courses_service.py
+@@ -180,6 +180,7 @@ class CoursesService(BaseService[Courses]):
+         query: str,
+         limit: int = 20,
+         offset: int = 0,
++        only_active: bool = False,
+     ) -> List[Courses]:
+         """
+         Поиск ТОЛЬКО среди корневых курсов (title/course_uid ILIKE) — подкурсы
+@@ -190,10 +191,12 @@ class CoursesService(BaseService[Courses]):
+         :param query: поисковый запрос (title/course_uid).
+         :param limit: максимум результатов.
+         :param offset: смещение.
++        :param only_active: не показывать курсы вне работы (`is_active=false`,
++            tsk-886) — включается там, где курс ВЫБИРАЮТ для назначения.
+         :return: Список найденных корневых курсов.
+         """
+         return await self.repo.search_root_courses(
+-            db, query=query, limit=limit, offset=offset
++            db, query=query, limit=limit, offset=offset, only_active=only_active
+         )
+ 
+     async def validate_hierarchy(
+diff --git a/app/services/homework_service.py b/app/services/homework_service.py
+index a5df74a..cb10e4b 100644
+--- a/app/services/homework_service.py
++++ b/app/services/homework_service.py
+@@ -36,7 +36,11 @@ from typing import Any, Optional
+ from sqlalchemy import text
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+-from app.services import homework_volume_service, program_scope_service
++from app.services import (
++    course_activity_service,
++    homework_volume_service,
++    program_scope_service,
++)
+ # tsk-867: вес элемента — состав набирается до бюджета времени, а не до штук.
+ from app.services.task_effort_service import (
+     MATERIAL_EFFORT_SECONDS_PROXY,
+@@ -153,6 +157,14 @@ async def _next_items(
+             ).scalars().all()
+         )
+ 
++    # tsk-886: курсы, выведенные из работы, в подбор не идут — ни корнем, ни
++    # темой внутри дерева. Каскада нет (граница tsk-873): выключенный корень не
++    # выключает подкурсы, поэтому проверяется КАЖДЫЙ узел, а не только корень.
++    # Берём весь список разом: он ограничен числом выведенных курсов (на 10.09
++    # их ноль из 843), а спрашивать про каждый узел обхода было бы дороже.
++    inactive_courses = await course_activity_service.load_inactive_course_ids(db)
++    roots = [c for c in roots if int(c) not in inactive_courses]
++
+     # tsk-882: собираем НЕ ТОЛЬКО набор, но и хвост за ним — что идёт следом
+     # по учебному порядку. Без хвоста не ответить на вопрос «закрывает ли эта
+     # выдача тему» и нечем взять теорию следующей.
+@@ -179,6 +191,10 @@ async def _next_items(
+                 continue
+             if item["status"] in _DONE_STATUSES:
+                 continue
++            # tsk-886: тема (подкурс) выведена из работы — её содержимое домой
++            # не задаём, хотя в прогрессе ученика оно по-прежнему видно.
++            if int(item["course_id"]) in inactive_courses:
++                continue
+             item_id = int(item["item_id"])
+             if item["item_type"] == "task" and item_id in graced.tasks:
+                 continue
+diff --git a/app/services/teacher_courses_service.py b/app/services/teacher_courses_service.py
+index 3d9a179..f5bb50c 100644
+--- a/app/services/teacher_courses_service.py
++++ b/app/services/teacher_courses_service.py
+@@ -7,6 +7,7 @@ from sqlalchemy import select, func
+ from app.models.users import Users
+ from app.models.courses import Courses
+ from app.repos.teacher_courses_repo import TeacherCoursesRepository
++from app.services import course_activity_service
+ from app.utils.exceptions import DomainError
+ 
+ 
+@@ -175,7 +176,16 @@ class TeacherCoursesService:
+         course = await db.get(Courses, course_id)
+         if not course:
+             raise DomainError(f"Курс с ID {course_id} не найден")
+-        
++
++        # tsk-886: за курсом вне работы преподавателя не закрепляют. Отказ
++        # 409-й (HTTPException, а не DomainError): оба эндпоинта переводят
++        # DomainError в 404 «не найдено», а курс здесь как раз найден —
++        # 404 сказал бы неправду о состоянии системы.
++        if not await self.repo.get_link(db, teacher_id, course_id):
++            await course_activity_service.assert_courses_active(
++                db, [course_id], action="закрепление преподавателя за курсом"
++            )
++
+         return await self.repo.add_link(db, teacher_id, course_id)
+     
+     async def remove_link(
+diff --git a/app/services/user_courses_service.py b/app/services/user_courses_service.py
+index 65e19c8..24d94a0 100644
+--- a/app/services/user_courses_service.py
++++ b/app/services/user_courses_service.py
+@@ -4,12 +4,13 @@ from __future__ import annotations
+ 
+ from typing import Optional, List, Dict
+ 
++from sqlalchemy import text
+ from sqlalchemy.exc import IntegrityError
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+ from app.models.user_courses import UserCourses
+ from app.repos.user_courses_repo import UserCoursesRepository
+-from app.services import course_dependencies_enrollment_service
++from app.services import course_activity_service, course_dependencies_enrollment_service
+ from app.services.base import BaseService
+ from app.utils.exceptions import DomainError
+ 
+@@ -85,6 +86,13 @@ class UserCoursesService(BaseService[UserCourses]):
+                     status_code=_DUPLICATE_STATUS,
+                     payload=keys,
+                 )
++            # tsk-886: курс вне работы новых записей не принимает. Проверка
++            # стоит ПОСЛЕ отсечения дубля (повторное назначение ничего не
++            # создаёт — отказывать там не за что) и ДО доназначения
++            # зависимостей: иначе побочные вставки делаются впустую.
++            await course_activity_service.assert_courses_active(
++                db, [int(course_id)], action="зачисление ученика на курс"
++            )
+             await course_dependencies_enrollment_service.ensure_dependencies_assigned(
+                 db, student_id=int(user_id), course_ids=[int(course_id)]
+             )
+@@ -175,6 +183,26 @@ class UserCoursesService(BaseService[UserCourses]):
+         :param course_ids: Список ID курсов для привязки.
+         :return: Список созданных связей пользователя с курсами.
+         """
++        # tsk-886: отказываем, только если выключенный курс ученику ЕЩЁ НЕ
++        # назначен. Уже назначенный курс пачка и так пропускает — новой связи
++        # там не появляется, и разворачивать из-за него всю операцию значило бы
++        # ломать чтение того, что уже есть.
++        existing = set(
++            (
++                await db.execute(
++                    text(
++                        "SELECT course_id FROM user_courses "
++                        "WHERE user_id = :uid AND course_id = ANY(:cids)"
++                    ),
++                    {"uid": int(user_id), "cids": [int(c) for c in course_ids]},
++                )
++            ).scalars().all()
++        )
++        await course_activity_service.assert_courses_active(
++            db,
++            [int(c) for c in course_ids if int(c) not in existing],
++            action="пакетное зачисление ученика на курсы",
++        )
+         await course_dependencies_enrollment_service.ensure_dependencies_assigned(
+             db, student_id=user_id, course_ids=course_ids
+         )
+diff --git a/docs/openapi.json b/docs/openapi.json
+index ad9a715..3b355f1 100644
+--- a/docs/openapi.json
++++ b/docs/openapi.json
+@@ -3316,8 +3316,8 @@
+         "tags": [
+           "courses"
+         ],
+-        "summary": "Правка карточки курса (название, описание, доступ, код)",
+-        "description": "Изменить то, что видно в карточке курса. Структура графа правится отдельным путём `PATCH /courses/{course_id}/structure`.\n\nОтличие от общего `PATCH /courses/{course_id}`: тот висит на legacy `?api_key=` и браузеру недоступен. Перекрывать его узкой схемой нельзя — у него шире контракт, которым пользуются ТГ-боты.",
++        "summary": "Правка карточки курса (название, описание, доступ, код, работа)",
++        "description": "Изменить то, что видно в карточке курса. Структура графа правится отдельным путём `PATCH /courses/{course_id}/structure`.\n\n`is_active=false` выводит курс из работы (tsk-886): он пропадает из форм выбора и подбора домашней работы и перестаёт принимать новые записи. Каскада нет — подкурсы выключенного корня остаются в работе: подкурс входит и в другие программы.\n\nОтличие от общего `PATCH /courses/{course_id}`: тот висит на legacy `?api_key=` и браузеру недоступен. Перекрывать его узкой схемой нельзя — у него шире контракт, которым пользуются ТГ-боты.",
+         "operationId": "patch_course_card_api_v1_courses__course_id__card_patch",
+         "security": [
+           {
+@@ -11523,7 +11523,7 @@
+             "description": "Invalid or missing API Key"
+           },
+           "409": {
+-            "description": "Связь уже существует (студент уже привязан к курсу)",
++            "description": "Связь уже существует (студент уже привязан к курсу) ЛИБО курс выведен из работы (`courses.is_active = false`, tsk-886) — новых записей он не принимает.",
+             "content": {
+               "application/json": {
+                 "example": {
+@@ -12078,6 +12078,9 @@
+           "404": {
+             "description": "Пользователь не найден"
+           },
++          "409": {
++            "description": "Курс вложен в другой (зачислять можно только на корневой) ЛИБО курс выведен из работы (`courses.is_active = false`, tsk-886). В обоих случаях не зачисляется НИ ОДИН курс пачки."
++          },
+           "403": {
+             "description": "Invalid or missing API Key"
+           },
+@@ -14626,6 +14629,9 @@
+               }
+             }
+           },
++          "409": {
++            "description": "Курс вложен в другой (закреплять можно только за корневым) ЛИБО курс выведен из работы (`courses.is_active = false`, tsk-886) и связи ещё нет."
++          },
+           "403": {
+             "description": "Invalid or missing API Key"
+           },
+@@ -14991,6 +14997,9 @@
+               }
+             }
+           },
++          "409": {
++            "description": "Курс вложен в другой (закреплять можно только за корневым) ЛИБО курс выведен из работы (`courses.is_active = false`, tsk-886) и связи ещё нет."
++          },
+           "403": {
+             "description": "Invalid or missing API Key"
+           },
+@@ -16408,6 +16417,9 @@
+               }
+             }
+           },
++          "409": {
++            "description": "Курс попытки (или корень навигации) выведен из работы (`courses.is_active = false`, tsk-886) — новую попытку в нём не начать. Уже открытая попытка при этом продолжает работать."
++          },
+           "422": {
+             "description": "Validation Error",
+             "content": {
+@@ -17891,6 +17903,9 @@
+           "403": {
+             "description": "tsk-010: занятия закрыты за просроченную оплату — `payload.code = payment_overdue` (сумма, месяцы, `payments_url`); tsk-673: тариф закрывает работу в курсе — `payload.code = course_work_closed` (так устроен «Выпускник»: материалы читаются, ответы не принимаются); либо чужой `student_id`."
+           },
++          "409": {
++            "description": "Курс задания (или корень навигации) выведен из работы (`courses.is_active = false`, tsk-886) — НОВУЮ попытку в нём не начать. Уже открытая незавершённая попытка возвращается как обычно: начатое ученик дорешает."
++          },
+           "422": {
+             "description": "Validation Error",
+             "content": {
+@@ -21155,6 +21170,9 @@
+           "404": {
+             "description": "Ученик или курс не найден"
+           },
++          "409": {
++            "description": "Курс выведен из работы (`courses.is_active = false`, tsk-886) и ученик на нём ещё не числится. Повторное назначение уже зачисленного по-прежнему возвращает 200 с `already_enrolled=true`."
++          },
+           "422": {
+             "description": "Validation Error",
+             "content": {
+@@ -21174,7 +21192,7 @@
+           "teacher_assignments"
+         ],
+         "summary": "Поиск курса для ручного назначения (кабинет преподавателя)",
+-        "description": "Поиск курсов по названию или коду (`course_uid`) — источник данных для селектора курса в кнопке «Назначить курс» на карточке ученика.\n\nТолько **корневые** курсы (без родителя в `course_parents`): подкурс графа не открывается ученику в отрыве от родителя, назначать его отдельно бессмысленно.\n\nRead-only, гейт по роли (`teacher`/`methodist`/`admin` или сервисный токен) — доступен по cookie-сессии учителя в браузере (в отличие от `/courses/search`, который требует X-API-Key и ищет по всему графу, включая подкурсы).",
++        "description": "Поиск курсов по названию или коду (`course_uid`) — источник данных для селектора курса в кнопке «Назначить курс» на карточке ученика.\n\nТолько **корневые** курсы (без родителя в `course_parents`): подкурс графа не открывается ученику в отрыве от родителя, назначать его отдельно бессмысленно.\n\nКурсы вне работы (`is_active=false`, tsk-886) в выдачу не попадают: назначить их нельзя, сервер отказал бы 409-м.\n\nRead-only, гейт по роли (`teacher`/`methodist`/`admin` или сервисный токен) — доступен по cookie-сессии учителя в браузере (в отличие от `/courses/search`, который требует X-API-Key и ищет по всему графу, включая подкурсы).",
+         "operationId": "search_courses_for_teacher_endpoint_api_v1_teacher_courses_search_get",
+         "security": [
+           {
+@@ -46851,6 +46869,22 @@
+             "examples": [
+               "wp:python-ege"
+             ]
++          },
++          "is_active": {
++            "anyOf": [
++              {
++                "type": "boolean"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Is Active",
++            "description": "Курс в работе (tsk-886). `false` выводит курс из работы: он пропадает из форм выбора и подбора домашней работы и перестаёт принимать новые записи. Уже начатое не трогается.",
++            "examples": [
++              true,
++              false
++            ]
+           }
+         },
+         "type": "object",
+@@ -47484,6 +47518,16 @@
+               false,
+               true
+             ]
++          },
++          "is_active": {
++            "type": "boolean",
++            "title": "Is Active",
++            "description": "Курс в работе (tsk-886). `false` — курс выведен из работы: он не предлагается в формах выбора, не попадает в подбор домашней работы и не принимает новых записей (зачисление, закрепление преподавателя, начало попытки). Уже существующее — история, прогресс, открытая попытка — остаётся видимым и рабочим.",
++            "default": true,
++            "examples": [
++              true,
++              false
++            ]
+           }
+         },
+         "type": "object",
+@@ -47682,6 +47726,16 @@
+               true
+             ]
+           },
++          "is_active": {
++            "type": "boolean",
++            "title": "Is Active",
++            "description": "Курс в работе (tsk-886). `false` — курс выведен из работы: он не предлагается в формах выбора, не попадает в подбор домашней работы и не принимает новых записей (зачисление, закрепление преподавателя, начало попытки). Уже существующее — история, прогресс, открытая попытка — остаётся видимым и рабочим.",
++            "default": true,
++            "examples": [
++              true,
++              false
++            ]
++          },
+           "children": {
+             "items": {
+               "$ref": "#/components/schemas/CourseTreeRead"
+@@ -48015,6 +48069,16 @@
+               true
+             ]
+           },
++          "is_active": {
++            "type": "boolean",
++            "title": "Is Active",
++            "description": "Курс в работе (tsk-886). `false` — курс выведен из работы: он не предлагается в формах выбора, не попадает в подбор домашней работы и не принимает новых записей (зачисление, закрепление преподавателя, начало попытки). Уже существующее — история, прогресс, открытая попытка — остаётся видимым и рабочим.",
++            "default": true,
++            "examples": [
++              true,
++              false
++            ]
++          },
+           "order_number": {
+             "anyOf": [
+               {
+diff --git a/app/services/course_activity_service.py b/app/services/course_activity_service.py
+new file mode 100644
+index 0000000..abe0ad2
+--- /dev/null
++++ b/app/services/course_activity_service.py
+@@ -0,0 +1,137 @@
++"""tsk-886: курс вне работы (`courses.is_active`) — один страж на все пути.
++
++Признак завёл tsk-873, поведения за ним не было: выключенный курс так же
++предлагался в формах, принимал зачисление и попадал в подбор домашней работы.
++
++Правило, по которому проведена граница:
++
++* **Запрещается создание НОВОЙ связи** с выключенным курсом — зачисление,
++  закрепление преподавателя, начало попытки. Курс выведён из работы, и
++  заводить на нём новое незачем.
++* **Чтение и уже начатое не трогаем.** Карточка человека, история, прогресс,
++  открытая незавершённая попытка — всё показывается и продолжает работать:
++  иначе прошлое ученика на этом курсе перестанет объясняться.
++
++Каскада нет намеренно (граница tsk-873): выключенный корень НЕ выключает
++подкурсы. Подкурс живёт под несколькими родителями, и «выключить дерево»
++выключило бы его в чужих программах. Поэтому каждый узел проверяется сам по
++себе, а не через предков.
++
++Код отказа — **409 Conflict**: тело запроса корректно (это не 422), объект
++существует и вызывающему открыт (это не 404), но текущее состояние курса
++конфликтует с действием. Тем же 409 в этом кабинете уже отвечают «курс вложен
++в другой — зачислять нельзя» (`user_courses_extra`, `teacher_courses`), то есть
++клиент разбирает отказ по тексту в одном месте.
++"""
++from __future__ import annotations
++
++import logging
++from typing import Iterable
++
++from fastapi import HTTPException, status
++from sqlalchemy import text
++from sqlalchemy.ext.asyncio import AsyncSession
++
++# Роль владельца берём у соседнего стража (tsk-701): четвёртой копии этого
++# запроса заводить не нужно — предикат общий, зовём его, а не копируем.
++from app.services.tasks_acl_service import _user_has_extended_role
++
++logger = logging.getLogger(__name__)
++
++#: Текст отказа. Один на все пути: методист выключил курс в одном месте, и
++#: объяснение должно быть одинаковым, откуда бы ни пришёл отказ.
++INACTIVE_DETAIL = (
++    "Курс выведен из работы и не принимает новых записей. "
++    "Верните его в работу на карточке курса, если он снова нужен."
++)
++
++
++async def inactive_among(db: AsyncSession, course_ids: Iterable[int]) -> list[int]:
++    """Какие из перечисленных курсов выключены.
++
++    :param db: async-сессия.
++    :param course_ids: проверяемые id (дубли и пустой список допустимы).
++    :returns: id выключенных курсов в порядке возрастания; несуществующие id
++        сюда не попадают — их отсутствие ловят свои проверки.
++    """
++    ids = sorted({int(c) for c in course_ids})
++    if not ids:
++        return []
++    rows = await db.execute(
++        text("SELECT id FROM courses WHERE id = ANY(:ids) AND is_active = false"),
++        {"ids": ids},
++    )
++    return [int(r[0]) for r in rows.fetchall()]
++
++
++async def load_inactive_course_ids(db: AsyncSession) -> set[int]:
++    """Все выключенные курсы разом — для обхода дерева.
++
++    Подбор домашней работы идёт по узлам дерева и спрашивать про каждый узел
++    отдельно дорого. Выборка ограничена числом ВЫВЕДЕННЫХ курсов (на 10.09 их
++    ноль из 843), поэтому «взять все» здесь дешевле точечных запросов.
++    """
++    rows = await db.execute(text("SELECT id FROM courses WHERE is_active = false"))
++    return {int(r[0]) for r in rows.fetchall()}
++
++
++async def assert_courses_active(
++    db: AsyncSession,
++    course_ids: Iterable[int],
++    *,
++    action: str,
++) -> None:
++    """Отказать, если среди курсов есть выключенный.
++
++    Зовётся ПЕРЕД созданием новой связи. Уже существующую связь проверять не
++    нужно и нельзя: повторное (идемпотентное) назначение ничего не создаёт, а
++    отказ на нём сломал бы чтение того, что уже есть.
++
++    :param db: async-сессия.
++    :param course_ids: курсы, с которыми создаётся связь.
++    :param action: что делали — только для журнала.
++    :raises HTTPException: 409, если хотя бы один курс выключен.
++    """
++    inactive = await inactive_among(db, course_ids)
++    if not inactive:
++        return
++    logger.info("tsk-886: отказ «%s» — курсы вне работы: %s", action, inactive)
++    raise HTTPException(status.HTTP_409_CONFLICT, INACTIVE_DETAIL)
++
++
++async def assert_course_active_for_student(
++    db: AsyncSession,
++    *,
++    student_id: int,
++    course_id: int | None,
++    action: str,
++) -> None:
++    """То же для ученика, но со снисхождением к сотруднику.
++
++    Расширенная роль (teacher / methodist / admin) проходит: методист выключает
++    курс и тут же идёт смотреть его глазами ученика — закрыть ему этот путь
++    значит закрыть проверку собственной правки. Ровно то же исключение сделано
++    у выключенного задания (`tasks_acl_service.assert_task_active_for_student`,
++    tsk-701).
++
++    Проверяется ВЛАДЕЛЕЦ попытки, а не вызывающий: все боты TG_LMS ходят по
++    сервисному ключу, и освобождение сервисного вызова означало бы «в браузере
++    нельзя, в Telegram можно» (тот же урок tsk-617/tsk-673/tsk-701).
++
++    :param db: async-сессия.
++    :param student_id: владелец будущей попытки.
++    :param course_id: курс попытки; `None` — проверять нечего.
++    :param action: что делали — только для журнала.
++    :raises HTTPException: 409, если курс выключен, а владелец — обычный ученик.
++    """
++    if course_id is None:
++        return
++    if not await inactive_among(db, [course_id]):
++        return
++    if await _user_has_extended_role(db, student_id):
++        return
++    logger.info(
++        "tsk-886: отказ «%s» student_id=%s course_id=%s (курс вне работы)",
++        action, student_id, course_id,
++    )
++    raise HTTPException(status.HTTP_409_CONFLICT, INACTIVE_DETAIL)
+diff --git a/tests/test_course_inactive_tsk886.py b/tests/test_course_inactive_tsk886.py
+new file mode 100644
+index 0000000..be7e485
+--- /dev/null
++++ b/tests/test_course_inactive_tsk886.py
+@@ -0,0 +1,474 @@
++"""tsk-886: курс вне работы (`courses.is_active`) — поведение за признаком.
++
++Признак завёл tsk-873, поведения за ним не было никакого: выключенный курс так
++же предлагался в формах, принимал зачисление и попадал в подбор домашней
++работы. Тесты держат обе стороны границы:
++
++* **новую связь заводить нельзя** — зачисление (три пути), закрепление
++  преподавателя, начало попытки;
++* **уже существующее не трогаем** — карточка курса читается, открытая попытка
++  возвращается, зачисленный ученик остаётся зачисленным.
++
++Плюс отбор: выключенный курс не показывается там, где курс ВЫБИРАЮТ
++(`GET /teacher/courses/search`), и не попадает в подбор домашней работы.
++Возврат курса в работу (`is_active=true`) снимает всё разом.
++
++Работают под общей откатываемой транзакцией (`db` + `client` на одном
++соединении, tsk-333): своего движка модуль НЕ заводит — иначе его уборка встала
++бы в блокировку за транзакцией теста (клинч, описанный в `conftest.py` над
++`SELF_MANAGED_CONNECTION_MODULES`). Ничего чистить руками не нужно: откат
++внешней транзакции уносит все вставки, даже если тест упал посередине.
++"""
++from __future__ import annotations
++
++import uuid
++
++import pytest
++from sqlalchemy import text
++
++from app.api.deps import get_current_user
++from app.api.main import app
++from app.auth.current_user import CurrentUser
++from app.core.config import Settings
++from app.services import course_activity_service, homework_service
++
++pytestmark = pytest.mark.asyncio
++
++_settings = Settings()
++_DENY = course_activity_service.INACTIVE_DETAIL
++
++
++def _service_headers() -> dict[str, str]:
++    return {"X-API-Key": next(iter(_settings.valid_api_keys))}
++
++
++@pytest.fixture
++def student_auth():
++    """Подменить `get_current_user` на обычного ученика (без расширенной роли)."""
++
++    def _apply(student_id: int):
++        app.dependency_overrides[get_current_user] = lambda: CurrentUser(
++            id=student_id, is_service=False
++        )
++
++    yield _apply
++    app.dependency_overrides.pop(get_current_user, None)
++
++
++async def _make_graph(db) -> dict:
++    """Два корневых курса (в работе и вне работы) с заданиями, ученики, учитель.
++
++    Метка `tsk886-<uuid>` в названии нужна тесту поиска: он должен находить
++    ровно свои курсы, а не чужие с похожим словом.
++    """
++    mark = f"tsk886-{uuid.uuid4().hex[:10]}"
++    ids: dict[str, int | str] = {"mark": mark}
++
++    difficulty_id = (
++        await db.execute(text("SELECT id FROM difficulties ORDER BY id LIMIT 1"))
++    ).scalar()
++    assert difficulty_id is not None, "нет difficulties — задание не собрать"
++
++    async def _course(suffix: str, *, is_active: bool) -> int:
++        return int(
++            (
++                await db.execute(
++                    text(
++                        "INSERT INTO courses (title, access_level, is_active) "
++                        "VALUES (:t, 'self_guided', :a) RETURNING id"
++                    ),
++                    {"t": f"{mark} {suffix}", "a": is_active},
++                )
++            ).scalar()
++        )
++
++    async def _task(course_id: int) -> int:
++        return int(
++            (
++                await db.execute(
++                    text(
++                        "INSERT INTO tasks (task_content, solution_rules, course_id, "
++                        "difficulty_id, external_uid, max_attempts, order_position) "
++                        "VALUES (CAST(:tc AS jsonb), CAST(:sr AS jsonb), :cid, :did, "
++                        ":uid, 10, 1) RETURNING id"
++                    ),
++                    {
++                        "tc": (
++                            '{"type":"SC","stem":"2+2?","options":['
++                            '{"id":"a","text":"3"},{"id":"b","text":"4"}]}'
++                        ),
++                        "sr": '{"max_score":1,"correct_options":["b"]}',
++                        "cid": course_id,
++                        "did": difficulty_id,
++                        "uid": f"{mark}-{uuid.uuid4().hex[:8]}",
++                    },
++                )
++            ).scalar()
++        )
++
++    ids["course_on"] = await _course("в работе", is_active=True)
++    ids["course_off"] = await _course("вне работы", is_active=False)
++    ids["task_on"] = await _task(int(ids["course_on"]))
++    ids["task_off"] = await _task(int(ids["course_off"]))
++
++    async def _user(name: str) -> int:
++        return int(
++            (
++                await db.execute(
++                    text("INSERT INTO users (full_name) VALUES (:n) RETURNING id"),
++                    {"n": f"{mark} {name}"},
++                )
++            ).scalar()
++        )
++
++    ids["student"] = await _user("ученик")
++    # Ученик УЖЕ на обоих курсах: курс выключили ПОСЛЕ зачисления — именно тот
++    # случай, ради которого «уже существующее» не трогают.
++    for key in ("course_on", "course_off"):
++        await db.execute(
++            text(
++                "INSERT INTO user_courses (user_id, course_id, is_active) "
++                "VALUES (:u, :c, true)"
++            ),
++            {"u": ids["student"], "c": ids[key]},
++        )
++
++    ids["student_free"] = await _user("ученик без курсов")
++    ids["teacher"] = await _user("учитель")
++    teacher_role_id = (
++        await db.execute(text("SELECT id FROM roles WHERE name = 'teacher' LIMIT 1"))
++    ).scalar()
++    if teacher_role_id is not None:
++        await db.execute(
++            text("INSERT INTO user_roles (user_id, role_id) VALUES (:u, :r)"),
++            {"u": ids["teacher"], "r": teacher_role_id},
++        )
++
++    await db.commit()
++    return ids
++
++
++@pytest.fixture
++async def graph(db):
++    """Граф задачи. Уборки нет намеренно — её делает откат общей транзакции."""
++    return await _make_graph(db)
++
++
++# ---------------------------------------------------------------------------
++# Признак наружу
++# ---------------------------------------------------------------------------
++
++
++async def test_course_read_exposes_is_active(client, graph):
++    """Клиент видит признак: до tsk-886 `CourseRead` про него не знал вовсе."""
++    off = await client.get(
++        f"/api/v1/courses/{graph['course_off']}", headers=_service_headers()
++    )
++    on = await client.get(
++        f"/api/v1/courses/{graph['course_on']}", headers=_service_headers()
++    )
++    assert off.status_code == 200, off.text
++    assert off.json()["is_active"] is False, off.text
++    assert on.json()["is_active"] is True, on.text
++
++
++async def test_patch_card_toggles_is_active(client, db, graph):
++    """Методист снимает и возвращает признак с карточки курса."""
++    course_id = graph["course_on"]
++
++    off = await client.patch(
++        f"/api/v1/courses/{course_id}/card",
++        json={"is_active": False},
++        headers=_service_headers(),
++    )
++    assert off.status_code == 200, off.text
++    assert off.json()["is_active"] is False, off.text
++
++    on = await client.patch(
++        f"/api/v1/courses/{course_id}/card",
++        json={"is_active": True},
++        headers=_service_headers(),
++    )
++    assert on.status_code == 200, on.text
++    assert on.json()["is_active"] is True, on.text
++    assert (
++        await db.execute(
++            text("SELECT is_active FROM courses WHERE id = :c"), {"c": course_id}
++        )
++    ).scalar() is True
++
++
++async def test_patch_card_does_not_touch_exam_and_service(client, db, graph):
++    """Граница задачи: `is_exam` / `is_service` карточкой не правятся."""
++    resp = await client.patch(
++        f"/api/v1/courses/{graph['course_on']}/card",
++        json={"is_exam": True, "is_service": True},
++        headers=_service_headers(),
++    )
++    # Лишние поля Pydantic отбрасывает — 200, но в базе ничего не изменилось.
++    assert resp.status_code == 200, resp.text
++    row = (
++        await db.execute(
++            text("SELECT is_exam, is_service FROM courses WHERE id = :c"),
++            {"c": graph["course_on"]},
++        )
++    ).fetchone()
++    assert tuple(row) == (False, False), row
++
++
++# ---------------------------------------------------------------------------
++# Новую связь заводить нельзя
++# ---------------------------------------------------------------------------
++
++
++async def test_enroll_denied_on_inactive_course(client, db, graph):
++    """`POST /user-courses/` — прямое зачисление отказывает 409."""
++    resp = await client.post(
++        "/api/v1/user-courses/",
++        json={"user_id": graph["student_free"], "course_id": graph["course_off"]},
++        headers=_service_headers(),
++    )
++    assert resp.status_code == 409, resp.text
++    assert _DENY in resp.text
++    assert (
++        await db.execute(
++            text(
++                "SELECT COUNT(*) FROM user_courses "
++                "WHERE user_id = :u AND course_id = :c"
++            ),
++            {"u": graph["student_free"], "c": graph["course_off"]},
++        )
++    ).scalar() == 0, "при отказе связь писаться не должна"
++
++
++async def test_bulk_enroll_denied_on_inactive_course(client, db, graph):
++    """`POST /users/{id}/courses/bulk` — пачка отказывает целиком."""
++    resp = await client.post(
++        f"/api/v1/users/{graph['student_free']}/courses/bulk",
++        json={"course_ids": [graph["course_on"], graph["course_off"]]},
++        headers=_service_headers(),
++    )
++    assert resp.status_code == 409, resp.text
++    assert _DENY in resp.text
++    assert (
++        await db.execute(
++            text("SELECT COUNT(*) FROM user_courses WHERE user_id = :u"),
++            {"u": graph["student_free"]},
++        )
++    ).scalar() == 0, "отказ по одному курсу не должен зачислять на соседний"
++
++
++async def test_bulk_enroll_passes_for_active_courses(client, db, graph):
++    """Обратная сторона: курс в работе пачка принимает как раньше."""
++    resp = await client.post(
++        f"/api/v1/users/{graph['student_free']}/courses/bulk",
++        json={"course_ids": [graph["course_on"]]},
++        headers=_service_headers(),
++    )
++    assert resp.status_code == 201, resp.text
++    assert (
++        await db.execute(
++            text(
++                "SELECT COUNT(*) FROM user_courses "
++                "WHERE user_id = :u AND course_id = :c"
++            ),
++            {"u": graph["student_free"], "c": graph["course_on"]},
++        )
++    ).scalar() == 1
++
++
++async def test_teacher_manual_assign_denied(client, graph):
++    """`POST /teacher/students/{id}/assignments` — третий путь зачисления."""
++    resp = await client.post(
++        f"/api/v1/teacher/students/{graph['student_free']}/assignments",
++        json={"course_id": graph["course_off"]},
++        headers=_service_headers(),
++    )
++    assert resp.status_code == 409, resp.text
++    assert _DENY in resp.text
++
++
++async def test_teacher_manual_assign_idempotent_on_enrolled(client, graph):
++    """Уже зачисленного ученика повторный вызов не ломает: новой связи нет.
++
++    Отказ здесь означал бы, что «уже существующее» перестало читаться, — а это
++    ровно то, что задача запрещает трогать.
++    """
++    resp = await client.post(
++        f"/api/v1/teacher/students/{graph['student']}/assignments",
++        json={"course_id": graph["course_off"]},
++        headers=_service_headers(),
++    )
++    assert resp.status_code == 200, resp.text
++    assert resp.json()["already_enrolled"] is True, resp.text
++
++
++async def test_teacher_course_link_denied(client, db, graph):
++    """Закрепление преподавателя за курсом вне работы — 409, а не 404."""
++    resp = await client.post(
++        f"/api/v1/courses/{graph['course_off']}/teachers/{graph['teacher']}",
++        headers=_service_headers(),
++    )
++    assert resp.status_code == 409, resp.text
++    assert _DENY in resp.text
++    assert (
++        await db.execute(
++            text(
++                "SELECT COUNT(*) FROM teacher_courses "
++                "WHERE teacher_id = :t AND course_id = :c"
++            ),
++            {"t": graph["teacher"], "c": graph["course_off"]},
++        )
++    ).scalar() == 0
++
++
++async def test_teacher_course_link_allowed_on_active(client, graph):
++    """Курс в работе закрепляется как раньше — запрет не задел соседа."""
++    resp = await client.post(
++        f"/api/v1/courses/{graph['course_on']}/teachers/{graph['teacher']}",
++        headers=_service_headers(),
++    )
++    assert resp.status_code == 204, resp.text
++
++
++async def test_start_attempt_denied_on_inactive_course(client, db, graph, student_auth):
++    """Новую попытку в курсе вне работы ученик не начинает."""
++    student_auth(graph["student"])
++    resp = await client.post(
++        f"/api/v1/learning/tasks/{graph['task_off']}/start-or-get-attempt",
++        json={"student_id": graph["student"]},
++    )
++    assert resp.status_code == 409, resp.text
++    assert _DENY in resp.text
++    assert (
++        await db.execute(
++            text("SELECT COUNT(*) FROM attempts WHERE user_id = :u"),
++            {"u": graph["student"]},
++        )
++    ).scalar() == 0, "при отказе попытка создаваться не должна"
++
++
++async def test_start_attempt_allowed_on_active_course(client, graph, student_auth):
++    """Соседний курс в работе открывается как раньше."""
++    student_auth(graph["student"])
++    resp = await client.post(
++        f"/api/v1/learning/tasks/{graph['task_on']}/start-or-get-attempt",
++        json={"student_id": graph["student"]},
++    )
++    assert resp.status_code == 200, resp.text
++
++
++async def test_create_attempt_endpoint_denied(client, graph):
++    """Вторая дверь того же действия — `POST /attempts` — закрыта так же.
++
++    Отсечка по ВЛАДЕЛЬЦУ попытки: сервисный ключ (боты TG_LMS) её не обходит,
++    иначе запрет снимался бы сменой клиента (урок tsk-617/tsk-673/tsk-701).
++    """
++    resp = await client.post(
++        "/api/v1/attempts",
++        json={
++            "user_id": graph["student"],
++            "course_id": graph["course_off"],
++            "source_system": "test_tsk886",
++        },
++        headers=_service_headers(),
++    )
++    assert resp.status_code == 409, resp.text
++    assert _DENY in resp.text
++
++
++async def test_started_attempt_survives(client, db, graph, student_auth):
++    """Уже начатая попытка возвращается: ученик дорешает открытое."""
++    attempt_id = int(
++        (
++            await db.execute(
++                text(
++                    "INSERT INTO attempts (user_id, course_id, root_course_id, "
++                    "source_system) VALUES (:u, :c, :c, 'test_tsk886') RETURNING id"
++                ),
++                {"u": graph["student"], "c": graph["course_off"]},
++            )
++        ).scalar()
++    )
++    await db.commit()
++
++    student_auth(graph["student"])
++    resp = await client.post(
++        f"/api/v1/learning/tasks/{graph['task_off']}/start-or-get-attempt",
++        json={
++            "student_id": graph["student"],
++            "root_course_id": graph["course_off"],
++        },
++    )
++    assert resp.status_code == 200, resp.text
++    assert resp.json()["attempt_id"] == attempt_id, resp.text
++
++
++async def test_reading_existing_enrollment_still_works(client, graph):
++    """Курс ученика виден в его карточке — прошлое обязано объясняться."""
++    resp = await client.get(
++        f"/api/v1/users/{graph['student']}/courses?role=student",
++        headers=_service_headers(),
++    )
++    assert resp.status_code == 200, resp.text
++    rows = resp.json()["courses"]
++    assert graph["course_off"] in {c["course_id"] for c in rows}, resp.text
++    off = next(c for c in rows if c["course_id"] == graph["course_off"])
++    assert off["course"]["is_active"] is False, off
++
++
++# ---------------------------------------------------------------------------
++# Отбор: где курс ВЫБИРАЮТ
++# ---------------------------------------------------------------------------
++
++
++async def test_teacher_course_search_hides_inactive(client, graph):
++    """Форма выбора курса для назначения выключенный курс не предлагает."""
++    resp = await client.get(
++        f"/api/v1/teacher/courses/search?q={graph['mark']}",
++        headers=_service_headers(),
++    )
++    assert resp.status_code == 200, resp.text
++    found = {c["id"] for c in resp.json()}
++    assert graph["course_on"] in found, resp.text
++    assert graph["course_off"] not in found, "курс вне работы в форме выбора не место"
++
++
++async def test_homework_pick_skips_inactive_course(db, graph):
++    """Подбор домашней работы обходит курс вне работы стороной."""
++    items = await homework_service._next_items(db, student_id=graph["student"], limit=20)
++    picked = {(i["kind"], i["item_id"]) for i in items}
++    assert ("task", graph["task_on"]) in picked, picked
++    assert ("task", graph["task_off"]) not in picked, "выключенный курс не задают на дом"
++
++
++# ---------------------------------------------------------------------------
++# Возврат в работу снимает всё разом
++# ---------------------------------------------------------------------------
++
++
++async def test_reactivation_restores_everything(client, db, graph):
++    """Включили обратно — зачисление проходит, курс снова в форме и в подборе."""
++    await db.execute(
++        text("UPDATE courses SET is_active = true WHERE id = :c"),
++        {"c": graph["course_off"]},
++    )
++    await db.commit()
++
++    enroll = await client.post(
++        "/api/v1/user-courses/",
++        json={"user_id": graph["student_free"], "course_id": graph["course_off"]},
++        headers=_service_headers(),
++    )
++    assert enroll.status_code == 201, enroll.text
++
++    search = await client.get(
++        f"/api/v1/teacher/courses/search?q={graph['mark']}",
++        headers=_service_headers(),
++    )
++    assert graph["course_off"] in {c["id"] for c in search.json()}, search.text
++
++    items = await homework_service._next_items(db, student_id=graph["student"], limit=20)
++    assert ("task", graph["task_off"]) in {
++        (i["kind"], i["item_id"]) for i in items
++    }, items

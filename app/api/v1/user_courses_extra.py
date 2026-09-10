@@ -266,6 +266,13 @@ async def get_user_courses_endpoint(
         404: {
             "description": "Пользователь не найден",
         },
+        409: {
+            "description": (
+                "Курс вложен в другой (зачислять можно только на корневой) "
+                "ЛИБО курс выведен из работы (`courses.is_active = false`, "
+                "tsk-886). В обоих случаях не зачисляется НИ ОДИН курс пачки."
+            )
+        },
         403: {"description": "Invalid or missing API Key"},
     },
 )

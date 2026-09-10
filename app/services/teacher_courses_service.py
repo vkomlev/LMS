@@ -7,6 +7,7 @@ from sqlalchemy import select, func
 from app.models.users import Users
 from app.models.courses import Courses
 from app.repos.teacher_courses_repo import TeacherCoursesRepository
+from app.services import course_activity_service
 from app.utils.exceptions import DomainError
 
 
@@ -175,7 +176,16 @@ class TeacherCoursesService:
         course = await db.get(Courses, course_id)
         if not course:
             raise DomainError(f"Курс с ID {course_id} не найден")
-        
+
+        # tsk-886: за курсом вне работы преподавателя не закрепляют. Отказ
+        # 409-й (HTTPException, а не DomainError): оба эндпоинта переводят
+        # DomainError в 404 «не найдено», а курс здесь как раз найден —
+        # 404 сказал бы неправду о состоянии системы.
+        if not await self.repo.get_link(db, teacher_id, course_id):
+            await course_activity_service.assert_courses_active(
+                db, [course_id], action="закрепление преподавателя за курсом"
+            )
+
         return await self.repo.add_link(db, teacher_id, course_id)
     
     async def remove_link(

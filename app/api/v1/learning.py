@@ -61,6 +61,7 @@ from app.services import graduation_service
 from app.services import lesson_attendance_service
 # tsk-301: единственная дверь прав подписки — своей проверки здесь быть не должно.
 from app.services import entitlements_service
+from app.services import course_activity_service
 from app.services.attempts_service import AttemptsService
 from app.services.tasks_service import TasksService
 from app.services.materials_service import MaterialsService
@@ -409,7 +410,17 @@ async def task_skip(
 @router.post(
     "/tasks/{task_id}/start-or-get-attempt",
     response_model=StartOrGetAttemptResponse,
-    responses=_PAYMENT_403,
+    responses={
+        **_PAYMENT_403,
+        409: {
+            "description": (
+                "Курс задания (или корень навигации) выведен из работы "
+                "(`courses.is_active = false`, tsk-886) — НОВУЮ попытку в нём "
+                "не начать. Уже открытая незавершённая попытка возвращается "
+                "как обычно: начатое ученик дорешает."
+            )
+        },
+    },
     summary="Начать попытку или вернуть текущую незавершённую (идемпотентно)",
 )
 async def start_or_get_attempt(
@@ -503,6 +514,18 @@ async def start_or_get_attempt(
             source_system=existing.source_system,
         )
 
+    # tsk-886: НОВУЮ попытку в курсе вне работы не начать. Проверка стоит после
+    # ветки «есть незавершённая попытка» намеренно: уже начатое не трогаем —
+    # ученик дорешает то, что открыл до вывода курса из работы. Проверяются оба
+    # узла — сам курс задания и корень навигации: каскада между ними нет.
+    await course_activity_service.assert_course_active_for_student(
+        db, student_id=body.student_id, course_id=course_id,
+        action="начало попытки",
+    )
+    await course_activity_service.assert_course_active_for_student(
+        db, student_id=body.student_id, course_id=root_course_id,
+        action="начало попытки (корень)",
+    )
     attempt = await attempts_service.create_attempt(
         db=db,
         user_id=body.student_id,

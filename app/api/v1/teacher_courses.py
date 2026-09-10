@@ -148,6 +148,13 @@ async def list_course_teachers(
                 }
             }
         },
+        409: {
+            "description": (
+                "Курс вложен в другой (закреплять можно только за корневым) "
+                "ЛИБО курс выведен из работы (`courses.is_active = false`, "
+                "tsk-886) и связи ещё нет."
+            )
+        },
         403: {"description": "Invalid or missing API Key"},
     },
 )
@@ -383,6 +390,13 @@ async def list_all_teacher_courses(
                     "example": {"detail": "Преподаватель с ID 16 не найден"}
                 }
             }
+        },
+        409: {
+            "description": (
+                "Курс вложен в другой (закреплять можно только за корневым) "
+                "ЛИБО курс выведен из работы (`courses.is_active = false`, "
+                "tsk-886) и связи ещё нет."
+            )
         },
         403: {"description": "Invalid or missing API Key"},
     },

@@ -184,6 +184,7 @@ class CoursesRepository(BaseRepository[Courses]):
         query: str,
         limit: int = 20,
         offset: int = 0,
+        only_active: bool = False,
     ) -> List[Courses]:
         """
         Поиск ТОЛЬКО среди корневых курсов (без родителя) по title/course_uid (ILIKE).
@@ -202,16 +203,22 @@ class CoursesRepository(BaseRepository[Courses]):
             return val.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
         pattern = f"%{_escape_like(query)}%"
+        conditions = [
+            t_course_parents.c.course_id.is_(None),
+            or_(
+                Courses.title.ilike(pattern, escape="\\"),
+                Courses.course_uid.ilike(pattern, escape="\\"),
+            ),
+        ]
+        # tsk-886: `only_active` — для форм, где курс ВЫБИРАЮТ. Значение по
+        # умолчанию оставлено прежним (искать всё), чтобы поиск «покажи, что у
+        # нас есть» не начал молча прятать выведенные курсы.
+        if only_active:
+            conditions.append(Courses.is_active.is_(True))
         stmt = (
             select(Courses)
             .outerjoin(t_course_parents, Courses.id == t_course_parents.c.course_id)
-            .where(
-                t_course_parents.c.course_id.is_(None),
-                or_(
-                    Courses.title.ilike(pattern, escape="\\"),
-                    Courses.course_uid.ilike(pattern, escape="\\"),
-                ),
-            )
+            .where(*conditions)
             .order_by(Courses.title)
             .offset(offset)
             .limit(limit)

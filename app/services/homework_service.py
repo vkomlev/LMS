@@ -36,7 +36,11 @@ from typing import Any, Optional
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services import homework_volume_service, program_scope_service
+from app.services import (
+    course_activity_service,
+    homework_volume_service,
+    program_scope_service,
+)
 # tsk-867: вес элемента — состав набирается до бюджета времени, а не до штук.
 from app.services.task_effort_service import (
     MATERIAL_EFFORT_SECONDS_PROXY,
@@ -153,6 +157,14 @@ async def _next_items(
             ).scalars().all()
         )
 
+    # tsk-886: курсы, выведенные из работы, в подбор не идут — ни корнем, ни
+    # темой внутри дерева. Каскада нет (граница tsk-873): выключенный корень не
+    # выключает подкурсы, поэтому проверяется КАЖДЫЙ узел, а не только корень.
+    # Берём весь список разом: он ограничен числом выведенных курсов (на 10.09
+    # их ноль из 843), а спрашивать про каждый узел обхода было бы дороже.
+    inactive_courses = await course_activity_service.load_inactive_course_ids(db)
+    roots = [c for c in roots if int(c) not in inactive_courses]
+
     # tsk-882: собираем НЕ ТОЛЬКО набор, но и хвост за ним — что идёт следом
     # по учебному порядку. Без хвоста не ответить на вопрос «закрывает ли эта
     # выдача тему» и нечем взять теорию следующей.
@@ -178,6 +190,10 @@ async def _next_items(
             if item["item_type"] not in ("task", "material"):
                 continue
             if item["status"] in _DONE_STATUSES:
+                continue
+            # tsk-886: тема (подкурс) выведена из работы — её содержимое домой
+            # не задаём, хотя в прогрессе ученика оно по-прежнему видно.
+            if int(item["course_id"]) in inactive_courses:
                 continue
             item_id = int(item["item_id"])
             if item["item_type"] == "task" and item_id in graced.tasks:

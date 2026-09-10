@@ -237,6 +237,15 @@ async def _enrich_attempt_with_learning_fields(
     response_model=AttemptRead,
     status_code=status.HTTP_201_CREATED,
     summary="Создать попытку прохождения теста/набора задач",
+    responses={
+        409: {
+            "description": (
+                "Курс попытки (или корень навигации) выведен из работы "
+                "(`courses.is_active = false`, tsk-886) — новую попытку в нём "
+                "не начать. Уже открытая попытка при этом продолжает работать."
+            )
+        },
+    },
 )
 async def create_attempt(
     payload: AttemptCreate = Body(
@@ -263,6 +272,18 @@ async def create_attempt(
 
     Используется существующий AttemptsService.create_attempt.
     """
+    # tsk-886: в курсе вне работы новую попытку не начать. Проверяется и узел
+    # задания, и корень навигации: каскада между ними нет (подкурс живёт под
+    # несколькими родителями), поэтому «выключен» у каждого свой.
+    from app.services import course_activity_service
+
+    await course_activity_service.assert_course_active_for_student(
+        db,
+        student_id=payload.user_id,
+        course_id=payload.course_id,
+        action="создание попытки",
+    )
+
     # tsk-264: корень определяем и здесь, а не только в start-or-get-attempt.
     # Попытка с пустым корнем не расходует лимит ни в одном курсе, поэтому без
     # резолва этот эндпоинт стал бы способом выдать себе бесконечные попытки.
@@ -279,6 +300,12 @@ async def create_attempt(
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
             ) from exc
+        await course_activity_service.assert_course_active_for_student(
+            db,
+            student_id=payload.user_id,
+            course_id=root_course_id,
+            action="создание попытки (корень)",
+        )
     attempt = await attempts_service.create_attempt(
         db=db,
         user_id=payload.user_id,
