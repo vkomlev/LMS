@@ -167,6 +167,42 @@ async def _load_unasked_absences(
     return result
 
 
+def _achievement_reason(name: str, condition: Any) -> str:
+    """За что хвалить — словами, а не названием значка (tsk-889).
+
+    Замечание оператора 10.09: «названия ачивок непонятны никому, ни ученикам,
+    ни преподам». В плане занятия это особенно дорого: строка идёт под
+    подписью «Назовите вслух», то есть преподаватель читает её группе. «Новое
+    достижение: 10 шагов между занятиями» не сообщает ни что за шаги, ни за
+    какой срок; хуже того, «10 шагов» звучит мелко, а за ним стоят десять
+    закрытых заданий.
+
+    Правило разбирается из условия значка, а не из названия: условие —
+    машинное, оно не изменится от того, что методист перепишет подпись.
+    Незнакомый вид условия отдаёт название как есть — это лучше пустоты.
+    """
+    kind = (condition or {}).get("type") if isinstance(condition, dict) else None
+    if kind == "between_lessons_items":
+        count = int((condition or {}).get("count") or 0)
+        if count:
+            return (
+                f"закрыл {count} "
+                + _plural(count, "задание", "задания", "заданий")
+                + " и материалов между уроками"
+            )
+    if kind == "weekly_streak":
+        weeks = int((condition or {}).get("weeks") or 0)
+        if weeks == 1:
+            return "занимался между уроками на этой неделе"
+        if weeks:
+            return (
+                f"{weeks} "
+                + _plural(weeks, "неделю", "недели", "недель")
+                + " подряд занимается между уроками"
+            )
+    return name
+
+
 async def _load_recent_achievements(
     db: AsyncSession, *, student_ids: list[int], now: datetime,
 ) -> dict[int, str]:
@@ -174,13 +210,16 @@ async def _load_recent_achievements(
 
     Второй системы достижений заводить не стали (решение по tsk-741): то, за что
     ученику уже выдали значок, и есть его успех между занятиями.
+
+    Отдаётся ПОВОД словами (`_achievement_reason`), а не название значка.
     """
     if not student_ids:
         return {}
     rows = (
         await db.execute(
             text(
-                "SELECT DISTINCT ON (ua.user_id) ua.user_id, a.name, ua.earned_at "
+                "SELECT DISTINCT ON (ua.user_id) ua.user_id, a.name, a.condition, "
+                "       ua.earned_at "
                 "FROM user_achievements ua "
                 "JOIN achievements a ON a.id = ua.achievement_id "
                 "WHERE ua.user_id = ANY(:ids) AND ua.earned_at >= :since "
@@ -189,7 +228,10 @@ async def _load_recent_achievements(
             {"ids": student_ids, "since": now - timedelta(days=_WINS_LOOKBACK_DAYS)},
         )
     ).mappings().fetchall()
-    return {int(r["user_id"]): r["name"] for r in rows}
+    return {
+        int(r["user_id"]): _achievement_reason(r["name"], r["condition"])
+        for r in rows
+    }
 
 
 async def _load_open_help(
@@ -462,7 +504,14 @@ async def _start_steps(
     )
 
     # 1. Домашняя работа
+    #
+    # tsk-889: в список идут только те, у кого срок УЖЕ прошёл. Раньше сюда
+    # попадал и человек, которому выдачу сделали вчера: подпись «спросите, что
+    # не получилось» на невыполненной работе, срок которой ещё не наступил,
+    # спрашивает не за что. На проде 10.09 так набиралось четверо из восьми,
+    # и половина из них была не должниками, а просто ещё не взявшимися.
     not_done: list[dict[str, Any]] = []
+    overdue_students: set[int] = set()
     done_fully: list[int] = []
     for student_id in student_ids:
         status = assigned.get(student_id)
@@ -473,9 +522,11 @@ async def _start_steps(
         if total and done >= total:
             done_fully.append(student_id)
             continue
-        suffix = ", просрочено" if status.get("is_overdue") else ""
+        if not status.get("is_overdue"):
+            continue
+        overdue_students.add(student_id)
         not_done.append(
-            _student_entry(student_id, names, f"ДЗ {done} из {total}{suffix}")
+            _student_entry(student_id, names, f"ДЗ {done} из {total}, просрочено")
         )
     homework_step = _step(
         "homework",
@@ -510,10 +561,20 @@ async def _start_steps(
     wins: list[dict[str, Any]] = []
     for student_id in done_fully:
         wins.append(_student_entry(student_id, names, "домашняя работа сделана полностью"))
-    for student_id, title in achievements.items():
+    for student_id, reason in achievements.items():
         if any(w["student_id"] == student_id for w in wins):
             continue
-        wins.append(_student_entry(student_id, names, f"новое достижение: {title}"))
+        # tsk-889: у кого висит ПРОСРОЧЕННОЕ ДЗ, того не хвалим. Иначе один и
+        # тот же человек стоит на экране в двух противоположных списках: и
+        # «спросите, что не получилось», и «назовите вслух». Значок за шаги
+        # накопительный — его порог мог быть взят неделю назад, а долг стоит
+        # сейчас, и вслух это звучит издевательски.
+        #
+        # Невыполненное, но не просроченное — не помеха: человек ещё в сроке,
+        # и успех между занятиями у него настоящий.
+        if student_id in overdue_students:
+            continue
+        wins.append(_student_entry(student_id, names, reason))
     wins_step = _step(
         "wins", "start", f"Есть кого похвалить: {len(wins)}", "Назовите вслух", wins,
         limit=_MAX_WINS,

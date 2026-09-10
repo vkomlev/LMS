@@ -141,6 +141,39 @@ async def _result(
     await db.commit()
 
 
+async def _award(db, *, student_id: int, earned_at: datetime) -> int:
+    """Выдать ученику значок «10 шагов между занятиями» (tsk-889).
+
+    Значок заводится свой, а не берётся из справочника: план занятия
+    разбирает ПОВОД из условия, и тест обязан задавать условие сам, иначе он
+    молча зависит от того, что лежит в справочнике этой базы.
+    """
+    achievement_id = int(
+        (
+            await db.execute(
+                text(
+                    "INSERT INTO achievements (name, condition, description) "
+                    "VALUES (:n, CAST(:c AS jsonb), :d) RETURNING id"
+                ),
+                {
+                    "n": f"{_TAG} 10 шагов между занятиями",
+                    "c": json.dumps({"type": "between_lessons_items", "count": 10}),
+                    "d": "Десять заданий и материалов, закрытых между уроками.",
+                },
+            )
+        ).scalar_one()
+    )
+    await db.execute(
+        text(
+            "INSERT INTO user_achievements (user_id, achievement_id, earned_at) "
+            "VALUES (:u, :a, :t)"
+        ),
+        {"u": student_id, "a": achievement_id, "t": earned_at},
+    )
+    await db.commit()
+    return achievement_id
+
+
 async def _homework(
     db, *, student_id: int, task_ids: list[int], due_at: datetime, issued_at: datetime,
 ) -> int:
@@ -286,7 +319,12 @@ async def test_quiet_group_gets_empty_plan(db, client):
 
 @pytest.mark.asyncio
 async def test_start_phase_shows_unfinished_homework_with_names(db, client):
-    """Несделанное ДЗ приходит с именем и счётом, а сделанное — как успех."""
+    """Несделанное ДЗ приходит с именем и счётом, а сделанное — как успех.
+
+    tsk-889: срок у должника ПРОШЁЛ. В список идёт только просроченное —
+    подпись «спросите, что не получилось» на работе, срок которой ещё не
+    наступил, спрашивает не за что.
+    """
     teacher_id, token = await _new_user(db, role="teacher", name="t")
     lazy_id, _ = await _new_user(db, role="student", name="lazy")
     diligent_id, _ = await _new_user(db, role="student", name="dili")
@@ -297,7 +335,7 @@ async def test_start_phase_shows_unfinished_homework_with_names(db, client):
     now = datetime.now(UTC)
     await _homework(
         db, student_id=lazy_id, task_ids=[task_a, task_b],
-        issued_at=now - timedelta(days=3), due_at=now + timedelta(days=1),
+        issued_at=now - timedelta(days=3), due_at=now - timedelta(hours=1),
     )
     await _homework(
         db, student_id=diligent_id, task_ids=[task_a],
@@ -345,7 +383,8 @@ async def test_long_step_sends_everyone_and_says_how_many_to_show(db, client):
         student_id, _ = await _new_user(db, role="student", name=f"s{i}")
         await _homework(
             db, student_id=student_id, task_ids=[task_id],
-            issued_at=now - timedelta(days=3), due_at=now + timedelta(days=1),
+            # tsk-889: срок прошёл — иначе в шаг никто не попадёт.
+            issued_at=now - timedelta(days=3), due_at=now - timedelta(hours=1),
         )
         students[student_id] = "confirmed"
 
@@ -677,3 +716,98 @@ async def test_far_future_lesson_has_no_steps(db, client):
     ).json()
     assert payload["phase"] == "before"
     assert payload["steps"] == []
+
+
+@pytest.mark.asyncio
+async def test_homework_in_progress_is_not_a_debt(db, client):
+    """Срок не вышел — человека в «не сделана» нет (tsk-889).
+
+    До задачи в список попадал и тот, кому выдачу сделали вчера: на проде
+    10.09 так набиралось четверо из восьми, и половина была не должниками, а
+    просто ещё не взявшимися. Подпись у шага — «спросите, что не получилось».
+    """
+    teacher_id, token = await _new_user(db, role="teacher", name="t")
+    student_id, _ = await _new_user(db, role="student", name="s")
+    course_id = await _new_course(db, f"{_TAG} курс")
+    task_id = await _new_task(db, course_id=course_id, uid="in-progress")
+
+    now = datetime.now(UTC)
+    await _homework(
+        db, student_id=student_id, task_ids=[task_id],
+        issued_at=now - timedelta(hours=2), due_at=now + timedelta(days=2),
+    )
+    occ_id = await _occurrence(
+        db, teacher_id=teacher_id, scheduled_at=now + timedelta(minutes=5),
+        students={student_id: "confirmed"},
+    )
+
+    payload = (
+        await _get_plan(client, occ_id=occ_id, teacher_id=teacher_id, token=token)
+    ).json()
+    assert _step(payload, "homework") is None, (
+        "человек со сроком впереди назван должником"
+    )
+
+
+@pytest.mark.asyncio
+async def test_overdue_student_is_not_praised_for_a_badge(db, client):
+    """С просроченным ДЗ значок вслух не называют (tsk-889).
+
+    Замечание оператора 10.09 со снимка экрана: один и тот же ученик стоял и
+    в «спросите, что не получилось», и в «назовите вслух». Значок за шаги
+    накопительный — его порог мог быть взят неделю назад, а долг стоит
+    сейчас.
+    """
+    teacher_id, token = await _new_user(db, role="teacher", name="t")
+    student_id, _ = await _new_user(db, role="student", name="s")
+    course_id = await _new_course(db, f"{_TAG} курс")
+    task_id = await _new_task(db, course_id=course_id, uid="debt")
+
+    now = datetime.now(UTC)
+    await _homework(
+        db, student_id=student_id, task_ids=[task_id],
+        issued_at=now - timedelta(days=3), due_at=now - timedelta(hours=1),
+    )
+    await _award(db, student_id=student_id, earned_at=now - timedelta(days=1))
+
+    occ_id = await _occurrence(
+        db, teacher_id=teacher_id, scheduled_at=now + timedelta(minutes=5),
+        students={student_id: "confirmed"},
+    )
+    payload = (
+        await _get_plan(client, occ_id=occ_id, teacher_id=teacher_id, token=token)
+    ).json()
+
+    assert _step(payload, "homework") is not None, "долг пропал из списка"
+    assert _step(payload, "wins") is None, (
+        "ученика с просроченным ДЗ предложили похвалить вслух"
+    )
+
+
+@pytest.mark.asyncio
+async def test_badge_is_named_by_reason_not_by_title(db, client):
+    """Повод похвалы — словами, а не названием значка (tsk-889).
+
+    «Названия ачивок непонятны никому, ни ученикам, ни преподам» — замечание
+    оператора 10.09. Строка идёт под подписью «Назовите вслух», её читают
+    группе: «10 шагов между занятиями» не сообщает ни что за шаги, ни за
+    какой срок.
+    """
+    teacher_id, token = await _new_user(db, role="teacher", name="t")
+    student_id, _ = await _new_user(db, role="student", name="s")
+
+    now = datetime.now(UTC)
+    await _award(db, student_id=student_id, earned_at=now - timedelta(days=1))
+    occ_id = await _occurrence(
+        db, teacher_id=teacher_id, scheduled_at=now + timedelta(minutes=5),
+        students={student_id: "confirmed"},
+    )
+    payload = (
+        await _get_plan(client, occ_id=occ_id, teacher_id=teacher_id, token=token)
+    ).json()
+
+    wins = _step(payload, "wins")
+    assert wins is not None, payload
+    detail = wins["students"][0]["detail"]
+    assert "закрыл 10 заданий и материалов между уроками" == detail, detail
+    assert "шагов" not in detail
