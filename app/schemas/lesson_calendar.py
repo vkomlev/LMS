@@ -399,6 +399,13 @@ class TeacherSummaryHomework(BaseModel):
         ..., description="Из заданий (не материалов) — сколько верно с первой попытки"
     )
     help_requested: int = Field(..., description="Заявок на помощь создано в окне")
+    service_completed: int = Field(
+        default=0,
+        description=(
+            "tsk-893: пунктов пройдено в СЛУЖЕБНЫХ курсах за то же окно. "
+            "Отдельно от учебной работы — см. `TeacherSummaryLessonWork`"
+        ),
+    )
     # tsk-741: то же окно, но про ПЛАН, а не про свободную работу. Счётчики
     # выше отвечают «сколько сделал», эти — «сделал ли то, что задали»; без
     # второго вопроса выданное ДЗ не проверить.
@@ -514,6 +521,16 @@ class TeacherSummaryLessonWork(BaseModel):
         ..., description="Из заданий — сколько верно с первой попытки"
     )
     help_requested: int = Field(..., description="Заявок на помощь за занятие")
+    service_completed: int = Field(
+        default=0,
+        description=(
+            "tsk-893: пунктов пройдено в СЛУЖЕБНЫХ курсах (tsk-877) — вводных, "
+            "про устройство сервиса и экзамена. Своим числом, а не в общем "
+            "счёте: у новичка первый урок уходит на вводный курс целиком, и "
+            "ноль в основных счётчиках — неправда про человека, который "
+            "работал весь час"
+        ),
+    )
 
 
 class TeacherSummaryParticipant(BaseModel):

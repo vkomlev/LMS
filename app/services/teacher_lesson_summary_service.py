@@ -427,12 +427,56 @@ async def load_homework_window(
         )
     ).scalar()
 
+    # tsk-893: сделанное в СЛУЖЕБНЫХ курсах — своим числом, а не выброшенное.
+    # Смешивать его с учебной работой нельзя (панель показывала «решено 60»
+    # рядом с «Python для ЕГЭ: 0%»), но и терять нельзя: у новичка первый урок
+    # целиком уходит на вводный курс, и «на занятии: 0» — неправда про
+    # человека, который работал час.
+    service_completed = (
+        await db.execute(
+            text(
+                f"WITH RECURSIVE {SERVICE_COURSES_CTE}, "
+                "first_success AS ( "
+                "    SELECT DISTINCT ON (tr.task_id) tr.task_id "
+                "    FROM task_results tr "
+                "    JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL "
+                "    JOIN tasks t ON t.id = tr.task_id "
+                "    WHERE tr.user_id = :student_id AND tr.is_correct = true "
+                "      AND tr.source_system IS DISTINCT FROM :manual_source "
+                "      AND t.course_id IN (SELECT id FROM service_courses) "
+                "      AND tr.submitted_at >= COALESCE(:window_from, '-infinity'::timestamptz) "
+                "      AND tr.submitted_at <= :window_to "
+                "    ORDER BY tr.task_id, tr.submitted_at ASC "
+                "), "
+                "service_materials AS ( "
+                "    SELECT smp.material_id FROM student_material_progress smp "
+                "    JOIN materials m ON m.id = smp.material_id "
+                "    WHERE smp.student_id = :student_id AND smp.status = 'completed' "
+                "      AND smp.completed_at IS NOT NULL "
+                "      AND smp.source IS DISTINCT FROM :manual_source "
+                "      AND m.course_id IN (SELECT id FROM service_courses) "
+                "      AND smp.completed_at >= COALESCE(:window_from, '-infinity'::timestamptz) "
+                "      AND smp.completed_at <= :window_to "
+                ") "
+                "SELECT (SELECT count(*) FROM first_success) "
+                "     + (SELECT count(*) FROM service_materials) AS cnt"
+            ),
+            {
+                "student_id": student_id,
+                "manual_source": MANUAL_SOURCE,
+                "window_from": window_from,
+                "window_to": window_to,
+            },
+        )
+    ).scalar()
+
     tasks_completed = int(completed_row["completed"] or 0) if completed_row else 0
     return {
         "tasks_completed": tasks_completed,
         "theory_completed": int(materials_completed or 0),
         "first_try": int(completed_row["first_try"] or 0) if completed_row else 0,
         "help_requested": int(help_count or 0),
+        "service_completed": int(service_completed or 0),
     }
 
 

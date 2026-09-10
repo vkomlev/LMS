@@ -69905,6 +69905,12 @@
             "title": "Help Requested",
             "description": "Заявок на помощь создано в окне"
           },
+          "service_completed": {
+            "type": "integer",
+            "title": "Service Completed",
+            "description": "tsk-893: пунктов пройдено в СЛУЖЕБНЫХ курсах за то же окно. Отдельно от учебной работы — см. `TeacherSummaryLessonWork`",
+            "default": 0
+          },
           "assigned_total": {
             "anyOf": [
               {
@@ -69986,6 +69992,12 @@
             "type": "integer",
             "title": "Help Requested",
             "description": "Заявок на помощь за занятие"
+          },
+          "service_completed": {
+            "type": "integer",
+            "title": "Service Completed",
+            "description": "tsk-893: пунктов пройдено в СЛУЖЕБНЫХ курсах (tsk-877) — вводных, про устройство сервиса и экзамена. Своим числом, а не в общем счёте: у новичка первый урок уходит на вводный курс целиком, и ноль в основных счётчиках — неправда про человека, который работал весь час",
+            "default": 0
           }
         },
         "type": "object",

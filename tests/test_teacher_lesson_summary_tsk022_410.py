@@ -291,6 +291,10 @@ async def test_summary_basic_shape_and_ad_hoc_flag(db, client):
     assert p["window_from"] is None
     assert p["homework"] == {
         "tasks_completed": 0, "theory_completed": 0, "first_try": 0, "help_requested": 0,
+        # tsk-893: работа в служебных курсах считается своим числом — смешивать
+        # её с учебной нельзя, терять тоже (у новичка первый урок целиком в
+        # вводном курсе).
+        "service_completed": 0,
         # tsk-741: рядом со свободной работой между занятиями появился ПЛАН.
         # Ученику ничего не задавали — поля пустые, и это не «задали ноль»:
         # пустых выдач не бывает, а спутать «не задавали» с «не сделал» на
@@ -1049,3 +1053,50 @@ async def test_service_course_work_is_not_counted(db, client):
     assert p["current_lesson"]["tasks_completed"] == 1, (
         "в итоги урока попало задание служебного курса"
     )
+
+
+@pytest.mark.asyncio
+async def test_service_course_work_is_counted_separately(db, client):
+    """Работа во вводном курсе не пропадает, а идёт своим числом (tsk-893).
+
+    Первая редакция правки просто убрала служебные курсы из счётчиков — и у
+    новичка, у которого первый урок целиком уходит на «С чего начать»,
+    панель показала «на занятии: 0». Это неправда про человека, который
+    работал весь час.
+    """
+    teacher_id, token = await _new_user(db, role="teacher", name="teach")
+    student_id, _ = await _new_user(db, role="student", name="stud")
+    await _link_student_teacher(db, student_id=student_id, teacher_id=teacher_id)
+
+    service_id = await _new_course(db, f"{_TAG}-893-вводный")
+    await db.execute(
+        text("UPDATE courses SET is_service = true WHERE id = :c"), {"c": service_id}
+    )
+    await db.commit()
+    first = await _new_task(db, course_id=service_id, uid="893-sep-1")
+    second = await _new_task(db, course_id=service_id, uid="893-sep-2")
+
+    now = datetime.now(UTC)
+    occ_id = await _create_occurrence_with_participant(
+        db, student_id=student_id, teacher_id=teacher_id,
+        scheduled_at=now - timedelta(minutes=30), duration_minutes=60,
+    )
+    for task_id in (first, second):
+        await _insert_task_result(
+            db, student_id=student_id, task_id=task_id, course_id=service_id,
+            is_correct=True, submitted_at=now - timedelta(minutes=5),
+        )
+
+    resp = await client.get(
+        f"/api/v1/teacher/lesson-occurrences/{occ_id}/summary",
+        params={"teacher_id": teacher_id},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200, resp.text
+    p = resp.json()["participants"][0]
+
+    assert p["current_lesson"]["tasks_completed"] == 0, "служебное ушло в учебный счёт"
+    assert p["current_lesson"]["service_completed"] == 2, (
+        "работа во вводном курсе потерялась — панель скажет «на занятии: 0»"
+    )
+    assert p["homework"]["service_completed"] == 2
