@@ -1,0 +1,1268 @@
+[
+  {
+    "id": 5417,
+    "course_id": 833,
+    "course_title": "Раздел 2. Вывод и переменные",
+    "etalon": "print(f\"Мне {vozrast} лет!\")"
+  },
+  {
+    "id": 5456,
+    "course_id": 834,
+    "course_title": "Раздел 3. Ввод и числа",
+    "etalon": "print(f\"За год накопится: {za_god}\")"
+  },
+  {
+    "id": 5457,
+    "course_id": 834,
+    "course_title": "Раздел 3. Ввод и числа",
+    "etalon": "print(int(vozrast_text))"
+  },
+  {
+    "id": 5447,
+    "course_id": 835,
+    "course_title": "Раздел 4. Строки",
+    "etalon": "print(imya.upper())"
+  },
+  {
+    "id": 5448,
+    "course_id": 835,
+    "course_title": "Раздел 4. Строки",
+    "etalon": "print(slovo.lower())"
+  },
+  {
+    "id": 5449,
+    "course_id": 835,
+    "course_title": "Раздел 4. Строки",
+    "etalon": "print(slovo.replace(\"о\", \"0\"))"
+  },
+  {
+    "id": 5450,
+    "course_id": 835,
+    "course_title": "Раздел 4. Строки",
+    "etalon": "print(slovo.count(\"а\"))"
+  },
+  {
+    "id": 5451,
+    "course_id": 835,
+    "course_title": "Раздел 4. Строки",
+    "etalon": "print(slovo.find(\"и\"))"
+  },
+  {
+    "id": 5462,
+    "course_id": 843,
+    "course_title": "Раздел 5. Условия",
+    "etalon": "print(\"Не грусти, всё наладится!\")"
+  },
+  {
+    "id": 5468,
+    "course_id": 844,
+    "course_title": "Раздел 6. Случайность и игра «Угадай число»",
+    "etalon": "import random"
+  },
+  {
+    "id": 5469,
+    "course_id": 844,
+    "course_title": "Раздел 6. Случайность и игра «Угадай число»",
+    "etalon": "print(random.randint(1, 100))"
+  },
+  {
+    "id": 5470,
+    "course_id": 844,
+    "course_title": "Раздел 6. Случайность и игра «Угадай число»",
+    "etalon": "print(random.randint(1, 6))"
+  },
+  {
+    "id": 5473,
+    "course_id": 844,
+    "course_title": "Раздел 6. Случайность и игра «Угадай число»",
+    "etalon": "print(\"Угадал!\")"
+  },
+  {
+    "id": 5499,
+    "course_id": 852,
+    "course_title": "Раздел 7. Циклы",
+    "etalon": "for i in range(10):"
+  },
+  {
+    "id": 5500,
+    "course_id": 852,
+    "course_title": "Раздел 7. Циклы",
+    "etalon": "print(i)"
+  },
+  {
+    "id": 5525,
+    "course_id": 857,
+    "course_title": "Раздел 8. Списки",
+    "etalon": "print(len(spisok))"
+  },
+  {
+    "id": 5526,
+    "course_id": 857,
+    "course_title": "Раздел 8. Списки",
+    "etalon": "spisok.append(\"ёж\")"
+  },
+  {
+    "id": 5528,
+    "course_id": 857,
+    "course_title": "Раздел 8. Списки",
+    "etalon": "print(spisok[0])"
+  },
+  {
+    "id": 5542,
+    "course_id": 862,
+    "course_title": "Занятие 1. Среда, вывод, переменные, типы",
+    "etalon": "print(temperatura)"
+  },
+  {
+    "id": 5543,
+    "course_id": 862,
+    "course_title": "Занятие 1. Среда, вывод, переменные, типы",
+    "etalon": "print(f\"{datchik}: {znachenie}\")"
+  },
+  {
+    "id": 5546,
+    "course_id": 862,
+    "course_title": "Занятие 1. Среда, вывод, переменные, типы",
+    "etalon": "print(f\"Модель {model}, режим {rezhim}\")"
+  },
+  {
+    "id": 5638,
+    "course_id": 862,
+    "course_title": "Занятие 1. Среда, вывод, переменные, типы",
+    "etalon": "ustroystvo = \"Привод М1\"\ntemperatura = 25\nprint(ustroystvo)\nprint(f\"Температура: {temperatura}\")"
+  },
+  {
+    "id": 5554,
+    "course_id": 863,
+    "course_title": "Занятие 2. Ввод и вычисления",
+    "etalon": "print(int(text))"
+  },
+  {
+    "id": 5555,
+    "course_id": 863,
+    "course_title": "Занятие 2. Ввод и вычисления",
+    "etalon": "print(z_vedomaya / z_veduschaya)"
+  },
+  {
+    "id": 5558,
+    "course_id": 863,
+    "course_title": "Занятие 2. Ввод и вычисления",
+    "etalon": "print(round(put / vremya, 2))"
+  },
+  {
+    "id": 5640,
+    "course_id": 863,
+    "course_title": "Занятие 2. Ввод и вычисления",
+    "etalon": "z_vedomaya = int(input(\"Ведомая: \"))\nz_veduschaya = int(input(\"Ведущая: \"))\notnoshenie = z_vedomaya / z_veduschaya\nprint(round(otnoshenie, 2))"
+  },
+  {
+    "id": 5566,
+    "course_id": 864,
+    "course_title": "Занятие 3. Ветвление (условия)",
+    "etalon": "print(\"Норма\")"
+  },
+  {
+    "id": 5641,
+    "course_id": 864,
+    "course_title": "Занятие 3. Ветвление (условия)",
+    "etalon": "temperatura = int(input(\"Температура: \"))\nif temperatura > 90:\n    print(\"АВАРИЯ\")\nelif temperatura > 70:\n    print(\"ВНИМАНИЕ\")\nelse:\n    print(\"НОРМА\")"
+  },
+  {
+    "id": 5578,
+    "course_id": 865,
+    "course_title": "Занятие 4. Циклы",
+    "etalon": "for i in range(10):"
+  },
+  {
+    "id": 5579,
+    "course_id": 865,
+    "course_title": "Занятие 4. Циклы",
+    "etalon": "print(takt)"
+  },
+  {
+    "id": 5580,
+    "course_id": 865,
+    "course_title": "Занятие 4. Циклы",
+    "etalon": "summa = summa + izmerenie"
+  },
+  {
+    "id": 5642,
+    "course_id": 865,
+    "course_title": "Занятие 4. Циклы",
+    "etalon": "n = int(input(\"Сколько? \"))\nsumma = 0\nfor i in range(n):\n    x = int(input(\"Измерение: \"))\n    summa = summa + x\nprint(summa)\nprint(round(summa / n, 2))"
+  },
+  {
+    "id": 5588,
+    "course_id": 866,
+    "course_title": "Занятие 5. Списки и обработка измерений",
+    "etalon": "log.append(50)"
+  },
+  {
+    "id": 5589,
+    "course_id": 866,
+    "course_title": "Занятие 5. Списки и обработка измерений",
+    "etalon": "print(sum(izmereniya))"
+  },
+  {
+    "id": 5590,
+    "course_id": 866,
+    "course_title": "Занятие 5. Списки и обработка измерений",
+    "etalon": "print(max(izmereniya))"
+  },
+  {
+    "id": 5643,
+    "course_id": 866,
+    "course_title": "Занятие 5. Списки и обработка измерений",
+    "etalon": "izmereniya = [20, 35, 90, 41, 95]\nporog = 80\nprevysheniy = 0\nfor x in izmereniya:\n    if x > porog:\n        prevysheniy = prevysheniy + 1\nprint(round(sum(izmereniya) / len(izmereniya), 2))\nprint(max(izmereniya))\nprint(prevysheniy)"
+  },
+  {
+    "id": 5600,
+    "course_id": 867,
+    "course_title": "Занятие 6. Строки и разбор данных",
+    "etalon": "print(kod.upper())"
+  },
+  {
+    "id": 5601,
+    "course_id": 867,
+    "course_title": "Занятие 6. Строки и разбор данных",
+    "etalon": "print(s.replace(\";\", \" \"))"
+  },
+  {
+    "id": 5602,
+    "course_id": 867,
+    "course_title": "Занятие 6. Строки и разбор данных",
+    "etalon": "print(s.count(\";\"))"
+  },
+  {
+    "id": 5603,
+    "course_id": 867,
+    "course_title": "Занятие 6. Строки и разбор данных",
+    "etalon": "chasti = stroka.split(\"=\")"
+  },
+  {
+    "id": 5644,
+    "course_id": 867,
+    "course_title": "Занятие 6. Строки и разбор данных",
+    "etalon": "telemetriya = \"temp=25;rpm=1500\"\nchasti = telemetriya.split(\";\")\ntemp = int(chasti[0].split(\"=\")[1])\nrpm = int(chasti[1].split(\"=\")[1])\nprint(\"Температура:\", temp)\nprint(\"Обороты:\", rpm)"
+  },
+  {
+    "id": 5612,
+    "course_id": 868,
+    "course_title": "Занятие 7. Функции и модули",
+    "etalon": "def ploschad(a, b):"
+  },
+  {
+    "id": 5614,
+    "course_id": 868,
+    "course_title": "Занятие 7. Функции и модули",
+    "etalon": "print(ploschad(3, 4))"
+  },
+  {
+    "id": 5617,
+    "course_id": 868,
+    "course_title": "Занятие 7. Функции и модули",
+    "etalon": "import math"
+  },
+  {
+    "id": 5645,
+    "course_id": 868,
+    "course_title": "Занятие 7. Функции и модули",
+    "etalon": "def srednee(spisok):\n    return round(sum(spisok) / len(spisok), 2)\n\ndef maksimum(spisok):\n    return max(spisok)\n\nizmereniya = [20, 35, 28, 41]\nprint(srednee(izmereniya))\nprint(maksimum(izmereniya))"
+  },
+  {
+    "id": 5623,
+    "course_id": 869,
+    "course_title": "Занятие 8. Итоговый проект и ЕГЭ-алгоритмика",
+    "etalon": "print(round(sum(izmereniya) / len(izmereniya), 2))"
+  },
+  {
+    "id": 5646,
+    "course_id": 869,
+    "course_title": "Занятие 8. Итоговый проект и ЕГЭ-алгоритмика",
+    "etalon": "def srednee(spisok):\n    return round(sum(spisok) / len(spisok), 2)\n\nizmereniya = [20, 35, 90, 41, 95]\nporog = 80\navariy = 0\nfor x in izmereniya:\n    if x > porog:\n        print(f\"{x}: АВАРИЯ\")\n        avariy = avariy + 1\n    else:\n        print(f\"{x}: норма\")\nprint(srednee(izmereniya))\nprint(max(izmereniya))\nprint(avariy)"
+  },
+  {
+    "id": 5633,
+    "course_id": 870,
+    "course_title": "Раздел 9. Функции",
+    "etalon": "def privet():"
+  },
+  {
+    "id": 5634,
+    "course_id": 870,
+    "course_title": "Раздел 9. Функции",
+    "etalon": "def udar(uron):"
+  },
+  {
+    "id": 5635,
+    "course_id": 870,
+    "course_title": "Раздел 9. Функции",
+    "etalon": "udar(10)"
+  },
+  {
+    "id": 5748,
+    "course_id": 892,
+    "course_title": "Раздел 10. Черепашья графика",
+    "etalon": "import turtle"
+  },
+  {
+    "id": 5749,
+    "course_id": 892,
+    "course_title": "Раздел 10. Черепашья графика",
+    "etalon": "t.forward(100)"
+  },
+  {
+    "id": 5750,
+    "course_id": 892,
+    "course_title": "Раздел 10. Черепашья графика",
+    "etalon": "t.right(90)"
+  },
+  {
+    "id": 5758,
+    "course_id": 893,
+    "course_title": "Раздел 11. Графика с циклами",
+    "etalon": "t.goto(0, 0)"
+  },
+  {
+    "id": 5759,
+    "course_id": 893,
+    "course_title": "Раздел 11. Графика с циклами",
+    "etalon": "print(random.choice(cveta))"
+  },
+  {
+    "id": 5767,
+    "course_id": 894,
+    "course_title": "Раздел 12. Финальный проект",
+    "etalon": "print(\"Ты нашёл сокровище!\")"
+  },
+  {
+    "id": 6945,
+    "course_id": 1181,
+    "course_title": "Задание 16. Программа на анализ последовательности чисел",
+    "etalon": "if a % 3 == 0: cnt += 1"
+  },
+  {
+    "id": 9203,
+    "course_id": 1351,
+    "course_title": "GROUP BY и агрегаты — считаем и проверяем цифры продукта",
+    "etalon": "SELECT COUNT(*) FROM enrollments WHERE course_id = 5;"
+  },
+  {
+    "id": 9214,
+    "course_id": 1352,
+    "course_title": "Подзапросы обзорно — когда запрос удобнее вложить внутрь запроса",
+    "etalon": "SELECT name FROM users WHERE id IN (SELECT user_id FROM enrollments);"
+  },
+  {
+    "id": 9223,
+    "course_id": 1353,
+    "course_title": "INSERT, UPDATE, DELETE и DDL — только в песочнице. Риски",
+    "etalon": "INSERT INTO users (name, email) VALUES ('QA Тест', 'qa@example.com');"
+  },
+  {
+    "id": 9574,
+    "course_id": 1405,
+    "course_title": "Занятие 1. Arduino C++, Wokwi, цифровой выход",
+    "etalon": "pinMode"
+  },
+  {
+    "id": 9575,
+    "course_id": 1405,
+    "course_title": "Занятие 1. Arduino C++, Wokwi, цифровой выход",
+    "etalon": "digitalWrite(pin_led, HIGH);"
+  },
+  {
+    "id": 9578,
+    "course_id": 1405,
+    "course_title": "Занятие 1. Arduino C++, Wokwi, цифровой выход",
+    "etalon": "digitalWrite(pin_led, HIGH);\ndelay(200);\ndigitalWrite(pin_led, LOW);"
+  },
+  {
+    "id": 9579,
+    "course_id": 1405,
+    "course_title": "Занятие 1. Arduino C++, Wokwi, цифровой выход",
+    "etalon": "void setup() {\n  pinMode(13, OUTPUT);\n  Serial.begin(9600);\n}\n\nvoid loop() {\n  digitalWrite(13, HIGH);\n  Serial.println(\"Сигнал: ВКЛ\");\n  delay(300);\n  digitalWrite(13, LOW);\n  Serial.println(\"Сигнал: ВЫКЛ\");\n  delay(900);\n}"
+  },
+  {
+    "id": 9585,
+    "course_id": 1406,
+    "course_title": "Занятие 2. Цифровой вход: кнопка и события",
+    "etalon": "digitalRead"
+  },
+  {
+    "id": 9588,
+    "course_id": 1406,
+    "course_title": "Занятие 2. Цифровой вход: кнопка и события",
+    "etalon": "if (knopka == LOW) {\n  Serial.println(\"Тревога\");\n} else {\n  Serial.println(\"Тишина\");\n}"
+  },
+  {
+    "id": 9589,
+    "course_id": 1406,
+    "course_title": "Занятие 2. Цифровой вход: кнопка и события",
+    "etalon": "void setup() {\n  pinMode(2, INPUT_PULLUP);\n  Serial.begin(9600);\n}\n\nvoid loop() {\n  int knopka = digitalRead(2);\n  if (knopka == LOW) {\n    Serial.println(\"Событие: нажатие\");\n  }\n  delay(100);\n}"
+  },
+  {
+    "id": 9591,
+    "course_id": 1406,
+    "course_title": "Занятие 2. Цифровой вход: кнопка и события",
+    "etalon": "void setup() {\n  pinMode(13, OUTPUT);\n  pinMode(2, INPUT_PULLUP);\n  Serial.begin(9600);\n}\n\nvoid loop() {\n  int knopka = digitalRead(2);\n  if (knopka == LOW) {\n    digitalWrite(13, LOW);\n    Serial.println(\"Режим: диагностика\");\n  } else {\n    digitalWrite(13, HIGH);\n    Serial.println(\"Режим: мониторинг\");\n  }\n  delay(150);\n}"
+  },
+  {
+    "id": 9597,
+    "course_id": 1407,
+    "course_title": "Занятие 3. Аналоговый вход: датчик и map()",
+    "etalon": "analogRead"
+  },
+  {
+    "id": 9598,
+    "course_id": 1407,
+    "course_title": "Занятие 3. Аналоговый вход: датчик и map()",
+    "etalon": "int urovenj = map(syroe, 0, 1023, 0, 50);"
+  },
+  {
+    "id": 9601,
+    "course_id": 1407,
+    "course_title": "Занятие 3. Аналоговый вход: датчик и map()",
+    "etalon": "int davlenie = map(syroe, 0, 1023, 0, 200);\nSerial.print(\"Давление: \");\nSerial.print(davlenie);\nSerial.println(\" кПа\");"
+  },
+  {
+    "id": 9602,
+    "course_id": 1407,
+    "course_title": "Занятие 3. Аналоговый вход: датчик и map()",
+    "etalon": "void setup() {\n  Serial.begin(9600);\n}\n\nvoid loop() {\n  int syroe = analogRead(A0);\n  int oboroty = map(syroe, 0, 1023, 0, 500);\n  Serial.print(\"Обороты: \");\n  Serial.println(oboroty);\n  delay(250);\n}"
+  },
+  {
+    "id": 9604,
+    "course_id": 1407,
+    "course_title": "Занятие 3. Аналоговый вход: датчик и map()",
+    "etalon": "void setup() {\n  Serial.begin(9600);\n}\n\nvoid loop() {\n  int syroe = analogRead(A0);\n  int temperatura = map(syroe, 0, 1023, -20, 40);\n  Serial.print(\"Температура: \");\n  Serial.print(temperatura);\n  Serial.println(\" C\");\n  delay(300);\n}"
+  },
+  {
+    "id": 9614,
+    "course_id": 1408,
+    "course_title": "Занятие 4. Пороговая логика: сигнализация по показанию",
+    "etalon": "if (urovenj > 90) {\n  Serial.println(\"Перелив\");\n} else if (urovenj > 70) {\n  Serial.println(\"Заполнено\");\n} else {\n  Serial.println(\"Норма\");\n}"
+  },
+  {
+    "id": 9617,
+    "course_id": 1408,
+    "course_title": "Занятие 4. Пороговая логика: сигнализация по показанию",
+    "etalon": "void setup() {\n  pinMode(9, OUTPUT);\n  Serial.begin(9600);\n}\n\nvoid loop() {\n  int syroe = analogRead(A0);\n  int temperatura = map(syroe, 0, 1023, -20, 60);\n\n  if (temperatura > 40 || temperatura < -10) {\n    digitalWrite(9, HIGH);\n    Serial.println(\"Авария\");\n  } else if (temperatura > 25) {\n    digitalWrite(9, LOW);\n    Serial.println(\"Предупреждение\");\n  } else {\n    digitalWrite(9, LOW);\n    Serial.println(\"Норма\");\n  }\n  delay(300);\n}"
+  },
+  {
+    "id": 9625,
+    "course_id": 1409,
+    "course_title": "Занятие 5. Неблокирующее время: millis() вместо delay()",
+    "etalon": "currentMillis - previousMillis >= interval"
+  },
+  {
+    "id": 9626,
+    "course_id": 1409,
+    "course_title": "Занятие 5. Неблокирующее время: millis() вместо delay()",
+    "etalon": "unsigned long previousMillis = 0;\nconst long interval = 400;\nbool ledState = false;\n\nvoid setup() {\n  pinMode(8, OUTPUT);\n}\n\nvoid loop() {\n  unsigned long currentMillis = millis();\n  if (currentMillis - previousMillis >= interval) {\n    previousMillis = currentMillis;\n    ledState = !ledState;\n    digitalWrite(8, ledState);\n  }\n}"
+  },
+  {
+    "id": 9629,
+    "course_id": 1409,
+    "course_title": "Занятие 5. Неблокирующее время: millis() вместо delay()",
+    "etalon": "unsigned long prevLed1 = 0;\nunsigned long prevLed2 = 0;\nconst long interval1 = 500;\nconst long interval2 = 350;\nbool state1 = false;\nbool state2 = false;\n\nvoid setup() {\n  pinMode(13, OUTPUT);\n  pinMode(12, OUTPUT);\n}\n\nvoid loop() {\n  unsigned long teper = millis();\n\n  if (teper - prevLed1 >= interval1) {\n    prevLed1 = teper;\n    state1 = !state1;\n    digitalWrite(13, state1);\n  }\n\n  if (teper - prevLed2 >= interval2) {\n    prevLed2 = teper;\n    state2 = !state2;\n    digitalWrite(12, state2);\n  }\n}"
+  },
+  {
+    "id": 9637,
+    "course_id": 1410,
+    "course_title": "Занятие 6. Библиотеки и реальный датчик DHT22",
+    "etalon": "readHumidity"
+  },
+  {
+    "id": 9638,
+    "course_id": 1410,
+    "course_title": "Занятие 6. Библиотеки и реальный датчик DHT22",
+    "etalon": "if (isnan(temperatura)) {\n  Serial.println(\"Датчик молчит\");\n} else {\n  Serial.println(temperatura);\n}"
+  },
+  {
+    "id": 9641,
+    "course_id": 1410,
+    "course_title": "Занятие 6. Библиотеки и реальный датчик DHT22",
+    "etalon": "#include <DHT.h>\n\n#define PIN_DHT 4\nDHT dht(PIN_DHT, DHT22);\n\nunsigned long previousMillis = 0;\nconst long interval = 2000;\n\nvoid setup() {\n  Serial.begin(9600);\n  dht.begin();\n}\n\nvoid loop() {\n  unsigned long currentMillis = millis();\n  if (currentMillis - previousMillis >= interval) {\n    previousMillis = currentMillis;\n    float temperatura = dht.readTemperature();\n    float vlazhnost = dht.readHumidity();\n    if (isnan(temperatura) || isnan(vlazhnost)) {\n      Serial.println(\"Ошибка чтения датчика\");\n    } else {\n      Serial.print(\"Температура: \");\n      Serial.println(temperatura);\n      Serial.print(\"Влажность: \");\n      Serial.println(vlazhnost);\n    }\n  }\n}"
+  },
+  {
+    "id": 9649,
+    "course_id": 1411,
+    "course_title": "Занятие 7. Массивы, скользящее среднее, фильтр выбросов",
+    "etalon": "pokazaniya[i]"
+  },
+  {
+    "id": 9650,
+    "course_id": 1411,
+    "course_title": "Занятие 7. Массивы, скользящее среднее, фильтр выбросов",
+    "etalon": "okno[indeks] = novoe;\nindeks = (indeks + 1) % RAZMER_OKNA;"
+  },
+  {
+    "id": 9652,
+    "course_id": 1411,
+    "course_title": "Занятие 7. Массивы, скользящее среднее, фильтр выбросов",
+    "etalon": "float minimum = pokazaniya[0];\nfloat maksimum = pokazaniya[0];\nfor (int i = 1; i < 5; i = i + 1) {\n  if (pokazaniya[i] < minimum) {\n    minimum = pokazaniya[i];\n  }\n  if (pokazaniya[i] > maksimum) {\n    maksimum = pokazaniya[i];\n  }\n}"
+  },
+  {
+    "id": 9653,
+    "course_id": 1411,
+    "course_title": "Занятие 7. Массивы, скользящее среднее, фильтр выбросов",
+    "etalon": "float summa = 0;\nfor (int i = 0; i < 5; i = i + 1) {\n  summa = summa + okno[i];\n}\nfloat srednee = summa / 5;\n\nif (fabs(novoe_pokazanie - srednee) > porog) {\n  Serial.println(\"Выброс\");\n} else {\n  Serial.println(\"Норма\");\n}\nSerial.println(srednee);"
+  },
+  {
+    "id": 9661,
+    "course_id": 1412,
+    "course_title": "Занятие 8. Функции и структурированный дашборд",
+    "etalon": "return a * b;"
+  },
+  {
+    "id": 9662,
+    "course_id": 1412,
+    "course_title": "Занятие 8. Функции и структурированный дашборд",
+    "etalon": "void signalTrevogi() {\n  digitalWrite(9, HIGH);\n  Serial.println(\"Тревога!\");\n  digitalWrite(9, LOW);\n}"
+  },
+  {
+    "id": 9665,
+    "course_id": 1412,
+    "course_title": "Занятие 8. Функции и структурированный дашборд",
+    "etalon": "float maksimumMassiva(float arr[], int razmer) {\n  float maksimum = arr[0];\n  for (int i = 1; i < razmer; i = i + 1) {\n    if (arr[i] > maksimum) {\n      maksimum = arr[i];\n    }\n  }\n  return maksimum;\n}"
+  },
+  {
+    "id": 9666,
+    "course_id": 1412,
+    "course_title": "Занятие 8. Функции и структурированный дашборд",
+    "etalon": "void vyvestiPokazanie(String nazvanie, float znachenie, String edinitsa) {\n  Serial.print(nazvanie);\n  Serial.print(\": \");\n  Serial.print(znachenie);\n  Serial.println(edinitsa);\n}\n\nvyvestiPokazanie(\"Температура\", 24.5, \" C\");\nvyvestiPokazanie(\"Влажность\", 45.0, \" %\");\nvyvestiPokazanie(\"Давление\", 101.0, \" кПа\");"
+  },
+  {
+    "id": 9673,
+    "course_id": 1413,
+    "course_title": "Занятие 9. Отладка C++: перенос навыка на новый язык",
+    "etalon": "Serial.begin(9600);"
+  },
+  {
+    "id": 9675,
+    "course_id": 1413,
+    "course_title": "Занятие 9. Отладка C++: перенос навыка на новый язык",
+    "etalon": "if (currentMillis - previousMillis >= interval) {\n  previousMillis = currentMillis;\n  digitalWrite(13, !digitalRead(13));\n}"
+  },
+  {
+    "id": 9678,
+    "course_id": 1413,
+    "course_title": "Занятие 9. Отладка C++: перенос навыка на новый язык",
+    "etalon": "int knopka = digitalRead(2);\nif (knopka == LOW) {\n  Serial.println(\"Нажата\");\n}\n\nfloat arr[4] = {1.0, 2.0, 3.0, 4.0};\nfloat summa = 0;\nfor (int i = 0; i < 4; i = i + 1) {\n  summa = summa + arr[i];\n}"
+  },
+  {
+    "id": 9684,
+    "course_id": 1414,
+    "course_title": "Занятие 10. Итоговый проект, часть 1: сборка датчиковой части",
+    "etalon": "map(svetSyroe, 0, 1023, 0, 100)"
+  },
+  {
+    "id": 9685,
+    "course_id": 1414,
+    "course_title": "Занятие 10. Итоговый проект, часть 1: сборка датчиковой части",
+    "etalon": "oknoTemperatury[indeksOkna] = temperatura;\nindeksOkna = (indeksOkna + 1) % RAZMER_OKNA;"
+  },
+  {
+    "id": 9687,
+    "course_id": 1414,
+    "course_title": "Занятие 10. Итоговый проект, часть 1: сборка датчиковой части",
+    "etalon": "float minimumMassiva(float arr[], int razmer) {\n  float minimum = arr[0];\n  for (int i = 1; i < razmer; i = i + 1) {\n    if (arr[i] < minimum) {\n      minimum = arr[i];\n    }\n  }\n  return minimum;\n}\n\n// в дашборде, сразу после vyvestiPokazanie(\"Средняя температура\", ...):\nvyvestiPokazanie(\"Мин. температура\", minimumMassiva(oknoTemperatury, RAZMER_OKNA), \" C\");"
+  },
+  {
+    "id": 9688,
+    "course_id": 1414,
+    "course_title": "Занятие 10. Итоговый проект, часть 1: сборка датчиковой части",
+    "etalon": "// в дашборде, сразу после vyvestiPokazanie(\"Мин. температура\", ...):\nvyvestiPokazanie(\"Макс. температура\", maksimumMassiva(oknoTemperatury, RAZMER_OKNA), \" C\");"
+  },
+  {
+    "id": 9694,
+    "course_id": 1415,
+    "course_title": "Занятие 11. Итоговый проект, часть 2: сигнализация и защита",
+    "etalon": "(srednyayaTemperatura > 28 && srednyayaTemperatura <= 35) || svetProcent < 10"
+  },
+  {
+    "id": 9696,
+    "course_id": 1415,
+    "course_title": "Занятие 11. Итоговый проект, часть 2: сигнализация и защита",
+    "etalon": "String status;\nif (srednyayaTemperatura > 35 || srednyayaTemperatura < 0) {\n  status = \"Авария\";\n  digitalWrite(pinLed, HIGH);\n} else if ((srednyayaTemperatura > 28 && srednyayaTemperatura <= 35) || svetProcent < 10) {\n  status = \"Предупреждение\";\n  digitalWrite(pinLed, LOW);\n} else {\n  status = \"Норма\";\n  digitalWrite(pinLed, LOW);\n}\nSerial.print(\"Статус: \");\nSerial.println(status);"
+  },
+  {
+    "id": 9697,
+    "course_id": 1415,
+    "course_title": "Занятие 11. Итоговый проект, часть 2: сигнализация и защита",
+    "etalon": "// в setup():\npinMode(9, OUTPUT);\n\n// в loop(), после вычисления srednyayaTemperatura и svetProcent:\nString status;\nint pinLed = 9;\nif (srednyayaTemperatura > 35 || srednyayaTemperatura < 0) {\n  status = \"Авария\";\n  digitalWrite(pinLed, HIGH);\n} else if ((srednyayaTemperatura > 28 && srednyayaTemperatura <= 35) || svetProcent < 10) {\n  status = \"Предупреждение\";\n  digitalWrite(pinLed, LOW);\n} else {\n  status = \"Норма\";\n  digitalWrite(pinLed, LOW);\n}\nSerial.print(\"Статус: \");\nSerial.println(status);"
+  },
+  {
+    "id": 9698,
+    "course_id": 1415,
+    "course_title": "Занятие 11. Итоговый проект, часть 2: сигнализация и защита",
+    "etalon": "#include <DHT.h>\n\n#define PIN_DHT 4\nDHT dht(PIN_DHT, DHT22);\nconst int PIN_LDR = A0;\nint pinLed = 9;\n\nconst int RAZMER_OKNA = 5;\nfloat oknoTemperatury[RAZMER_OKNA];\nint indeksOkna = 0;\n\nunsigned long previousMillis = 0;\nconst long interval = 2000;\n\nvoid vyvestiPokazanie(String nazvanie, float znachenie, String edinitsa) {\n  Serial.print(nazvanie);\n  Serial.print(\": \");\n  Serial.print(znachenie);\n  Serial.println(edinitsa);\n}\n\nfloat sredneeMassiva(float arr[], int razmer) {\n  float summa = 0;\n  for (int i = 0; i < razmer; i = i + 1) {\n    summa = summa + arr[i];\n  }\n  return summa / razmer;\n}\n\nvoid setup() {\n  Serial.begin(9600);\n  dht.begin();\n  pinMode(pinLed, OUTPUT);\n  for (int i = 0; i < RAZMER_OKNA; i = i + 1) {\n    oknoTemperatury[i] = 0;\n  }\n}\n\nvoid loop() {\n  unsigned long currentMillis = millis();\n  if (currentMillis - previousMillis >= interval) {\n    previousMillis = currentMillis;\n\n    float temperatura = dht.readTemperature();\n    if (!isnan(temperatura)) {\n      oknoTemperatury[indeksOkna] = temperatura;\n      indeksOkna = (indeksOkna + 1) % RAZMER_OKNA;\n    }\n    float srednyayaTemperatura = sredneeMassiva(oknoTemperatury, RAZMER_OKNA);\n\n    int svetSyroe = analogRead(PIN_LDR);\n    int svetProcent = map(svetSyroe, 0, 1023, 0, 100);\n\n    String status;\n    if (srednyayaTemperatura > 35 || srednyayaTemperatura < 0) {\n      status = \"Авария\";\n      digitalWrite(pinLed, HIGH);\n    } else if ((srednyayaTemperatura > 28 && srednyayaTemperatura <= 35) || svetProcent < 10) {\n      status = \"Предупреждение\";\n      digitalWrite(pinLed, LOW);\n    } else {\n      status = \"Норма\";\n      digitalWrite(pinLed, LOW);\n    }\n\n    vyvestiPokazanie(\"Температура\", temperatura, \" C\");\n    vyvestiPokazanie(\"Средняя температура\", srednyayaTemperatura, \" C\");\n    vyvestiPokazanie(\"Освещённость\", svetProcent, \" %\");\n    Serial.print(\"Статус: \");\n    Serial.println(status);\n    Serial.println(\"----------\");\n  }\n}"
+  },
+  {
+    "id": 10058,
+    "course_id": 1455,
+    "course_title": "Мини-курс: точный диапазон и аккуратный вывод",
+    "etalon": "end=' '"
+  },
+  {
+    "id": 10597,
+    "course_id": 1509,
+    "course_title": "Как работает интернет: запрос, ответ и коды состояния",
+    "etalon": "requests.get('http://books.toscrape.com/')"
+  },
+  {
+    "id": 10598,
+    "course_id": 1509,
+    "course_title": "Как работает интернет: запрос, ответ и коды состояния",
+    "etalon": "otvet.status_code"
+  },
+  {
+    "id": 10391,
+    "course_id": 1510,
+    "course_title": "HTML и CSS глазами скрейпера. Инструменты разработчика",
+    "etalon": "p.price_color"
+  },
+  {
+    "id": 10392,
+    "course_id": 1510,
+    "course_title": "HTML и CSS глазами скрейпера. Инструменты разработчика",
+    "etalon": "article.product_pod h3"
+  },
+  {
+    "id": 10607,
+    "course_id": 1511,
+    "course_title": "Правила игры: robots.txt, условия сайта и данные о людях",
+    "etalon": "robots.txt"
+  },
+  {
+    "id": 10826,
+    "course_id": 1512,
+    "course_title": "Частоты слов и пары слов: что говорят собранные тексты",
+    "etalon": "Counter"
+  },
+  {
+    "id": 10827,
+    "course_id": 1512,
+    "course_title": "Частоты слов и пары слов: что говорят собранные тексты",
+    "etalon": "chastoty.most_common(3)"
+  },
+  {
+    "id": 10829,
+    "course_id": 1512,
+    "course_title": "Частоты слов и пары слов: что говорят собранные тексты",
+    "etalon": "re.findall(r'\\w+', tekst.lower())"
+  },
+  {
+    "id": 10830,
+    "course_id": 1512,
+    "course_title": "Частоты слов и пары слов: что говорят собранные тексты",
+    "etalon": "list(zip(slova, slova[1:]))"
+  },
+  {
+    "id": 10832,
+    "course_id": 1513,
+    "course_title": "Морфология: почему «сбор» и «сбора» — одно слово",
+    "etalon": "m.parse(slovo)[0].normal_form"
+  },
+  {
+    "id": 10833,
+    "course_id": 1513,
+    "course_title": "Морфология: почему «сбор» и «сбора» — одно слово",
+    "etalon": "m.parse(slovo)[0].tag.POS"
+  },
+  {
+    "id": 10834,
+    "course_id": 1513,
+    "course_title": "Морфология: почему «сбор» и «сбора» — одно слово",
+    "etalon": "[m.parse(s)[0].normal_form for s in slova]"
+  },
+  {
+    "id": 10840,
+    "course_id": 1514,
+    "course_title": "Постановка: что собираем, откуда и зачем",
+    "etalon": "null (зависит от проекта ученика — проверяется по описанию на встрече)\n**COM-фаза:** ученик показывает описание полей; проверяется, что у каждого сказано происхождение и обязательность, а не только имя."
+  },
+  {
+    "id": 10841,
+    "course_id": 1514,
+    "course_title": "Постановка: что собираем, откуда и зачем",
+    "etalon": "null (зависит от источника ученика)\n**COM-фаза:** ученик называет каждое препятствие и говорит, каким способом из курса будет его решать."
+  },
+  {
+    "id": 10419,
+    "course_id": 1517,
+    "course_title": "requests: получить страницу и не поверить ей на слово",
+    "etalon": "otvet.text"
+  },
+  {
+    "id": 10623,
+    "course_id": 1517,
+    "course_title": "requests: получить страницу и не поверить ей на слово",
+    "etalon": "otvet.status_code == 200"
+  },
+  {
+    "id": 10624,
+    "course_id": 1517,
+    "course_title": "requests: получить страницу и не поверить ей на слово",
+    "etalon": "requests.RequestException"
+  },
+  {
+    "id": 10423,
+    "course_id": 1518,
+    "course_title": "Объект супа: find и find_all",
+    "etalon": "BeautifulSoup(html, 'html.parser')"
+  },
+  {
+    "id": 10626,
+    "course_id": 1518,
+    "course_title": "Объект супа: find и find_all",
+    "etalon": "sup.find_all('a')"
+  },
+  {
+    "id": 10628,
+    "course_id": 1518,
+    "course_title": "Объект супа: find и find_all",
+    "etalon": ".get_text()"
+  },
+  {
+    "id": 10630,
+    "course_id": 1518,
+    "course_title": "Объект супа: find и find_all",
+    "etalon": "len(sup.find_all('article', class_='product_pod'))"
+  },
+  {
+    "id": 10722,
+    "course_id": 1520,
+    "course_title": "Очистка в коде: пробелы, регистр, дубликаты",
+    "etalon": "' '.join(nazvanie.split())"
+  },
+  {
+    "id": 10723,
+    "course_id": 1520,
+    "course_title": "Очистка в коде: пробелы, регистр, дубликаты",
+    "etalon": "int(re.sub(r'[^\\d]', '', tekst))"
+  },
+  {
+    "id": 10724,
+    "course_id": 1520,
+    "course_title": "Очистка в коде: пробелы, регистр, дубликаты",
+    "etalon": "len({' '.join(t['Товар'].split()).lower() for t in tovary})"
+  },
+  {
+    "id": 10726,
+    "course_id": 1520,
+    "course_title": "Очистка в коде: пробелы, регистр, дубликаты",
+    "etalon": "t['Товар'].strip()"
+  },
+  {
+    "id": 10439,
+    "course_id": 1521,
+    "course_title": "Атрибуты, class и id: как отличить нужный тег от сотни похожих",
+    "etalon": "£51.77"
+  },
+  {
+    "id": 10633,
+    "course_id": 1521,
+    "course_title": "Атрибуты, class и id: как отличить нужный тег от сотни похожих",
+    "etalon": "смысл"
+  },
+  {
+    "id": 10634,
+    "course_id": 1521,
+    "course_title": "Атрибуты, class и id: как отличить нужный тег от сотни похожих",
+    "etalon": "ssylka['href']"
+  },
+  {
+    "id": 10635,
+    "course_id": 1521,
+    "course_title": "Атрибуты, class и id: как отличить нужный тег от сотни похожих",
+    "etalon": "sup.find_all('span', {'class': ['green', 'red']})"
+  },
+  {
+    "id": 10636,
+    "course_id": 1521,
+    "course_title": "Атрибуты, class и id: как отличить нужный тег от сотни похожих",
+    "etalon": "a['title']"
+  },
+  {
+    "id": 10640,
+    "course_id": 1522,
+    "course_title": "Навигация по дереву: дети, соседи, родители",
+    "etalon": "sup.body.div"
+  },
+  {
+    "id": 10641,
+    "course_id": 1522,
+    "course_title": "Навигация по дереву: дети, соседи, родители",
+    "etalon": "cena.parent.parent"
+  },
+  {
+    "id": 10643,
+    "course_id": 1522,
+    "course_title": "Навигация по дереву: дети, соседи, родители",
+    "etalon": "pervaya.next_sibling.next_sibling"
+  },
+  {
+    "id": 10447,
+    "course_id": 1523,
+    "course_title": "Текст против тегов: get_text, очистка и регулярные выражения",
+    "etalon": "51.77"
+  },
+  {
+    "id": 10644,
+    "course_id": 1523,
+    "course_title": "Текст против тегов: get_text, очистка и регулярные выражения",
+    "etalon": "blok.get_text()"
+  },
+  {
+    "id": 10647,
+    "course_id": 1523,
+    "course_title": "Текст против тегов: get_text, очистка и регулярные выражения",
+    "etalon": "re.search(r'\\d+\\.\\d+', stroka)"
+  },
+  {
+    "id": 10648,
+    "course_id": 1523,
+    "course_title": "Текст против тегов: get_text, очистка и регулярные выражения",
+    "etalon": "float(tekst[1:])"
+  },
+  {
+    "id": 10649,
+    "course_id": 1523,
+    "course_title": "Текст против тегов: get_text, очистка и регулярные выражения",
+    "etalon": ".strip()"
+  },
+  {
+    "id": 10451,
+    "course_id": 1524,
+    "course_title": "Сборка: первый скрейпер и список словарей",
+    "etalon": "It's Only the Himalayas"
+  },
+  {
+    "id": 10653,
+    "course_id": 1524,
+    "course_title": "Сборка: первый скрейпер и список словарей",
+    "etalon": "DictWriter"
+  },
+  {
+    "id": 10654,
+    "course_id": 1524,
+    "course_title": "Сборка: первый скрейпер и список словарей",
+    "etalon": "knigi.append({'nazvanie': nazvanie, 'cena': cena})"
+  },
+  {
+    "id": 10659,
+    "course_id": 1525,
+    "course_title": "Формы и метод POST: как отправить данные из программы",
+    "etalon": "requests.post('https://httpbin.org/post', data={'imya': 'Виктор', 'kurs': 'skrejping'})"
+  },
+  {
+    "id": 10661,
+    "course_id": 1525,
+    "course_title": "Формы и метод POST: как отправить данные из программы",
+    "etalon": "files={'uploadFile': open('python.png', 'rb')}"
+  },
+  {
+    "id": 10664,
+    "course_id": 1526,
+    "course_title": "Сессии и cookies: как программа запоминает, что вошла",
+    "etalon": "requests.Session()"
+  },
+  {
+    "id": 10665,
+    "course_id": 1526,
+    "course_title": "Сессии и cookies: как программа запоминает, что вошла",
+    "etalon": "otvet.cookies.get_dict()"
+  },
+  {
+    "id": 10666,
+    "course_id": 1526,
+    "course_title": "Сессии и cookies: как программа запоминает, что вошла",
+    "etalon": "requests.get('https://httpbin.org/basic-auth/user/passwd', auth=('user', 'passwd'))"
+  },
+  {
+    "id": 10670,
+    "course_id": 1527,
+    "course_title": "API как источник: методы, JSON и разбор ответа",
+    "etalon": "dannye['quotes'][0]['author']['name']"
+  },
+  {
+    "id": 10671,
+    "course_id": 1527,
+    "course_title": "API как источник: методы, JSON и разбор ответа",
+    "etalon": "params={'page': 2}"
+  },
+  {
+    "id": 10675,
+    "course_id": 1528,
+    "course_title": "Ненайденный API: как увидеть его во вкладке «Сеть»",
+    "etalon": "requests.get('https://quotes.toscrape.com/api/quotes', params={'page': 3})"
+  },
+  {
+    "id": 10479,
+    "course_id": 1530,
+    "course_title": "Достаём данные без браузера: тег script и повтор запроса",
+    "etalon": "json.loads(kusok)"
+  },
+  {
+    "id": 10685,
+    "course_id": 1530,
+    "course_title": "Достаём данные без браузера: тег script и повтор запроса",
+    "etalon": "re.search(r'var data = (\\[.*?\\]);', html, re.S)"
+  },
+  {
+    "id": 10689,
+    "course_id": 1531,
+    "course_title": "Selenium там, где иначе нельзя: запуск и ожидания вместо пауз",
+    "etalon": "from selenium.webdriver.common.by import By"
+  },
+  {
+    "id": 10690,
+    "course_id": 1531,
+    "course_title": "Selenium там, где иначе нельзя: запуск и ожидания вместо пауз",
+    "etalon": "driver.find_element(By.ID, 'content')"
+  },
+  {
+    "id": 10691,
+    "course_id": 1531,
+    "course_title": "Selenium там, где иначе нельзя: запуск и ожидания вместо пауз",
+    "etalon": "EC.presence_of_element_located((By.ID, 'loadedButton'))"
+  },
+  {
+    "id": 10692,
+    "course_id": 1531,
+    "course_title": "Selenium там, где иначе нельзя: запуск и ожидания вместо пауз",
+    "etalon": "вкладку"
+  },
+  {
+    "id": 10486,
+    "course_id": 1532,
+    "course_title": "Селекторы и XPath, фоновый режим, перенаправления",
+    "etalon": "пустое"
+  },
+  {
+    "id": 10695,
+    "course_id": 1532,
+    "course_title": "Селекторы и XPath, фоновый режим, перенаправления",
+    "etalon": "//span[@class='text']"
+  },
+  {
+    "id": 10696,
+    "course_id": 1532,
+    "course_title": "Селекторы и XPath, фоновый режим, перенаправления",
+    "etalon": "options.add_argument('--headless=new')"
+  },
+  {
+    "id": 10697,
+    "course_id": 1532,
+    "course_title": "Селекторы и XPath, фоновый режим, перенаправления",
+    "etalon": "driver.find_element(By.XPATH, \"//span[@class='text']\")"
+  },
+  {
+    "id": 10699,
+    "course_id": 1533,
+    "course_title": "Кодировки и текстовые файлы: CSV без «кракозябр»",
+    "etalon": "encoding='cp1251'"
+  },
+  {
+    "id": 10700,
+    "course_id": 1533,
+    "course_title": "Кодировки и текстовые файлы: CSV без «кракозябр»",
+    "etalon": "DictReader"
+  },
+  {
+    "id": 10703,
+    "course_id": 1533,
+    "course_title": "Кодировки и текстовые файлы: CSV без «кракозябр»",
+    "etalon": "'r', encoding='cp1251'"
+  },
+  {
+    "id": 10705,
+    "course_id": 1534,
+    "course_title": "PDF и Word: достать текст и таблицы",
+    "etalon": "reader.pages[0].extract_text()"
+  },
+  {
+    "id": 10707,
+    "course_id": 1534,
+    "course_title": "PDF и Word: достать текст и таблицы",
+    "etalon": "PdfReader('prays-list.pdf')"
+  },
+  {
+    "id": 10708,
+    "course_id": 1534,
+    "course_title": "PDF и Word: достать текст и таблицы",
+    "etalon": "[p.text for p in d.paragraphs]"
+  },
+  {
+    "id": 10711,
+    "course_id": 1535,
+    "course_title": "Изображения и распознавание текста",
+    "etalon": "pytesseract.image_to_string(img, lang='rus')"
+  },
+  {
+    "id": 10714,
+    "course_id": 1535,
+    "course_title": "Изображения и распознавание текста",
+    "etalon": "pytesseract.pytesseract.tesseract_cmd = r'C:\\Program Files\\Tesseract-OCR\\tesseract.exe'"
+  },
+  {
+    "id": 10715,
+    "course_id": 1535,
+    "course_title": "Изображения и распознавание текста",
+    "etalon": "[s.strip() for s in tekst.splitlines() if s.strip()]"
+  },
+  {
+    "id": 10731,
+    "course_id": 1536,
+    "course_title": "Очистка постфактум: когда данные уже собраны",
+    "etalon": "{t['Наличие'] for t in tovary}"
+  },
+  {
+    "id": 10733,
+    "course_id": 1537,
+    "course_title": "Файлы и медиа: CSV, картинки, безопасные имена",
+    "etalon": "DictWriter"
+  },
+  {
+    "id": 10734,
+    "course_id": 1537,
+    "course_title": "Файлы и медиа: CSV, картинки, безопасные имена",
+    "etalon": "newline=''"
+  },
+  {
+    "id": 10737,
+    "course_id": 1537,
+    "course_title": "Файлы и медиа: CSV, картинки, безопасные имена",
+    "etalon": "re.sub(r'[^\\w\\-]', '_', imya)"
+  },
+  {
+    "id": 10738,
+    "course_id": 1537,
+    "course_title": "Файлы и медиа: CSV, картинки, безопасные имена",
+    "etalon": "writer.writeheader()"
+  },
+  {
+    "id": 10741,
+    "course_id": 1538,
+    "course_title": "База данных: таблицы, вставка и выборка из Python",
+    "etalon": "sqlite3.connect('tovary.db')"
+  },
+  {
+    "id": 10742,
+    "course_id": 1538,
+    "course_title": "База данных: таблицы, вставка и выборка из Python",
+    "etalon": "cur.executemany('INSERT INTO tovary VALUES (?, ?)', stroki)"
+  },
+  {
+    "id": 10743,
+    "course_id": 1538,
+    "course_title": "База данных: таблицы, вставка и выборка из Python",
+    "etalon": "cur.execute('SELECT nazvanie, cena FROM tovary WHERE cena > 5000 ORDER BY cena').fetchall()"
+  },
+  {
+    "id": 10746,
+    "course_id": 1539,
+    "course_title": "Работа с базой через модели: SQLAlchemy",
+    "etalon": "create_engine('sqlite:///tovary.db')"
+  },
+  {
+    "id": 10747,
+    "course_id": 1539,
+    "course_title": "Работа с базой через модели: SQLAlchemy",
+    "etalon": "conn.commit()"
+  },
+  {
+    "id": 10748,
+    "course_id": 1539,
+    "course_title": "Работа с базой через модели: SQLAlchemy",
+    "etalon": "text('SELECT * FROM tovary')"
+  },
+  {
+    "id": 10749,
+    "course_id": 1539,
+    "course_title": "Работа с базой через модели: SQLAlchemy",
+    "etalon": "conn.commit()"
+  },
+  {
+    "id": 10753,
+    "course_id": 1540,
+    "course_title": "Обход одного домена: очередь, посещённые, глубина",
+    "etalon": "urljoin(adres, ssylka)"
+  },
+  {
+    "id": 10758,
+    "course_id": 1541,
+    "course_title": "Внешние ссылки и правила обхода",
+    "etalon": "urlparse(adres).netloc"
+  },
+  {
+    "id": 10760,
+    "course_id": 1541,
+    "course_title": "Внешние ссылки и правила обхода",
+    "etalon": "urlparse(polnyj).netloc == urlparse(start).netloc"
+  },
+  {
+    "id": 10761,
+    "course_id": 1541,
+    "course_title": "Внешние ссылки и правила обхода",
+    "etalon": "urljoin(polnyj, urlparse(polnyj).path)"
+  },
+  {
+    "id": 10765,
+    "course_id": 1542,
+    "course_title": "Архитектура краулера: сайт, страница, правила извлечения",
+    "etalon": "{k: izvlech(kartochka, v) for k, v in pravila.items()}"
+  },
+  {
+    "id": 10766,
+    "course_id": 1542,
+    "course_title": "Архитектура краулера: сайт, страница, правила извлечения",
+    "etalon": "def izvlech(kartochka, selektor):"
+  },
+  {
+    "id": 10769,
+    "course_id": 1543,
+    "course_title": "Scrapy: проект, паук, элементы данных",
+    "etalon": "response.css('h1::text').get()"
+  },
+  {
+    "id": 10770,
+    "course_id": 1543,
+    "course_title": "Scrapy: проект, паук, элементы данных",
+    "etalon": "response.follow(dalshe, callback=self.parse)"
+  },
+  {
+    "id": 10771,
+    "course_id": 1543,
+    "course_title": "Scrapy: проект, паук, элементы данных",
+    "etalon": "yield {'nazvanie': nazvanie, 'cena': cena}"
+  },
+  {
+    "id": 10776,
+    "course_id": 1544,
+    "course_title": "Scrapy: конвейеры обработки, журнал, выгрузка",
+    "etalon": "{'knigi.csv': {'format': 'csv'}}"
+  },
+  {
+    "id": 10777,
+    "course_id": 1544,
+    "course_title": "Scrapy: конвейеры обработки, журнал, выгрузка",
+    "etalon": "raise DropItem('нет цены')"
+  },
+  {
+    "id": 10779,
+    "course_id": 1545,
+    "course_title": "Почему сбор идёт медленно: потоки и пул задач",
+    "etalon": "from concurrent.futures import ThreadPoolExecutor"
+  },
+  {
+    "id": 10780,
+    "course_id": 1545,
+    "course_title": "Почему сбор идёт медленно: потоки и пул задач",
+    "etalon": "pul.map(skachat, adresa)"
+  },
+  {
+    "id": 10783,
+    "course_id": 1545,
+    "course_title": "Почему сбор идёт медленно: потоки и пул задач",
+    "etalon": "except requests.RequestException:"
+  },
+  {
+    "id": 10786,
+    "course_id": 1546,
+    "course_title": "Асинхронный сбор",
+    "etalon": "asyncio.run(sobrat())"
+  },
+  {
+    "id": 10787,
+    "course_id": 1546,
+    "course_title": "Асинхронный сбор",
+    "etalon": "asyncio.gather(*zaprosy)"
+  },
+  {
+    "id": 10792,
+    "course_id": 1547,
+    "course_title": "Ловушки: скрытые поля, приманки, заголовки",
+    "etalon": "[i['name'] for i in sup.find_all('input') if i.get('name') and not i.find_parent(class_='uehalo')]"
+  },
+  {
+    "id": 10794,
+    "course_id": 1548,
+    "course_title": "Ограничения по адресу, задержки и прокси",
+    "etalon": "proxies=posredniki"
+  },
+  {
+    "id": 10796,
+    "course_id": 1548,
+    "course_title": "Ограничения по адресу, задержки и прокси",
+    "etalon": "otvet.headers.get('Retry-After')"
+  },
+  {
+    "id": 10807,
+    "course_id": 1551,
+    "course_title": "robots.txt и условия использования",
+    "etalon": "urllib.robotparser"
+  },
+  {
+    "id": 10809,
+    "course_id": 1551,
+    "course_title": "robots.txt и условия использования",
+    "etalon": "rp.can_fetch('MyBot', adres)"
+  },
+  {
+    "id": 10810,
+    "course_id": 1551,
+    "course_title": "robots.txt и условия использования",
+    "etalon": "rp.read()"
+  },
+  {
+    "id": 10811,
+    "course_id": 1551,
+    "course_title": "robots.txt и условия использования",
+    "etalon": "if rp.can_fetch('MyBot', adres):"
+  },
+  {
+    "id": 10814,
+    "course_id": 1552,
+    "course_title": "Тесты для скрейпера: ловим смену вёрстки",
+    "etalon": "self.assertEqual(kartochek, 20)"
+  },
+  {
+    "id": 10816,
+    "course_id": 1552,
+    "course_title": "Тесты для скрейпера: ловим смену вёрстки",
+    "etalon": "self.assertIsNotNone(cena)"
+  },
+  {
+    "id": 10818,
+    "course_id": 1552,
+    "course_title": "Тесты для скрейпера: ловим смену вёрстки",
+    "etalon": "self.assertIsNotNone(k.find('p', class_='price_color'))"
+  },
+  {
+    "id": 10820,
+    "course_id": 1553,
+    "course_title": "Проверка через браузер: тестируем то, что видит человек",
+    "etalon": "knopka.click()"
+  },
+  {
+    "id": 10821,
+    "course_id": 1553,
+    "course_title": "Проверка через браузер: тестируем то, что видит человек",
+    "etalon": "pole.send_keys('Виктор')"
+  },
+  {
+    "id": 10823,
+    "course_id": 1553,
+    "course_title": "Проверка через браузер: тестируем то, что видит человек",
+    "etalon": "self.assertIn('Спасибо', driver.page_source)"
+  },
+  {
+    "id": 10824,
+    "course_id": 1553,
+    "course_title": "Проверка через браузер: тестируем то, что видит человек",
+    "etalon": "self.driver.quit()"
+  }
+]
