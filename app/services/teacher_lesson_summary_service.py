@@ -513,6 +513,18 @@ async def _load_course_progress_and_blocked(
     courses = await manual_progress_service.list_accessible_student_courses(
         db, current_user, student_id,
     )
+    # tsk-893: какие из курсов служебные. Один запрос на список, а не признак
+    # на каждый курс: их единицы, а панель открывается по клику на ученика.
+    service_course_ids: set[int] = {
+        int(row[0])
+        for row in (
+            await db.execute(
+                text(
+                    f"WITH RECURSIVE {SERVICE_COURSES_CTE} SELECT id FROM service_courses"
+                )
+            )
+        ).all()
+    }
     progress: list[dict[str, Any]] = []
     blocked: list[dict[str, Any]] = []
     for course in courses:
@@ -544,6 +556,7 @@ async def _load_course_progress_and_blocked(
             "percent_complete": percent,
             "current_section_title": current_section_title,
             "current_item_title": current_item_title,
+            "is_service": bool(service_course_ids and course_id in service_course_ids),
         })
         for i in countable:
             if i["item_type"] == "task" and i["status"] == "BLOCKED_LIMIT":
