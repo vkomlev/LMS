@@ -41,6 +41,17 @@ _run_db = provision_run_database(os.environ.get("DATABASE_URL", ""))
 if _run_db.active:
     os.environ["DATABASE_URL"] = _run_db.dsn
 
+# tsk-880: то же самое для Redis — своя логическая база на прогон. Тоже до
+# импорта приложения: `get_redis` кеширует пул на первый переданный URL.
+# Иначе прогоны делят ограничители частоты, а те ключуются по IP тестового
+# клиента — он у всех один (`ml_send:127.0.0.1` — пять запросов за десять
+# минут на всех).
+from run_redis import provision_run_redis  # noqa: E402
+
+_run_redis = provision_run_redis(os.environ.get("REDIS_URL", ""))
+if _run_redis.active:
+    os.environ["REDIS_URL"] = _run_redis.url
+
 from app.core.config import Settings
 from app.api.main import app
 from app.db.session import get_async_db
@@ -74,20 +85,21 @@ _logger = logging.getLogger(__name__)
 # раньше, до создания базы прогона. Источник один, чтобы список не разъехался.
 
 
-def pytest_report_header(config: "pytest.Config") -> str:
-    """Строка в шапке прогона: в какой базе он идёт (tsk-872)."""
-    return f"tsk-872: {_run_db.note}"
+def pytest_report_header(config: "pytest.Config") -> list[str]:
+    """Строки в шапке прогона: где он работает (tsk-872, tsk-880)."""
+    return [f"tsk-872: {_run_db.note}", f"tsk-880: {_run_redis.note}"]
 
 
 def pytest_sessionfinish(session: "pytest.Session", exitstatus: int) -> None:
-    """Удалить временную базу прогона (tsk-872).
+    """Отпустить временные ресурсы прогона: базу (tsk-872) и Redis (tsk-880).
 
     Именно здесь, а не в `atexit`: на выходе интерпретатора уже нельзя
     запускать потоки, а разрешение адреса в asyncpg на Windows идёт через
     пул потоков. Не сработало (процесс убили) — базу подберёт уборка сирот
-    следующего прогона.
+    следующего прогона, а аренда Redis истечёт сама.
     """
     _run_db.drop()
+    _run_redis.release()
 
 
 def pytest_configure(config: "pytest.Config") -> None:
