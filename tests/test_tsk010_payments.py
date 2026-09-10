@@ -30,12 +30,21 @@ pytestmark = pytest.mark.asyncio
 _RECEIPT = ("cheque.png", b"\x89PNG\r\n\x1a\n test receipt", "image/png")
 
 
-def _receipt_files() -> set[str]:
-    """Что сейчас лежит в каталоге чеков — чтобы ловить мусор после отказов."""
+def _receipt_files(student_id: int) -> set[str]:
+    """Чеки ЭТОГО ученика в каталоге — чтобы ловить мусор после отказов.
+
+    Только его, а не весь каталог (tsk-878). Базы у параллельных прогонов свои
+    (tsk-872), а каталог загрузок общий на рабочее дерево: при полном прогоне
+    рядом с соседним сюда падает чужой файл, и проверка «после отказа ничего не
+    прибавилось» краснела на чужой работе. Имя чека начинается с id ученика
+    (`{student_id}_{uuid}.{ext}`, см. `app/api/v1/me_payments.py`), а id у
+    каждого прогона свой — тот же приём, что в тестах вложений
+    (`glob(f"{attempt_id}_*")`).
+    """
     upload_dir = Settings().payment_receipts_upload_dir
     if not upload_dir.exists():
         return set()
-    return {p.name for p in upload_dir.iterdir() if p.is_file()}
+    return {p.name for p in upload_dir.glob(f"{student_id}_*") if p.is_file()}
 
 
 async def _charge_id(db, *, student_id: int, period: date = PERIOD) -> int:
@@ -541,12 +550,14 @@ async def test_amount_over_limit_is_refused_and_leaves_no_file(db, client):
     charge_id = await _charge_id(db, student_id=env["student_id"])
     _, student_token = await _login_as(db, env["student_id"])
 
-    before = _receipt_files()
+    before = _receipt_files(env["student_id"])
     resp = await _submit(
         client, student_token, charge_id=charge_id, amount_minor=10**12
     )
     assert resp.status_code == 422, resp.text
-    assert _receipt_files() == before, "после отказа файл чека остался на диске"
+    assert _receipt_files(env["student_id"]) == before, (
+        "после отказа файл чека остался на диске"
+    )
 
 
 async def test_service_key_is_locked_out_of_money(db, client):
