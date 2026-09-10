@@ -89,6 +89,8 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.learning_gaps_service import (
+    SERVICE_COURSES_CTE,
+    non_service_course_filter,
     real_student_material_filter,
     real_student_results_filter,
 )
@@ -617,7 +619,8 @@ def target_per_week_for(grade: Optional[int], today: Optional[date] = None) -> i
 
 
 _REMAINING_SQL = f"""
-WITH RECURSIVE tree AS (
+WITH RECURSIVE {SERVICE_COURSES_CTE},
+tree AS (
     SELECT uc.course_id AS member_course_id
       FROM user_courses uc
      WHERE uc.user_id = :student_id AND uc.is_active = true
@@ -631,12 +634,14 @@ course_tasks AS (
       FROM tasks t JOIN tree ON tree.member_course_id = t.course_id
      WHERE COALESCE(t.is_active, true)
        AND t.requirement_level = ANY(:levels)
+       AND {non_service_course_filter('t')}
 ),
 course_materials AS (
     SELECT DISTINCT m.id
       FROM materials m JOIN tree ON tree.member_course_id = m.course_id
      WHERE COALESCE(m.is_active, true)
        AND m.requirement_level = ANY(:levels)
+       AND {non_service_course_filter('m')}
 ),
 tasks_done AS (
     SELECT DISTINCT tr.task_id AS id
@@ -664,8 +669,14 @@ SELECT (SELECT count(*) FROM course_tasks) + (SELECT count(*) FROM course_materi
 
 #: Завершённое ЗА НЕДЕЛЮ, по неделям — для медианы фактического темпа.
 #: Ручные зачёты отсечены общим правилом проекта, а не своей копией условия.
+#:
+#: tsk-881: служебные курсы (`is_service`, tsk-877) в темп не идут. Вводный
+#: курс проходится один раз, и его два-три десятка пунктов дают всплеск в
+#: одной неделе — а от темпа поднимается и потолок нормы, и норматив, то есть
+#: человеку прибавляли работы за то, что он прочитал правила школы.
 _FACT_SQL = f"""
-WITH bounds AS (
+WITH RECURSIVE {SERVICE_COURSES_CTE},
+bounds AS (
     -- Окна по семь дней, отсчитанные назад ОТ МОМЕНТА РАСЧЁТА, а не
     -- календарные недели (tsk-819). Календарная нарезка бралась от `since`,
     -- и последнее окно кончалось прошлым воскресеньем: работа текущей недели
@@ -689,17 +700,21 @@ SELECT b.starts_at::date AS week,
         SELECT count(DISTINCT tr.task_id) AS n
           FROM task_results tr
           JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
+          JOIN tasks t ON t.id = tr.task_id
          WHERE tr.user_id = :student_id AND tr.is_correct = true
            AND {real_student_results_filter('tr')}
+           AND {non_service_course_filter('t')}
            AND tr.submitted_at >= b.starts_at
            AND tr.submitted_at < b.ends_at
        ) td ON true
   LEFT JOIN LATERAL (
         SELECT count(DISTINCT smp.material_id) AS n
           FROM student_material_progress smp
+          JOIN materials m ON m.id = smp.material_id
          WHERE smp.student_id = :student_id AND smp.status = 'completed'
            AND smp.completed_at IS NOT NULL
            AND {real_student_material_filter('smp')}
+           AND {non_service_course_filter('m')}
            AND smp.completed_at >= b.starts_at
            AND smp.completed_at < b.ends_at
        ) md ON true
@@ -715,8 +730,9 @@ SELECT b.starts_at::date AS week,
 #: они. Два разных остатка нужны затем же, зачем в штучном расчёте: программа
 #: подготовки задаёт норму, а все курсы — потолок «больше, чем осталось, не
 #: задашь».
-_REMAINING_WEIGHTS_SQL = """
-WITH RECURSIVE roots AS (
+_REMAINING_WEIGHTS_SQL = f"""
+WITH RECURSIVE {SERVICE_COURSES_CTE},
+roots AS (
     SELECT unnest(CAST(:root_ids AS int[])) AS member_course_id
     UNION
     SELECT uc.course_id
@@ -735,11 +751,13 @@ course_tasks AS (
     SELECT DISTINCT t.id, t.difficulty_id, t.task_content->>'type' AS task_type
       FROM tasks t JOIN tree ON tree.member_course_id = t.course_id
      WHERE COALESCE(t.is_active, true) AND t.requirement_level = ANY(:levels)
+       AND {non_service_course_filter('t')}
 ),
 course_materials AS (
     SELECT DISTINCT m.id
       FROM materials m JOIN tree ON tree.member_course_id = m.course_id
      WHERE COALESCE(m.is_active, true) AND m.requirement_level = ANY(:levels)
+       AND {non_service_course_filter('m')}
 ),
 tasks_done AS (
     SELECT DISTINCT tr.task_id AS id
@@ -774,7 +792,8 @@ SELECT 'material', NULL::int, NULL::text, count(*)
 #: разница только в группировке, поэтому недели без работы сюда не попадают —
 #: нули берутся из `_FACT_SQL`, который отдаёт полный список окон.
 _FACT_WEIGHTS_SQL = f"""
-WITH bounds AS (
+WITH RECURSIVE {SERVICE_COURSES_CTE},
+bounds AS (
     SELECT CAST(:since AS timestamptz)
              + CAST(idx || ' weeks' AS interval) AS starts_at,
            CAST(:since AS timestamptz)
@@ -791,6 +810,7 @@ SELECT b.starts_at::date AS week, 'task' AS kind,
    AND tr.submitted_at >= b.starts_at AND tr.submitted_at < b.ends_at
   JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
   JOIN tasks t ON t.id = tr.task_id
+ WHERE {non_service_course_filter('t')}
  GROUP BY 1, 2, 3, 4
 UNION ALL
 -- Типы в UNION обязаны совпадать явно: голый NULL Postgres считает text и
@@ -803,6 +823,8 @@ SELECT b.starts_at::date, 'material', NULL::int, NULL::text,
    AND smp.completed_at IS NOT NULL
    AND {real_student_material_filter('smp')}
    AND smp.completed_at >= b.starts_at AND smp.completed_at < b.ends_at
+  JOIN materials m ON m.id = smp.material_id
+ WHERE {non_service_course_filter('m')}
  GROUP BY 1, 2, 3, 4
 """
 
@@ -901,16 +923,28 @@ async def _weekly_minutes(
 #: неделям, которых у него ещё не было: медиана трёх недель у человека,
 #: занимающегося три дня, — это медиана [0, 0, N], то есть ноль. На проде это
 #: дало «делает 0» ученице, решившей 60 заданий за одно занятие (замер 07.09).
+#: tsk-881: начало считается по УЧЕБНОЙ работе, служебные курсы не в счёт.
+#: Иначе правка темпа выходит боком: человек в первую неделю проходит вводный
+#: курс, во вторую берётся за предмет — и окно, отсчитанное от вводного,
+#: включает неделю, где учебной работы не было вовсе. Медиана [0, N] даёт
+#: половину настоящего темпа, а медиана [0, 0, N] — ноль. На боевых 10.09 у
+#: Машталер выходило ровно это: недели [0, 0, 36] и темп «делает 0» при
+#: тридцати шести сделанных пунктах.
 _FIRST_ACTIVITY_SQL = f"""
+WITH RECURSIVE {SERVICE_COURSES_CTE}
 SELECT least(
     (SELECT min(tr.submitted_at)
        FROM task_results tr
        JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
-      WHERE tr.user_id = :student_id AND {real_student_results_filter('tr')}),
+       JOIN tasks t ON t.id = tr.task_id
+      WHERE tr.user_id = :student_id AND {real_student_results_filter('tr')}
+        AND {non_service_course_filter('t')}),
     (SELECT min(smp.completed_at)
        FROM student_material_progress smp
+       JOIN materials m ON m.id = smp.material_id
       WHERE smp.student_id = :student_id AND smp.completed_at IS NOT NULL
-        AND {real_student_material_filter('smp')})
+        AND {real_student_material_filter('smp')}
+        AND {non_service_course_filter('m')})
 ) AS first_at
 """
 
@@ -922,7 +956,8 @@ SELECT least(
 #: без разбивки непонятно, работает человек сам или только под присмотром
 #: преподавателя. Это разные выводы и разные действия.
 _LESSON_WORK_SQL = f"""
-WITH lessons AS (
+WITH RECURSIVE {SERVICE_COURSES_CTE},
+lessons AS (
     SELECT lo.scheduled_at AS starts_at,
            lo.scheduled_at
              + CAST(COALESCE(lo.duration_minutes, 60) || ' minutes' AS interval)
@@ -935,8 +970,10 @@ WITH lessons AS (
 SELECT count(DISTINCT tr.task_id) AS n
   FROM task_results tr
   JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
+  JOIN tasks t ON t.id = tr.task_id
  WHERE tr.user_id = :student_id AND tr.is_correct = true
    AND {real_student_results_filter('tr')}
+   AND {non_service_course_filter('t')}
    AND tr.submitted_at >= :since
    AND EXISTS (
        SELECT 1 FROM lessons l
@@ -960,12 +997,15 @@ SELECT count(*) AS missed
 
 #: Доля верных за то же окно — поправка на качество.
 _QUALITY_SQL = f"""
+WITH RECURSIVE {SERVICE_COURSES_CTE}
 SELECT count(*) AS total,
        count(*) FILTER (WHERE tr.is_correct) AS correct
   FROM task_results tr
   JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
+  JOIN tasks t ON t.id = tr.task_id
  WHERE tr.user_id = :student_id
    AND {real_student_results_filter('tr')}
+   AND {non_service_course_filter('t')}
    AND tr.submitted_at >= :since
 """
 

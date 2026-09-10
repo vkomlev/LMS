@@ -884,3 +884,120 @@ async def test_summary_unknown_student_id_gives_empty_list_not_404(db, client):
     )
     assert resp.status_code == 200, resp.text
     assert resp.json()["participants"] == []
+
+
+# ══════════════════ tsk-874: результат ТЕКУЩЕГО занятия ══════════════════
+
+
+@pytest.mark.asyncio
+async def test_current_lesson_is_null_before_the_lesson_starts(db, client):
+    """Занятие ещё не началось — блока итогов нет вовсе.
+
+    Не нули: ноль читается как «сидел на уроке и ничего не сделал», и на
+    экране итогов это прямая неправда про человека.
+    """
+    teacher_id, token = await _new_user(db, role="teacher", name="teach")
+    student_id, _ = await _new_user(db, role="student", name="stud")
+    await _link_student_teacher(db, student_id=student_id, teacher_id=teacher_id)
+
+    occ_id = await _create_occurrence_with_participant(
+        db, student_id=student_id, teacher_id=teacher_id,
+        scheduled_at=datetime.now(UTC) + timedelta(hours=2),
+    )
+
+    resp = await client.get(
+        f"/api/v1/teacher/lesson-occurrences/{occ_id}/summary",
+        params={"teacher_id": teacher_id},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["participants"][0]["current_lesson"] is None
+
+
+@pytest.mark.asyncio
+async def test_current_lesson_counts_only_work_done_during_the_lesson(db, client):
+    """Домашняя работа и работа на уроке разведены (требование 10.09).
+
+    Недельные метрики отвечают «что человек делал всю неделю», итоги занятия —
+    «что он успел сейчас». До задачи экраны показывали одно и то же число.
+    """
+    teacher_id, token = await _new_user(db, role="teacher", name="teach")
+    student_id, _ = await _new_user(db, role="student", name="stud")
+    course_id = await _new_course(db, f"{_TAG}-course-874")
+    await _link_student_teacher(db, student_id=student_id, teacher_id=teacher_id)
+    home_task = await _new_task(db, course_id=course_id, uid="874-home")
+    lesson_task = await _new_task(db, course_id=course_id, uid="874-lesson")
+
+    now = datetime.now(UTC)
+    # Занятие идёт: началось полчаса назад, длится час.
+    occ_id = await _create_occurrence_with_participant(
+        db, student_id=student_id, teacher_id=teacher_id,
+        scheduled_at=now - timedelta(minutes=30), duration_minutes=60,
+    )
+
+    # Одно задание сдано вчера дома, второе — только что, на уроке.
+    await _insert_task_result(
+        db, student_id=student_id, task_id=home_task, course_id=course_id,
+        is_correct=True, submitted_at=now - timedelta(days=1),
+    )
+    await _insert_task_result(
+        db, student_id=student_id, task_id=lesson_task, course_id=course_id,
+        is_correct=True, submitted_at=now - timedelta(minutes=5),
+    )
+
+    resp = await client.get(
+        f"/api/v1/teacher/lesson-occurrences/{occ_id}/summary",
+        params={"teacher_id": teacher_id},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200, resp.text
+    p = resp.json()["participants"][0]
+
+    assert p["homework"]["tasks_completed"] == 2, "неделя считает обе сдачи"
+    assert p["current_lesson"] is not None
+    assert p["current_lesson"]["tasks_completed"] == 1, (
+        "в итоги занятия попала домашняя работа"
+    )
+    assert p["current_lesson"]["first_try"] == 1
+
+
+@pytest.mark.asyncio
+async def test_current_lesson_stops_at_the_end_of_the_lesson(db, client):
+    """Занятие кончилось — сделанное ПОСЛЕ него в итоги урока не идёт.
+
+    Иначе у прошедшего занятия итоги дописывались бы неделями: преподаватель
+    открыл бы вчерашний урок и увидел там всю домашнюю работу с тех пор.
+    """
+    teacher_id, token = await _new_user(db, role="teacher", name="teach")
+    student_id, _ = await _new_user(db, role="student", name="stud")
+    course_id = await _new_course(db, f"{_TAG}-course-874-end")
+    await _link_student_teacher(db, student_id=student_id, teacher_id=teacher_id)
+    during = await _new_task(db, course_id=course_id, uid="874-during")
+    after = await _new_task(db, course_id=course_id, uid="874-after")
+
+    now = datetime.now(UTC)
+    occ_id = await _create_occurrence_with_participant(
+        db, student_id=student_id, teacher_id=teacher_id,
+        scheduled_at=now - timedelta(hours=5), duration_minutes=60,
+        status="completed",
+    )
+
+    await _insert_task_result(
+        db, student_id=student_id, task_id=during, course_id=course_id,
+        is_correct=True, submitted_at=now - timedelta(hours=4, minutes=30),
+    )
+    await _insert_task_result(
+        db, student_id=student_id, task_id=after, course_id=course_id,
+        is_correct=True, submitted_at=now - timedelta(hours=1),
+    )
+
+    resp = await client.get(
+        f"/api/v1/teacher/lesson-occurrences/{occ_id}/summary",
+        params={"teacher_id": teacher_id},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200, resp.text
+    p = resp.json()["participants"][0]
+    assert p["current_lesson"]["tasks_completed"] == 1, (
+        "в итоги урока попало сделанное после его конца"
+    )

@@ -69895,6 +69895,39 @@
         "title": "TeacherSummaryHomework",
         "description": "Метрики ДЗ за окно «между занятиями» (с конца предыдущего occurrence\nэтого ученика до момента запроса). tsk-473: раздельные счётчики —\nоператорский откат объединения от 2026-07-27 (tsk-410)."
       },
+      "TeacherSummaryLessonWork": {
+        "properties": {
+          "tasks_completed": {
+            "type": "integer",
+            "title": "Tasks Completed",
+            "description": "Заданий сдано верно за занятие"
+          },
+          "theory_completed": {
+            "type": "integer",
+            "title": "Theory Completed",
+            "description": "Материалов изучено за занятие"
+          },
+          "first_try": {
+            "type": "integer",
+            "title": "First Try",
+            "description": "Из заданий — сколько верно с первой попытки"
+          },
+          "help_requested": {
+            "type": "integer",
+            "title": "Help Requested",
+            "description": "Заявок на помощь за занятие"
+          }
+        },
+        "type": "object",
+        "required": [
+          "tasks_completed",
+          "theory_completed",
+          "first_try",
+          "help_requested"
+        ],
+        "title": "TeacherSummaryLessonWork",
+        "description": "Сделанное НА ЗАНЯТИИ (tsk-874).\n\nОтдельно от недельных метрик по прямому требованию оператора 10.09: экран\n«сводка перед занятием» и экран «итоги после занятия» выглядели одинаково,\nхотя вопросы у них разные. Перед занятием нужно «что человек делал всю\nнеделю», после — «что он успел сейчас».\n\nСчитается тем же счётчиком, что и неделя (`load_homework_window`), только\nокном занятия — иначе «сделал» на двух экранах означало бы разное."
+      },
       "TeacherSummaryParticipant": {
         "properties": {
           "student_id": {
@@ -70052,6 +70085,17 @@
               }
             ],
             "description": "tsk-649: ученику пора дать сложнее. `null` — повода менять набор заданий нет; это НЕ оценка «слабый». В очерёдности `attention` не участвует: это разные вопросы"
+          },
+          "current_lesson": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TeacherSummaryLessonWork"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "tsk-874: сделанное НА ЭТОМ занятии — от его начала до конца (или до сейчас, если идёт). `null` — занятие ещё не началось: там нечего подводить, а ноль означал бы «сидел и ничего не сделал». Метрики выше считают неделю ЦЕЛИКОМ, вместе с домашней работой, и по ним не ответить, что человек успел за сам урок"
           }
         },
         "type": "object",

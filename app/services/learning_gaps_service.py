@@ -121,6 +121,37 @@ def real_student_material_filter(alias: str = "smp") -> str:
     return f"{alias}.source IS DISTINCT FROM '{MANUAL_TEACHER_SOURCE}'"
 
 
+#: CTE «все курсы служебных деревьев» (tsk-877/tsk-881). Спуск ВНИЗ от корней,
+#: а не подъём от каждого задания: служебных корней единицы, и один проход
+#: дешевле подзапроса на строку.
+#:
+#: Требует, чтобы `WITH` в запросе был объявлен как `WITH RECURSIVE` — ссылка
+#: на себя без этого слова не разрешается. Нерекурсивные соседи в том же
+#: списке допустимы, слово относится ко всему `WITH`.
+SERVICE_COURSES_CTE = """service_courses AS (
+    SELECT c.id FROM courses c WHERE c.is_service
+    UNION
+    SELECT cp.course_id
+      FROM service_courses sc
+      JOIN course_parents cp ON cp.parent_course_id = sc.id
+)"""
+
+
+def non_service_course_filter(alias: str, column: str = "course_id") -> str:
+    """Условие «элемент НЕ из служебного курса» для SQL (tsk-881).
+
+    ЕДИНСТВЕННОЕ место, где живёт правило; запрос обязан подставлять его
+    отсюда и добавить `SERVICE_COURSES_CTE` в свой `WITH RECURSIVE`.
+
+    Служебный курс объясняет устройство сервиса и экзамена либо меряет вход
+    (`courses.is_service`, tsk-877). Его пункты — не учебная работа, и в
+    измерениях ей притворяться не должны: вводный курс проходится один раз, а
+    его два-три десятка пунктов дают разовый всплеск недельного темпа, от
+    которого поднимается и потолок нормы, и норматив.
+    """
+    return f"{alias}.{column} NOT IN (SELECT id FROM service_courses)"
+
+
 @dataclass
 class TopicGap:
     """Тема-кандидат на мини-курс повторения."""

@@ -100,6 +100,11 @@ _SCHOOL_TZ = ZoneInfo("Europe/Moscow")
 #: должен читаться одинаково у всей группы.
 _STUCK_LOOKBACK_DAYS = 7
 
+#: Длительность занятия, когда в расписании её нет (tsk-874). Та же величина,
+#: что и в `homework_volume_service`, где по расписанию определяется «работа
+#: шла на уроке»: два ответа про один урок расходиться не должны.
+_DEFAULT_LESSON_MINUTES = 60
+
 # --- tsk-649: «пора усложнить» ------------------------------------------------
 #
 # Обратная сторона сводки: слабого видно по незачётам и заявкам помощи, а
@@ -859,6 +864,13 @@ async def get_occurrence_summary(
 
     now_utc = datetime.now(timezone.utc)
     threshold = timedelta(minutes=no_show_threshold_minutes)
+    # tsk-874: границы САМОГО занятия — окно для «что сделано на уроке».
+    # Длительность может быть пустой: тогда берём час, как и везде, где
+    # расписание отвечает на вопрос «урок ещё идёт».
+    lesson_started_at = occurrence.scheduled_at
+    lesson_ends_at = lesson_started_at + timedelta(
+        minutes=occurrence.duration_minutes or _DEFAULT_LESSON_MINUTES
+    )
 
     student_ids = [p.student_id for p in participants]
     profiles: dict[int, dict[str, Any]] = {}
@@ -924,6 +936,22 @@ async def get_occurrence_summary(
         homework = await load_homework_window(
             db, student_id=p.student_id, window_from=window_from, window_to=now_utc,
         )
+        # tsk-874: сделанное НА ЭТОМ занятии — отдельно от недели. Требование
+        # оператора 10.09: экраны «сводка перед занятием» и «итоги после»
+        # выглядели одинаково, хотя вопросы у них разные. Считаем тем же
+        # счётчиком, только окном урока: «сделал» на двух экранах обязано
+        # означать одно и то же.
+        #
+        # Занятие ещё не началось — `None`, а не нули: ноль читается как «был
+        # и ничего не сделал», и на экране итогов это прямая неправда.
+        current_lesson = None
+        if lesson_started_at <= now_utc:
+            current_lesson = await load_homework_window(
+                db,
+                student_id=p.student_id,
+                window_from=lesson_started_at,
+                window_to=min(now_utc, lesson_ends_at),
+            )
         # Ученику могли ещё ничего не задавать — тогда полей плана нет вовсе
         # (`None`), и это не то же самое, что «задали ноль»: пустых выдач не
         # бывает, а спутать «не задавали» с «не сделал» на этом экране дороже
@@ -959,6 +987,7 @@ async def get_occurrence_summary(
             "closed_help_requests": closed_help,
             "missed_streak": missed_streak,
             "course_progress": course_progress,
+            "current_lesson": current_lesson,
             "prev_started_at": prev_started_at,
         })
 

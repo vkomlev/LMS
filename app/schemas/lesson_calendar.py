@@ -487,6 +487,26 @@ class TeacherSummaryReadyForHarder(BaseModel):
     )
 
 
+class TeacherSummaryLessonWork(BaseModel):
+    """Сделанное НА ЗАНЯТИИ (tsk-874).
+
+    Отдельно от недельных метрик по прямому требованию оператора 10.09: экран
+    «сводка перед занятием» и экран «итоги после занятия» выглядели одинаково,
+    хотя вопросы у них разные. Перед занятием нужно «что человек делал всю
+    неделю», после — «что он успел сейчас».
+
+    Считается тем же счётчиком, что и неделя (`load_homework_window`), только
+    окном занятия — иначе «сделал» на двух экранах означало бы разное.
+    """
+
+    tasks_completed: int = Field(..., description="Заданий сдано верно за занятие")
+    theory_completed: int = Field(..., description="Материалов изучено за занятие")
+    first_try: int = Field(
+        ..., description="Из заданий — сколько верно с первой попытки"
+    )
+    help_requested: int = Field(..., description="Заявок на помощь за занятие")
+
+
 class TeacherSummaryParticipant(BaseModel):
     student_id: int
     full_name: Optional[str] = None
@@ -545,6 +565,16 @@ class TeacherSummaryParticipant(BaseModel):
             "tsk-649: ученику пора дать сложнее. `null` — повода менять набор "
             "заданий нет; это НЕ оценка «слабый». В очерёдности `attention` "
             "не участвует: это разные вопросы"
+        ),
+    )
+    current_lesson: Optional[TeacherSummaryLessonWork] = Field(
+        default=None,
+        description=(
+            "tsk-874: сделанное НА ЭТОМ занятии — от его начала до конца (или "
+            "до сейчас, если идёт). `null` — занятие ещё не началось: там "
+            "нечего подводить, а ноль означал бы «сидел и ничего не сделал». "
+            "Метрики выше считают неделю ЦЕЛИКОМ, вместе с домашней работой, "
+            "и по ним не ответить, что человек успел за сам урок"
         ),
     )
 

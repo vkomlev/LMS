@@ -54,6 +54,19 @@ _DONE_STATUSES = ("PASSED", "COMPLETED", "SKIPPED")
 #: физически не сможет его сдать, а в сводке оно будет висеть невыполненным.
 _UNASSIGNABLE_TASK_STATUSES = ("BLOCKED_LIMIT",)
 
+#: tsk-882: сколько пунктов сверх набора просмотреть вперёд. Нужно, чтобы
+#: увидеть начало СЛЕДУЮЩЕЙ темы: без запаса набор кончается ровно на границе
+#: и «что идёт дальше» неизвестно.
+_THEORY_AHEAD_LOOKAHEAD = 20
+
+#: Сколько материалов следующей темы уходит домой сверх бюджета. Требование
+#: оператора 10.09: теорию читают дома, занятие — для работы, поэтому при
+#: закрытии темы теория следующей задаётся ОБЯЗАТЕЛЬНО, даже если недельный
+#: бюджет уже выбран. Потолок затем, что у тем разный размер: медиана — 4
+#: материала, девять из десяти тем укладываются в семь, но есть и курс на 29,
+#: и вот он превратил бы домашнюю работу в марафон.
+_THEORY_AHEAD_MAX_ITEMS = 6
+
 
 async def _program_roots(db: AsyncSession, *, student_id: int) -> list[int]:
     """Корневые курсы программы подготовки ученика (tsk-869).
@@ -140,9 +153,13 @@ async def _next_items(
             ).scalars().all()
         )
 
-    picked: list[dict[str, Any]] = []
+    # tsk-882: собираем НЕ ТОЛЬКО набор, но и хвост за ним — что идёт следом
+    # по учебному порядку. Без хвоста не ответить на вопрос «закрывает ли эта
+    # выдача тему» и нечем взять теорию следующей.
+    pending: list[dict[str, Any]] = []
+    lookahead = limit + _THEORY_AHEAD_LOOKAHEAD
     for course_id in roots:
-        if len(picked) >= limit:
+        if len(pending) >= lookahead:
             break
         progress = await manual_progress_service.get_student_progress(
             db, student_id=student_id, course_id=int(course_id)
@@ -156,7 +173,7 @@ async def _next_items(
         graced = await compute_graced_items(db, student_id, int(course_id))
 
         for item in progress.get("items", []):
-            if len(picked) >= limit:
+            if len(pending) >= lookahead:
                 break
             if item["item_type"] not in ("task", "material"):
                 continue
@@ -172,26 +189,83 @@ async def _next_items(
                 and item["status"] in _UNASSIGNABLE_TASK_STATUSES
             ):
                 continue
-            picked.append(
+            pending.append(
                 {
                     "kind": item["item_type"],
                     "item_id": int(item["item_id"]),
                     "title": item.get("title"),
+                    # tsk-882: тема, которой принадлежит пункт. Нужна только
+                    # здесь и наружу не отдаётся — снимается перед возвратом.
+                    "topic_id": int(item["course_id"]),
                 }
             )
 
-    if minutes_budget is None or effort_table is None or not picked:
-        return picked
-    return _trim_to_budget(
-        picked,
-        minutes_budget=minutes_budget,
-        weights=await effort_for_tasks(
-            db,
-            task_ids=[i["item_id"] for i in picked if i["kind"] == "task"],
+    picked = pending[:limit]
+    if minutes_budget is not None and effort_table is not None and picked:
+        picked = _trim_to_budget(
+            picked,
+            minutes_budget=minutes_budget,
+            weights=await effort_for_tasks(
+                db,
+                task_ids=[i["item_id"] for i in picked if i["kind"] == "task"],
+                table=effort_table,
+            ),
             table=effort_table,
-        ),
-        table=effort_table,
-    )
+        )
+    return _strip_topics(_with_theory_ahead(picked, pending))
+
+
+def _with_theory_ahead(
+    picked: list[dict[str, Any]], pending: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Добавить теорию следующей темы, если эта выдача закрывает текущую.
+
+    Требование оператора 10.09: «теорию желательно изучать дома (материалы и
+    видео), поэтому если тема подходит к концу — обязательно задавать теорию
+    на дом». Смысл в том, чтобы занятие уходило на работу, а не на чтение:
+    ученик приходит, уже зная материал следующей темы.
+
+    Условие «тема подходит к концу» берётся не порогом в процентах, а фактом:
+    после этой выдачи в теме не остаётся ни одного незавершённого пункта.
+    Порог пришлось бы подбирать, а факт виден точно — и ровно он означает,
+    что на следующем занятии человек будет уже в новой теме.
+
+    Материалы добавляются СВЕРХ бюджета времени, как и первый элемент выдачи:
+    иначе правило не работало бы в самом частом случае — тема закрывается
+    заданиями, набранными ровно под бюджет, и теории места уже нет.
+
+    Ничего не делает, если выдача пуста, тему не закрывает или следующая тема
+    начинается сразу с задания (теории у неё нет).
+    """
+    if not picked:
+        return picked
+    taken = {(i["kind"], i["item_id"]) for i in picked}
+    tail = [i for i in pending if (i["kind"], i["item_id"]) not in taken]
+
+    current_topic = picked[-1]["topic_id"]
+    if any(i["topic_id"] == current_topic for i in tail):
+        return picked  # тема не закрывается — теория следующей не к спеху
+
+    ahead: list[dict[str, Any]] = []
+    for item in tail:
+        # Только ведущие материалы следующей темы: дошли до её первого
+        # задания — теория кончилась, дальше уже работа.
+        if item["kind"] != "material" or item["topic_id"] == current_topic:
+            break
+        ahead.append(item)
+        if len(ahead) >= _THEORY_AHEAD_MAX_ITEMS:
+            break
+    if ahead:
+        logger.info(
+            "ДЗ: тема %s закрывается выдачей, добавляем теорию следующей: %s материалов",
+            current_topic, len(ahead),
+        )
+    return picked + ahead
+
+
+def _strip_topics(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Убрать служебное поле темы: наружу состав выдачи отдаётся без него."""
+    return [{k: v for k, v in item.items() if k != "topic_id"} for item in items]
 
 
 async def _items_minutes(
