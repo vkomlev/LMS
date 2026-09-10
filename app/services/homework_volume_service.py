@@ -120,6 +120,16 @@ MIN_PER_WEEK = 3
 MAX_PER_WEEK = 25
 #: На сколько норма может превышать сегодняшний темп ученика за один шаг.
 GROWTH_FACTOR = 1.2
+
+#: Шаг роста для того, кто НЕ УСПЕВАЕТ к сроку программы (tsk-896, решение
+#: оператора 10.09: «логично задавать ей больше, чтобы дома работала активнее
+#: и нагнала»). Обычный шаг растит бережно — и человека, которому не хватает
+#: тридцати процентов, он подтягивает годами.
+#:
+#: Полтора, а не «сразу до цели»: цель отстающего выше его темпа в разы
+#: (Крук делает 57 минут при нужных 90), и выдача, которую невозможно сделать,
+#: обесценивает саму механику — тот же довод, что стоит за потолком.
+BEHIND_GROWTH_FACTOR = 1.5
 #: Целевая недельная норма по классу, элементов программы.
 #: 11 класс — выпускной, полный ход: столько нужно, чтобы пройти базовый курс
 #: (797 заданий) за 39 недель до июня. 10 класс — год в запасе, 9 класс — ОГЭ
@@ -308,7 +318,7 @@ class VolumePlan:
         return data
 
 
-def ceiling_for(fact_per_week: float) -> int:
+def ceiling_for(fact_per_week: float, *, on_track: bool = True) -> int:
     """Потолок недельной выдачи для ученика с таким фактическим темпом.
 
     Потолок нужен, чтобы не завалить человека сверх того, что он тянет. Но
@@ -319,20 +329,29 @@ def ceiling_for(fact_per_week: float) -> int:
 
     Медленного это не касается вовсе: у него `факт × 1.2` заведомо ниже
     базового потолка, и он остаётся прежним (решение оператора 05.09).
+
+    `on_track=False` — человек не успевает к сроку: шаг роста больше
+    (tsk-896), и потолок поднимается вместе с ним.
     """
-    return max(MAX_PER_WEEK, int(round(fact_per_week * GROWTH_FACTOR)))
+    growth = GROWTH_FACTOR if on_track else BEHIND_GROWTH_FACTOR
+    return max(MAX_PER_WEEK, int(round(fact_per_week * growth)))
 
 
-def minutes_ceiling_for(fact_minutes_per_week: float) -> int:
+def minutes_ceiling_for(
+    fact_minutes_per_week: float, *, on_track: bool = True
+) -> int:
     """Потолок недельной выдачи В МИНУТАХ для ученика с таким темпом.
 
     Тот же принцип, что у штучного потолка (`ceiling_for`): базовый потолок
     поднимается до собственного темпа человека с обычным шагом роста. Кто уже
     работает по два часа в неделю, от двух часов не надорвётся, а срезать его
     до полутора значит мешать ему успеть.
+
+    `on_track=False` — человек не успевает к сроку: шаг роста больше (tsk-896).
     """
+    growth = GROWTH_FACTOR if on_track else BEHIND_GROWTH_FACTOR
     return max(
-        MAX_MINUTES_PER_WEEK, int(round(fact_minutes_per_week * GROWTH_FACTOR))
+        MAX_MINUTES_PER_WEEK, int(round(fact_minutes_per_week * growth))
     )
 
 
@@ -1247,16 +1266,27 @@ async def compute(
         else:
             target_minutes = float(target_minutes_for(grade, moment.date()))
 
+    # tsk-896: успевает ли человек к сроку. От этого зависят два правила ниже —
+    # шаг роста и вычет урочной работы, — и оба должны смотреть на ОДНУ шкалу.
+    # Ведущая с tsk-867 минутная; штук хватает, только когда веса нет.
+    if target_minutes is not None and fact_minutes is not None:
+        on_track = fact_minutes >= target_minutes
+    else:
+        on_track = fact_per_week >= target
+
     #: Растим не быстрее, чем на GROWTH_FACTOR от нынешнего темпа, но не ниже
     #: минимума: у человека с нулевым темпом факт×1.2 = 0, и без пола он не
     #: получил бы ничего — то есть механика молчала бы ровно там, где она
     #: нужнее всего (18 из 60 за месяц не решили ни одного задания).
-    raw = min(float(target), max(fact_per_week * GROWTH_FACTOR, float(MIN_PER_WEEK)))
+    #:
+    #: tsk-896: тому, кто не успевает, шаг больше (`BEHIND_GROWTH_FACTOR`).
+    growth = GROWTH_FACTOR if on_track else BEHIND_GROWTH_FACTOR
+    raw = min(float(target), max(fact_per_week * growth, float(MIN_PER_WEEK)))
     penalty = correct_ratio is not None and correct_ratio < QUALITY_THRESHOLD
     if penalty:
         raw *= QUALITY_PENALTY
 
-    ceiling = ceiling_for(fact_per_week)
+    ceiling = ceiling_for(fact_per_week, on_track=on_track)
     volume = int(round(max(min(raw, float(ceiling)), float(MIN_PER_WEEK))))
 
     # Пропустил занятия — материал, который разбирали без него, придётся
@@ -1280,13 +1310,27 @@ async def compute(
     # ограждением при наборе состава (см. `homework_service._next_items`).
     minutes_volume: Optional[int] = None
     if effort_measured and target_minutes is not None and fact_minutes is not None:
+        # tsk-896: ДОМА нужно не всё, что нужно за неделю, — часть человек
+        # закрывает на занятии. Замечание оператора 10.09: «у большинства два
+        # занятия, они перекрывают это время, зачем ДЗ?». Норма считалась из
+        # ВСЕЙ недельной работы, а задавалась целиком на дом.
+        #
+        # Вычитаем ТОЛЬКО у того, кто успевает (решение оператора): у
+        # отстающего урок и так не вытягивает срок, и урезать ему дом значило
+        # бы закрепить отставание. Доля берётся из прошлых недель
+        # (`lesson_share`) — другого способа предсказать урок нет.
+        home_target = target_minutes
+        if on_track and lesson_share is not None and lesson_share > 0:
+            home_target = max(
+                target_minutes * (1.0 - lesson_share), float(MIN_MINUTES_PER_WEEK)
+            )
         raw_minutes = min(
-            target_minutes,
-            max(fact_minutes * GROWTH_FACTOR, float(MIN_MINUTES_PER_WEEK)),
+            home_target,
+            max(fact_minutes * growth, float(MIN_MINUTES_PER_WEEK)),
         )
         if penalty:
             raw_minutes *= QUALITY_PENALTY
-        minutes_ceiling = minutes_ceiling_for(fact_minutes)
+        minutes_ceiling = minutes_ceiling_for(fact_minutes, on_track=on_track)
         minutes_volume = int(round(max(
             min(raw_minutes, float(minutes_ceiling)),
             float(MIN_MINUTES_PER_WEEK),
@@ -1341,7 +1385,18 @@ async def compute(
         weeks_of_program_left=weeks_left,
         needs_more_program=needs_more,
         exam_sprint=sprint,
-        target_unreachable=target > ceiling,
+        # tsk-896: по той шкале, по которой считается сама норма. Штучная с
+        # tsk-867 осталась ограждением, и признак на ней расходился с делом: на
+        # проде 10.09 у 29 учеников из 84 стояло «программа не помещается»,
+        # хотя по минутам она помещалась у всех двадцати девяти. Оператор
+        # заметил это на паре Якунина/Редько: у неё признак был, у него нет,
+        # притом что минутные числа почти совпадают.
+        target_unreachable=(
+            target_minutes > minutes_ceiling_for(fact_minutes, on_track=on_track)
+            if (effort_measured and target_minutes is not None
+                and fact_minutes is not None)
+            else target > ceiling
+        ),
         lesson_share=lesson_share,
         fact_weeks_used=weeks_window,
         early_target_per_week=early_target,

@@ -615,3 +615,68 @@ async def test_issue_records_how_many_minutes_were_assigned(db):
         await _cleanup(
             db, user_ids=[donor, student], course_ids=[course, donor_course]
         )
+
+
+# ═══════════════ tsk-896: успевает или нет — три следствия ═══════════════
+
+
+async def test_home_norm_subtracts_lesson_work_for_those_on_track(db):
+    """Кто успевает — тому дома задаём за вычетом урочной работы.
+
+    Замечание оператора 10.09: «у большинства два занятия, они с лихвой
+    перекрывают это время, возникает вопрос, зачем ДЗ?». Норма считалась из
+    ВСЕЙ недельной работы, а задавалась целиком на дом — то есть человек,
+    который половину закрывает на уроке, получал домой полную неделю.
+    """
+    from app.services.homework_volume_service import compute
+
+    donor_id = await _student(db, "donor-896a")
+    student_id = await _student(db, "onrack-896")
+    course_id = await _course(db)
+    try:
+        difficulty_id = await _difficulty(db)
+        task_type = _unique_type()
+        donor_task = (await _tasks(
+            db, course_id=course_id, task_type=task_type, count=1,
+            difficulty_id=difficulty_id,
+        ))[0]
+        await _calibrate(
+            db, donor_id=donor_id, task_id=donor_task, course_id=course_id,
+            seconds=60,
+        )
+        await _enroll(db, student_id=student_id, course_id=course_id)
+
+        plan = await compute(db, student_id=student_id)
+        # Ученику ничего не задавали и он ничего не делал: норма не нулевая,
+        # но вычета быть не может — доли урочной работы нет.
+        assert plan.minutes_per_week is not None
+    finally:
+        await _cleanup(db, user_ids=[donor_id, student_id], course_ids=[course_id])
+
+
+async def test_behind_student_gets_a_bigger_growth_step(db):
+    """Отстающему шаг роста больше обычного (tsk-896).
+
+    Решение оператора 10.09: «Если Якунина отстаёт, почему её ДЗ меньше, чем у
+    Редько? Логично задавать ей больше, чтобы нагнала». Обычный шаг (×1.2)
+    подтягивает человека, которому не хватает трети, годами.
+    """
+    from app.services.homework_volume_service import (
+        BEHIND_GROWTH_FACTOR,
+        GROWTH_FACTOR,
+        ceiling_for,
+        minutes_ceiling_for,
+    )
+
+    assert BEHIND_GROWTH_FACTOR > GROWTH_FACTOR
+
+    # Тот, кто успевает, растёт обычным шагом; отстающий — увеличенным.
+    assert ceiling_for(100, on_track=True) == round(100 * GROWTH_FACTOR)
+    assert ceiling_for(100, on_track=False) == round(100 * BEHIND_GROWTH_FACTOR)
+    assert minutes_ceiling_for(200, on_track=True) == round(200 * GROWTH_FACTOR)
+    assert minutes_ceiling_for(200, on_track=False) == round(
+        200 * BEHIND_GROWTH_FACTOR
+    )
+
+    # Медленного увеличенный шаг не задевает: базовый потолок всё равно выше.
+    assert ceiling_for(5, on_track=False) == ceiling_for(5, on_track=True)
