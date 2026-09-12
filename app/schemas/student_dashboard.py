@@ -178,6 +178,14 @@ class StudentDashboardProgramRead(BaseModel):
     summer_target_per_week: Optional[int] = Field(
         default=None, description="То же, но с занятиями летом"
     )
+    early_target_minutes_per_week: Optional[int] = Field(
+        default=None,
+        description="tsk-922: то же в минутах работы; null — вес не измерен",
+    )
+    summer_target_minutes_per_week: Optional[int] = Field(
+        default=None,
+        description="tsk-922: то же в минутах работы; null — вес не измерен",
+    )
     early_deadline: Optional[date] = None
     summer_deadline: Optional[date] = None
     remaining_minutes: Optional[int] = Field(

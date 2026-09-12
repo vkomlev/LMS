@@ -720,6 +720,8 @@ async def _program_progress(
         ),
         "early_target_per_week": plan.early_target_per_week,
         "summer_target_per_week": plan.summer_target_per_week,
+        "early_target_minutes_per_week": plan.early_target_minutes_per_week,
+        "summer_target_minutes_per_week": plan.summer_target_minutes_per_week,
         "early_deadline": plan.early_deadline,
         "summer_deadline": plan.summer_deadline,
     }

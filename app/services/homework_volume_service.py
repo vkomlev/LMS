@@ -313,6 +313,10 @@ class VolumePlan:
     #: Темп, нужный чтобы закончить программу к концу ЭТОГО учебного года;
     #: None — ученик и так выпускник, у него другого срока нет.
     early_target_per_week: Optional[int] = None
+    #: tsk-922: те же ранние нормы в минутах работы — единица, в которой
+    #: показывается весь блок программы; None — вес не измерен.
+    early_target_minutes_per_week: Optional[int] = None
+    summer_target_minutes_per_week: Optional[int] = None
     #: То же, но с занятиями летом.
     summer_target_per_week: Optional[int] = None
     #: Дата раннего финиша (конец учебного года).
@@ -1363,6 +1367,8 @@ async def compute(
         None if remaining_seconds is None else remaining_seconds / 60
     )
     target_minutes: Optional[float] = None
+    early_target_minutes: Optional[int] = None
+    summer_target_minutes: Optional[int] = None
     if effort_measured:
         if program is not None and remaining_minutes is not None:
             days_left = (program["deadline"] - moment.date()).days
@@ -1375,6 +1381,25 @@ async def compute(
                 target_minutes = (
                     scoped_minutes if scoped_minutes is not None else remaining_minutes
                 ) / max(days_left / 7.0, 1e-9)
+                # tsk-922: ранние сроки — в той же единице и от того же
+                # остатка, что и основная норма. У родителя строка «можно
+                # закончить раньше: 26 в неделю» стояла рядом с «нужно 51 мин
+                # в неделю» — штуки и минуты в одной карточке (Курунов, 12.09).
+                scoped_or_full = (
+                    scoped_minutes if scoped_minutes is not None else remaining_minutes
+                )
+                if early_day is not None:
+                    early_days = (early_day - moment.date()).days
+                    early_target_minutes = int(round(
+                        scoped_or_full / max(early_days / 7.0, 1e-9)
+                        if early_days > 0 else scoped_or_full
+                    ))
+                if summer_day is not None:
+                    summer_days = (summer_day - moment.date()).days
+                    summer_target_minutes = int(round(
+                        scoped_or_full / max(summer_days / 7.0, 1e-9)
+                        if summer_days > 0 else scoped_or_full
+                    ))
             else:
                 # Срок программы прошёл — дальше отработка вариантов, и норма
                 # та же, что в штучном расчёте, только в своей единице.
@@ -1566,6 +1591,8 @@ async def compute(
         fact_weeks_used=weeks_window,
         early_target_per_week=early_target,
         summer_target_per_week=summer_target,
+        early_target_minutes_per_week=early_target_minutes,
+        summer_target_minutes_per_week=summer_target_minutes,
         early_deadline=early_day,
         summer_deadline=summer_day,
         pace_gap=pace_gap,

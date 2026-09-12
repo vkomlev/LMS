@@ -53825,6 +53825,30 @@
             "title": "Fact Minutes Per Week",
             "description": "Сколько минут в неделю человек работает сейчас (медиана)"
           },
+          "early_target_minutes_per_week": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Early Target Minutes Per Week",
+            "description": "tsk-922: ранняя норма в минутах; null — вес не измерен"
+          },
+          "summer_target_minutes_per_week": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summer Target Minutes Per Week",
+            "description": "tsk-922: летняя норма в минутах; null — вес не измерен"
+          },
           "remaining_minutes": {
             "anyOf": [
               {
@@ -64569,6 +64593,30 @@
             ],
             "title": "Summer Target Per Week",
             "description": "То же, но с занятиями летом"
+          },
+          "early_target_minutes_per_week": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Early Target Minutes Per Week",
+            "description": "tsk-922: то же в минутах работы; null — вес не измерен"
+          },
+          "summer_target_minutes_per_week": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summer Target Minutes Per Week",
+            "description": "tsk-922: то же в минутах работы; null — вес не измерен"
           },
           "early_deadline": {
             "anyOf": [

@@ -190,3 +190,27 @@ async def test_program_course_forecast_equals_the_program_forecast(db, monkeypat
     assert program["forecast_date"] is not None
     assert course["forecast_completion_date"] == program["forecast_date"]
     assert course["is_service"] is False
+
+
+@pytest.mark.asyncio
+async def test_early_targets_come_in_minutes_too(db, monkeypatch):
+    """Ранние сроки — в той же единице, что и весь блок (tsk-922).
+
+    У Курунова (10 класс) 12.09 «нужно 51 мин в неделю» стояло рядом с
+    «можно закончить раньше: 26 в неделю» — штуки и минуты в одной карточке.
+    """
+
+    student_id, _ = await _student_on_program(db, monkeypatch, grade=10)
+    block = await student_dashboard_service._program_progress(
+        db, student_id=student_id, now=_PACE_NOW,
+    )
+    assert block["early_target_per_week"] is not None
+    # Вес измерен → минутные ранние нормы есть и упорядочены как штучные:
+    # к маю нужно больше в неделю, чем к августу.
+    if block["target_minutes_per_week"] is not None:
+        assert block["early_target_minutes_per_week"] is not None
+        assert block["summer_target_minutes_per_week"] is not None
+        assert block["early_target_minutes_per_week"] > block["summer_target_minutes_per_week"]
+        assert block["early_target_minutes_per_week"] > block["target_minutes_per_week"]
+    else:
+        assert block["early_target_minutes_per_week"] is None

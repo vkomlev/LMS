@@ -308,6 +308,12 @@ class HomeworkVolumeRead(BaseModel):
         default=None,
         description="Сколько минут в неделю человек работает сейчас (медиана)",
     )
+    early_target_minutes_per_week: Optional[int] = Field(
+        default=None, description="tsk-922: ранняя норма в минутах; null — вес не измерен",
+    )
+    summer_target_minutes_per_week: Optional[int] = Field(
+        default=None, description="tsk-922: летняя норма в минутах; null — вес не измерен",
+    )
     remaining_minutes: Optional[int] = Field(
         default=None,
         description=(
