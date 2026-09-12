@@ -39,6 +39,17 @@
 а не обвинение; на балл и зачёт он не влияет и ученику не показывается.
 Формулировка в интерфейсе говорит только о факте: «в пройденных темах эта
 конструкция не объяснялась».
+
+**tsk-916: первое расширение каталога — списки.** Живой случай: задание на
+тему «Строки» (курс 108), ученик получает список через `.split()` и собирает
+строку обратно через `.join()`, курс 109 «Списки» не открывал вообще. У
+`split_join` (и у `list_literal`) есть особенность: сам метод `.split()`/
+`.join()` мельком объясняется и в материале курса 108 «Строковые методы»
+(попутно, без упражнений на списки) — то есть под общее правило «текущая тема
+пройдена целиком» эти два кода НЕ подпадают (`course_covers=False` у записи
+каталога): решение оператора 12.09 — практики со списками мельком объяснённый
+метод не даёт, пометка важнее риска лишний раз показаться. Для всех остальных
+14 конструкций правило tsk-864 не изменилось.
 """
 from __future__ import annotations
 
@@ -74,6 +85,15 @@ class Construct:
     #: считается объяснением. Образцы намеренно широкие: лишнее совпадение
     #: гасит пометку, то есть ошибается в сторону молчания.
     material_patterns: Tuple[re.Pattern[str], ...]
+    #: tsk-916. По умолчанию `True` — общее правило tsk-864: материалы ТЕКУЩЕГО
+    #: курса (в котором сдана работа) считаются доступными ученику целиком,
+    #: даже неотмеченными. Для `False` эта льгота не действует: конструкция
+    #: считается объяснённой только тем, что ученик САМ отметил пройденным
+    #: (`student_material_progress`), из любого курса. Нужно там, где текущий
+    #: курс мельком упоминает конструкцию, но не даёт по ней практики — ровно
+    #: случай `split_join`: курс «Строки» называет метод `.split()`, но
+    #: упражнения на списки только в курсе «Списки».
+    course_covers: bool = True
 
 
 def _p(*patterns: str) -> Tuple[re.Pattern[str], ...]:
@@ -95,6 +115,16 @@ CONSTRUCTS: Tuple[Construct, ...] = (
     Construct(
         "format_method", "метод `.format()`",
         _p(r"\.format\s*\("),
+    ),
+    Construct(
+        "list_literal", "литерал списка (`[...]`)",
+        _p(r"список\w*\s+можно\s+созда", r"созда(ть|ни[ея])\s+списк", r"\blist\s*\("),
+        course_covers=False,
+    ),
+    Construct(
+        "split_join", "методы `.split()`/`.join()` (строка ↔ список)",
+        _p(r"\.split\s*\(", r"\.join\s*\(", r"метод\w*\s+split", r"метод\w*\s+join"),
+        course_covers=False,
     ),
     Construct(
         "func_def", "объявление своей функции (`def`)",
@@ -208,6 +238,12 @@ def detect_in_code(code: str) -> List[Tuple[str, str]]:
             func = node.func
             if isinstance(func, ast.Attribute) and func.attr == "format":
                 remember(node, "format_method")
+            elif isinstance(func, ast.Attribute) and func.attr in ("split", "join"):
+                remember(node, "split_join")
+        elif isinstance(node, ast.List):
+            # tsk-916: литерал `[...]`, не генератор списка (тот - ast.ListComp,
+            # отдельная ветка ниже) и не срез (ast.Slice, отдельная конструкция).
+            remember(node, "list_literal")
         elif isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
             remember(node, "comprehension")
         elif isinstance(node, ast.Lambda):
@@ -368,7 +404,13 @@ async def covered_codes(
             box[course_key] = acc
         course_seen = box[course_key]
 
-    return student_seen | course_seen, materials_seen
+    # tsk-916: льгота "текущий курс пройден целиком" не действует для конструкций
+    # с course_covers=False - см. докстринг Construct.course_covers. Студент
+    # мог сам отметить такой материал пройденным (student_seen), это считается
+    # как обычно; не считается только бесплатный проход от всего курса.
+    course_seen_counted = {c for c in course_seen if _BY_CODE[c].course_covers}
+
+    return student_seen | course_seen_counted, materials_seen
 
 
 async def build_report(
