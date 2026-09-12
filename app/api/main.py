@@ -858,6 +858,12 @@ from app.api.v1.auth_signals import router as auth_signals_router
 
 app.include_router(auth_signals_router, prefix=API_PREFIX)
 
+# tsk-652: сводка «требует внимания» для преподавателя (gap-сигналы +
+# непрочитанные student_idle/lesson_missed) — источник для push-хука в TG_LMS.
+from app.api.v1.teacher_attention import router as teacher_attention_router
+
+app.include_router(teacher_attention_router, prefix=API_PREFIX)
+
 
 @app.on_event("startup")
 async def _load_school_settings() -> None:

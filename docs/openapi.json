@@ -43740,6 +43740,106 @@
           }
         }
       }
+    },
+    "/api/v1/teacher/attention/summary": {
+      "get": {
+        "tags": [
+          "teacher_attention"
+        ],
+        "summary": "Сводка отклонений, требующих внимания преподавателя (tsk-652)",
+        "operationId": "attention_summary_api_v1_teacher_attention_summary_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "teacher_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "description": "ID преподавателя",
+              "title": "Teacher Id"
+            },
+            "description": "ID преподавателя"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeacherAttentionSummaryResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -70327,6 +70427,46 @@
           "action"
         ],
         "title": "TeacherAttendanceActionRequest"
+      },
+      "TeacherAttentionSummaryResponse": {
+        "properties": {
+          "gap_signals_new": {
+            "type": "integer",
+            "title": "Gap Signals New",
+            "description": "Сигналы learning_gap_signal в статусе new (общий счётчик на всех)"
+          },
+          "student_idle_unread": {
+            "type": "integer",
+            "title": "Student Idle Unread",
+            "description": "Непрочитанные notifications.kind='student_idle', адресованные этому преподавателю"
+          },
+          "lesson_missed_unread": {
+            "type": "integer",
+            "title": "Lesson Missed Unread",
+            "description": "Непрочитанные notifications.kind='lesson_missed', адресованные этому преподавателю"
+          },
+          "oldest_created_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oldest Created At",
+            "description": "Самый старый непрочитанный/неразобранный элемент из трёх счётчиков выше"
+          }
+        },
+        "type": "object",
+        "required": [
+          "gap_signals_new",
+          "student_idle_unread",
+          "lesson_missed_unread"
+        ],
+        "title": "TeacherAttentionSummaryResponse",
+        "description": "Сводка отклонений, требующих внимания преподавателя.\n\n`gap_signals_new` — счётчик ОБЩИЙ для всех преподавателей (сигналы\n`learning_gap_signal` не привязаны к конкретному преподавателю, пока его\nне разберут — см. `GET /learning-gaps/students`, тот же принцип «кто\nпервый увидел»). `student_idle_unread`/`lesson_missed_unread` — только\nсвои: уведомления уже адресованы конкретному `user_id`."
       },
       "TeacherCourseCreate": {
         "properties": {
