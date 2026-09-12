@@ -1,0 +1,146 @@
+diff --git a/app/services/homework_service.py b/app/services/homework_service.py
+index 6ed398b..314fbfa 100644
+--- a/app/services/homework_service.py
++++ b/app/services/homework_service.py
+@@ -72,6 +72,42 @@ _THEORY_AHEAD_LOOKAHEAD = 20
+ _THEORY_AHEAD_MAX_ITEMS = 6
+ 
+ 
++#: Корни ученика вне программы — сначала тот, где он работал последним (tsk-913).
++#: Без активности вовсе — в порядке записи, как раньше: другого ориентира нет.
++_ROOTS_BY_ACTIVITY_SQL = """
++WITH RECURSIVE roots AS (
++    SELECT uc.course_id AS root, uc.course_id, uc.order_number
++      FROM user_courses uc
++     WHERE uc.user_id = :sid AND uc.is_active = true
++    UNION
++    SELECT r.root, cp.course_id, r.order_number
++      FROM roots r
++      JOIN course_parents cp ON cp.parent_course_id = r.course_id
++),
++last_task AS (
++    SELECT r.root, max(tr.submitted_at) AS at
++      FROM roots r
++      JOIN tasks t ON t.course_id = r.course_id
++      JOIN task_results tr ON tr.task_id = t.id AND tr.user_id = :sid
++     GROUP BY r.root
++),
++last_material AS (
++    SELECT r.root, max(coalesce(smp.completed_at, smp.skipped_at)) AS at
++      FROM roots r
++      JOIN materials m ON m.course_id = r.course_id
++      JOIN student_material_progress smp
++        ON smp.material_id = m.id AND smp.student_id = :sid
++     GROUP BY r.root
++)
++SELECT r.root
++  FROM (SELECT DISTINCT root, order_number FROM roots) r
++  LEFT JOIN last_task lt ON lt.root = r.root
++  LEFT JOIN last_material lm ON lm.root = r.root
++ ORDER BY greatest(lt.at, lm.at) DESC NULLS LAST,
++          r.order_number ASC NULLS LAST, r.root
++"""
++
++
+ async def _program_roots(db: AsyncSession, *, student_id: int) -> list[int]:
+     """Корневые курсы программы подготовки ученика (tsk-869).
+ 
+@@ -144,17 +180,17 @@ async def _next_items(
+     # есть все его курсы, других ориентиров нет.
+     roots = await _program_roots(db, student_id=student_id)
+     if not roots:
++        # tsk-913: вне программы курсы идут в порядке ПОСЛЕДНЕЙ АКТИВНОСТИ, а
++        # не записи. Правило оператора 12.09: «ДЗ должно быть по курсу, над
++        # которым сейчас работает ученик». Порядок записи это не отражает:
++        # первым в нём стоит то, на что записали раньше всех, — обычно летний
++        # курс, который забросили, — и домой уходили его хвосты, пока ученик
++        # уже занимался другим. Активность считается по ВСЕМУ дереву корня:
++        # ученик работает в подкурсах, а записан на корень.
+         roots = list(
+-            (
+-                await db.execute(
+-                    text(
+-                        "SELECT uc.course_id FROM user_courses uc "
+-                        " WHERE uc.user_id = :sid AND uc.is_active = true "
+-                        " ORDER BY uc.order_number ASC NULLS LAST, uc.course_id"
+-                    ),
+-                    {"sid": student_id},
+-                )
+-            ).scalars().all()
++            (await db.execute(text(_ROOTS_BY_ACTIVITY_SQL), {"sid": student_id}))
++            .scalars()
++            .all()
+         )
+ 
+     # tsk-886: курсы, выведенные из работы, в подбор не идут — ни корнем, ни
+diff --git a/tests/test_tsk741_homework.py b/tests/test_tsk741_homework.py
+index e6ec415..c09bce3 100644
+--- a/tests/test_tsk741_homework.py
++++ b/tests/test_tsk741_homework.py
+@@ -1555,6 +1555,66 @@ async def test_student_outside_programs_still_gets_all_his_courses(db, monkeypat
+     assert picked, "ученик вне программ остался без домашней работы"
+ 
+ 
++@pytest.mark.asyncio
++async def test_student_outside_programs_gets_the_course_he_works_on_now(db, monkeypatch):
++    """Вне программы домой идёт курс, где ученик работал ПОСЛЕДНИМ (tsk-913).
++
++    Правило оператора 12.09: «ДЗ должно быть по курсу, над которым сейчас
++    работает ученик». Курунов летом проходил чат-ботов и бросил, осенью
++    занялся ЕГЭ — а домой уходили хвосты чат-ботов, потому что они стояли
++    первыми по порядку записи.
++    """
++    from app.core import settings_store
++
++    student_id, summer = await _student_with_program(db, materials=0, tasks=3)
++    autumn = await _new_course(db, "осенний")
++    await _enroll(db, student_id=student_id, course_id=autumn)
++    # Летний курс записан раньше — по порядку записи он первый.
++    await db.execute(
++        text(
++            "UPDATE user_courses SET order_number = CASE course_id WHEN :s THEN 1 ELSE 2 END "
++            " WHERE user_id = :u"
++        ),
++        {"u": student_id, "s": summer},
++    )
++    autumn_tasks = [
++        await _new_task(db, course_id=autumn, order_position=i) for i in range(1, 4)
++    ]
++    # Задания старше сдач: иначе правило tsk-692 сочтёт их досыпанными после
++    # прохождения и простит — и выдача окажется пустой по другой причине.
++    await db.execute(
++        text(
++            "UPDATE tasks SET created_at = now() - interval '90 days' "
++            " WHERE course_id IN (:s, :a)"
++        ),
++        {"s": summer, "a": autumn},
++    )
++    await db.commit()
++    now = datetime.now(UTC)
++    # Летом решал в летнем, вчера — в осеннем.
++    summer_task = (
++        await db.execute(
++            text("SELECT id FROM tasks WHERE course_id = :c ORDER BY order_position LIMIT 1"),
++            {"c": summer},
++        )
++    ).scalar()
++    await _submit(
++        db, student_id=student_id, task_id=summer_task, course_id=summer,
++        is_correct=True, at=now - timedelta(days=60),
++    )
++    await _submit(
++        db, student_id=student_id, task_id=autumn_tasks[0], course_id=autumn,
++        is_correct=True, at=now - timedelta(days=1),
++    )
++    monkeypatch.setattr(settings_store, "get_str", lambda key: "")
++
++    picked = await homework_service._next_items(db, student_id=student_id, limit=2)
++
++    assert [i["item_id"] for i in picked] == autumn_tasks[1:3], (
++        "домой ушёл летний курс, а не тот, где ученик работает сейчас"
++    )
++
++
+ @pytest.mark.asyncio
+ async def test_content_added_after_the_topic_was_passed_is_not_homework(db):
+     """Задание, досыпанное в пройденную тему, домой не задаётся (tsk-838).

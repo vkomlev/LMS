@@ -1556,6 +1556,66 @@ async def test_student_outside_programs_still_gets_all_his_courses(db, monkeypat
 
 
 @pytest.mark.asyncio
+async def test_student_outside_programs_gets_the_course_he_works_on_now(db, monkeypatch):
+    """Вне программы домой идёт курс, где ученик работал ПОСЛЕДНИМ (tsk-913).
+
+    Правило оператора 12.09: «ДЗ должно быть по курсу, над которым сейчас
+    работает ученик». Курунов летом проходил чат-ботов и бросил, осенью
+    занялся ЕГЭ — а домой уходили хвосты чат-ботов, потому что они стояли
+    первыми по порядку записи.
+    """
+    from app.core import settings_store
+
+    student_id, summer = await _student_with_program(db, materials=0, tasks=3)
+    autumn = await _new_course(db, "осенний")
+    await _enroll(db, student_id=student_id, course_id=autumn)
+    # Летний курс записан раньше — по порядку записи он первый.
+    await db.execute(
+        text(
+            "UPDATE user_courses SET order_number = CASE course_id WHEN :s THEN 1 ELSE 2 END "
+            " WHERE user_id = :u"
+        ),
+        {"u": student_id, "s": summer},
+    )
+    autumn_tasks = [
+        await _new_task(db, course_id=autumn, order_position=i) for i in range(1, 4)
+    ]
+    # Задания старше сдач: иначе правило tsk-692 сочтёт их досыпанными после
+    # прохождения и простит — и выдача окажется пустой по другой причине.
+    await db.execute(
+        text(
+            "UPDATE tasks SET created_at = now() - interval '90 days' "
+            " WHERE course_id IN (:s, :a)"
+        ),
+        {"s": summer, "a": autumn},
+    )
+    await db.commit()
+    now = datetime.now(UTC)
+    # Летом решал в летнем, вчера — в осеннем.
+    summer_task = (
+        await db.execute(
+            text("SELECT id FROM tasks WHERE course_id = :c ORDER BY order_position LIMIT 1"),
+            {"c": summer},
+        )
+    ).scalar()
+    await _submit(
+        db, student_id=student_id, task_id=summer_task, course_id=summer,
+        is_correct=True, at=now - timedelta(days=60),
+    )
+    await _submit(
+        db, student_id=student_id, task_id=autumn_tasks[0], course_id=autumn,
+        is_correct=True, at=now - timedelta(days=1),
+    )
+    monkeypatch.setattr(settings_store, "get_str", lambda key: "")
+
+    picked = await homework_service._next_items(db, student_id=student_id, limit=2)
+
+    assert [i["item_id"] for i in picked] == autumn_tasks[1:3], (
+        "домой ушёл летний курс, а не тот, где ученик работает сейчас"
+    )
+
+
+@pytest.mark.asyncio
 async def test_content_added_after_the_topic_was_passed_is_not_homework(db):
     """Задание, досыпанное в пройденную тему, домой не задаётся (tsk-838).
 

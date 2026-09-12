@@ -72,6 +72,42 @@ _THEORY_AHEAD_LOOKAHEAD = 20
 _THEORY_AHEAD_MAX_ITEMS = 6
 
 
+#: Корни ученика вне программы — сначала тот, где он работал последним (tsk-913).
+#: Без активности вовсе — в порядке записи, как раньше: другого ориентира нет.
+_ROOTS_BY_ACTIVITY_SQL = """
+WITH RECURSIVE roots AS (
+    SELECT uc.course_id AS root, uc.course_id, uc.order_number
+      FROM user_courses uc
+     WHERE uc.user_id = :sid AND uc.is_active = true
+    UNION
+    SELECT r.root, cp.course_id, r.order_number
+      FROM roots r
+      JOIN course_parents cp ON cp.parent_course_id = r.course_id
+),
+last_task AS (
+    SELECT r.root, max(tr.submitted_at) AS at
+      FROM roots r
+      JOIN tasks t ON t.course_id = r.course_id
+      JOIN task_results tr ON tr.task_id = t.id AND tr.user_id = :sid
+     GROUP BY r.root
+),
+last_material AS (
+    SELECT r.root, max(coalesce(smp.completed_at, smp.skipped_at)) AS at
+      FROM roots r
+      JOIN materials m ON m.course_id = r.course_id
+      JOIN student_material_progress smp
+        ON smp.material_id = m.id AND smp.student_id = :sid
+     GROUP BY r.root
+)
+SELECT r.root
+  FROM (SELECT DISTINCT root, order_number FROM roots) r
+  LEFT JOIN last_task lt ON lt.root = r.root
+  LEFT JOIN last_material lm ON lm.root = r.root
+ ORDER BY greatest(lt.at, lm.at) DESC NULLS LAST,
+          r.order_number ASC NULLS LAST, r.root
+"""
+
+
 async def _program_roots(db: AsyncSession, *, student_id: int) -> list[int]:
     """Корневые курсы программы подготовки ученика (tsk-869).
 
@@ -144,17 +180,17 @@ async def _next_items(
     # есть все его курсы, других ориентиров нет.
     roots = await _program_roots(db, student_id=student_id)
     if not roots:
+        # tsk-913: вне программы курсы идут в порядке ПОСЛЕДНЕЙ АКТИВНОСТИ, а
+        # не записи. Правило оператора 12.09: «ДЗ должно быть по курсу, над
+        # которым сейчас работает ученик». Порядок записи это не отражает:
+        # первым в нём стоит то, на что записали раньше всех, — обычно летний
+        # курс, который забросили, — и домой уходили его хвосты, пока ученик
+        # уже занимался другим. Активность считается по ВСЕМУ дереву корня:
+        # ученик работает в подкурсах, а записан на корень.
         roots = list(
-            (
-                await db.execute(
-                    text(
-                        "SELECT uc.course_id FROM user_courses uc "
-                        " WHERE uc.user_id = :sid AND uc.is_active = true "
-                        " ORDER BY uc.order_number ASC NULLS LAST, uc.course_id"
-                    ),
-                    {"sid": student_id},
-                )
-            ).scalars().all()
+            (await db.execute(text(_ROOTS_BY_ACTIVITY_SQL), {"sid": student_id}))
+            .scalars()
+            .all()
         )
 
     # tsk-886: курсы, выведенные из работы, в подбор не идут — ни корнем, ни
