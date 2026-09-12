@@ -38768,6 +38768,143 @@
         }
       }
     },
+    "/api/v1/marketer/dashboard": {
+      "get": {
+        "tags": [
+          "marketer_dashboard"
+        ],
+        "summary": "Дашборд: лиды, клиенты/выпускники, начисления, конверсия",
+        "description": "Шесть плиток главной страницы кабинета: лиды, переход на платный тариф и в выпускники, начисления, конверсия лидов в клиенты, необработанные лиды, долг ушедших. Конверсия текущего месяца всегда занижена — часть лидов этого месяца станет клиентами позже (см. current_period_is_partial).",
+        "operationId": "dashboard_api_v1_marketer_dashboard_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "period",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Первое число месяца, по умолчанию — текущий",
+              "title": "Period"
+            },
+            "description": "Первое число месяца, по умолчанию — текущий"
+          },
+          {
+            "name": "months",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 24,
+              "minimum": 1,
+              "description": "Сколько месяцев истории отдать для графика",
+              "default": 6,
+              "title": "Months"
+            },
+            "description": "Сколько месяцев истории отдать для графика"
+          },
+          {
+            "name": "unprocessed_threshold_days",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 30,
+              "minimum": 1,
+              "description": "Лид старше скольких дней без примечания и привязки считается необработанным",
+              "default": 3,
+              "title": "Unprocessed Threshold Days"
+            },
+            "description": "Лид старше скольких дней без примечания и привязки считается необработанным"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarketerDashboardKpi"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/me/payments/gateway-status": {
       "get": {
         "tags": [
@@ -46758,6 +46895,23 @@
         "title": "CheckResultDetails",
         "description": "Расширенная информация о проверке ответа.\n\nПоля опциональны и используются по ситуации:\n- для SC/MC: correct_options, user_options;\n- для SA/SA_COM: matched_short_answer;\n- для TA: rubric_scores."
       },
+      "ClientsAlumniKpi": {
+        "properties": {
+          "clients": {
+            "$ref": "#/components/schemas/KpiSeries"
+          },
+          "alumni": {
+            "$ref": "#/components/schemas/KpiSeries"
+          }
+        },
+        "type": "object",
+        "required": [
+          "clients",
+          "alumni"
+        ],
+        "title": "ClientsAlumniKpi",
+        "description": "Одна плитка, два числа: переход на платный тариф и выпуск (tsk-925)."
+      },
       "ClosePeriodRequest": {
         "properties": {
           "period": {
@@ -47225,6 +47379,89 @@
         "type": "object",
         "title": "CodeReviewStatic",
         "description": "Разбор линтера — только для Python; для прочих языков секции нет."
+      },
+      "ConversionKpi": {
+        "properties": {
+          "current_rate_pct": {
+            "type": "number",
+            "title": "Current Rate Pct"
+          },
+          "previous_rate_pct": {
+            "type": "number",
+            "title": "Previous Rate Pct"
+          },
+          "delta_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delta Pct"
+          },
+          "current_leads_count": {
+            "type": "integer",
+            "title": "Current Leads Count"
+          },
+          "current_converted_count": {
+            "type": "integer",
+            "title": "Current Converted Count"
+          },
+          "current_period_is_partial": {
+            "type": "boolean",
+            "title": "Current Period Is Partial"
+          },
+          "history": {
+            "items": {
+              "$ref": "#/components/schemas/ConversionPoint"
+            },
+            "type": "array",
+            "title": "History"
+          }
+        },
+        "type": "object",
+        "required": [
+          "current_rate_pct",
+          "previous_rate_pct",
+          "current_leads_count",
+          "current_converted_count",
+          "current_period_is_partial",
+          "history"
+        ],
+        "title": "ConversionKpi",
+        "description": "Конверсия лидов в клиенты по когорте месяца появления лида.\n\n`current_period_is_partial` —tsk-925: конверсия текущего (незакрытого)\nмесяца всегда занижена относительно будущей, потому что часть лидов этого\nмесяца ещё станет клиентами позже. Это свойство метрики с задержкой, а не\nдефект расчёта — фронтенд обязан показать оговорку рядом с числом."
+      },
+      "ConversionPoint": {
+        "properties": {
+          "period": {
+            "type": "string",
+            "format": "date",
+            "title": "Period"
+          },
+          "rate_pct": {
+            "type": "number",
+            "title": "Rate Pct"
+          },
+          "leads_count": {
+            "type": "integer",
+            "title": "Leads Count"
+          },
+          "converted_count": {
+            "type": "integer",
+            "title": "Converted Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "period",
+          "rate_pct",
+          "leads_count",
+          "converted_count"
+        ],
+        "title": "ConversionPoint",
+        "description": "Конверсия одного месяца-когорты: сколько лидов, сколько из них стали клиентами."
       },
       "CourseCardPatch": {
         "properties": {
@@ -54337,6 +54574,49 @@
         "title": "IndividualReviewResponse",
         "description": "Ответ POST /learning/help-requests/{id}/request-individual-review."
       },
+      "KpiSeries": {
+        "properties": {
+          "current": {
+            "type": "integer",
+            "title": "Current"
+          },
+          "previous": {
+            "type": "integer",
+            "title": "Previous"
+          },
+          "delta_abs": {
+            "type": "integer",
+            "title": "Delta Abs"
+          },
+          "delta_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delta Pct"
+          },
+          "history": {
+            "items": {
+              "$ref": "#/components/schemas/MonthlyPoint"
+            },
+            "type": "array",
+            "title": "History"
+          }
+        },
+        "type": "object",
+        "required": [
+          "current",
+          "previous",
+          "delta_abs",
+          "history"
+        ],
+        "title": "KpiSeries",
+        "description": "Текущий период, прошлый — для справки, прирост, история по месяцам."
+      },
       "LastPositionRead": {
         "properties": {
           "course_id": {
@@ -55617,6 +55897,57 @@
           "message_ids"
         ],
         "title": "MarkReadRequest"
+      },
+      "MarketerDashboardKpi": {
+        "properties": {
+          "period": {
+            "type": "string",
+            "format": "date",
+            "title": "Period"
+          },
+          "leads": {
+            "$ref": "#/components/schemas/KpiSeries"
+          },
+          "clients_alumni": {
+            "$ref": "#/components/schemas/ClientsAlumniKpi"
+          },
+          "charges": {
+            "$ref": "#/components/schemas/KpiSeries"
+          },
+          "conversion": {
+            "$ref": "#/components/schemas/ConversionKpi"
+          },
+          "unprocessed_leads_count": {
+            "type": "integer",
+            "title": "Unprocessed Leads Count"
+          },
+          "unprocessed_leads_threshold_days": {
+            "type": "integer",
+            "title": "Unprocessed Leads Threshold Days"
+          },
+          "alumni_debt_total_minor": {
+            "type": "integer",
+            "title": "Alumni Debt Total Minor"
+          },
+          "alumni_debt_count": {
+            "type": "integer",
+            "title": "Alumni Debt Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "period",
+          "leads",
+          "clients_alumni",
+          "charges",
+          "conversion",
+          "unprocessed_leads_count",
+          "unprocessed_leads_threshold_days",
+          "alumni_debt_total_minor",
+          "alumni_debt_count"
+        ],
+        "title": "MarketerDashboardKpi",
+        "description": "Шесть плиток главной страницы кабинета маркетолога."
       },
       "MaterialBulkUpdateRequest": {
         "properties": {
@@ -57481,6 +57812,26 @@
         },
         "type": "object",
         "title": "MessageUpdate"
+      },
+      "MonthlyPoint": {
+        "properties": {
+          "period": {
+            "type": "string",
+            "format": "date",
+            "title": "Period"
+          },
+          "value": {
+            "type": "integer",
+            "title": "Value"
+          }
+        },
+        "type": "object",
+        "required": [
+          "period",
+          "value"
+        ],
+        "title": "MonthlyPoint",
+        "description": "Одна точка истории графика — месяц и значение."
       },
       "MyEntitlements": {
         "properties": {

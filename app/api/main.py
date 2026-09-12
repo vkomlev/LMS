@@ -499,6 +499,10 @@ app.include_router(me_payments_router, prefix=API_PREFIX)
 from app.api.v1.marketer_payments import router as marketer_payments_router
 app.include_router(marketer_payments_router, prefix=API_PREFIX)
 
+# tsk-925 (кабинет маркетолога): дашборд главной страницы — шесть KPI-плиток
+from app.api.v1.marketer_dashboard import router as marketer_dashboard_router
+app.include_router(marketer_dashboard_router, prefix=API_PREFIX)
+
 # tsk-010: оплата картой и приём уведомлений от платёжного сервиса.
 # Адрес уведомлений открыт (сервис стучится без нашей сессии) — защита в том,
 # что зачисление идёт только по перезапросу платежа у самого сервиса.
