@@ -14,6 +14,7 @@ from sqlalchemy import text
 
 from app.core.config import Settings
 from app.models.users import Users
+from app.services import subscription_service
 from app.services.auth import identity_link_service
 from app.services.auth.session_service import create_session
 
@@ -146,6 +147,31 @@ async def test_roster_cookie_foreign_forbidden(db, client):
         assert resp.status_code == 403, resp.text
     finally:
         await _cleanup(db, [tid])
+
+
+@pytest.mark.asyncio
+async def test_roster_marks_alumni_student(db, client):
+    """tsk-917 п.5: ростер отдаёт is_alumni — экран добавления на занятие
+    скрывает выпускников этим же признаком, а не своим способом определения.
+    """
+    tid, token = await _teacher_with_session(db)
+    sid_alumni = await _student(db)
+    sid_regular = await _student(db)
+    await _link(db, sid_alumni, tid)
+    await _link(db, sid_regular, tid)
+    await subscription_service.change_plan(db, sid_alumni, "alumni", reason="tsk-917 тест")
+    await db.commit()
+    try:
+        resp = await client.get(
+            f"/api/v1/users/{tid}/students",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200, resp.text
+        by_id = {u["id"]: u["is_alumni"] for u in resp.json()}
+        assert by_id[sid_alumni] is True
+        assert by_id[sid_regular] is False
+    finally:
+        await _cleanup(db, [tid, sid_alumni, sid_regular])
 
 
 @pytest.mark.asyncio

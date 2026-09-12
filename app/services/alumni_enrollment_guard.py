@@ -31,6 +31,7 @@ tsk-886, — не изобретать заново):
 from __future__ import annotations
 
 import logging
+from typing import Iterable
 
 from fastapi import HTTPException, status
 from sqlalchemy import text
@@ -70,6 +71,30 @@ async def is_alumni(db: AsyncSession, student_id: int) -> bool:
         )
     ).first()
     return row is not None and row.code == ALUMNI_PLAN_CODE
+
+
+async def load_alumni_ids(db: AsyncSession, student_ids: Iterable[int]) -> set[int]:
+    """Кто из перечисленных учеников сейчас — действующий «Выпускник».
+
+    Батч-версия `is_alumni` для списков (ростер преподавателя и т.п., tsk-917
+    п.5) — один запрос вместо N, тот же приём, что и
+    `course_activity_service.load_inactive_course_ids` для is_active курсов.
+    """
+    ids = list(student_ids)
+    if not ids:
+        return set()
+    rows = (
+        await db.execute(
+            text(
+                "SELECT s.student_id "
+                "  FROM student_subscription s "
+                "  JOIN subscription_plan p ON p.id = s.plan_id "
+                " WHERE s.student_id = ANY(:ids) AND s.ends_on IS NULL AND p.code = :code"
+            ),
+            {"ids": ids, "code": ALUMNI_PLAN_CODE},
+        )
+    ).scalars().all()
+    return {int(r) for r in rows}
 
 
 async def assert_not_alumni(db: AsyncSession, student_id: int, *, action: str) -> None:

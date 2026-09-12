@@ -5,9 +5,12 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from pydantic import Field
+
 from app.api.deps import get_async_db, get_bare_db, get_current_user, get_db, require_role
 from app.auth.current_user import CurrentUser
 from app.schemas.users import UserRead
+from app.services import alumni_enrollment_guard
 from app.services.student_teacher_links_service import (
     StudentTeacherLinksService,
 )
@@ -189,9 +192,24 @@ async def remove_student_teacher_link(
 
 # ---------- Преподаватель → его студенты ----------
 
+
+class TeacherStudentRead(UserRead):
+    """Ученик в ростере преподавателя — с признаком тарифа (tsk-917 п.5).
+
+    Отдельная схема, а не поле в общем `UserRead`: тариф вычисляется join'ом
+    к `student_subscription`, и считать его на КАЖДОЙ выдаче пользователя
+    (auth, профиль и т.п.) было бы лишним запросом там, где он не нужен.
+    """
+
+    is_alumni: bool = Field(
+        default=False,
+        description="Действующий тариф ученика — «Выпускник» (см. alumni_enrollment_guard)",
+    )
+
+
 @router.get(
     "/users/{teacher_id}/students",
-    response_model=List[UserRead],
+    response_model=List[TeacherStudentRead],
     summary="Список студентов преподавателя",
     description=(
         "Получить список всех студентов, привязанных к указанному преподавателю.\n\n"
@@ -223,7 +241,7 @@ async def list_teacher_students(
     teacher_id: int,
     current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_bare_db),
-) -> List[UserRead]:
+) -> List[TeacherStudentRead]:
     """
     Вернуть всех студентов, привязанных к преподавателю.
 
@@ -250,4 +268,12 @@ async def list_teacher_students(
         roles = set(await roles_service.get_user_role_names(db, current_user.id))
         if roles.isdisjoint({"methodist", "admin"}):
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
-    return await service.list_students(db, teacher_id)
+    students = await service.list_students(db, teacher_id)
+    alumni_ids = await alumni_enrollment_guard.load_alumni_ids(db, (s.id for s in students))
+    return [
+        TeacherStudentRead(
+            **UserRead.model_validate(s).model_dump(),
+            is_alumni=s.id in alumni_ids,
+        )
+        for s in students
+    ]
