@@ -967,6 +967,19 @@ async def get_occurrence_summary(
         minutes=occurrence.duration_minutes or _DEFAULT_LESSON_MINUTES
     )
 
+    # tsk-917 п.6: занятие уже ЗАВЕРШИЛОСЬ — в итогах остаются только те, кто
+    # ФАКТИЧЕСКИ был (`confirmed`/`completed`), а не все, кто был на него
+    # записан. `no_show` (не пришёл — авто по порогу или преподаватель
+    # отметил вручную), `declined` (отказался заранее) и `rescheduled`
+    # (перенесён на другое occurrence) — это не «фактически был». Пришедший
+    # НЕ по записи (добавлен ad-hoc и всё равно подтвердил явку) остаётся:
+    # у него та же строка со статусом `confirmed`, второго признака не
+    # заводим. Пока занятие идёт или ещё не началось — фильтр не действует:
+    # это сводка ДО занятия (tsk-022/tsk-410), там `scheduled` — норма, а не
+    # дефект, реальная явка ещё не наступила.
+    if lesson_ends_at <= now_utc:
+        participants = [p for p in participants if p.status in ("confirmed", "completed")]
+
     student_ids = [p.student_id for p in participants]
     profiles: dict[int, dict[str, Any]] = {}
     if student_ids:

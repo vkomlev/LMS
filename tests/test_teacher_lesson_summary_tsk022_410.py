@@ -1170,3 +1170,105 @@ async def test_progress_ignores_content_added_after_the_topic_was_passed(db, cli
         "прощённое задание предложено как следующий шаг"
     )
     assert all(b["task_id"] != fresh_task for b in (p["blocked_tasks"] or []))
+
+
+# ================ Фактическая явка в итогах занятия (tsk-917 п.6) ================
+
+
+@pytest.mark.asyncio
+async def test_summary_past_lesson_hides_those_not_actually_present(db, client):
+    """Прошедшее занятие: no_show/declined/rescheduled — не в итогах.
+
+    Это не то же самое, что «не записан на слот» — все четверо были
+    записаны участниками occurrence, но фактически присутствовал только
+    один из них (`confirmed`).
+    """
+    teacher_id, token = await _new_user(db, role="teacher", name="teach")
+    present, _ = await _new_user(db, role="student", name="present")
+    absent, _ = await _new_user(db, role="student", name="absent")
+    declined, _ = await _new_user(db, role="student", name="declined")
+    moved, _ = await _new_user(db, role="student", name="moved")
+    past = datetime.now(UTC) - timedelta(hours=2)
+
+    occ_id = await _create_occurrence_with_participant(
+        db, student_id=present, teacher_id=teacher_id, scheduled_at=past, status="confirmed",
+    )
+    db.add(LessonOccurrenceParticipant(occurrence_id=occ_id, student_id=absent, status="no_show"))
+    db.add(LessonOccurrenceParticipant(occurrence_id=occ_id, student_id=declined, status="declined"))
+    db.add(LessonOccurrenceParticipant(occurrence_id=occ_id, student_id=moved, status="rescheduled"))
+    await db.commit()
+
+    resp = await client.get(
+        f"/api/v1/teacher/lesson-occurrences/{occ_id}/summary",
+        params={"teacher_id": teacher_id, "include_progress": "false"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200, resp.text
+    ids = {p["student_id"] for p in resp.json()["participants"]}
+    assert ids == {present}, "в итогах прошедшего занятия должен остаться только фактически бывший"
+
+
+@pytest.mark.asyncio
+async def test_summary_future_lesson_still_shows_scheduled_not_started_ones(db, client):
+    """Занятие ещё не началось — фильтр не действует: это сводка ДО занятия
+    (tsk-022/410), `scheduled` тут норма, а не «фактически не было»."""
+    teacher_id, token = await _new_user(db, role="teacher", name="teach")
+    student_id, _ = await _new_user(db, role="student", name="stu")
+
+    occ_id = await _create_occurrence_with_participant(
+        db, student_id=student_id, teacher_id=teacher_id,
+        scheduled_at=datetime.now(UTC) + timedelta(hours=1), status="scheduled",
+    )
+    resp = await client.get(
+        f"/api/v1/teacher/lesson-occurrences/{occ_id}/summary",
+        params={"teacher_id": teacher_id, "include_progress": "false"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200, resp.text
+    ids = {p["student_id"] for p in resp.json()["participants"]}
+    assert ids == {student_id}
+
+
+@pytest.mark.asyncio
+async def test_summary_ongoing_lesson_still_shows_scheduled_ones(db, client):
+    """Занятие ИДЁТ (началось, но ещё не кончилось) — фильтр тоже не
+    действует: явка ещё может определиться (не спутать с планированием
+    будущего — здесь занятие уже наступило, но не закончилось)."""
+    teacher_id, token = await _new_user(db, role="teacher", name="teach")
+    student_id, _ = await _new_user(db, role="student", name="stu")
+
+    occ_id = await _create_occurrence_with_participant(
+        db, student_id=student_id, teacher_id=teacher_id,
+        scheduled_at=datetime.now(UTC) - timedelta(minutes=10),
+        status="scheduled", duration_minutes=60,
+    )
+    resp = await client.get(
+        f"/api/v1/teacher/lesson-occurrences/{occ_id}/summary",
+        params={"teacher_id": teacher_id, "include_progress": "false"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200, resp.text
+    ids = {p["student_id"] for p in resp.json()["participants"]}
+    assert ids == {student_id}, "занятие ещё идёт — рано считать явку решённой"
+
+
+@pytest.mark.asyncio
+async def test_summary_past_lesson_shows_present_regardless_of_how_they_joined(db, client):
+    """Пришедший не по записи (добавлен уже после начала, но подтвердил
+    явку) остаётся в итогах — признак ровно тот же (`confirmed`), второго
+    способа определения «пришёл» не заводим."""
+    teacher_id, token = await _new_user(db, role="teacher", name="teach")
+    ad_hoc, _ = await _new_user(db, role="student", name="adhoc")
+    past = datetime.now(UTC) - timedelta(hours=2)
+
+    occ_id = await _create_occurrence_with_participant(
+        db, student_id=ad_hoc, teacher_id=teacher_id, scheduled_at=past, status="confirmed",
+    )
+    resp = await client.get(
+        f"/api/v1/teacher/lesson-occurrences/{occ_id}/summary",
+        params={"teacher_id": teacher_id, "include_progress": "false"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200, resp.text
+    ids = {p["student_id"] for p in resp.json()["participants"]}
+    assert ids == {ad_hoc}
