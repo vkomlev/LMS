@@ -178,6 +178,39 @@ async def test_acknowledge_without_escalation_is_a_valid_outcome(db):
 
 
 @pytest.mark.asyncio
+async def test_acknowledged_signal_leaves_teacher_active_list(db):
+    """«Разберу сам» убирает сигнал из активного списка преподавателя (tsk-924).
+
+    Живая жалоба оператора: после комментария и «Разберу сам» карточка
+    оставалась на экране. Причина — эндпоинт `/learning-gaps/students` звал
+    `list_signals` с дефолтными статусами `("new", "acknowledged")`, а
+    `acknowledge_signal(escalate=False)` переводит сигнал именно в
+    `acknowledged` — то есть в статус, который сам же фильтр считал открытым.
+    `acknowledged` без эскалации — это принятое преподавателем решение, а не
+    промежуточный шаг, и держать его в списке было ошибкой видимости, а не
+    задержкой обновления кэша на клиенте.
+    """
+    course = await _course(db, "Разберу сам — уходит из списка")
+    student = await _user(db, "sig-ack-gone-student")
+    teacher = await _user(db, "sig-ack-gone-teacher")
+    try:
+        sid = await sig.upsert_signal(db, course_id=course, student_id=student,
+                                      submissions=9, students=1, wrong_rate=0.55)
+        await db.commit()
+        assert await sig.acknowledge_signal(
+            db, signal_id=sid, teacher_id=teacher, comment="Разберём на занятии",
+        )
+
+        # Тот же вызов, что делает GET /learning-gaps/students.
+        active = await sig.list_signals(db, for_student=True, statuses=("new",))
+        assert not any(s["id"] == sid for s in active), (
+            "сигнал остался в активном списке преподавателя после «Разберу сам»"
+        )
+    finally:
+        await _cleanup(db, [student, teacher], [course])
+
+
+@pytest.mark.asyncio
 async def test_dismissed_signal_keeps_the_reason(db):
     """Отклонение сохраняет причину: по ней видно, что датчик шумит.
 

@@ -101,10 +101,14 @@ async def list_student_signals(
 ) -> list[dict]:
     """Ученики, которым датчик предлагает повторение.
 
-    Показываются только открытые сигналы: разобранные уходят из списка, иначе
-    он копится и его перестают читать.
+    Показываются только НЕРАЗОБРАННЫЕ сигналы (`new`). Общий дефолт
+    `list_signals` («new», «acknowledged») здесь не годится: `acknowledged` —
+    это уже принятое преподавателем решение «разберусь сам» (tsk-924, живая
+    жалоба оператора), а не промежуточное состояние, и держать его в открытом
+    списке значит никогда не убирать карточку после этой самой кнопки.
+    `escalated`/`dismissed`/`resolved` и так не входят в дефолт.
     """
-    return _view(await signals.list_signals(db, for_student=True))
+    return _view(await signals.list_signals(db, for_student=True, statuses=("new",)))
 
 
 @router.get("/topics", summary="Темы под мини-курс (методисту)")

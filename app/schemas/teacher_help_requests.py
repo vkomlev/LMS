@@ -34,6 +34,14 @@ class HelpRequestListItem(BaseModel):
     attempt_id: Optional[int] = None
     created_at: datetime
     updated_at: datetime
+    closed_at: Optional[datetime] = Field(
+        None,
+        description=(
+            "Когда заявка закрыта; null — ещё открыта. tsk-924: список закрытых "
+            "заявок сортируется по этому полю (свежие сверху), без него клиенту "
+            "нечем было бы это проверить"
+        ),
+    )
     thread_id: Optional[int] = None
     event_id: Optional[int] = None
     # Этап 3.9: SLA/приоритет
@@ -95,7 +103,7 @@ class HelpRequestDetailResponse(HelpRequestListItem):
         ),
     )
     message: Optional[str] = None
-    closed_at: Optional[datetime] = None
+    # closed_at теперь в HelpRequestListItem (tsk-924) — наследуется отсюда.
     closed_by: Optional[int] = None
     resolution_comment: Optional[str] = None
     history: list[HelpRequestReplyItem] = Field(default_factory=list, description="Ответы преподавателей")

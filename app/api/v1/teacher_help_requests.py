@@ -201,7 +201,11 @@ async def help_requests_list(
         description="manual_help | blocked_limit | individual_review | all",
         alias="request_type",
     ),
-    sort: str = Query("priority", description="priority | created_at | due_at (этап 3.9)", alias="sort"),
+    sort: str = Query(
+        "priority",
+        description="priority | created_at | due_at (этап 3.9) | closed_at (tsk-924)",
+        alias="sort",
+    ),
     overdue: bool = Query(False, description="true — только просроченные (due_at < now), ортогонально типу (tsk-312)"),
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
@@ -223,10 +227,10 @@ async def help_requests_list(
                 "individual_review или all"
             ),
         )
-    if sort not in ("priority", "created_at", "due_at"):
+    if sort not in ("priority", "created_at", "due_at", "closed_at"):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="sort должен быть priority, created_at или due_at",
+            detail="sort должен быть priority, created_at, due_at или closed_at",
         )
     items, total = await list_help_requests(
         db, teacher_id, status_filter, request_type_filter, limit, offset, sort=sort, overdue=overdue

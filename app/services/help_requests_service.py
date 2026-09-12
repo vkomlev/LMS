@@ -418,11 +418,19 @@ async def can_access_help_request(
 
 
 def _order_by_sort(sort: str) -> str:
-    """ORDER BY для списка заявок (этап 3.9). sort: priority | created_at | due_at."""
+    """ORDER BY для списка заявок. sort: priority | created_at | due_at | closed_at.
+
+    `closed_at` (tsk-924) — для экрана закрытых заявок: свежие закрытия сверху.
+    `DESC`, в отличие от остальных веток — те ведут открытую очередь сверху
+    вниз по срочности, а закрытая уже не очередь, и первым естественно видеть
+    то, что случилось последним.
+    """
     if sort == "due_at":
         return "ORDER BY hr.due_at ASC NULLS LAST, hr.created_at ASC"
     if sort == "created_at":
         return "ORDER BY hr.created_at ASC"
+    if sort == "closed_at":
+        return "ORDER BY hr.closed_at DESC NULLS LAST, hr.id DESC"
     return "ORDER BY hr.priority ASC, hr.due_at ASC NULLS LAST, hr.created_at ASC"
 
 
@@ -507,7 +515,8 @@ async def list_help_requests(
                    -- Колонки в БД были с этапа 3.9, но наружу не отдавались —
                    -- поэтому второй преподаватель не видел занятость и брался
                    -- за ту же заявку.
-                   hr.claimed_by, hr.claim_expires_at, cu.full_name AS claimed_by_name
+                   hr.claimed_by, hr.claim_expires_at, cu.full_name AS claimed_by_name,
+                   hr.closed_at
             FROM help_requests hr
             LEFT JOIN users u ON u.id = hr.student_id
             LEFT JOIN tasks t ON t.id = hr.task_id
@@ -559,6 +568,8 @@ async def list_help_requests(
                 teacher_id,
                 now,
             ),
+            # tsk-924: дата закрытия — колонка 23, последняя в SELECT.
+            "closed_at": row[23] if len(row) > 23 else None,
         })
     return (items, total)
 

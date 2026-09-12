@@ -19325,11 +19325,11 @@
             "required": false,
             "schema": {
               "type": "string",
-              "description": "priority | created_at | due_at (этап 3.9)",
+              "description": "priority | created_at | due_at (этап 3.9) | closed_at (tsk-924)",
               "default": "priority",
               "title": "Sort"
             },
-            "description": "priority | created_at | due_at (этап 3.9)"
+            "description": "priority | created_at | due_at (этап 3.9) | closed_at (tsk-924)"
           },
           {
             "name": "overdue",
@@ -40547,7 +40547,7 @@
           "learning_gaps"
         ],
         "summary": "Кому нужно повторение (преподавателю)",
-        "description": "Ученики, которым датчик предлагает повторение.\n\nПоказываются только открытые сигналы: разобранные уходят из списка, иначе\nон копится и его перестают читать.",
+        "description": "Ученики, которым датчик предлагает повторение.\n\nПоказываются только НЕРАЗОБРАННЫЕ сигналы (`new`). Общий дефолт\n`list_signals` («new», «acknowledged») здесь не годится: `acknowledged` —\nэто уже принятое преподавателем решение «разберусь сам» (tsk-924, живая\nжалоба оператора), а не промежуточное состояние, и держать его в открытом\nсписке значит никогда не убирать карточку после этой самой кнопки.\n`escalated`/`dismissed`/`resolved` и так не входят в дефолт.",
         "operationId": "list_student_signals_api_v1_learning_gaps_students_get",
         "security": [
           {
@@ -52318,6 +52318,19 @@
             "format": "date-time",
             "title": "Updated At"
           },
+          "closed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closed At",
+            "description": "Когда заявка закрыта; null — ещё открыта. tsk-924: список закрытых заявок сортируется по этому полю (свежие сверху), без него клиенту нечем было бы это проверить"
+          },
           "thread_id": {
             "anyOf": [
               {
@@ -52436,18 +52449,6 @@
               }
             ],
             "title": "Message"
-          },
-          "closed_at": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "date-time"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Closed At"
           },
           "closed_by": {
             "anyOf": [
@@ -52645,6 +52646,19 @@
             "type": "string",
             "format": "date-time",
             "title": "Updated At"
+          },
+          "closed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closed At",
+            "description": "Когда заявка закрыта; null — ещё открыта. tsk-924: список закрытых заявок сортируется по этому полю (свежие сверху), без него клиенту нечем было бы это проверить"
           },
           "thread_id": {
             "anyOf": [
