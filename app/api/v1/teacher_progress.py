@@ -177,6 +177,13 @@ class StudentCourseRef(BaseModel):
 
     course_id: int
     title: Optional[str] = None
+    is_current: bool = Field(
+        default=False,
+        description=(
+            "Курс, над которым ученик работает сейчас (последняя активность "
+            "по дереву курса, tsk-913/tsk-917) — ровно один True в списке"
+        ),
+    )
 
 
 class ProgressTreeResponse(BaseModel):

@@ -208,8 +208,12 @@ async def list_accessible_student_courses(
     Источник — активные записи ``user_courses`` (то, на что ученик записан),
     отфильтрованные тем же ACL, что и правка прогресса.
 
-    :returns: список ``{"course_id": int, "title": str}`` в порядке
-        ``user_courses.order_number``.
+    :returns: список ``{"course_id": int, "title": str, "is_current": bool}``
+        в порядке ``user_courses.order_number``. Ровно один элемент несёт
+        ``is_current=True`` — курс, над которым ученик работает сейчас
+        (последняя активность по всему его дереву, тот же принцип, что и в
+        подборе домашней работы вне программы — tsk-913/tsk-917 п.4). Без
+        активности вовсе — первый по порядку записи, как и было раньше.
     """
     rows = (
         await db.execute(
@@ -229,6 +233,21 @@ async def list_accessible_student_courses(
         cid = int(row["course_id"])
         if await can_edit_progress(db, current_user, student_id, cid):
             result.append({"course_id": cid, "title": row["title"]})
+    if not result:
+        return result
+
+    # tsk-917 п.4: локальный импорт — `homework_service` тянет
+    # `homework_volume_service`, а тот на уровне модуля импортирует ИЗ ЭТОГО
+    # модуля (`REQUIREMENT_LEVELS`); импорт наверху файла дал бы цикл.
+    from app.services import homework_service
+
+    ordered_ids = await homework_service.order_roots_by_activity(db, student_id=student_id)
+    accessible_ids = {c["course_id"] for c in result}
+    current_id = next((cid for cid in ordered_ids if cid in accessible_ids), None)
+    if current_id is None:
+        current_id = result[0]["course_id"]
+    for course in result:
+        course["is_current"] = course["course_id"] == current_id
     return result
 
 

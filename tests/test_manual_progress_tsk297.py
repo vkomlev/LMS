@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import random
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi import HTTPException
@@ -1266,11 +1267,33 @@ async def test_api_course_selector_marks_course_with_latest_activity_as_current(
         )
         await db.commit()
 
-        # Сначала решает в корне, ПОТОМ во втором курсе — второй курс должен
-        # стать активным, несмотря на то, что записан позже.
-        await _submit_result(db, ids["student"], ids["task_root_a"], score=10)
-        await db.commit()
-        await _submit_result(db, ids["student"], second_task, score=10)
+        # Решал в корне ДВА дня назад, во втором курсе — ВЧЕРА: второй курс
+        # должен стать активным, несмотря на то, что записан позже.
+        # Явные метки времени, а не `now()`: тест идёт в одной транзакции,
+        # `now()` внутри нее не меняется между запросами (та же грабля, что
+        # уже обходили explicit `at=` в тесте tsk-913).
+        async def submit_at(task_id: int, course_id: int, when) -> None:
+            attempt_id = (
+                await db.execute(
+                    text(
+                        "INSERT INTO attempts (user_id, course_id, root_course_id, source_system) "
+                        "VALUES (:u, :c, :c, 'test') RETURNING id"
+                    ),
+                    {"u": ids["student"], "c": course_id},
+                )
+            ).scalar()
+            await db.execute(
+                text(
+                    "INSERT INTO task_results (user_id, task_id, attempt_id, score, max_score, "
+                    "  is_correct, submitted_at, received_at, count_retry, checked_at, source_system) "
+                    "VALUES (:u, :t, :a, 10, 10, true, :at, :at, 0, :at, 'test')"
+                ),
+                {"u": ids["student"], "t": task_id, "a": attempt_id, "at": when},
+            )
+
+        now = datetime.now(timezone.utc)
+        await submit_at(ids["task_root_a"], ids["root"], now - timedelta(days=2))
+        await submit_at(second_task, second, now - timedelta(days=1))
         await db.commit()
 
         headers = {"Authorization": f"Bearer {graph['tokens']['teacher']}"}

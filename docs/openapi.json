@@ -63931,6 +63931,12 @@
               }
             ],
             "title": "Title"
+          },
+          "is_current": {
+            "type": "boolean",
+            "title": "Is Current",
+            "description": "Курс, над которым ученик работает сейчас (последняя активность по дереву курса, tsk-913/tsk-917) — ровно один True в списке",
+            "default": false
           }
         },
         "type": "object",

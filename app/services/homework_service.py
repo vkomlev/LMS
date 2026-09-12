@@ -108,6 +108,23 @@ SELECT r.root
 """
 
 
+async def order_roots_by_activity(db: AsyncSession, *, student_id: int) -> list[int]:
+    """Корневые курсы ученика (все ``user_courses``) в порядке последней
+    активности по своему дереву — первый элемент и есть «курс, над которым
+    ученик работает сейчас» (tsk-913/tsk-917). Без активности вовсе — в
+    порядке записи, как раньше: другого ориентира нет.
+
+    Публичная обёртка над `_ROOTS_BY_ACTIVITY_SQL`, вынесенная из `_next_items`
+    для переиспользования на экране прогресса (tsk-917, п.4) — тот же принцип,
+    не второй способ определения «активного курса».
+    """
+    return list(
+        (await db.execute(text(_ROOTS_BY_ACTIVITY_SQL), {"sid": student_id}))
+        .scalars()
+        .all()
+    )
+
+
 async def _program_roots(db: AsyncSession, *, student_id: int) -> list[int]:
     """Корневые курсы программы подготовки ученика (tsk-869).
 
@@ -187,11 +204,7 @@ async def _next_items(
         # курс, который забросили, — и домой уходили его хвосты, пока ученик
         # уже занимался другим. Активность считается по ВСЕМУ дереву корня:
         # ученик работает в подкурсах, а записан на корень.
-        roots = list(
-            (await db.execute(text(_ROOTS_BY_ACTIVITY_SQL), {"sid": student_id}))
-            .scalars()
-            .all()
-        )
+        roots = await order_roots_by_activity(db, student_id=student_id)
 
     # tsk-886: курсы, выведенные из работы, в подбор не идут — ни корнем, ни
     # темой внутри дерева. Каскада нет (граница tsk-873): выключенный корень не
