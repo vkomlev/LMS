@@ -50,6 +50,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # tsk-867: вес элемента в секундах — измеритель, ничего не решающий сам.
+from app.services.content_grace_service import graced_for_roots
 from app.services.task_effort_service import (
     MATERIAL_EFFORT_SECONDS_PROXY,
     EffortTable,
@@ -159,6 +160,7 @@ course_tasks AS (
       JOIN tree ON tree.member_course_id = t.course_id
       LEFT JOIN difficulties d ON d.id = t.difficulty_id
      WHERE COALESCE(t.is_active, true) AND t.requirement_level = ANY(:levels)
+       AND t.id <> ALL(CAST(:graced_tasks AS int[]))
 ),
 tasks_done AS (
     SELECT DISTINCT tr.task_id AS id
@@ -210,6 +212,7 @@ SELECT m.course_id, count(*) AS n
   FROM materials m
   JOIN tree ON tree.member_course_id = m.course_id
  WHERE COALESCE(m.is_active, true) AND m.requirement_level = ANY(:levels)
+   AND m.id <> ALL(CAST(:graced_materials AS int[]))
    AND NOT EXISTS (
        SELECT 1 FROM student_material_progress smp
         WHERE smp.student_id = :student_id AND smp.material_id = m.id
@@ -433,6 +436,8 @@ async def compute_scope(
     # ученика бюджет всё равно считался бы в штуках.
     if effort_table is None and fact_minutes_per_week is not None:
         effort_table = await load_effort_table(db)
+    # tsk-912: досыпанное в пройденные темы — не остаток (правило tsk-692).
+    graced = await graced_for_roots(db, student_id, root_ids)
     rows = (
         await db.execute(
             text(_SCOPE_SQL),
@@ -442,6 +447,7 @@ async def compute_scope(
                 "levels": _requirement_levels(),
                 "core_codes": list(CORE_DIFFICULTIES),
                 "drill_codes": list(DRILL_DIFFICULTIES),
+                "graced_tasks": list(graced.tasks),
             },
         )
     ).mappings().all()
@@ -455,6 +461,7 @@ async def compute_scope(
                     "student_id": student_id,
                     "root_ids": root_ids,
                     "levels": _requirement_levels(),
+                    "graced_materials": list(graced.materials),
                 },
             )
         ).mappings()

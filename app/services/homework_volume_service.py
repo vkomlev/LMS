@@ -101,6 +101,7 @@ from app.services.task_effort_service import (
     load_effort_table,
 )
 # tsk-741: «что вообще входит в программу» — одно правило на весь проект.
+from app.services.content_grace_service import graced_for_roots
 from app.services.manual_progress_service import REQUIREMENT_LEVELS
 # tsk-741: «занятие пропущено» — тоже одно правило; перенос пропуском не считается.
 from app.services.student_dashboard_service import MISSED_STATUSES
@@ -161,13 +162,38 @@ EXAM_SPRINT_FROM_MONTH = 3
 #: вариантами, домашняя работа становится добавкой, а не основой.
 TARGET_PER_WEEK_EXAM_SPRINT = 6
 
-#: Насколько больше задаём за КАЖДОЕ пропущенное занятие: материал, который
-#: разбирали без него, придётся пройти самому. Доля от обычного объёма.
-CATCH_UP_PER_MISSED_LESSON = 0.25
 #: Потолок нагона. Пропустивший занятия — чаще всего и есть отстающий, и
 #: удвоенная выдача для него не «нагон», а повод бросить совсем. Полтора
 #: объёма человек ещё видит выполнимым.
 MAX_CATCH_UP_FACTOR = 1.5
+
+# --- Пропуски (tsk-914) ---------------------------------------------------
+#
+# Правило оператора 12.09: «пропуск добавляет к ДЗ норматив урока — но только
+# если пропуск не погашен». До этого нагон был множителем (+25% за пропуск),
+# а «пропуск» — любым `no_show` в окне. Оба конца были неверны:
+#
+# * множитель не отвечает на вопрос «сколько работы не случилось» — а не
+#   случился ровно один час занятия, и добавить надо его;
+# * `no_show` бывает призраком. Курунов переехал с четверга на субботу, слот
+#   четверга ему выключили, но уже созданные занятия остались с ним как
+#   участником — два `no_show` при двух отработанных субботних часах в
+#   неделю. Или преподаватель не отметил явку, а человек работал весь час.
+#
+# Поэтому пропуск считается ПО НЕДЕЛЕ: сколько часов положено по расписанию
+# (активные слоты) против сколько отработано — пришёл по отметке, либо
+# работал в окне любого часа, своего или чужого. Непогашено только то, чего
+# не хватает до плана недели.
+
+#: Со скольких сдач и отметок материалов внутри окна часа считаем, что человек
+#: на нём был — независимо от отметки явки. Медиана по посещённым часам на
+#: проде 12.09 — семь сдач за час; три — треть часа работы, случайно столько
+#: не набирается.
+LESSON_PRESENCE_MIN_ITEMS = 3
+#: Вес одного часа занятия в минутах работы, когда у ученика нет своих
+#: посещённых часов в окне (новичок или не ходит вовсе). Медиана по школе,
+#: замер 12.09 по посещённым часам последних четырёх недель.
+LESSON_NORM_FALLBACK_MINUTES = 24
 
 #: Остатка программы меньше, чем на столько недель — пора добавлять курс.
 #: Сигнал поднимается заранее: «программа кончилась» узнавать в тот день, когда
@@ -276,8 +302,8 @@ class VolumePlan:
     #: Занятий пропущено за окно расчёта. Перенесённые сюда не входят.
     missed_lessons: int
     #: Во сколько раз объём увеличен, чтобы нагнать пропущенное; 1.0 — не
-    #: увеличен. Считается только по НАСТОЯЩИМ пропускам: перенёс занятие —
-    #: нагонять нечего, оно состоится.
+    #: увеличен. tsk-914: производная от `catch_up_minutes`, оставлена ради
+    #: прежних читателей поля.
     catch_up_factor: float
     #: На сколько элементов в неделю человек не дотягивает до нормы своего
     #: класса; 0 — дотягивает. Это и есть сигнал преподавателю: не «завалить
@@ -315,6 +341,16 @@ class VolumePlan:
     #: Во сколько минут оценивается весь непройденный остаток программы.
     #: Оценка, а не измерение: вес теории здесь — прокси ([[tsk-868]]).
     remaining_minutes: Optional[int] = None
+    #: tsk-914: пропусков, которых не хватает до плана недели по расписанию —
+    #: только за них и нагоняем. `missed_lessons` минус погашенные: пришёл
+    #: на другой час, работал в окне своего без отметки, переехал в другой слот.
+    missed_unpaid: int = 0
+    #: tsk-914: вес одного часа занятия для этого ученика в минутах работы —
+    #: столько добавляется за каждый непогашенный пропуск. Свой замер по
+    #: посещённым часам окна, иначе `LESSON_NORM_FALLBACK_MINUTES`.
+    lesson_norm_minutes: Optional[int] = None
+    #: tsk-914: сколько минут добавлено к недельной выдаче за пропуски.
+    catch_up_minutes: int = 0
 
     def as_details(self) -> dict[str, Any]:
         """Снимок для `homework_assignment.volume_details` (JSON-совместимый)."""
@@ -516,11 +552,13 @@ course_tasks AS (
     SELECT DISTINCT t.id
       FROM tasks t JOIN tree ON tree.member_course_id = t.course_id
      WHERE COALESCE(t.is_active, true) AND t.requirement_level = ANY(:levels)
+       AND t.id <> ALL(CAST(:graced_tasks AS int[]))
 ),
 course_materials AS (
     SELECT DISTINCT m.id
       FROM materials m JOIN tree ON tree.member_course_id = m.course_id
      WHERE COALESCE(m.is_active, true) AND m.requirement_level = ANY(:levels)
+       AND m.id <> ALL(CAST(:graced_materials AS int[]))
 ),
 tasks_done AS (
     SELECT DISTINCT tr.task_id AS id
@@ -590,6 +628,8 @@ async def program_for_student(
     else:
         return None
 
+    # tsk-912: досыпанное в пройденные темы — не остаток (правило tsk-692).
+    graced = await graced_for_roots(db, student_id, root_ids)
     row = (
         await db.execute(
             text(_PROGRAM_REMAINING_SQL),
@@ -597,6 +637,8 @@ async def program_for_student(
                 "student_id": student_id,
                 "root_ids": root_ids,
                 "levels": list(REQUIREMENT_LEVELS),
+                "graced_tasks": list(graced.tasks),
+                "graced_materials": list(graced.materials),
             },
         )
     ).mappings().one()
@@ -668,6 +710,7 @@ course_tasks AS (
      WHERE COALESCE(t.is_active, true)
        AND t.requirement_level = ANY(:levels)
        AND {non_service_course_filter('t')}
+       AND t.id <> ALL(CAST(:graced_tasks AS int[]))
 ),
 course_materials AS (
     SELECT DISTINCT m.id
@@ -675,6 +718,7 @@ course_materials AS (
      WHERE COALESCE(m.is_active, true)
        AND m.requirement_level = ANY(:levels)
        AND {non_service_course_filter('m')}
+       AND m.id <> ALL(CAST(:graced_materials AS int[]))
 ),
 tasks_done AS (
     SELECT DISTINCT tr.task_id AS id
@@ -785,12 +829,14 @@ course_tasks AS (
       FROM tasks t JOIN tree ON tree.member_course_id = t.course_id
      WHERE COALESCE(t.is_active, true) AND t.requirement_level = ANY(:levels)
        AND {non_service_course_filter('t')}
+       AND t.id <> ALL(CAST(:graced_tasks AS int[]))
 ),
 course_materials AS (
     SELECT DISTINCT m.id
       FROM materials m JOIN tree ON tree.member_course_id = m.course_id
      WHERE COALESCE(m.is_active, true) AND m.requirement_level = ANY(:levels)
        AND {non_service_course_filter('m')}
+       AND m.id <> ALL(CAST(:graced_materials AS int[]))
 ),
 tasks_done AS (
     SELECT DISTINCT tr.task_id AS id
@@ -908,6 +954,7 @@ async def weighted_remaining_seconds(
     подготовки). `None` в ответе значит «мерить нечем», а не «ничего не
     осталось».
     """
+    graced = await graced_for_roots(db, student_id, root_ids)
     rows = (
         await db.execute(
             text(_REMAINING_WEIGHTS_SQL),
@@ -915,6 +962,8 @@ async def weighted_remaining_seconds(
                 "student_id": student_id,
                 "root_ids": root_ids,
                 "levels": list(REQUIREMENT_LEVELS),
+                "graced_tasks": list(graced.tasks),
+                "graced_materials": list(graced.materials),
             },
         )
     ).mappings().all()
@@ -1017,18 +1066,102 @@ SELECT count(DISTINCT tr.task_id) AS n
    )
 """
 
-#: Пропущенные занятия за то же окно. Перенос и перерыв не считаются: правило
-#: берётся из `student_dashboard_service.MISSED_STATUSES`, а не пишется заново —
-#: разъехавшись, «пропустил» на дашборде и «нагоняем» в домашней работе стали
-#: бы двумя разными числами про одно и то же.
-_MISSED_SQL = """
-SELECT count(*) AS missed
-  FROM lesson_occurrence_participant lop
-  JOIN lesson_occurrence lo ON lo.id = lop.occurrence_id
- WHERE lop.student_id = :student_id
-   AND lo.scheduled_at >= :since
-   AND lo.scheduled_at <= :now
-   AND lop.status = ANY(:missed_statuses)
+
+#: Посещаемость по неделям окна (tsk-914): план из активных слотов, свои
+#: пропуски и ОТРАБОТАННЫЕ часы. Отработанный час — свой с отметкой «пришёл»
+#: либо любой час (свой без отметки или чужой), в окне которого ученик сдал
+#: или отметил не меньше `LESSON_PRESENCE_MIN_ITEMS`. Часы одного времени
+#: считаются один раз: в субботу в десять идут три группы, а человек — один.
+_WEEKLY_ATTENDANCE_SQL = """
+WITH bounds AS (
+    SELECT idx,
+           CAST(:since AS timestamptz) + CAST(idx || ' weeks' AS interval) AS starts_at,
+           CAST(:since AS timestamptz) + CAST((idx + 1) || ' weeks' AS interval) AS ends_at
+      FROM generate_series(0, :weeks - 1) AS idx
+),
+own AS (
+    SELECT lo.id, lo.scheduled_at,
+           lo.scheduled_at + CAST(COALESCE(lo.duration_minutes, 60) || ' minutes' AS interval) AS ends_at,
+           lop.status
+      FROM lesson_occurrence_participant lop
+      JOIN lesson_occurrence lo ON lo.id = lop.occurrence_id
+     WHERE lop.student_id = :student_id
+       AND lo.scheduled_at >= :since AND lo.scheduled_at <= :now
+),
+hours AS (
+    -- Любой час школы в окне, в котором ученик работал.
+    SELECT DISTINCT lo.scheduled_at
+      FROM lesson_occurrence lo
+     WHERE lo.scheduled_at >= :since AND lo.scheduled_at <= :now
+       AND (
+           SELECT count(*) FROM (
+               SELECT tr.task_id AS id FROM task_results tr
+                WHERE tr.user_id = :student_id
+                  AND tr.submitted_at >= lo.scheduled_at
+                  AND tr.submitted_at < lo.scheduled_at
+                      + CAST(COALESCE(lo.duration_minutes, 60) || ' minutes' AS interval)
+               UNION
+               SELECT smp.material_id FROM student_material_progress smp
+                WHERE smp.student_id = :student_id AND smp.status = 'completed'
+                  AND smp.completed_at >= lo.scheduled_at
+                  AND smp.completed_at < lo.scheduled_at
+                      + CAST(COALESCE(lo.duration_minutes, 60) || ' minutes' AS interval)
+           ) w
+       ) >= :min_items
+    UNION
+    SELECT o.scheduled_at FROM own o WHERE o.status = 'confirmed'
+)
+SELECT b.idx,
+       (SELECT count(*) FROM own o
+         WHERE o.scheduled_at >= b.starts_at AND o.scheduled_at < b.ends_at
+           AND o.status = ANY(:missed_statuses)) AS missed,
+       (SELECT count(*) FROM own o
+         WHERE o.scheduled_at >= b.starts_at AND o.scheduled_at < b.ends_at) AS own_hours,
+       (SELECT count(*) FROM own o
+         WHERE o.scheduled_at >= b.starts_at AND o.scheduled_at < b.ends_at
+           AND o.status = 'confirmed') AS attended_own,
+       (SELECT count(*) FROM hours h
+         WHERE h.scheduled_at >= b.starts_at AND h.scheduled_at < b.ends_at) AS attended,
+       (SELECT count(*) FROM lesson_slot_student lss
+          JOIN lesson_slot ls ON ls.id = lss.slot_id
+         WHERE lss.student_id = :student_id AND lss.is_active AND ls.is_active) AS planned
+  FROM bounds b
+ ORDER BY b.idx
+"""
+
+#: Сделанное в окнах СВОИХ посещённых часов, в разрезе рода элемента — вес
+#: одного часа занятия для этого ученика (tsk-914). Тот же разрез, что у
+#: `_FACT_WEIGHTS_SQL`: взвешивается той же таблицей.
+_OWN_LESSON_WEIGHTS_SQL = f"""
+WITH RECURSIVE {SERVICE_COURSES_CTE},
+lessons AS (
+    SELECT lo.scheduled_at AS starts_at,
+           lo.scheduled_at
+             + CAST(COALESCE(lo.duration_minutes, 60) || ' minutes' AS interval) AS ends_at
+      FROM lesson_occurrence_participant lop
+      JOIN lesson_occurrence lo ON lo.id = lop.occurrence_id
+     WHERE lop.student_id = :student_id AND lop.status = 'confirmed'
+       AND lo.scheduled_at >= :since AND lo.scheduled_at <= :now
+)
+SELECT 'task' AS kind, t.difficulty_id, t.task_content->>'type' AS task_type,
+       count(DISTINCT tr.task_id) AS n
+  FROM task_results tr
+  JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
+  JOIN tasks t ON t.id = tr.task_id
+ WHERE tr.user_id = :student_id AND tr.is_correct = true
+   AND {real_student_results_filter('tr')}
+   AND {non_service_course_filter('t')}
+   AND EXISTS (SELECT 1 FROM lessons l WHERE tr.submitted_at BETWEEN l.starts_at AND l.ends_at)
+ GROUP BY 1, 2, 3
+UNION ALL
+SELECT 'material', NULL::int, NULL::text, count(DISTINCT smp.material_id)
+  FROM student_material_progress smp
+  JOIN materials m ON m.id = smp.material_id
+ WHERE smp.student_id = :student_id AND smp.status = 'completed'
+   AND smp.completed_at IS NOT NULL
+   AND {real_student_material_filter('smp')}
+   AND {non_service_course_filter('m')}
+   AND EXISTS (SELECT 1 FROM lessons l WHERE smp.completed_at BETWEEN l.starts_at AND l.ends_at)
 """
 
 #: Доля верных за то же окно — поправка на качество.
@@ -1044,6 +1177,45 @@ SELECT count(*) AS total,
    AND {non_service_course_filter('t')}
    AND tr.submitted_at >= :since
 """
+
+
+def _unpaid_misses(rows: list[Any]) -> tuple[int, int]:
+    """(всего пропусков, непогашенных) по недельным строкам посещаемости.
+
+    Непогашено за неделю — сколько часов не хватило до плана по расписанию,
+    но не больше, чем было пропусков: план два, отработал ноль, а занятие в
+    неделе было одно (праздник) — непогашен один, а не два. Плана нет (ученик
+    без слотов, разовые занятия) — планом считаются его собственные часы этой
+    недели: другого ориентира нет.
+    """
+    missed_total = 0
+    unpaid_total = 0
+    for row in rows:
+        missed = int(row["missed"] or 0)
+        attended = int(row["attended"] or 0)
+        planned = int(row["planned"] or 0) or int(row["own_hours"] or 0)
+        missed_total += missed
+        unpaid_total += min(missed, max(planned - attended, 0))
+    return missed_total, unpaid_total
+
+
+def _lesson_norm_minutes(
+    rows: list[Any], *, confirmed_hours: int, table: EffortTable
+) -> Optional[int]:
+    """Вес одного посещённого часа в минутах работы; None — вес не измерен.
+
+    Своих посещённых часов в окне нет — берём школьную заглушку
+    `LESSON_NORM_FALLBACK_MINUTES`: нагонять новичку всё равно есть что.
+    """
+    if table.overall is None:
+        return None
+    if confirmed_hours <= 0:
+        return LESSON_NORM_FALLBACK_MINUTES
+    seconds = _seconds_for_rows(list(rows), table) or 0.0
+    per_hour = seconds / 60 / confirmed_hours
+    # Час без единой сдачи в окне (преподаватель объяснял у доски) не должен
+    # обнулять нагон: ниже заглушки не опускаемся.
+    return max(int(round(per_hour)), 1) if per_hour >= 1 else LESSON_NORM_FALLBACK_MINUTES
 
 
 async def compute(
@@ -1086,11 +1258,19 @@ async def compute(
             text("SELECT school_grade FROM users WHERE id = :uid"), {"uid": student_id}
         )
     ).scalar()
+    # tsk-912: прощённое по всем корням ученика — один раз на расчёт; кеш
+    # правила живёт в сессии, повторные вызовы ниже его не пересчитывают.
+    graced_all = await graced_for_roots(db, student_id)
 
     totals = (
         await db.execute(
             text(_REMAINING_SQL),
-            {"student_id": student_id, "levels": list(REQUIREMENT_LEVELS)},
+            {
+                "student_id": student_id,
+                "levels": list(REQUIREMENT_LEVELS),
+                "graced_tasks": list(graced_all.tasks),
+                "graced_materials": list(graced_all.materials),
+            },
         )
     ).mappings().one()
     # Остаток ВСЕХ курсов ученика — потолок выдачи: больше, чем осталось, не
@@ -1150,19 +1330,30 @@ async def compute(
         )
     ).mappings().one()
 
-    missed_lessons = int(
-        (
-            await db.execute(
-                text(_MISSED_SQL),
-                {
-                    "student_id": student_id,
-                    "since": since,
-                    "now": moment,
-                    "missed_statuses": list(MISSED_STATUSES),
-                },
-            )
-        ).scalar()
-        or 0
+    # tsk-914: пропуски по неделям — план из расписания против отработанного.
+    attendance = (
+        await db.execute(
+            text(_WEEKLY_ATTENDANCE_SQL),
+            {
+                "student_id": student_id,
+                "since": since,
+                "now": moment,
+                "weeks": weeks_window,
+                "missed_statuses": list(MISSED_STATUSES),
+                "min_items": LESSON_PRESENCE_MIN_ITEMS,
+            },
+        )
+    ).mappings().all()
+    missed_lessons, missed_unpaid = _unpaid_misses(attendance)
+    lesson_rows = (
+        await db.execute(
+            text(_OWN_LESSON_WEIGHTS_SQL),
+            {"student_id": student_id, "since": since, "now": moment},
+        )
+    ).mappings().all()
+    confirmed_hours = sum(int(r["attended_own"] or 0) for r in attendance)
+    lesson_norm_minutes = _lesson_norm_minutes(
+        lesson_rows, confirmed_hours=confirmed_hours, table=effort_table
     )
     total_submissions = int(quality["total"] or 0)
     correct_ratio = (
@@ -1321,13 +1512,29 @@ async def compute(
     # пройти самому (требование оператора 02.09). Нагон применяется ПОСЛЕ
     # ограничения «не больше, чем человек тянет»: то ограничение защищает от
     # перегруза в обычной жизни, а здесь мы сознательно просим больше — но не
-    # вдвое, а в полтора раза максимум. Перенесённые занятия не считаются: они
-    # состоятся, нагонять нечего.
-    catch_up = min(
-        1.0 + CATCH_UP_PER_MISSED_LESSON * missed_lessons, MAX_CATCH_UP_FACTOR
+    # вдвое, а в полтора раза максимум.
+    #
+    # tsk-914: за КАЖДЫЙ непогашенный пропуск добавляется вес одного часа
+    # занятия — столько работы и не случилось. Штучная шкала — ограждение,
+    # и час здесь переводится в элементы по общей медиане веса.
+    catch_up_items = 0
+    if missed_unpaid > 0 and lesson_norm_minutes is not None:
+        per_item_minutes = (effort_table.overall or 0.0) / 60 or 1.0
+        catch_up_items = int(round(
+            missed_unpaid * lesson_norm_minutes / per_item_minutes
+        ))
+    elif missed_unpaid > 0:
+        catch_up_items = missed_unpaid * MIN_PER_WEEK
+    volume_before_catch_up = volume
+    if catch_up_items > 0:
+        volume = int(round(min(
+            volume + catch_up_items,
+            volume * MAX_CATCH_UP_FACTOR,
+            float(ceiling),
+        )))
+    catch_up = (
+        round(volume / volume_before_catch_up, 2) if volume_before_catch_up > 0 else 1.0
     )
-    if catch_up > 1.0:
-        volume = int(round(min(volume * catch_up, float(ceiling))))
 
     # Больше, чем осталось в программе, задать нельзя — иначе выдача попросит
     # то, чего нет, и пункты в ней окажутся невыполнимыми.
@@ -1337,6 +1544,7 @@ async def compute(
     # зависела от того, чем её меряют. Ведёт минутная; штучная остаётся
     # ограждением при наборе состава (см. `homework_service._next_items`).
     minutes_volume: Optional[int] = None
+    catch_up_minutes = 0
     if effort_measured and target_minutes is not None and fact_minutes is not None:
         # tsk-896: ДОМА нужно не всё, что нужно за неделю, — часть человек
         # закрывает на занятии. Замечание оператора 10.09: «у большинства два
@@ -1370,12 +1578,26 @@ async def compute(
             min(raw_minutes, float(minutes_ceiling)),
             float(MIN_MINUTES_PER_WEEK),
         )))
-        if catch_up > 1.0:
+        # tsk-914: минутная шкала ведущая — здесь нагон и есть «вес часа за
+        # каждый непогашенный пропуск», с теми же двумя потолками.
+        base_minutes = minutes_volume
+        if missed_unpaid > 0 and lesson_norm_minutes is not None:
+            wanted = missed_unpaid * lesson_norm_minutes
             minutes_volume = int(round(min(
-                minutes_volume * catch_up, float(minutes_ceiling)
+                minutes_volume + wanted,
+                minutes_volume * MAX_CATCH_UP_FACTOR,
+                float(minutes_ceiling),
             )))
+        # Больше остатка не задать — и нагон не исключение: у того, кому
+        # осталось ноль, нагонять нечего, сколько бы он ни пропустил.
         if remaining_minutes is not None:
-            minutes_volume = min(minutes_volume, int(round(remaining_minutes)))
+            cap = int(round(remaining_minutes))
+            minutes_volume = min(minutes_volume, cap)
+            base_minutes = min(base_minutes, cap)
+        catch_up_minutes = max(minutes_volume - base_minutes, 0)
+        catch_up = (
+            round(minutes_volume / base_minutes, 2) if base_minutes > 0 else 1.0
+        )
 
     #: Насколько человек не дотягивает до нормы своего класса. Считается по
     #: ФАКТУ, а не по выданному объёму: объём — это то, что мы задали, а
@@ -1450,6 +1672,9 @@ async def compute(
         remaining_minutes=(
             int(round(remaining_minutes)) if remaining_minutes is not None else None
         ),
+        missed_unpaid=missed_unpaid,
+        lesson_norm_minutes=lesson_norm_minutes,
+        catch_up_minutes=catch_up_minutes,
     )
 
 

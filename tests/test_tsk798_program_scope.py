@@ -63,10 +63,13 @@ async def _new_task(db, *, course_id: int, code: str, pos: int) -> int:
         (
             await db.execute(
                 text(
+                    # tsk-912: содержимое старше любых сдач в тестах — иначе
+                    # правило tsk-692 сочтёт его досыпанным после прохождения
+                    # и простит, а остаток программы окажется пустым.
                     "INSERT INTO tasks (task_content, solution_rules, course_id, "
-                    "  difficulty_id, external_uid, max_score, order_position) "
+                    "  difficulty_id, external_uid, max_score, order_position, created_at) "
                     "VALUES (CAST(:tc AS jsonb), CAST(:sr AS jsonb), :cid, :did, "
-                    "  :uid, 10, :pos) RETURNING id"
+                    "  :uid, 10, :pos, now() - interval '400 days') RETURNING id"
                 ),
                 {
                     "tc": json.dumps({"type": "SA", "stem": f"{_TAG} {pos}"}),
@@ -518,8 +521,8 @@ async def test_engine_hides_a_dropped_number_completely(db):
     dropped = await _subcourse(db, root, "выпадает", priority=9, theory=20)
     await db.execute(
         text(
-            "INSERT INTO materials (course_id, title, type, content, order_position) "
-            "VALUES (:c, :t, 'text', CAST(:body AS jsonb), 1)"
+            "INSERT INTO materials (course_id, title, type, content, order_position, created_at) "
+            "VALUES (:c, :t, 'text', CAST(:body AS jsonb), 1, now() - interval '400 days')"
         ),
         {"c": dropped, "t": f"{_TAG} теория", "body": json.dumps({"body": "x"})},
     )

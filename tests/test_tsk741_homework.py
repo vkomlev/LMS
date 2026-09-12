@@ -101,7 +101,12 @@ async def _enroll(db, *, student_id: int, course_id: int) -> None:
     await db.commit()
 
 
-async def _new_task(db, *, course_id: int, order_position: int) -> int:
+async def _new_task(
+    db, *, course_id: int, order_position: int, fresh: bool = False
+) -> int:
+    """Задание курса. По умолчанию — старше любых сдач в тестах (tsk-912):
+    иначе правило tsk-692 сочтёт его досыпанным после прохождения и простит.
+    `fresh=True` — создано «сейчас», для тестов самого правила."""
     difficulty_id = (
         await db.execute(text("SELECT id FROM difficulties ORDER BY id LIMIT 1"))
     ).scalar()
@@ -109,11 +114,13 @@ async def _new_task(db, *, course_id: int, order_position: int) -> int:
         await db.execute(
             text(
                 "INSERT INTO tasks (task_content, solution_rules, course_id, difficulty_id, "
-                "  external_uid, max_score, order_position) "
-                "VALUES (CAST(:tc AS jsonb), CAST(:sr AS jsonb), :cid, :did, :uid, 10, :pos) "
+                "  external_uid, max_score, order_position, created_at) "
+                "VALUES (CAST(:tc AS jsonb), CAST(:sr AS jsonb), :cid, :did, :uid, 10, :pos, "
+                "  CASE WHEN :fresh THEN now() ELSE now() - interval '400 days' END) "
                 "RETURNING id"
             ),
             {
+                "fresh": fresh,
                 "tc": json.dumps({"type": "SA", "stem": f"{_TAG} задача {order_position}"}),
                 "sr": json.dumps({"max_score": 10, "accepted_answers": ["42"]}),
                 "cid": course_id,
@@ -125,14 +132,18 @@ async def _new_task(db, *, course_id: int, order_position: int) -> int:
     ).scalar()
 
 
-async def _new_material(db, *, course_id: int, order_position: int) -> int:
+async def _new_material(
+    db, *, course_id: int, order_position: int, fresh: bool = False
+) -> int:
     return (
         await db.execute(
             text(
-                "INSERT INTO materials (course_id, title, type, content, order_position) "
-                "VALUES (:c, :t, 'text', CAST(:content AS jsonb), :pos) RETURNING id"
+                "INSERT INTO materials (course_id, title, type, content, order_position, created_at) "
+                "VALUES (:c, :t, 'text', CAST(:content AS jsonb), :pos, "
+                "  CASE WHEN :fresh THEN now() ELSE now() - interval '400 days' END) RETURNING id"
             ),
             {
+                "fresh": fresh,
                 "c": course_id,
                 "t": f"{_TAG} материал {order_position}",
                 "content": json.dumps({"body": "x"}),
@@ -1012,7 +1023,13 @@ async def test_missed_lesson_increases_the_volume(db):
 
     assert before.missed_lessons == 0 and before.catch_up_factor == 1.0
     assert after.missed_lessons == 1
-    assert after.catch_up_factor == 1.25
+    # tsk-914: не множитель, а вес часа занятия — и только за непогашенный.
+    assert after.missed_unpaid == 1
+    # Вес часа есть только при измеренном весе заданий; без телеметрии нагон
+    # идёт в штуках — но идёт.
+    if after.effort_measured:
+        assert after.lesson_norm_minutes is not None and after.lesson_norm_minutes > 0
+    assert after.catch_up_factor > 1.0
     assert after.volume_per_week > before.volume_per_week
 
 
@@ -1070,7 +1087,9 @@ async def test_catch_up_has_a_ceiling(db):
             days_ago=days_ago, status="no_show",
         )
     plan = await homework_volume_service.compute(db, student_id=student_id)
-    assert plan.missed_lessons == 5
+    assert plan.missed_lessons == 5 and plan.missed_unpaid == 5
+    assert plan.catch_up_factor <= homework_volume_service.MAX_CATCH_UP_FACTOR
+    # Пять часов по весу часа — заведомо больше полутора объёмов: упёрлись.
     assert plan.catch_up_factor == homework_volume_service.MAX_CATCH_UP_FACTOR
 
 
@@ -1086,6 +1105,136 @@ async def test_attended_lesson_changes_nothing(db):
     after = await homework_volume_service.compute(db, student_id=student_id)
     assert after.missed_lessons == 0
     assert after.volume_per_week == before.volume_per_week
+
+
+async def _slot(db, *, teacher_id: int, student_id: int, weekday: int, hour: int) -> int:
+    """Постоянный слот расписания с учеником — «план недели» (tsk-914)."""
+    slot_id = (
+        await db.execute(
+            text(
+                "INSERT INTO lesson_slot (teacher_id, weekday, start_time, duration_minutes, "
+                "  timezone, is_active, created_by) "
+                "VALUES (:t, :wd, make_time(:h, 0, 0), 60, 'Europe/Moscow', true, :t) RETURNING id"
+            ),
+            {"t": teacher_id, "wd": weekday, "h": hour},
+        )
+    ).scalar()
+    await db.execute(
+        text(
+            "INSERT INTO lesson_slot_student (slot_id, student_id, is_active, added_by) "
+            "VALUES (:s, :u, true, :t)"
+        ),
+        {"s": slot_id, "u": student_id, "t": teacher_id},
+    )
+    await db.commit()
+    return slot_id
+
+
+async def _work_in_window(db, *, student_id: int, course_id: int, at: datetime, n: int = 3):
+    """`n` верных сдач внутри часа, начавшегося в `at` (tsk-914)."""
+    for i in range(n):
+        task_id = await _new_task(db, course_id=course_id, order_position=500 + i)
+        await _submit(
+            db, student_id=student_id, task_id=task_id, course_id=course_id,
+            is_correct=True, at=at + timedelta(minutes=10 + i * 5),
+        )
+
+
+@pytest.mark.asyncio
+async def test_miss_is_paid_off_by_the_week_hours(db):
+    """Пропуск погашен, если часов за неделю отработано не меньше плана (tsk-914).
+
+    Курунов 12.09: переехал с четверга на субботу, слот четверга выключен, но
+    уже созданные занятия четверга остались с ним как участником — два
+    `no_show` при двух отработанных субботних часах в неделю. Оператор:
+    «пропуск добавляет норматив урока, но только если он не погашен».
+    """
+    student_id, _ = await _student_with_pace(db)
+    teacher_id, _ = await _new_user(db, role="teacher", name="teach")
+    # План — два часа в неделю.
+    await _slot(db, teacher_id=teacher_id, student_id=student_id, weekday=5, hour=10)
+    await _slot(db, teacher_id=teacher_id, student_id=student_id, weekday=5, hour=11)
+    # На той же неделе: призрачный пропуск и два отработанных часа.
+    await _lesson_with_status(
+        db, student_id=student_id, teacher_id=teacher_id, days_ago=4, status="no_show",
+    )
+    await _lesson_with_status(
+        db, student_id=student_id, teacher_id=teacher_id, days_ago=2, status="confirmed",
+    )
+    await _lesson_with_status(
+        db, student_id=student_id, teacher_id=teacher_id, days_ago=1, status="confirmed",
+    )
+    plan = await homework_volume_service.compute(db, student_id=student_id)
+
+    assert plan.missed_lessons == 1
+    assert plan.missed_unpaid == 0, "пропуск погашен двумя отработанными часами, а нагон остался"
+    assert plan.catch_up_minutes == 0 and plan.catch_up_factor == 1.0
+
+
+@pytest.mark.asyncio
+async def test_unmarked_but_worked_hour_is_attended(db):
+    """Не отметили явку, но человек работал весь час — он был (tsk-914)."""
+    student_id, course_id = await _student_with_pace(db)
+    teacher_id, _ = await _new_user(db, role="teacher", name="teach")
+    occurrence_id = await _lesson_with_status(
+        db, student_id=student_id, teacher_id=teacher_id, days_ago=3, status="no_show",
+    )
+    starts_at = (
+        await db.execute(
+            text("SELECT scheduled_at FROM lesson_occurrence WHERE id = :o"),
+            {"o": occurrence_id},
+        )
+    ).scalar()
+    await _work_in_window(db, student_id=student_id, course_id=course_id, at=starts_at)
+
+    plan = await homework_volume_service.compute(db, student_id=student_id)
+    assert plan.missed_lessons == 1 and plan.missed_unpaid == 0
+
+
+@pytest.mark.asyncio
+async def test_work_during_someone_elses_hour_pays_off_a_miss(db):
+    """Пропустил свой час, но отработал чужой — пропуск погашен (tsk-914).
+
+    Оператор 12.09: «ученик штатно не перенёс занятие, но фактически был на
+    другом часе — это тоже нужно отслеживать».
+    """
+    student_id, course_id = await _student_with_pace(db)
+    other_id, _ = await _new_user(db, name="other")
+    teacher_id, _ = await _new_user(db, role="teacher", name="teach")
+    await _lesson_with_status(
+        db, student_id=student_id, teacher_id=teacher_id, days_ago=3, status="no_show",
+    )
+    # Чужой час на той же неделе: наш ученик в нём не участник, но работал.
+    foreign_at = datetime.now(UTC) - timedelta(days=2)
+    await _create_occurrence(
+        db, student_id=other_id, teacher_id=teacher_id, scheduled_at=foreign_at,
+    )
+    await _work_in_window(db, student_id=student_id, course_id=course_id, at=foreign_at)
+
+    plan = await homework_volume_service.compute(db, student_id=student_id)
+    assert plan.missed_lessons == 1 and plan.missed_unpaid == 0
+
+
+@pytest.mark.asyncio
+async def test_two_submissions_do_not_make_an_hour(db):
+    """Две случайные сдачи в окне чужого часа — ещё не «был на занятии»."""
+    student_id, course_id = await _student_with_pace(db)
+    other_id, _ = await _new_user(db, name="other")
+    teacher_id, _ = await _new_user(db, role="teacher", name="teach")
+    await _lesson_with_status(
+        db, student_id=student_id, teacher_id=teacher_id, days_ago=3, status="no_show",
+    )
+    foreign_at = datetime.now(UTC) - timedelta(days=2)
+    await _create_occurrence(
+        db, student_id=other_id, teacher_id=teacher_id, scheduled_at=foreign_at,
+    )
+    await _work_in_window(
+        db, student_id=student_id, course_id=course_id, at=foreign_at,
+        n=homework_volume_service.LESSON_PRESENCE_MIN_ITEMS - 1,
+    )
+
+    plan = await homework_volume_service.compute(db, student_id=student_id)
+    assert plan.missed_unpaid == 1
 
 
 # ============ Сводка занятия: ДЗ на момент ЭТОГО занятия ============
@@ -1580,15 +1729,6 @@ async def test_student_outside_programs_gets_the_course_he_works_on_now(db, monk
     autumn_tasks = [
         await _new_task(db, course_id=autumn, order_position=i) for i in range(1, 4)
     ]
-    # Задания старше сдач: иначе правило tsk-692 сочтёт их досыпанными после
-    # прохождения и простит — и выдача окажется пустой по другой причине.
-    await db.execute(
-        text(
-            "UPDATE tasks SET created_at = now() - interval '90 days' "
-            " WHERE course_id IN (:s, :a)"
-        ),
-        {"s": summer, "a": autumn},
-    )
     await db.commit()
     now = datetime.now(UTC)
     # Летом решал в летнем, вчера — в осеннем.
@@ -1644,7 +1784,7 @@ async def test_content_added_after_the_topic_was_passed_is_not_homework(db):
     await db.commit()
 
     # Тема пройдена — и только теперь в курс добавляют новое задание.
-    fresh = await _new_task(db, course_id=course_id, order_position=99)
+    fresh = await _new_task(db, course_id=course_id, order_position=99, fresh=True)
     await db.commit()
 
     # Сначала убеждаемся, что правило вообще сработало на этих данных — иначе
@@ -1661,6 +1801,58 @@ async def test_content_added_after_the_topic_was_passed_is_not_homework(db):
     assert fresh not in [i["item_id"] for i in picked], (
         "домой ушло то, что система сама считает для этого ученика необязательным"
     )
+
+
+@pytest.mark.asyncio
+async def test_forgiven_content_is_not_in_the_remaining_program(db, monkeypatch):
+    """Досыпанное в пройденную тему не идёт в остаток, из которого считается
+    норма (tsk-912).
+
+    Разбор Литовкина 12.09: курс Python пройден целиком, но в остатке сидело
+    21 задание, добавленное в закрытые темы, — норма требовала за них
+    ≈ 4%, а задать их выдача не могла (она правило tsk-692 соблюдает).
+    Одна величина, три потребителя: остаток всех курсов, остаток программы
+    подготовки и подрезка программы — вычет один и тот же.
+    """
+    from app.core import settings_store
+    from app.services.content_grace_service import compute_graced_items, grace_cache
+
+    student_id, course_id = await _student_with_program(db, materials=0, tasks=3)
+    now = datetime.now(UTC)
+    old_tasks = (
+        await db.execute(
+            text("SELECT id FROM tasks WHERE course_id = :c ORDER BY order_position"),
+            {"c": course_id},
+        )
+    ).scalars().all()
+    for task_id in old_tasks:
+        await _submit(
+            db, student_id=student_id, task_id=int(task_id), course_id=course_id,
+            is_correct=True, at=now - timedelta(days=45),
+        )
+    await db.commit()
+    monkeypatch.setattr(settings_store, "get_str", lambda key: "")
+
+    before = await homework_volume_service.compute(db, student_id=student_id)
+    assert before.remaining_items == 0, "курс пройден целиком — остатка быть не должно"
+
+    # Тема пройдена — досыпаем два задания.
+    fresh = [
+        await _new_task(db, course_id=course_id, order_position=p, fresh=True)
+        for p in (98, 99)
+    ]
+    await db.commit()
+    # Кеш правила живёт в сессии (tsk-662): первый расчёт выше его заполнил,
+    # а в бою добавление заданий и расчёт нормы — разные запросы.
+    grace_cache(db).clear()
+    graced = await compute_graced_items(db, student_id, course_id)
+    assert set(fresh) <= set(graced.tasks), "правило tsk-692 не сработало — тест ничего не ловит"
+
+    after = await homework_volume_service.compute(db, student_id=student_id)
+    assert after.remaining_items == 0, (
+        "остаток вырос на прощённые задания — норму считают за то, что задать нельзя"
+    )
+    assert after.remaining_minutes in (None, 0)
 
 
 @pytest.mark.asyncio

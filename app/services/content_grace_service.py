@@ -287,6 +287,40 @@ async def compute_graced_items(
     return result
 
 
+async def graced_for_roots(
+    db: AsyncSession, student_id: int, root_ids: Optional[Iterable[int]] = None
+) -> GracedItems:
+    """Прощённое по НЕСКОЛЬКИМ корням разом — для расчётов остатка (tsk-912).
+
+    `root_ids=None` — все действующие записи ученика на курсы. Нужен там, где
+    остаток считается одним SQL по всему дереву: норма домашней работы
+    (`homework_volume_service`) и подрезка программы (`program_scope_service`).
+    Обе считали остаток ВМЕСТЕ с прощёнными элементами, хотя сама выдача их
+    не берёт (`homework_service._next_items`): норму требовали за то, что
+    задать не могли. У Литовкина 12.09 в остатке сидело 21 задание Python
+    при курсе, пройденном целиком, — ≈4% нормы.
+    """
+    if root_ids is None:
+        root_ids = (
+            await db.execute(
+                text(
+                    "SELECT course_id FROM user_courses "
+                    " WHERE user_id = :sid AND is_active = true"
+                ),
+                {"sid": student_id},
+            )
+        ).scalars().all()
+    tasks: Set[int] = set()
+    materials: Set[int] = set()
+    for root_id in root_ids:
+        graced = await compute_graced_items(db, student_id, int(root_id))
+        tasks |= graced.tasks
+        materials |= graced.materials
+    if not tasks and not materials:
+        return EMPTY_GRACE
+    return GracedItems(tasks=frozenset(tasks), materials=frozenset(materials))
+
+
 async def _compute(
     db: AsyncSession, student_id: int, root_course_id: int
 ) -> GracedItems:
