@@ -7,7 +7,8 @@
 - сохранение и правка: часы перезаписываются целиком, история копится;
 - аудитория опроса — выпускник (`alumni`) и демо (`demo`) в неё не входят,
   и флаг `schedule_preference_pending` в `GET /me` для них молчит;
-- тестовый тариф (`test`) — опрос видит, но в счёт не идёт (tsk-712);
+- тестовый тариф (`test`) — опрос видит, но в счёт не идёт (tsk-712), и с
+  2026-09-12 напоминаний по нему не получает (tsk-923);
 - сводка охвата: заполнившие, молчащие, спрос по часам;
 - гейт сводки — методист/админ, ученику она недоступна.
 """
@@ -461,6 +462,31 @@ async def test_reminder_goes_only_to_silent_and_respects_cooldown(db):
 
 
 @pytest.mark.asyncio
+async def test_reminder_skips_test_plan(db):
+    """tsk-923: тариф `test` больше не получает напоминания (отмена tsk-712).
+
+    Опрос ему по-прежнему показывается в кабинете (`is_audience`/`is_pending`
+    не менялись, см. `test_test_plan_sees_survey_but_is_not_counted`) — молчит
+    только канал напоминаний.
+    """
+    from app.services import schedule_preference_reminder_service as reminder
+
+    test_id = await _create_user(db, role="student", prefix="tsk923-rem-test")
+    await _assign_plan(db, test_id, "test")
+    real_id = await _create_user(db, role="student", prefix="tsk923-rem-real")
+    await _assign_plan(db, real_id, "base_legacy")
+
+    silent = await reminder.list_silent(db)
+    ids = {row["id"] for row in silent}
+    assert test_id not in ids, "тестовая учётка больше не в аудитории напоминаний"
+    assert real_id in ids, "реального молчащего ученика напоминание по-прежнему находит"
+
+    result = await reminder.enqueue_reminders(db)
+    assert test_id not in result["students"]
+    assert real_id in result["students"]
+
+
+@pytest.mark.asyncio
 async def test_reminder_dry_run_writes_nothing(db):
     from app.services import schedule_preference_reminder_service as reminder
 
@@ -591,3 +617,123 @@ async def test_clear_preference_is_closed_for_students(client, db):
         headers={"Authorization": f"Bearer {token}"},
     )
     assert resp.status_code == 403
+
+
+# ─────────────── отметка «получено вручную» (tsk-923 п.1) ───────────────
+
+
+@pytest.mark.asyncio
+async def test_acknowledge_removes_from_silent_without_fake_preference(db):
+    """Отметка убирает из «не ответил», но не выдумывает анкету."""
+    from app.services import schedule_preference_reminder_service as reminder
+
+    student_id = await _create_user(db, role="student", prefix="tsk923-ack")
+    await _assign_plan(db, student_id, "base_legacy")
+    staff_id = await _create_user(db, role="methodist", prefix="tsk923-ack-staff")
+
+    before = await schedule_preference_service.get_preference(db, student_id)
+    assert before["is_filled"] is False
+    assert await schedule_preference_service.is_pending(db, student_id) is True
+
+    after = await schedule_preference_service.acknowledge_preference(
+        db, student_id, acknowledged_by=staff_id
+    )
+    # get_preference по-прежнему говорит «анкеты нет» — отметка не подменяет
+    # содержание, только снимает вопрос «кто ответил».
+    assert after["is_filled"] is False
+    assert after["hours"] == []
+    assert await schedule_preference_service.is_pending(db, student_id) is False
+
+    summary = await schedule_preference_service.get_summary(db)
+    row = next(r for r in summary["students"] if r["student_id"] == student_id)
+    assert row["is_filled"] is True
+    assert row["acknowledged_manually"] is True
+    assert row["lessons_per_week"] is None, "часов и занятий в неделю у отметки нет"
+
+    silent = await reminder.list_silent(db)
+    assert student_id not in {s["id"] for s in silent}
+
+
+@pytest.mark.asyncio
+async def test_acknowledge_is_idempotent_and_removable(db):
+    student_id = await _create_user(db, role="student", prefix="tsk923-ack-idem")
+
+    await schedule_preference_service.acknowledge_preference(db, student_id, acknowledged_by=None)
+    await schedule_preference_service.acknowledge_preference(db, student_id, acknowledged_by=None)
+
+    summary = await schedule_preference_service.get_summary(db)
+    row = next(r for r in summary["students"] if r["student_id"] == student_id)
+    assert row["is_filled"] is True
+
+    await schedule_preference_service.remove_acknowledgement(db, student_id)
+    summary_after = await schedule_preference_service.get_summary(db)
+    row_after = next(r for r in summary_after["students"] if r["student_id"] == student_id)
+    assert row_after["is_filled"] is False
+    assert row_after["acknowledged_manually"] is False
+
+    with pytest.raises(SchedulePreferenceError):
+        await schedule_preference_service.remove_acknowledgement(db, student_id)
+
+
+@pytest.mark.asyncio
+async def test_real_answer_clears_stale_acknowledgement(db):
+    """Если ученик всё же заполнил форму — отметка больше не нужна и снимается сама."""
+    student_id = await _create_user(db, role="student", prefix="tsk923-ack-real")
+    await schedule_preference_service.acknowledge_preference(db, student_id, acknowledged_by=None)
+
+    await schedule_preference_service.save_preference(
+        db, student_id, _body(), changed_by=student_id
+    )
+
+    summary = await schedule_preference_service.get_summary(db)
+    row = next(r for r in summary["students"] if r["student_id"] == student_id)
+    assert row["is_filled"] is True
+    assert row["acknowledged_manually"] is False, "теперь это настоящая анкета, не отметка"
+
+
+@pytest.mark.asyncio
+async def test_ack_endpoint_gated_to_staff(client, db):
+    student_id = await _create_user(db, role="student", prefix="tsk923-ack-gate")
+    token, _, _ = await create_session(db, user_id=student_id)
+
+    resp = await client.post(
+        f"/api/v1/methodist/schedule-preferences/{student_id}/ack",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_ack_endpoint_marks_and_unmarks(client, db):
+    methodist_id = await _create_user(db, role="methodist", prefix="tsk923-ack-meth")
+    token, _, _ = await create_session(db, user_id=methodist_id)
+    student_id = await _create_user(db, role="student", prefix="tsk923-ack-ep")
+
+    resp = await client.post(
+        f"/api/v1/methodist/schedule-preferences/{student_id}/ack",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200, resp.text
+
+    summary = await client.get(
+        "/api/v1/methodist/schedule-preferences/summary",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    row = next(r for r in summary.json()["students"] if r["student_id"] == student_id)
+    assert row["is_filled"] is True
+    assert row["acknowledged_manually"] is True
+
+    resp = await client.delete(
+        f"/api/v1/methodist/schedule-preferences/{student_id}/ack",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200, resp.text
+
+    summary_after = await client.get(
+        "/api/v1/methodist/schedule-preferences/summary",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    row_after = next(
+        r for r in summary_after.json()["students"] if r["student_id"] == student_id
+    )
+    assert row_after["is_filled"] is False

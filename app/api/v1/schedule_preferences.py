@@ -6,9 +6,11 @@
 - ``GET  /me/schedule-preference/history``  — история собственных правок
 
 Методист/админ:
-- ``GET  /methodist/schedule-preferences/summary``            — охват опроса
-- ``GET  /methodist/schedule-preferences/{student_id}``       — пожелание ученика
-- ``GET  /methodist/schedule-preferences/{student_id}/history`` — его история
+- ``GET    /methodist/schedule-preferences/summary``              — охват опроса
+- ``GET    /methodist/schedule-preferences/{student_id}``         — пожелание ученика
+- ``POST   /methodist/schedule-preferences/{student_id}/ack``     — отметить «получено вручную» (tsk-923)
+- ``DELETE /methodist/schedule-preferences/{student_id}/ack``     — снять эту отметку (tsk-923)
+- ``GET    /methodist/schedule-preferences/{student_id}/history`` — его история
 
 Гейт сводки — тот же, что у расписания (`methodist`/`admin`): вёрстку делает
 методист, и охват опроса нужен ему же. Преподаватель сюда не входит по той же
@@ -215,6 +217,47 @@ async def clear_student_schedule_preference(
             student_id,
             changed_by=None if current_user.is_service else current_user.id,
         )
+    except SchedulePreferenceError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return SchedulePreferenceRead(**data)
+
+
+@router.post(
+    "/methodist/schedule-preferences/{student_id}/ack",
+    response_model=SchedulePreferenceRead,
+)
+async def acknowledge_student_schedule_preference(
+    student_id: int = Path(..., ge=1),
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(_SUMMARY_GATE),
+) -> SchedulePreferenceRead:
+    """Отметить «ответил вручную» — телеграм, лично, любым способом (tsk-923).
+
+    Не создаёт анкету и не выдумывает часы за ученика: убирает его только из
+    списка «не ответил» и из адресатов напоминаний. Верстальщик по-прежнему
+    сверяется с содержанием пожелания там, где оно есть, — отметка не то же
+    самое, что «пожелание учтено при вёрстке».
+    """
+    data = await schedule_preference_service.acknowledge_preference(
+        db,
+        student_id,
+        acknowledged_by=None if current_user.is_service else current_user.id,
+    )
+    return SchedulePreferenceRead(**data)
+
+
+@router.delete(
+    "/methodist/schedule-preferences/{student_id}/ack",
+    response_model=SchedulePreferenceRead,
+)
+async def remove_student_schedule_preference_ack(
+    student_id: int = Path(..., ge=1),
+    db: AsyncSession = Depends(get_async_db),
+    _current_user: CurrentUser = Depends(_SUMMARY_GATE),
+) -> SchedulePreferenceRead:
+    """Снять отметку «получено вручную» — ученик снова считается не ответившим."""
+    try:
+        data = await schedule_preference_service.remove_acknowledgement(db, student_id)
     except SchedulePreferenceError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     return SchedulePreferenceRead(**data)

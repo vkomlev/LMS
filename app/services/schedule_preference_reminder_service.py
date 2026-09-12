@@ -5,6 +5,12 @@
 зайдёт в кабинет, не увидит и её — а опрос нужен со ВСЕХ. Решение оператора
 2026-08-25: добавить второй канал, Telegram.
 
+**Тариф `test` (tsk-923, 2026-09-12).** До этой даты тестовые учётки нарочно
+получали напоминания (tsk-712) — проверяли, что канал доставки вообще
+работает. Оператор решение отменил: канал проверен, дальше это просто шум.
+Аудитория `list_silent` теперь та же, что и у охвата (`NOT_COUNTED_PLAN_CODES`
+из `schedule_preference_service`) — плашка в кабинете для `test` не менялась.
+
 **Как устроено.** Новых труб не строится. Напоминание кладётся строкой в
 `notifications` — тот же inbox, откуда student-бот TG_LMS уже забирает
 напоминания о занятиях (tsk-431). Оттуда же его видит ученик в кабинете на
@@ -31,6 +37,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import async_session_factory
 from app.services import inbox_service
+from app.services.schedule_preference_service import (
+    EXCLUDED_PLAN_CODES,
+    NOT_COUNTED_PLAN_CODES,
+    _plan_filter,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -71,21 +82,26 @@ _LINK = "https://learn.victor-komlev.ru/me/schedule"
 async def list_silent(db: AsyncSession) -> list[dict[str, Any]]:
     """Кто из аудитории опроса ещё не оставил пожеланий.
 
-    Условие аудитории повторяет `schedule_preference_service.AUDIENCE_FROM`
+    Условие аудитории повторяет `schedule_preference_service._AUDIENCE_CORE`
     намеренным дублем в одном месте — здесь нужен ещё и `tg_id`, а расширять
     ради этого общую выборку значило бы тащить лишнюю колонку во все её
     остальные вызовы.
 
-    Аудитория здесь **показная, а не счётная** (tsk-712): тестовые учётки в
-    напоминания входят намеренно — на них проверяют, что напоминание вообще
-    доходит. В сводку охвата и в спрос по часам они при этом не попадают, так
-    что «молчащих» тут может быть больше, чем на экране методиста, — это не
-    расхождение, а разные вопросы: «кому написать» и «кого считать».
+    Аудитория здесь — **счётная, не показная** (tsk-923, тот же фильтр, что и
+    охват). До 2026-09-12 тестовые учётки (`test`) сюда намеренно входили
+    (tsk-712) — на них проверяли, что напоминание вообще доходит. Оператор это
+    решение отменил: канал доставки уже проверен, а напоминания тестовым
+    учёткам только шумят. Плашка в кабинете (`AUDIENCE_FROM`) для `test`
+    по-прежнему показывается — меняются только напоминания.
+
+    Тот, кого методист отметил «получено вручную»
+    (`student_schedule_preference_ack`, tsk-923 п.1), тоже сюда не попадает —
+    он ответил, просто не через форму, и дальше напоминать ему нечего.
     """
     rows = (
         await db.execute(
             text(
-                """
+                f"""
                 SELECT u.id, u.full_name, u.tg_id
                   FROM users u
                   JOIN user_roles ur ON ur.user_id = u.id
@@ -97,9 +113,11 @@ async def list_silent(db: AsyncSession) -> list[dict[str, Any]]:
                        WHERE ss.ends_on IS NULL
                   ) cur ON cur.student_id = u.id
                   LEFT JOIN student_schedule_preference pref ON pref.student_id = u.id
+                  LEFT JOIN student_schedule_preference_ack ack ON ack.student_id = u.id
                  WHERE u.is_active
-                   AND (cur.code IS NULL OR cur.code NOT IN ('alumni', 'demo'))
+                   AND {_plan_filter(EXCLUDED_PLAN_CODES + NOT_COUNTED_PLAN_CODES)}
                    AND pref.id IS NULL
+                   AND ack.student_id IS NULL
                  ORDER BY u.id
                 """
             )

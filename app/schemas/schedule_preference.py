@@ -136,6 +136,9 @@ class SchedulePreferenceStudentRow(BaseModel):
     timezone: str | None
     plan_code: str | None
     is_filled: bool
+    #: tsk-923: ответил вручную (телеграм/лично), анкеты у него при этом нет —
+    #: `lessons_per_week`/`preferred_count`/`possible_count` остаются умолчаниями.
+    acknowledged_manually: bool = False
     lessons_per_week: int | None = None
     preferred_count: int = 0
     possible_count: int = 0

@@ -227,6 +227,12 @@ async def is_pending(db: AsyncSession, user_id: int) -> bool:
                 SELECT (
                     SELECT 1 FROM student_schedule_preference p
                      WHERE p.student_id = u.id
+                ) IS NULL
+                AND (
+                    -- tsk-923: методист отметил «получено вручную» — банер
+                    -- в кабинете больше не про что напоминать.
+                    SELECT 1 FROM student_schedule_preference_ack a
+                     WHERE a.student_id = u.id
                 ) IS NULL AS pending
                 {AUDIENCE_FROM} AND u.id = :uid
                 LIMIT 1
@@ -375,6 +381,14 @@ async def save_preference(
             },
         )
 
+    # tsk-923: настоящий ответ перекрывает ручную отметку — держать обе строки
+    # незачем, а на экране методиста «получено вручную» рядом с настоящей
+    # анкетой читалось бы как два разных факта вместо одного.
+    await db.execute(
+        text("DELETE FROM student_schedule_preference_ack WHERE student_id = :sid"),
+        {"sid": student_id},
+    )
+
     snapshot = [
         {
             "weekday": h.weekday,
@@ -471,6 +485,54 @@ async def clear_preference(
     return await get_preference(db, student_id)
 
 
+async def acknowledge_preference(
+    db: AsyncSession, student_id: int, *, acknowledged_by: Optional[int]
+) -> dict[str, Any]:
+    """Отметить «ответил, но не через форму» (tsk-923) — телеграм, лично и т.п.
+
+    Не создаёт анкету: часов и `lessons_per_week` тут нет и не будет, поэтому
+    в спрос по расписанию отметка ничего не добавляет (см. `get_summary`,
+    `_plan_filter`-джойны на `student_schedule_preference_hour`). Она только
+    убирает ученика из списка «не ответил» и из адресатов напоминаний
+    (`schedule_preference_reminder_service.list_silent`).
+
+    Идемпотентна: повторная отметка того же ученика — не операция.
+    """
+    await db.execute(
+        text(
+            "INSERT INTO student_schedule_preference_ack (student_id, acknowledged_by) "
+            "VALUES (:sid, :by) "
+            "ON CONFLICT (student_id) DO NOTHING"
+        ),
+        {"sid": student_id, "by": acknowledged_by},
+    )
+    await db.commit()
+    logger.info(
+        "tsk-923: пожелание ученика %s отмечено полученным вручную (методист %s)",
+        student_id, acknowledged_by,
+    )
+    return await get_preference(db, student_id)
+
+
+async def remove_acknowledgement(db: AsyncSession, student_id: int) -> dict[str, Any]:
+    """Снять отметку «получено вручную» — вернуть ученика в «не ответил».
+
+    Для случая, когда отметили по ошибке не того человека, или ученик,
+    несмотря на отметку, так и не сообщил ничего по существу.
+    """
+    result = await db.execute(
+        text("DELETE FROM student_schedule_preference_ack WHERE student_id = :sid"),
+        {"sid": student_id},
+    )
+    if result.rowcount == 0:
+        raise SchedulePreferenceError(
+            "У этого ученика нет отметки «получено вручную» — снимать нечего."
+        )
+    await db.commit()
+    logger.info("tsk-923: отметка «получено вручную» снята у ученика %s", student_id)
+    return await get_preference(db, student_id)
+
+
 async def list_history(
     db: AsyncSession, student_id: int, *, limit: int = 50
 ) -> list[dict[str, Any]]:
@@ -533,7 +595,11 @@ async def get_summary(db: AsyncSession) -> dict[str, Any]:
                        u.email,
                        u.timezone,
                        cur.code AS plan_code,
-                       (pref.id IS NOT NULL) AS is_filled,
+                       (pref.id IS NOT NULL OR ack.student_id IS NOT NULL) AS is_filled,
+                       -- tsk-923: отметка «получено вручную» — без анкеты, отдельно
+                       -- от «заполнил форму», чтобы экран мог показать это иначе и
+                       -- предложить снять именно отметку, а не анкету.
+                       (pref.id IS NULL AND ack.student_id IS NOT NULL) AS acknowledged_manually,
                        pref.lessons_per_week,
                        pref.updated_at,
                        COALESCE(cnt.preferred_count, 0) AS preferred_count,
@@ -549,6 +615,7 @@ async def get_summary(db: AsyncSession) -> dict[str, Any]:
                        WHERE ss.ends_on IS NULL
                   ) cur ON cur.student_id = u.id
                   LEFT JOIN student_schedule_preference pref ON pref.student_id = u.id
+                  LEFT JOIN student_schedule_preference_ack ack ON ack.student_id = u.id
                   LEFT JOIN LATERAL (
                       SELECT
                         COUNT(*) FILTER (WHERE h.kind = 'preferred') AS preferred_count,
@@ -571,7 +638,8 @@ async def get_summary(db: AsyncSession) -> dict[str, Any]:
                   ) slots ON TRUE
                  WHERE u.is_active
                    AND {_plan_filter(EXCLUDED_PLAN_CODES + NOT_COUNTED_PLAN_CODES)}
-                 ORDER BY (pref.id IS NOT NULL), u.full_name NULLS LAST, u.id
+                 ORDER BY (pref.id IS NOT NULL OR ack.student_id IS NOT NULL),
+                          u.full_name NULLS LAST, u.id
                 """
             )
         )
@@ -585,11 +653,12 @@ async def get_summary(db: AsyncSession) -> dict[str, Any]:
             "timezone": r[3],
             "plan_code": r[4],
             "is_filled": bool(r[5]),
-            "lessons_per_week": r[6],
-            "updated_at": r[7],
-            "preferred_count": int(r[8]),
-            "possible_count": int(r[9]),
-            "current_slots": list(r[10] or []),
+            "acknowledged_manually": bool(r[6]),
+            "lessons_per_week": r[7],
+            "updated_at": r[8],
+            "preferred_count": int(r[9]),
+            "possible_count": int(r[10]),
+            "current_slots": list(r[11] or []),
         }
         for r in rows
     ]

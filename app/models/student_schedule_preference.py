@@ -116,6 +116,47 @@ class StudentSchedulePreferenceHour(Base):
     )
 
 
+class StudentSchedulePreferenceAck(Base):
+    """Отметка «пожелание получено другим способом», без анкеты (tsk-923).
+
+    Часть учеников присылает пожелание в телеграм или лично методисту, а не
+    через форму. Отдельная таблица, а не флаг в `student_schedule_preference`:
+    у этой строки нет ни часов, ни `lessons_per_week` — придумывать их значило
+    бы вписать в спрос по часам данные, которых ученик не давал. Отметка снимает
+    только вопрос «кто ответил», не подменяет собой саму анкету (см.
+    `schedule_preference_service.get_summary`, `is_filled`).
+
+    Одна строка на ученика: повторная отметка — не операция, а нет-оп поверх
+    существующей (`ON CONFLICT DO NOTHING` в сервисе).
+    """
+
+    __tablename__ = "student_schedule_preference_ack"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["student_id"], ["users.id"], ondelete="CASCADE",
+            name="student_schedule_preference_ack_student_id_fkey",
+        ),
+        ForeignKeyConstraint(
+            ["acknowledged_by"], ["users.id"], ondelete="SET NULL",
+            name="student_schedule_preference_ack_acknowledged_by_fkey",
+        ),
+        PrimaryKeyConstraint("student_id", name="student_schedule_preference_ack_pkey"),
+        {
+            "comment": (
+                "Пожелание получено вручную (телеграм/лично), без анкеты (tsk-923)"
+            )
+        },
+    )
+
+    student_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    acknowledged_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("now()"), nullable=False
+    )
+    acknowledged_by: Mapped[Optional[int]] = mapped_column(
+        Integer, comment="Методист, поставивший отметку"
+    )
+
+
 class StudentSchedulePreferenceRevision(Base):
     """Снимок пожеланий на момент сохранения — история за весь срок обучения.
 
