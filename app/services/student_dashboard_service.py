@@ -103,6 +103,7 @@ from app.services.teacher_lesson_summary_service import (
 )
 # tsk-656: правило «это реальная сдача ученика» — из одного места.
 from app.services.learning_gaps_service import (
+    SERVICE_COURSES_CTE,
     real_student_material_filter,
     real_student_results_filter,
 )
@@ -1004,6 +1005,37 @@ async def get_student_dashboard(
     # же сервисом, что и норма домашней работы, — иначе у преподавателя и у
     # родителя появились бы два разных ответа на один вопрос.
     program_block = await _program_progress(db, student_id=student_id, now=now)
+    # tsk-921: у курсов программы прогноз ОДИН — из блока программы, по
+    # минутам. Свой штучный прогноз карточки курса (по темпу за последние
+    # недели) давал вторую дату на той же странице: у Нуженко «программа
+    # будет пройдена к 12 ноября» и тут же «прогноз окончания 04.02.27» про
+    # тот же ЕГЭ. Решение оператора 12.09: оставить по минутам.
+    program_root_ids: set[int] = set()
+    if program_block is not None:
+        from app.services import homework_volume_service
+
+        program = await homework_volume_service.program_for_student(
+            db,
+            student_id=student_id,
+            grade=(
+                await db.execute(
+                    text("SELECT school_grade FROM users WHERE id = :uid"),
+                    {"uid": student_id},
+                )
+            ).scalar(),
+            today=now.date(),
+        )
+        program_root_ids = {int(c) for c in (program or {}).get("root_ids", [])}
+    # tsk-921: служебные курсы (tsk-877) — как в сводке преподавателя (tsk-893):
+    # клиент показывает их одной строкой, без «сейчас» и прогноза.
+    service_course_ids: set[int] = {
+        int(row[0])
+        for row in (
+            await db.execute(
+                text(f"WITH RECURSIVE {SERVICE_COURSES_CTE} SELECT id FROM service_courses")
+            )
+        ).all()
+    }
 
     courses: list[dict[str, Any]] = []
     for course in accessible:
@@ -1070,8 +1102,13 @@ async def get_student_dashboard(
             "behind_count": pos.behind_count,
             "behind_section_title": pos.behind_section_title,
             "behind_item_title": pos.behind_item_title,
-            "forecast_completion_date": forecast_date,
+            "forecast_completion_date": (
+                program_block["forecast_date"]
+                if course_id in program_root_ids and not is_completed
+                else forecast_date
+            ),
             "is_completed": is_completed,
+            "is_service": course_id in service_course_ids,
         })
 
     return {

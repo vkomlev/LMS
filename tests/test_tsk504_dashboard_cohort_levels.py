@@ -448,7 +448,7 @@ async def test_response_does_not_leak_peer_identity_or_raw_values(db, client):
         "current_section_title", "current_item_title",
         # tsk-918: хвосты позади фронта — число и первое название, без id пиров.
         "behind_count", "behind_section_title", "behind_item_title",
-        "forecast_completion_date", "is_completed",
+        "forecast_completion_date", "is_completed", "is_service",
     }
     assert set(body["attendance"].keys()) == {
         "planned", "attended", "missed", "upcoming",

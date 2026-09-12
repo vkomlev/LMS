@@ -64366,6 +64366,12 @@
           "is_completed": {
             "type": "boolean",
             "title": "Is Completed"
+          },
+          "is_service": {
+            "type": "boolean",
+            "title": "Is Service",
+            "description": "tsk-921: служебный курс (tsk-877) — про устройство сервиса и экзамена, не про предмет. Клиент показывает такие одной строкой",
+            "default": false
           }
         },
         "type": "object",
@@ -64533,7 +64539,7 @@
               }
             ],
             "title": "Forecast Date",
-            "description": "Когда программа будет пройдена при нынешнем темпе; null — темпа нет, предсказывать не по чему"
+            "description": "Когда программа будет пройдена при нынешнем темпе; null — темпа нет, предсказывать не по чему. tsk-921: та же дата стоит в `forecast_completion_date` у курсов программы — прогноз один"
           },
           "on_track": {
             "type": "boolean",

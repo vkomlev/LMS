@@ -151,3 +151,42 @@ async def test_student_outside_any_program_has_no_block(db, monkeypatch):
     )
 
     assert block is None
+
+
+@pytest.mark.asyncio
+async def test_program_course_forecast_equals_the_program_forecast(db, monkeypatch):
+    """У курса программы прогноз — тот же, что у блока программы (tsk-921).
+
+    У Нуженко 12.09 на одной странице было «программа будет пройдена к 12
+    ноября» (блок, по минутам) и «прогноз окончания 04.02.27» (карточка
+    курса, по штучному темпу) про один и тот же ЕГЭ. Решение оператора:
+    прогноз один, по минутам.
+    """
+    from datetime import datetime, timezone
+
+    from tests.test_tsk741_homework import _submit
+
+    student_id, course_id = await _student_on_program(db, monkeypatch)
+    # Дашборд берёт «сейчас» от часов, а не из параметров — сдачи тоже
+    # относительно настоящего «сейчас».
+    now = datetime.now(timezone.utc)
+    tasks = (
+        await db.execute(
+            text("SELECT id FROM tasks WHERE course_id = :c LIMIT 20"), {"c": course_id}
+        )
+    ).scalars().all()
+    for task_id in tasks:
+        await _submit(
+            db, student_id=student_id, task_id=int(task_id), course_id=course_id,
+            is_correct=True, at=now - timedelta(days=2),
+        )
+
+    dashboard = await student_dashboard_service.get_student_dashboard(
+        db, student_id=student_id,
+        period_from=now - timedelta(days=30), period_to=now,
+    )
+    program = dashboard["program"]
+    course = next(c for c in dashboard["courses"] if c["course_id"] == course_id)
+    assert program["forecast_date"] is not None
+    assert course["forecast_completion_date"] == program["forecast_date"]
+    assert course["is_service"] is False

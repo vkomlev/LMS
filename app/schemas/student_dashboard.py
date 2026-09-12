@@ -43,6 +43,13 @@ class StudentDashboardCourseRead(BaseModel):
     behind_item_title: Optional[str] = None
     forecast_completion_date: Optional[date] = None
     is_completed: bool
+    is_service: bool = Field(
+        default=False,
+        description=(
+            "tsk-921: служебный курс (tsk-877) — про устройство сервиса и "
+            "экзамена, не про предмет. Клиент показывает такие одной строкой"
+        ),
+    )
 
 
 class StudentDashboardMetricsRead(BaseModel):
@@ -151,7 +158,8 @@ class StudentDashboardProgramRead(BaseModel):
         default=None,
         description=(
             "Когда программа будет пройдена при нынешнем темпе; null — темпа "
-            "нет, предсказывать не по чему"
+            "нет, предсказывать не по чему. tsk-921: та же дата стоит в "
+            "`forecast_completion_date` у курсов программы — прогноз один"
         ),
     )
     on_track: bool = Field(
