@@ -104,7 +104,7 @@ from app.services.task_effort_service import (
 from app.services.content_grace_service import graced_for_roots
 from app.services.manual_progress_service import REQUIREMENT_LEVELS
 # tsk-741: «занятие пропущено» — тоже одно правило; перенос пропуском не считается.
-from app.services.student_dashboard_service import MISSED_STATUSES
+from app.services import attendance_service
 
 logger = logging.getLogger(__name__)
 
@@ -185,11 +185,6 @@ MAX_CATCH_UP_FACTOR = 1.5
 # работал в окне любого часа, своего или чужого. Непогашено только то, чего
 # не хватает до плана недели.
 
-#: Со скольких сдач и отметок материалов внутри окна часа считаем, что человек
-#: на нём был — независимо от отметки явки. Медиана по посещённым часам на
-#: проде 12.09 — семь сдач за час; три — треть часа работы, случайно столько
-#: не набирается.
-LESSON_PRESENCE_MIN_ITEMS = 3
 #: Вес одного часа занятия в минутах работы, когда у ученика нет своих
 #: посещённых часов в окне (новичок или не ходит вовсе). Медиана по школе,
 #: замер 12.09 по посещённым часам последних четырёх недель.
@@ -1067,67 +1062,6 @@ SELECT count(DISTINCT tr.task_id) AS n
 """
 
 
-#: Посещаемость по неделям окна (tsk-914): план из активных слотов, свои
-#: пропуски и ОТРАБОТАННЫЕ часы. Отработанный час — свой с отметкой «пришёл»
-#: либо любой час (свой без отметки или чужой), в окне которого ученик сдал
-#: или отметил не меньше `LESSON_PRESENCE_MIN_ITEMS`. Часы одного времени
-#: считаются один раз: в субботу в десять идут три группы, а человек — один.
-_WEEKLY_ATTENDANCE_SQL = """
-WITH bounds AS (
-    SELECT idx,
-           CAST(:since AS timestamptz) + CAST(idx || ' weeks' AS interval) AS starts_at,
-           CAST(:since AS timestamptz) + CAST((idx + 1) || ' weeks' AS interval) AS ends_at
-      FROM generate_series(0, :weeks - 1) AS idx
-),
-own AS (
-    SELECT lo.id, lo.scheduled_at,
-           lo.scheduled_at + CAST(COALESCE(lo.duration_minutes, 60) || ' minutes' AS interval) AS ends_at,
-           lop.status
-      FROM lesson_occurrence_participant lop
-      JOIN lesson_occurrence lo ON lo.id = lop.occurrence_id
-     WHERE lop.student_id = :student_id
-       AND lo.scheduled_at >= :since AND lo.scheduled_at <= :now
-),
-hours AS (
-    -- Любой час школы в окне, в котором ученик работал.
-    SELECT DISTINCT lo.scheduled_at
-      FROM lesson_occurrence lo
-     WHERE lo.scheduled_at >= :since AND lo.scheduled_at <= :now
-       AND (
-           SELECT count(*) FROM (
-               SELECT tr.task_id AS id FROM task_results tr
-                WHERE tr.user_id = :student_id
-                  AND tr.submitted_at >= lo.scheduled_at
-                  AND tr.submitted_at < lo.scheduled_at
-                      + CAST(COALESCE(lo.duration_minutes, 60) || ' minutes' AS interval)
-               UNION
-               SELECT smp.material_id FROM student_material_progress smp
-                WHERE smp.student_id = :student_id AND smp.status = 'completed'
-                  AND smp.completed_at >= lo.scheduled_at
-                  AND smp.completed_at < lo.scheduled_at
-                      + CAST(COALESCE(lo.duration_minutes, 60) || ' minutes' AS interval)
-           ) w
-       ) >= :min_items
-    UNION
-    SELECT o.scheduled_at FROM own o WHERE o.status = 'confirmed'
-)
-SELECT b.idx,
-       (SELECT count(*) FROM own o
-         WHERE o.scheduled_at >= b.starts_at AND o.scheduled_at < b.ends_at
-           AND o.status = ANY(:missed_statuses)) AS missed,
-       (SELECT count(*) FROM own o
-         WHERE o.scheduled_at >= b.starts_at AND o.scheduled_at < b.ends_at) AS own_hours,
-       (SELECT count(*) FROM own o
-         WHERE o.scheduled_at >= b.starts_at AND o.scheduled_at < b.ends_at
-           AND o.status = 'confirmed') AS attended_own,
-       (SELECT count(*) FROM hours h
-         WHERE h.scheduled_at >= b.starts_at AND h.scheduled_at < b.ends_at) AS attended,
-       (SELECT count(*) FROM lesson_slot_student lss
-          JOIN lesson_slot ls ON ls.id = lss.slot_id
-         WHERE lss.student_id = :student_id AND lss.is_active AND ls.is_active) AS planned
-  FROM bounds b
- ORDER BY b.idx
-"""
 
 #: Сделанное в окнах СВОИХ посещённых часов, в разрезе рода элемента — вес
 #: одного часа занятия для этого ученика (tsk-914). Тот же разрез, что у
@@ -1177,26 +1111,6 @@ SELECT count(*) AS total,
    AND {non_service_course_filter('t')}
    AND tr.submitted_at >= :since
 """
-
-
-def _unpaid_misses(rows: list[Any]) -> tuple[int, int]:
-    """(всего пропусков, непогашенных) по недельным строкам посещаемости.
-
-    Непогашено за неделю — сколько часов не хватило до плана по расписанию,
-    но не больше, чем было пропусков: план два, отработал ноль, а занятие в
-    неделе было одно (праздник) — непогашен один, а не два. Плана нет (ученик
-    без слотов, разовые занятия) — планом считаются его собственные часы этой
-    недели: другого ориентира нет.
-    """
-    missed_total = 0
-    unpaid_total = 0
-    for row in rows:
-        missed = int(row["missed"] or 0)
-        attended = int(row["attended"] or 0)
-        planned = int(row["planned"] or 0) or int(row["own_hours"] or 0)
-        missed_total += missed
-        unpaid_total += min(missed, max(planned - attended, 0))
-    return missed_total, unpaid_total
 
 
 def _lesson_norm_minutes(
@@ -1331,27 +1245,21 @@ async def compute(
     ).mappings().one()
 
     # tsk-914: пропуски по неделям — план из расписания против отработанного.
+    # Предикат общий (`attendance_service`): им же считают серию пропусков в
+    # сводке и посещаемость на дашборде.
     attendance = (
-        await db.execute(
-            text(_WEEKLY_ATTENDANCE_SQL),
-            {
-                "student_id": student_id,
-                "since": since,
-                "now": moment,
-                "weeks": weeks_window,
-                "missed_statuses": list(MISSED_STATUSES),
-                "min_items": LESSON_PRESENCE_MIN_ITEMS,
-            },
+        await attendance_service.weekly(
+            db, student_ids=[student_id], since=since, until=moment
         )
-    ).mappings().all()
-    missed_lessons, missed_unpaid = _unpaid_misses(attendance)
+    ).get(student_id, [])
+    missed_lessons, missed_unpaid = attendance_service.totals(attendance)
     lesson_rows = (
         await db.execute(
             text(_OWN_LESSON_WEIGHTS_SQL),
             {"student_id": student_id, "since": since, "now": moment},
         )
     ).mappings().all()
-    confirmed_hours = sum(int(r["attended_own"] or 0) for r in attendance)
+    confirmed_hours = sum(w.attended_own for w in attendance)
     lesson_norm_minutes = _lesson_norm_minutes(
         lesson_rows, confirmed_hours=confirmed_hours, table=effort_table
     )

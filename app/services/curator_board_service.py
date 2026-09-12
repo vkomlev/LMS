@@ -22,6 +22,7 @@ from typing import Any, Dict, List
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services import attendance_service
 from app.services import curator_activity_service as activity
 from app.services.curator_service import active_student_sql
 from app.services.help_requests_service import awaiting_teacher_sql
@@ -165,6 +166,16 @@ async def get_board(db: AsyncSession, *, curator_id: int) -> Dict[str, Any]:
     touch_since = now - timedelta(days=TOUCH_WINDOW_DAYS)
     touches = await activity.last_touches(db, curator_id=curator_id, since=touch_since)
 
+    # tsk-916: «пропущено» — по общему правилу посещаемости, а не по голому
+    # `no_show`: погашенный пропуск (отработал другой час, переехал в другой
+    # слот) куратору не повод. Одним запросом на всю доску.
+    unpaid_by_student = await attendance_service.unpaid_missed(
+        db,
+        student_ids=[int(r["student_id"]) for r in rows],
+        since=now - timedelta(days=MISSED_WINDOW_DAYS),
+        until=now,
+    )
+
     signal_days = activity.signal_response_days()
     urgent_hours = activity.urgent_response_hours()
     review_days = activity.review_response_days()
@@ -173,6 +184,7 @@ async def get_board(db: AsyncSession, *, curator_id: int) -> Dict[str, Any]:
     for r in rows:
         item = dict(r)
         sid = int(item["student_id"])
+        item["missed_lessons"] = unpaid_by_student.get(sid, (0, 0))[1]
         reasons_to_act: List[str] = []
         priority = PRIORITY_CALM
 

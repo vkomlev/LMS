@@ -32,7 +32,7 @@ from sqlalchemy import text
 from app.models.lesson_occurrence import LessonOccurrence
 from app.models.lesson_occurrence_participant import LessonOccurrenceParticipant
 from app.models.users import Users
-from app.services import homework_service, homework_volume_service
+from app.services import attendance_service, homework_service, homework_volume_service
 from app.services.auth import identity_link_service
 from app.services.auth.session_service import create_session
 
@@ -1230,7 +1230,7 @@ async def test_two_submissions_do_not_make_an_hour(db):
     )
     await _work_in_window(
         db, student_id=student_id, course_id=course_id, at=foreign_at,
-        n=homework_volume_service.LESSON_PRESENCE_MIN_ITEMS - 1,
+        n=attendance_service.LESSON_PRESENCE_MIN_ITEMS - 1,
     )
 
     plan = await homework_volume_service.compute(db, student_id=student_id)

@@ -36,6 +36,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.current_user import CurrentUser
 from app.repos.lesson_calendar_repository import LessonOccurrenceParticipantRepository
 from app.services import (
+    attendance_service,
     help_requests_service,
     homework_service,
     lesson_occurrence_service,
@@ -265,12 +266,17 @@ async def _load_prev_occurrence_and_streak(
     prev = rows[0]
     window_from = prev["scheduled_at"] + timedelta(minutes=int(prev["duration_minutes"]))
 
-    streak = 0
-    for row in rows:
-        if row["status"] == "no_show":
-            streak += 1
-        else:
-            break
+    # tsk-916: серия — из НЕПОГАШЕННЫХ пропусков, по общему правилу
+    # (`attendance_service`): переезд в другой слот оставляет старые занятия
+    # с учеником как участником, и `no_show` по ним — призрак. У Курунова
+    # 12.09 «пропустил подряд: 1» при двух отработанных часах в неделю.
+    outcomes = await attendance_service.outcomes(
+        db,
+        student_id=student_id,
+        since=rows[-1]["scheduled_at"],
+        until=prev["scheduled_at"],
+    )
+    streak = attendance_service.streak(outcomes)
     # tsk-648: id предыдущего занятия нужен, чтобы спросить, молчал ли на нём
     # ученик. Отдельным запросом это был бы второй проход по той же истории.
     return window_from, streak, int(prev["id"]), prev["scheduled_at"]

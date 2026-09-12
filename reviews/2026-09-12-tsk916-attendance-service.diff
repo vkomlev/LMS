@@ -1,0 +1,412 @@
+diff --git a/app/services/curator_board_service.py b/app/services/curator_board_service.py
+index d8d2e1e..84a738e 100644
+--- a/app/services/curator_board_service.py
++++ b/app/services/curator_board_service.py
+@@ -22,6 +22,7 @@ from typing import Any, Dict, List
+ from sqlalchemy import text
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
++from app.services import attendance_service
+ from app.services import curator_activity_service as activity
+ from app.services.curator_service import active_student_sql
+ from app.services.help_requests_service import awaiting_teacher_sql
+@@ -165,6 +166,16 @@ async def get_board(db: AsyncSession, *, curator_id: int) -> Dict[str, Any]:
+     touch_since = now - timedelta(days=TOUCH_WINDOW_DAYS)
+     touches = await activity.last_touches(db, curator_id=curator_id, since=touch_since)
+ 
++    # tsk-916: «пропущено» — по общему правилу посещаемости, а не по голому
++    # `no_show`: погашенный пропуск (отработал другой час, переехал в другой
++    # слот) куратору не повод. Одним запросом на всю доску.
++    unpaid_by_student = await attendance_service.unpaid_missed(
++        db,
++        student_ids=[int(r["student_id"]) for r in rows],
++        since=now - timedelta(days=MISSED_WINDOW_DAYS),
++        until=now,
++    )
++
+     signal_days = activity.signal_response_days()
+     urgent_hours = activity.urgent_response_hours()
+     review_days = activity.review_response_days()
+@@ -173,6 +184,7 @@ async def get_board(db: AsyncSession, *, curator_id: int) -> Dict[str, Any]:
+     for r in rows:
+         item = dict(r)
+         sid = int(item["student_id"])
++        item["missed_lessons"] = unpaid_by_student.get(sid, (0, 0))[1]
+         reasons_to_act: List[str] = []
+         priority = PRIORITY_CALM
+ 
+diff --git a/app/services/homework_volume_service.py b/app/services/homework_volume_service.py
+index 88e0b7d..d41754c 100644
+--- a/app/services/homework_volume_service.py
++++ b/app/services/homework_volume_service.py
+@@ -104,7 +104,7 @@ from app.services.task_effort_service import (
+ from app.services.content_grace_service import graced_for_roots
+ from app.services.manual_progress_service import REQUIREMENT_LEVELS
+ # tsk-741: «занятие пропущено» — тоже одно правило; перенос пропуском не считается.
+-from app.services.student_dashboard_service import MISSED_STATUSES
++from app.services import attendance_service
+ 
+ logger = logging.getLogger(__name__)
+ 
+@@ -185,11 +185,6 @@ MAX_CATCH_UP_FACTOR = 1.5
+ # работал в окне любого часа, своего или чужого. Непогашено только то, чего
+ # не хватает до плана недели.
+ 
+-#: Со скольких сдач и отметок материалов внутри окна часа считаем, что человек
+-#: на нём был — независимо от отметки явки. Медиана по посещённым часам на
+-#: проде 12.09 — семь сдач за час; три — треть часа работы, случайно столько
+-#: не набирается.
+-LESSON_PRESENCE_MIN_ITEMS = 3
+ #: Вес одного часа занятия в минутах работы, когда у ученика нет своих
+ #: посещённых часов в окне (новичок или не ходит вовсе). Медиана по школе,
+ #: замер 12.09 по посещённым часам последних четырёх недель.
+@@ -1067,67 +1062,6 @@ SELECT count(DISTINCT tr.task_id) AS n
+ """
+ 
+ 
+-#: Посещаемость по неделям окна (tsk-914): план из активных слотов, свои
+-#: пропуски и ОТРАБОТАННЫЕ часы. Отработанный час — свой с отметкой «пришёл»
+-#: либо любой час (свой без отметки или чужой), в окне которого ученик сдал
+-#: или отметил не меньше `LESSON_PRESENCE_MIN_ITEMS`. Часы одного времени
+-#: считаются один раз: в субботу в десять идут три группы, а человек — один.
+-_WEEKLY_ATTENDANCE_SQL = """
+-WITH bounds AS (
+-    SELECT idx,
+-           CAST(:since AS timestamptz) + CAST(idx || ' weeks' AS interval) AS starts_at,
+-           CAST(:since AS timestamptz) + CAST((idx + 1) || ' weeks' AS interval) AS ends_at
+-      FROM generate_series(0, :weeks - 1) AS idx
+-),
+-own AS (
+-    SELECT lo.id, lo.scheduled_at,
+-           lo.scheduled_at + CAST(COALESCE(lo.duration_minutes, 60) || ' minutes' AS interval) AS ends_at,
+-           lop.status
+-      FROM lesson_occurrence_participant lop
+-      JOIN lesson_occurrence lo ON lo.id = lop.occurrence_id
+-     WHERE lop.student_id = :student_id
+-       AND lo.scheduled_at >= :since AND lo.scheduled_at <= :now
+-),
+-hours AS (
+-    -- Любой час школы в окне, в котором ученик работал.
+-    SELECT DISTINCT lo.scheduled_at
+-      FROM lesson_occurrence lo
+-     WHERE lo.scheduled_at >= :since AND lo.scheduled_at <= :now
+-       AND (
+-           SELECT count(*) FROM (
+-               SELECT tr.task_id AS id FROM task_results tr
+-                WHERE tr.user_id = :student_id
+-                  AND tr.submitted_at >= lo.scheduled_at
+-                  AND tr.submitted_at < lo.scheduled_at
+-                      + CAST(COALESCE(lo.duration_minutes, 60) || ' minutes' AS interval)
+-               UNION
+-               SELECT smp.material_id FROM student_material_progress smp
+-                WHERE smp.student_id = :student_id AND smp.status = 'completed'
+-                  AND smp.completed_at >= lo.scheduled_at
+-                  AND smp.completed_at < lo.scheduled_at
+-                      + CAST(COALESCE(lo.duration_minutes, 60) || ' minutes' AS interval)
+-           ) w
+-       ) >= :min_items
+-    UNION
+-    SELECT o.scheduled_at FROM own o WHERE o.status = 'confirmed'
+-)
+-SELECT b.idx,
+-       (SELECT count(*) FROM own o
+-         WHERE o.scheduled_at >= b.starts_at AND o.scheduled_at < b.ends_at
+-           AND o.status = ANY(:missed_statuses)) AS missed,
+-       (SELECT count(*) FROM own o
+-         WHERE o.scheduled_at >= b.starts_at AND o.scheduled_at < b.ends_at) AS own_hours,
+-       (SELECT count(*) FROM own o
+-         WHERE o.scheduled_at >= b.starts_at AND o.scheduled_at < b.ends_at
+-           AND o.status = 'confirmed') AS attended_own,
+-       (SELECT count(*) FROM hours h
+-         WHERE h.scheduled_at >= b.starts_at AND h.scheduled_at < b.ends_at) AS attended,
+-       (SELECT count(*) FROM lesson_slot_student lss
+-          JOIN lesson_slot ls ON ls.id = lss.slot_id
+-         WHERE lss.student_id = :student_id AND lss.is_active AND ls.is_active) AS planned
+-  FROM bounds b
+- ORDER BY b.idx
+-"""
+ 
+ #: Сделанное в окнах СВОИХ посещённых часов, в разрезе рода элемента — вес
+ #: одного часа занятия для этого ученика (tsk-914). Тот же разрез, что у
+@@ -1179,26 +1113,6 @@ SELECT count(*) AS total,
+ """
+ 
+ 
+-def _unpaid_misses(rows: list[Any]) -> tuple[int, int]:
+-    """(всего пропусков, непогашенных) по недельным строкам посещаемости.
+-
+-    Непогашено за неделю — сколько часов не хватило до плана по расписанию,
+-    но не больше, чем было пропусков: план два, отработал ноль, а занятие в
+-    неделе было одно (праздник) — непогашен один, а не два. Плана нет (ученик
+-    без слотов, разовые занятия) — планом считаются его собственные часы этой
+-    недели: другого ориентира нет.
+-    """
+-    missed_total = 0
+-    unpaid_total = 0
+-    for row in rows:
+-        missed = int(row["missed"] or 0)
+-        attended = int(row["attended"] or 0)
+-        planned = int(row["planned"] or 0) or int(row["own_hours"] or 0)
+-        missed_total += missed
+-        unpaid_total += min(missed, max(planned - attended, 0))
+-    return missed_total, unpaid_total
+-
+-
+ def _lesson_norm_minutes(
+     rows: list[Any], *, confirmed_hours: int, table: EffortTable
+ ) -> Optional[int]:
+@@ -1331,27 +1245,21 @@ async def compute(
+     ).mappings().one()
+ 
+     # tsk-914: пропуски по неделям — план из расписания против отработанного.
++    # Предикат общий (`attendance_service`): им же считают серию пропусков в
++    # сводке и посещаемость на дашборде.
+     attendance = (
+-        await db.execute(
+-            text(_WEEKLY_ATTENDANCE_SQL),
+-            {
+-                "student_id": student_id,
+-                "since": since,
+-                "now": moment,
+-                "weeks": weeks_window,
+-                "missed_statuses": list(MISSED_STATUSES),
+-                "min_items": LESSON_PRESENCE_MIN_ITEMS,
+-            },
++        await attendance_service.weekly(
++            db, student_ids=[student_id], since=since, until=moment
+         )
+-    ).mappings().all()
+-    missed_lessons, missed_unpaid = _unpaid_misses(attendance)
++    ).get(student_id, [])
++    missed_lessons, missed_unpaid = attendance_service.totals(attendance)
+     lesson_rows = (
+         await db.execute(
+             text(_OWN_LESSON_WEIGHTS_SQL),
+             {"student_id": student_id, "since": since, "now": moment},
+         )
+     ).mappings().all()
+-    confirmed_hours = sum(int(r["attended_own"] or 0) for r in attendance)
++    confirmed_hours = sum(w.attended_own for w in attendance)
+     lesson_norm_minutes = _lesson_norm_minutes(
+         lesson_rows, confirmed_hours=confirmed_hours, table=effort_table
+     )
+diff --git a/app/services/student_dashboard_service.py b/app/services/student_dashboard_service.py
+index aea1a2f..84651c4 100644
+--- a/app/services/student_dashboard_service.py
++++ b/app/services/student_dashboard_service.py
+@@ -88,6 +88,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+ from app.core.config import Settings
+ from app.services import (
++    attendance_service,
+     charge_service,
+     homework_service,
+     manual_progress_service,
+@@ -138,7 +139,7 @@ _NOT_COUNTED_STATUSES = NOT_COUNTED_STATUSES
+ #: строка `rescheduled` всё равно заменена той, куда участие переехало.
+ #: На проде 130 участий `no_show` и ни одного из них с переносом — то есть эти
+ #: два состояния в данных не смешиваются.
+-MISSED_STATUSES = ("no_show", "declined")
++MISSED_STATUSES = attendance_service.MISSED_STATUSES
+ 
+ 
+ def _subtract_metrics(total: dict[str, int], subset: dict[str, int]) -> dict[str, int]:
+@@ -335,6 +336,23 @@ async def _load_attendance(
+     attended = int(row["attended"] or 0)
+     planned = int(row["generated"] or 0)
+ 
++    # tsk-916: пропуск по статусу — гипотеза. Погашенный (работал в окне
++    # своего часа без отметки, отработал чужой час, переехал в другой слот —
++    # а старое занятие осталось с ним) считается посещённым: правило общее с
++    # нормой ДЗ и серией пропусков (`attendance_service`), иначе родитель на
++    # дашборде видел бы «пропустил 2», а преподаватель в карточке — «все
++    # отработаны».
++    if elapsed > attended:
++        by_status, unpaid = attendance_service.totals(
++            (
++                await attendance_service.weekly(
++                    db, student_ids=[student_id], since=period_from, until=elapsed_to
++                )
++            ).get(student_id, [])
++        )
++        paid = max(by_status - unpaid, 0)
++        attended = min(attended + paid, elapsed)
++
+     # Хвост периода за горизонтом генератора — по постоянному расписанию.
+     # Горизонт берём по ЭТОМУ ученику: у прикреплённого позже занятий может
+     # быть сгенерировано меньше, чем у остальных.
+diff --git a/app/services/teacher_lesson_summary_service.py b/app/services/teacher_lesson_summary_service.py
+index edd70f2..16eaf2e 100644
+--- a/app/services/teacher_lesson_summary_service.py
++++ b/app/services/teacher_lesson_summary_service.py
+@@ -36,6 +36,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
+ from app.auth.current_user import CurrentUser
+ from app.repos.lesson_calendar_repository import LessonOccurrenceParticipantRepository
+ from app.services import (
++    attendance_service,
+     help_requests_service,
+     homework_service,
+     lesson_occurrence_service,
+@@ -265,12 +266,17 @@ async def _load_prev_occurrence_and_streak(
+     prev = rows[0]
+     window_from = prev["scheduled_at"] + timedelta(minutes=int(prev["duration_minutes"]))
+ 
+-    streak = 0
+-    for row in rows:
+-        if row["status"] == "no_show":
+-            streak += 1
+-        else:
+-            break
++    # tsk-916: серия — из НЕПОГАШЕННЫХ пропусков, по общему правилу
++    # (`attendance_service`): переезд в другой слот оставляет старые занятия
++    # с учеником как участником, и `no_show` по ним — призрак. У Курунова
++    # 12.09 «пропустил подряд: 1» при двух отработанных часах в неделю.
++    outcomes = await attendance_service.outcomes(
++        db,
++        student_id=student_id,
++        since=rows[-1]["scheduled_at"],
++        until=prev["scheduled_at"],
++    )
++    streak = attendance_service.streak(outcomes)
+     # tsk-648: id предыдущего занятия нужен, чтобы спросить, молчал ли на нём
+     # ученик. Отдельным запросом это был бы второй проход по той же истории.
+     return window_from, streak, int(prev["id"]), prev["scheduled_at"]
+diff --git a/tests/test_lesson_attention_tsk648.py b/tests/test_lesson_attention_tsk648.py
+index d44db3a..4e08ee5 100644
+--- a/tests/test_lesson_attention_tsk648.py
++++ b/tests/test_lesson_attention_tsk648.py
+@@ -321,6 +321,61 @@ async def test_missed_two_lessons_in_a_row_is_a_reason(db, client):
+ 
+ 
+ @pytest.mark.asyncio
++async def test_paid_miss_does_not_count_in_the_streak(db, client):
++    """Погашенный пропуск серию не длит (tsk-916).
++
++    Курунов 12.09: переехал с четверга на субботу, слот четверга выключен, но
++    занятие четверга осталось с ним участником — `no_show`, «пропустил
++    подряд: 1» при двух отработанных субботних часах той же недели. Правило
++    общее с нормой ДЗ: план недели из активных слотов против отработанных
++    часов.
++    """
++    from sqlalchemy import text
++
++    teacher_id, token = await _new_user(db, role="teacher", name="t915")
++    student_id, _ = await _new_user(db, role="student", name="s915")
++    now = datetime.now(UTC)
++    # Две прошедшие недели без пропусков, чтобы окно серии было «чистым», и
++    # текущая неделя: два отработанных часа, потом призрачный пропуск.
++    week_start = (now - timedelta(days=now.weekday())).replace(
++        hour=6, minute=0, second=0, microsecond=0,
++    )
++    if week_start + timedelta(days=3, hours=1) > now:
++        # Понедельник-среда: текущая неделя ещё коротка — берём прошлую.
++        week_start -= timedelta(days=7)
++    for slot_hour in (10, 11):
++        slot_id = (
++            await db.execute(
++                text(
++                    "INSERT INTO lesson_slot (teacher_id, weekday, start_time, duration_minutes, "
++                    "  timezone, is_active, created_by) "
++                    "VALUES (:t, 5, make_time(:h, 0, 0), 60, 'Europe/Moscow', true, :t) RETURNING id"
++                ),
++                {"t": teacher_id, "h": slot_hour},
++            )
++        ).scalar()
++        await db.execute(
++            text(
++                "INSERT INTO lesson_slot_student (slot_id, student_id, is_active, added_by) "
++                "VALUES (:s, :u, true, :t)"
++            ),
++            {"s": slot_id, "u": student_id, "t": teacher_id},
++        )
++    await db.commit()
++
++    first = await _occurrence(db, teacher_id=teacher_id, scheduled_at=week_start)
++    await _join(db, occurrence_id=first, student_id=student_id, status="confirmed")
++    second = await _occurrence(db, teacher_id=teacher_id, scheduled_at=week_start + timedelta(hours=1))
++    await _join(db, occurrence_id=second, student_id=student_id, status="confirmed")
++    ghost = await _occurrence(db, teacher_id=teacher_id, scheduled_at=week_start + timedelta(days=3))
++    await _join(db, occurrence_id=ghost, student_id=student_id, status="no_show")
++    today = await _occurrence(db, teacher_id=teacher_id, scheduled_at=now + timedelta(hours=1))
++    await _join(db, occurrence_id=today, student_id=student_id)
++
++    (row,) = await _summary(client, occ_id=today, teacher_id=teacher_id, token=token)
++    assert row["missed_streak"] == 0, "призрачный пропуск при отработанной неделе попал в серию"
++
++
+ async def test_absence_reason_disappears_after_teacher_asked(db, client):
+     """Про пропуск уже поговорили (отметка из плана занятия, tsk-743) — повод снят.
+ 
+diff --git a/tests/test_tsk494_student_dashboard.py b/tests/test_tsk494_student_dashboard.py
+index 028cbf5..e097070 100644
+--- a/tests/test_tsk494_student_dashboard.py
++++ b/tests/test_tsk494_student_dashboard.py
+@@ -507,6 +507,46 @@ async def test_attendance_normative_counts_and_invariant(db, client):
+     assert a["planned"] == a["attended"] + a["missed"] + a["upcoming"]
+ 
+ 
++@pytest.mark.asyncio
++async def test_attendance_unmarked_but_worked_hour_counts_as_attended(db, client):
++    """tsk-916: не отметили явку, но человек работал весь час — посетил.
++
++    Пропуск по статусу — гипотеза. Правило общее с нормой ДЗ и серией
++    пропусков (`attendance_service`): иначе родитель на дашборде видел бы
++    «пропустил 1», а преподаватель в карточке — «все отработаны».
++    """
++    teacher_id, token = await _new_user(db, role="teacher", name="teach")
++    student_id, _ = await _new_user(db, role="student", name="stud")
++    await _link_student_teacher(db, student_id=student_id, teacher_id=teacher_id)
++    course_id = await _new_course(db, "att-915")
++    await _enroll_student(db, student_id=student_id, course_id=course_id)
++
++    now = datetime.now(UTC)
++    period_from = now - timedelta(days=10)
++    period_to = now
++    ghost_at = now - timedelta(days=4)
++    await _create_occurrence(
++        db, student_id=student_id, teacher_id=teacher_id,
++        scheduled_at=ghost_at, status="no_show",
++    )
++    # Три сдачи внутри окна «пропущенного» часа — он на нём был.
++    for i in range(3):
++        task_id = await _new_task(db, course_id=course_id, uid=f"att-915-{i}-{student_id}")
++        await _insert_task_result(
++            db, student_id=student_id, task_id=task_id, course_id=course_id,
++            is_correct=True, submitted_at=ghost_at + timedelta(minutes=10 + i * 5),
++        )
++
++    resp = await client.get(
++        f"/api/v1/students/{student_id}/dashboard",
++        params=_dt_params(period_from, period_to),
++        headers={"Authorization": f"Bearer {token}"},
++    )
++    assert resp.status_code == 200, resp.text
++    a = resp.json()["attendance"]
++    assert (a["planned"], a["attended"], a["missed"]) == (1, 1, 0)
++
++
+ @pytest.mark.asyncio
+ async def test_attendance_teacher_marked_absent_then_present(db, client):
+     """Сценарий оператора: ученик сам ничего не проставил, преподаватель
+diff --git a/tests/test_tsk741_homework.py b/tests/test_tsk741_homework.py
+index ad3eb27..a3806de 100644
+--- a/tests/test_tsk741_homework.py
++++ b/tests/test_tsk741_homework.py
+@@ -32,7 +32,7 @@ from sqlalchemy import text
+ from app.models.lesson_occurrence import LessonOccurrence
+ from app.models.lesson_occurrence_participant import LessonOccurrenceParticipant
+ from app.models.users import Users
+-from app.services import homework_service, homework_volume_service
++from app.services import attendance_service, homework_service, homework_volume_service
+ from app.services.auth import identity_link_service
+ from app.services.auth.session_service import create_session
+ 
+@@ -1230,7 +1230,7 @@ async def test_two_submissions_do_not_make_an_hour(db):
+     )
+     await _work_in_window(
+         db, student_id=student_id, course_id=course_id, at=foreign_at,
+-        n=homework_volume_service.LESSON_PRESENCE_MIN_ITEMS - 1,
++        n=attendance_service.LESSON_PRESENCE_MIN_ITEMS - 1,
+     )
+ 
+     plan = await homework_volume_service.compute(db, student_id=student_id)

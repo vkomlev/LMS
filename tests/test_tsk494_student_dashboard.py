@@ -508,6 +508,46 @@ async def test_attendance_normative_counts_and_invariant(db, client):
 
 
 @pytest.mark.asyncio
+async def test_attendance_unmarked_but_worked_hour_counts_as_attended(db, client):
+    """tsk-916: не отметили явку, но человек работал весь час — посетил.
+
+    Пропуск по статусу — гипотеза. Правило общее с нормой ДЗ и серией
+    пропусков (`attendance_service`): иначе родитель на дашборде видел бы
+    «пропустил 1», а преподаватель в карточке — «все отработаны».
+    """
+    teacher_id, token = await _new_user(db, role="teacher", name="teach")
+    student_id, _ = await _new_user(db, role="student", name="stud")
+    await _link_student_teacher(db, student_id=student_id, teacher_id=teacher_id)
+    course_id = await _new_course(db, "att-915")
+    await _enroll_student(db, student_id=student_id, course_id=course_id)
+
+    now = datetime.now(UTC)
+    period_from = now - timedelta(days=10)
+    period_to = now
+    ghost_at = now - timedelta(days=4)
+    await _create_occurrence(
+        db, student_id=student_id, teacher_id=teacher_id,
+        scheduled_at=ghost_at, status="no_show",
+    )
+    # Три сдачи внутри окна «пропущенного» часа — он на нём был.
+    for i in range(3):
+        task_id = await _new_task(db, course_id=course_id, uid=f"att-915-{i}-{student_id}")
+        await _insert_task_result(
+            db, student_id=student_id, task_id=task_id, course_id=course_id,
+            is_correct=True, submitted_at=ghost_at + timedelta(minutes=10 + i * 5),
+        )
+
+    resp = await client.get(
+        f"/api/v1/students/{student_id}/dashboard",
+        params=_dt_params(period_from, period_to),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200, resp.text
+    a = resp.json()["attendance"]
+    assert (a["planned"], a["attended"], a["missed"]) == (1, 1, 0)
+
+
+@pytest.mark.asyncio
 async def test_attendance_teacher_marked_absent_then_present(db, client):
     """Сценарий оператора: ученик сам ничего не проставил, преподаватель
     поставил пропуск, а потом сам же исправил на явку. Считается итог, не

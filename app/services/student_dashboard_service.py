@@ -88,6 +88,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
 from app.services import (
+    attendance_service,
     charge_service,
     homework_service,
     manual_progress_service,
@@ -138,7 +139,7 @@ _NOT_COUNTED_STATUSES = NOT_COUNTED_STATUSES
 #: строка `rescheduled` всё равно заменена той, куда участие переехало.
 #: На проде 130 участий `no_show` и ни одного из них с переносом — то есть эти
 #: два состояния в данных не смешиваются.
-MISSED_STATUSES = ("no_show", "declined")
+MISSED_STATUSES = attendance_service.MISSED_STATUSES
 
 
 def _subtract_metrics(total: dict[str, int], subset: dict[str, int]) -> dict[str, int]:
@@ -334,6 +335,23 @@ async def _load_attendance(
     elapsed = int(row["elapsed"] or 0)
     attended = int(row["attended"] or 0)
     planned = int(row["generated"] or 0)
+
+    # tsk-916: пропуск по статусу — гипотеза. Погашенный (работал в окне
+    # своего часа без отметки, отработал чужой час, переехал в другой слот —
+    # а старое занятие осталось с ним) считается посещённым: правило общее с
+    # нормой ДЗ и серией пропусков (`attendance_service`), иначе родитель на
+    # дашборде видел бы «пропустил 2», а преподаватель в карточке — «все
+    # отработаны».
+    if elapsed > attended:
+        by_status, unpaid = attendance_service.totals(
+            (
+                await attendance_service.weekly(
+                    db, student_ids=[student_id], since=period_from, until=elapsed_to
+                )
+            ).get(student_id, [])
+        )
+        paid = max(by_status - unpaid, 0)
+        attended = min(attended + paid, elapsed)
 
     # Хвост периода за горизонтом генератора — по постоянному расписанию.
     # Горизонт берём по ЭТОМУ ученику: у прикреплённого позже занятий может

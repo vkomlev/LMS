@@ -321,6 +321,61 @@ async def test_missed_two_lessons_in_a_row_is_a_reason(db, client):
 
 
 @pytest.mark.asyncio
+async def test_paid_miss_does_not_count_in_the_streak(db, client):
+    """Погашенный пропуск серию не длит (tsk-916).
+
+    Курунов 12.09: переехал с четверга на субботу, слот четверга выключен, но
+    занятие четверга осталось с ним участником — `no_show`, «пропустил
+    подряд: 1» при двух отработанных субботних часах той же недели. Правило
+    общее с нормой ДЗ: план недели из активных слотов против отработанных
+    часов.
+    """
+    from sqlalchemy import text
+
+    teacher_id, token = await _new_user(db, role="teacher", name="t915")
+    student_id, _ = await _new_user(db, role="student", name="s915")
+    now = datetime.now(UTC)
+    # Две прошедшие недели без пропусков, чтобы окно серии было «чистым», и
+    # текущая неделя: два отработанных часа, потом призрачный пропуск.
+    week_start = (now - timedelta(days=now.weekday())).replace(
+        hour=6, minute=0, second=0, microsecond=0,
+    )
+    if week_start + timedelta(days=3, hours=1) > now:
+        # Понедельник-среда: текущая неделя ещё коротка — берём прошлую.
+        week_start -= timedelta(days=7)
+    for slot_hour in (10, 11):
+        slot_id = (
+            await db.execute(
+                text(
+                    "INSERT INTO lesson_slot (teacher_id, weekday, start_time, duration_minutes, "
+                    "  timezone, is_active, created_by) "
+                    "VALUES (:t, 5, make_time(:h, 0, 0), 60, 'Europe/Moscow', true, :t) RETURNING id"
+                ),
+                {"t": teacher_id, "h": slot_hour},
+            )
+        ).scalar()
+        await db.execute(
+            text(
+                "INSERT INTO lesson_slot_student (slot_id, student_id, is_active, added_by) "
+                "VALUES (:s, :u, true, :t)"
+            ),
+            {"s": slot_id, "u": student_id, "t": teacher_id},
+        )
+    await db.commit()
+
+    first = await _occurrence(db, teacher_id=teacher_id, scheduled_at=week_start)
+    await _join(db, occurrence_id=first, student_id=student_id, status="confirmed")
+    second = await _occurrence(db, teacher_id=teacher_id, scheduled_at=week_start + timedelta(hours=1))
+    await _join(db, occurrence_id=second, student_id=student_id, status="confirmed")
+    ghost = await _occurrence(db, teacher_id=teacher_id, scheduled_at=week_start + timedelta(days=3))
+    await _join(db, occurrence_id=ghost, student_id=student_id, status="no_show")
+    today = await _occurrence(db, teacher_id=teacher_id, scheduled_at=now + timedelta(hours=1))
+    await _join(db, occurrence_id=today, student_id=student_id)
+
+    (row,) = await _summary(client, occ_id=today, teacher_id=teacher_id, token=token)
+    assert row["missed_streak"] == 0, "призрачный пропуск при отработанной неделе попал в серию"
+
+
 async def test_absence_reason_disappears_after_teacher_asked(db, client):
     """Про пропуск уже поговорили (отметка из плана занятия, tsk-743) — повод снят.
 
