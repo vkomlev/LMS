@@ -40172,6 +40172,200 @@
         }
       }
     },
+    "/api/v1/methodist/attention-summary": {
+      "get": {
+        "tags": [
+          "methodist_attention_summary"
+        ],
+        "summary": "Get Attention Summary",
+        "description": "Сколько учеников за окно получили повод «уделить время» (tsk-648) —\nпо школе целиком, без разреза по курсам (в схеме курс occurrence не\nхранит, честной опоры для разреза сегодня нет — см. docstring сервиса).",
+        "operationId": "get_attention_summary_api_v1_methodist_attention_summary_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "window_days",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 30,
+              "minimum": 1,
+              "description": "Окно накопления, дней. По умолчанию — неделя (tsk-888).",
+              "default": 7,
+              "title": "Window Days"
+            },
+            "description": "Окно накопления, дней. По умолчанию — неделя (tsk-888)."
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttentionSummaryRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/methodist/ready-for-harder-summary": {
+      "get": {
+        "tags": [
+          "methodist_attention_summary"
+        ],
+        "summary": "Get Ready For Harder Summary",
+        "description": "Кому пора усложнить (tsk-649) — по всем активным ученикам школы, а не\nтолько тем, кто попал в одно occurrence.",
+        "operationId": "get_ready_for_harder_summary_api_v1_methodist_ready_for_harder_summary_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadyForHarderSummaryRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/media/{sha_ext}": {
       "get": {
         "tags": [
@@ -45586,6 +45780,45 @@
           "action"
         ],
         "title": "AttendanceActionRequest"
+      },
+      "AttentionSummaryRead": {
+        "properties": {
+          "window_days": {
+            "type": "integer",
+            "title": "Window Days"
+          },
+          "window_from": {
+            "title": "Window From"
+          },
+          "window_to": {
+            "title": "Window To"
+          },
+          "participants_in_window": {
+            "type": "integer",
+            "title": "Participants In Window"
+          },
+          "students_flagged": {
+            "type": "integer",
+            "title": "Students Flagged"
+          },
+          "by_reason": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "By Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "window_days",
+          "window_from",
+          "window_to",
+          "participants_in_window",
+          "students_flagged",
+          "by_reason"
+        ],
+        "title": "AttentionSummaryRead"
       },
       "AttributeGuestRequest": {
         "properties": {
@@ -61490,6 +61723,86 @@
         ],
         "title": "RateReviewResponse",
         "description": "Ответ на оценку разбора."
+      },
+      "ReadyForHarderItem": {
+        "properties": {
+          "student_id": {
+            "type": "integer",
+            "title": "Student Id"
+          },
+          "full_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Full Name"
+          },
+          "tasks": {
+            "type": "integer",
+            "title": "Tasks"
+          },
+          "first_try_ok": {
+            "type": "integer",
+            "title": "First Try Ok"
+          },
+          "percent": {
+            "type": "integer",
+            "title": "Percent"
+          },
+          "hard_tasks": {
+            "type": "integer",
+            "title": "Hard Tasks"
+          },
+          "window_days": {
+            "type": "integer",
+            "title": "Window Days"
+          },
+          "detail": {
+            "type": "string",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "required": [
+          "student_id",
+          "tasks",
+          "first_try_ok",
+          "percent",
+          "hard_tasks",
+          "window_days",
+          "detail"
+        ],
+        "title": "ReadyForHarderItem"
+      },
+      "ReadyForHarderSummaryRead": {
+        "properties": {
+          "window_days": {
+            "type": "integer",
+            "title": "Window Days"
+          },
+          "active_students": {
+            "type": "integer",
+            "title": "Active Students"
+          },
+          "students": {
+            "items": {
+              "$ref": "#/components/schemas/ReadyForHarderItem"
+            },
+            "type": "array",
+            "title": "Students"
+          }
+        },
+        "type": "object",
+        "required": [
+          "window_days",
+          "active_students",
+          "students"
+        ],
+        "title": "ReadyForHarderSummaryRead"
       },
       "RecalculateResult": {
         "properties": {

@@ -522,6 +522,10 @@ app.include_router(staff_payments_router, prefix=API_PREFIX)
 from app.api.v1.methodist_breaks import router as methodist_breaks_router
 app.include_router(methodist_breaks_router, prefix=API_PREFIX)
 
+# tsk-888: сводный счётчик «уделить время»/«пора усложнить» по школе за период
+from app.api.v1.methodist_attention_summary import router as methodist_attention_summary_router
+app.include_router(methodist_attention_summary_router, prefix=API_PREFIX)
+
 # tsk-110 ADR-0040: CAS media endpoint (публичный, без auth)
 app.include_router(media_router, prefix=API_PREFIX)
 app.include_router(ai_tutor_router, prefix=API_PREFIX)  # tsk-572: ИИ-наставник

@@ -112,6 +112,14 @@ _STUCK_LOOKBACK_DAYS = 7
 #: шла на уроке»: два ответа про один урок расходиться не должны.
 _DEFAULT_LESSON_MINUTES = 60
 
+#: tsk-888: окно сводного счётчика очерёдности внимания для методиста —
+#: накопительный за период, а не устаревающий к следующему занятию, как
+#: per-occurrence список tsk-648. Неделя — тот же ритм, что у методистских
+#: еженедельных разборов в проекте (ср. `weekly_hard_tasks.py`), и на боевых
+#: данных 12.09 даёт содержательный объём: 51 из ~70 участников недели
+#: получили хотя бы один повод (idle 3, help_requests 37, no_show 21).
+_SCHOOL_ATTENTION_WINDOW_DAYS = 7
+
 # --- tsk-649: «пора усложнить» ------------------------------------------------
 #
 # Обратная сторона сводки: слабого видно по незачётам и заявкам помощи, а
@@ -1129,6 +1137,193 @@ async def get_occurrence_summary(
         "is_ad_hoc": occurrence.slot_id is None,
         "window_to": now_utc,
         "participants": result_participants,
+    }
+
+
+# --- tsk-888: сводный счётчик для методиста (окно, а не одно occurrence) ----
+#
+# Оба сигнала ниже уже посчитаны выше для ОДНОГО occurrence (tsk-648/649).
+# Методисту нужна картина по школе за период — не новая метрика, а тот же
+# расчёт, снятый с другого набора входов: не «участники этого занятия», а
+# «участники всех занятий за окно» (внимание) или «все активные ученики
+# школы» (пора усложнить, у него своё скользящее окно 60 дней).
+#
+# Разреза по курсам НЕТ в обеих функциях. Разведка 12.09 (боевая база):
+# ``lesson_occurrence`` не хранит ``course_id`` вовсе (только ``teacher_id``),
+# а единственная колонка, которая теоретически могла бы его дать —
+# ``lesson_idle_episode.course_id`` — заполнена на 0% (0 из 63 строк за 30
+# дней). Курс преподавателя через M2M ``teacher_courses`` тоже не опора: в
+# бою сейчас только ОДИН преподаватель реально ведёт групповые занятия
+# (154 occurrence за 90 дней), и у него ровно один курс — второй
+# «преподаватель» с 10 курсами (id 4495) занятий не ведёт ни одного. Строить
+# курсовой срез значило бы либо мешать сигнал через несуществующую связь,
+# либо (как показал tsk-599) на деле измерять преподавателя, а не курс —
+# та же ловушка, просто с обратным знаком: сегодня в проде курс и есть
+# преподаватель, один-в-один. Решение: разрез по школе целиком; вопрос
+# вернуть, когда у школы будет больше одной активно ведущейся программы.
+
+
+async def _load_help_counts_window(
+    db: AsyncSession, *, student_ids: list[int], window_from: datetime, window_to: datetime,
+) -> dict[int, int]:
+    """Заявки помощи на человека за окно — тот же ``COUNT``, что использует
+    ``load_homework_window`` для одного ученика, батчем на много сразу."""
+    if not student_ids:
+        return {}
+    rows = (
+        await db.execute(
+            text(
+                "SELECT student_id, count(*) AS cnt FROM help_requests "
+                "WHERE student_id = ANY(:ids) "
+                "  AND created_at >= :window_from AND created_at < :window_to "
+                "GROUP BY student_id"
+            ),
+            {"ids": student_ids, "window_from": window_from, "window_to": window_to},
+        )
+    ).mappings().fetchall()
+    return {int(r["student_id"]): int(r["cnt"]) for r in rows}
+
+
+async def get_school_attention_summary(
+    db: AsyncSession, *, window_days: int = _SCHOOL_ATTENTION_WINDOW_DAYS,
+) -> dict[str, Any]:
+    """Сводный счётчик очерёдности внимания (tsk-648) по всей школе за окно
+    (tsk-888) — не новый расчёт, а те же загрузчики и пороги, вызванные на
+    другом входе: вместо «предыдущее занятие ЭТОГО occurrence» — «любое
+    занятие школы за окно», вместо одной группы — все её участники.
+
+    Один эффект от смены входа неизбежен и это нормально: ``idle``/``stuck``
+    теперь отвечают на вопрос «было ли это НА ЗАНЯТИИ за окно» (а не «на
+    занятии, предыдущем относительно другого занятия») — для сводного
+    счётчика это и есть нужный вопрос. Пропуск засчитывается поводом окна
+    только если сам пропущенный урок попадает в окно (иначе месячная старая
+    серия каждую неделю выглядела бы свежей).
+    """
+    now_utc = datetime.now(timezone.utc)
+    window_start = now_utc - timedelta(days=window_days)
+
+    rows = (
+        await db.execute(
+            text(
+                "SELECT o.id AS occurrence_id, p.student_id, p.status "
+                "FROM lesson_occurrence_participant p "
+                "JOIN lesson_occurrence o ON o.id = p.occurrence_id "
+                "WHERE o.scheduled_at >= :window_start AND o.scheduled_at < :now"
+            ),
+            {"window_start": window_start, "now": now_utc},
+        )
+    ).mappings().fetchall()
+
+    pairs = [(int(r["occurrence_id"]), int(r["student_id"])) for r in rows]
+    student_ids = sorted({sid for _, sid in pairs})
+    if not student_ids:
+        return {
+            "window_days": window_days,
+            "window_from": window_start,
+            "window_to": now_utc,
+            "participants_in_window": 0,
+            "students_flagged": 0,
+            "by_reason": {},
+        }
+
+    idle_by_student = await _load_idle_on_lessons(db, pairs=pairs)
+    stuck_by_student = await load_stuck_tasks(
+        db,
+        student_ids=student_ids,
+        since=window_start,
+        until=now_utc,
+        include_limit_blocked=True,
+    )
+    homework_assigned = await homework_service.status_for_students(
+        db, student_ids=student_ids, now=now_utc, as_of=now_utc,
+    )
+    help_counts = await _load_help_counts_window(
+        db, student_ids=student_ids, window_from=window_start, window_to=now_utc,
+    )
+
+    # Серию пропусков считаем только тем, у кого в окне вообще был no_show —
+    # у остальных её и быть не может (streak гаснет первой же явкой).
+    no_show_candidates = sorted({
+        int(r["student_id"]) for r in rows if r["status"] == "no_show"
+    })
+    streak_by_student: dict[int, tuple[int, Optional[int], Optional[datetime]]] = {}
+    followup_pairs: list[tuple[int, int]] = []
+    for sid in no_show_candidates:
+        _window_from, missed_streak, prev_occ_id, prev_started_at = (
+            await _load_prev_occurrence_and_streak(db, student_id=sid, before=now_utc)
+        )
+        streak_by_student[sid] = (missed_streak, prev_occ_id, prev_started_at)
+        if prev_occ_id is not None:
+            followup_pairs.append((prev_occ_id, sid))
+    absence_asked = await _load_absence_followups(db, pairs=followup_pairs)
+
+    by_reason: dict[str, int] = {}
+    students_flagged = 0
+    for sid in student_ids:
+        missed_streak, _prev_occ_id, prev_started_at = streak_by_student.get(
+            sid, (0, None, None),
+        )
+        if prev_started_at is None or prev_started_at < window_start:
+            missed_streak = 0
+        homework_row = {
+            **_assigned_fields(homework_assigned.get(sid)),
+            "help_requested": help_counts.get(sid, 0),
+        }
+        attention = _build_attention(
+            idle=idle_by_student.get(sid),
+            stuck_items=stuck_by_student.get(sid, []),
+            missed_streak=missed_streak,
+            prev_started_at=prev_started_at,
+            absence_asked=sid in absence_asked,
+            homework=homework_row,
+        )
+        if attention:
+            students_flagged += 1
+            by_reason[attention["reason"]] = by_reason.get(attention["reason"], 0) + 1
+
+    return {
+        "window_days": window_days,
+        "window_from": window_start,
+        "window_to": now_utc,
+        "participants_in_window": len(student_ids),
+        "students_flagged": students_flagged,
+        "by_reason": by_reason,
+    }
+
+
+async def get_school_ready_for_harder_summary(db: AsyncSession) -> dict[str, Any]:
+    """«Пора усложнить» (tsk-649) по всей школе, а не по участникам одного
+    occurrence (tsk-888) — тот же признак ``_load_ready_for_harder``, снятый
+    с активных учеников школы (``retention_service.list_active_student_ids``,
+    та же выборка, что у замера удержания). Собственное окно признака — 60
+    дней, оно уже скользящее, второго окна поверх не нужно.
+    """
+    # Ленивый импорт: `retention_service` тянет `MANUAL_SOURCE` из ЭТОГО же
+    # модуля — импорт на уровне файла зациклился бы (`retention_service`
+    # грузится раньше, чем здесь определится сама константа).
+    from app.services import retention_service  # noqa: PLC0415
+
+    student_ids = await retention_service.list_active_student_ids(db)
+    harder_by_student = await _load_ready_for_harder(db, student_ids=student_ids)
+    profiles: dict[int, Optional[str]] = {}
+    if harder_by_student:
+        rows = (
+            await db.execute(
+                text("SELECT id, full_name FROM users WHERE id = ANY(:ids)"),
+                {"ids": list(harder_by_student.keys())},
+            )
+        ).mappings().fetchall()
+        profiles = {int(r["id"]): r["full_name"] for r in rows}
+    students = [
+        {"student_id": sid, "full_name": profiles.get(sid), **detail}
+        for sid, detail in sorted(
+            harder_by_student.items(), key=lambda kv: -kv[1]["percent"],
+        )
+    ]
+    return {
+        "window_days": _HARDER_WINDOW_DAYS,
+        "active_students": len(student_ids),
+        "students": students,
     }
 
 
