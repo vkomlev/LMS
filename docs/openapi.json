@@ -64064,6 +64064,33 @@
             ],
             "title": "Current Item Title"
           },
+          "behind_count": {
+            "type": "integer",
+            "title": "Behind Count",
+            "default": 0
+          },
+          "behind_section_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Behind Section Title"
+          },
+          "behind_item_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Behind Item Title"
+          },
           "forecast_completion_date": {
             "anyOf": [
               {
@@ -69825,6 +69852,36 @@
             ],
             "title": "Current Item Title",
             "description": "Конкретное следующее незавершённое задание/материал в этом курсе; None, если курс пройден целиком (не путать с last_activity — тот про последнее ЗАВЕРШЁННОЕ действие, этот про следующее НЕзавершённое)"
+          },
+          "behind_count": {
+            "type": "integer",
+            "title": "Behind Count",
+            "description": "tsk-918: незавершённых элементов ПОЗАДИ текущего — перепрыгнутых. «Сейчас» показывает фронт (первое незавершённое после последнего завершённого), а хвосты — здесь: ученик сделал 32 из 33 в теме и ушёл вперёд, и без этого поля «Сейчас: Задание 3» спорило с «Последнее: Задание 5»",
+            "default": 0
+          },
+          "behind_section_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Behind Section Title",
+            "description": "Раздел первого хвоста"
+          },
+          "behind_item_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Behind Item Title",
+            "description": "Первый хвост — название"
           },
           "is_service": {
             "type": "boolean",

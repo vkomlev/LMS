@@ -90,6 +90,7 @@ from app.core.config import Settings
 from app.services import (
     attendance_service,
     charge_service,
+    course_position,
     homework_service,
     manual_progress_service,
     pricing_service,
@@ -107,6 +108,7 @@ from app.services.learning_gaps_service import (
 )
 # tsk-867: только ради аннотации — сам модуль импортируется лениво, чтобы не
 # тянуть измеритель в путь, где вес не нужен вовсе.
+from app.services.content_grace_service import compute_graced_items
 from app.services.task_effort_service import EffortTable  # noqa: F401
 
 _METRIC_KEYS = ("tasks_completed", "theory_completed", "first_try", "help_requested")
@@ -1009,11 +1011,26 @@ async def get_student_dashboard(
         data = await manual_progress_service.get_student_progress(
             db, student_id=student_id, course_id=course_id,
         )
-        items = data["items"]
+        # tsk-918: прощённое (правило tsk-692) — не в счёт, как в сводке
+        # (tsk-907) и в кабинете ученика; иначе родитель видел бы 96% там, где
+        # курс пройден целиком.
+        graced = await compute_graced_items(db, student_id, course_id)
+        items = [
+            i
+            for i in data["items"]
+            if not (
+                (i["item_type"] == "task" and int(i["item_id"]) in graced.tasks)
+                or (
+                    i["item_type"] == "material"
+                    and int(i["item_id"]) in graced.materials
+                )
+            )
+        ]
         countable = [i for i in items if i["item_type"] != "course"]
-        done = sum(1 for i in countable if i["status"] in DONE_STATUSES)
+        anchor = await course_position.anchor_for(db, student_id=student_id, items=items)
+        pos = course_position.position(items, course_id=course_id, anchor=anchor)
+        percent = pos.percent_complete
         total = len(countable)
-        percent = round(done / total * 100) if total else 0
 
         # tsk-504: когорта per-course (метрика однозначно привязана к
         # course_id) — активные ученики ИМЕННО этого курса.
@@ -1029,18 +1046,6 @@ async def get_student_dashboard(
             float(percent) if total else None, list(percent_peer_values.values()),
             higher_is_better=True, cohort_size=len(course_peer_ids), min_cohort=min_cohort,
         )
-
-        section_titles = {i["item_id"]: i["title"] for i in items if i["item_type"] == "course"}
-        current_section_title: Optional[str] = None
-        current_item_title: Optional[str] = None
-        for i in countable:
-            if i["status"] in DONE_STATUSES:
-                continue
-            current_item_title = i["title"]
-            parent_id = i.get("parent_course_id")
-            if parent_id is not None and parent_id != course_id:
-                current_section_title = section_titles.get(parent_id)
-            break
 
         forecast_date, is_completed = await _load_course_pace_and_forecast(
             db,
@@ -1060,8 +1065,11 @@ async def get_student_dashboard(
             "title": course["title"],
             "percent_complete": percent,
             "pace_level": pace_level,
-            "current_section_title": current_section_title,
-            "current_item_title": current_item_title,
+            "current_section_title": pos.current_section_title,
+            "current_item_title": pos.current_item_title,
+            "behind_count": pos.behind_count,
+            "behind_section_title": pos.behind_section_title,
+            "behind_item_title": pos.behind_item_title,
             "forecast_completion_date": forecast_date,
             "is_completed": is_completed,
         })

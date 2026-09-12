@@ -377,6 +377,18 @@ class TeacherSummaryCourseProgress(BaseModel):
         "None, если курс пройден целиком (не путать с last_activity — тот про "
         "последнее ЗАВЕРШЁННОЕ действие, этот про следующее НЕзавершённое)",
     )
+    behind_count: int = Field(
+        default=0,
+        description=(
+            "tsk-918: незавершённых элементов ПОЗАДИ текущего — перепрыгнутых. "
+            "«Сейчас» показывает фронт (первое незавершённое после последнего "
+            "завершённого), а хвосты — здесь: ученик сделал 32 из 33 в теме и "
+            "ушёл вперёд, и без этого поля «Сейчас: Задание 3» спорило с "
+            "«Последнее: Задание 5»"
+        ),
+    )
+    behind_section_title: Optional[str] = Field(default=None, description="Раздел первого хвоста")
+    behind_item_title: Optional[str] = Field(default=None, description="Первый хвост — название")
     is_service: bool = Field(
         default=False,
         description=(

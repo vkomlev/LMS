@@ -1232,7 +1232,14 @@ async def get_student_progress(
                     tid, t.get("tc_title"), t.get("tc_stem"), t.get("external_uid"),
                     max_len=HINT_MAX_LEN,
                 ),
-                "status": state.state,
+                # tsk-918: пропущенное задание (tsk-111) — SKIPPED, как у
+                # материалов. В зачёт узла оно шло и раньше, а строка оставалась
+                # OPEN — и сводка с дашбордом считали его незакрытым.
+                "status": (
+                    "SKIPPED"
+                    if tid in skipped_task_ids and state.state != "PASSED"
+                    else state.state
+                ),
                 "manual": is_manual,
                 # Квиз зачесть нельзя (см. `ensure_task_grantable`) — SPW прячет
                 # кнопку по этому флагу, а не по типу задания: тип в дереве

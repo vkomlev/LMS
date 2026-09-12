@@ -1218,6 +1218,102 @@ async def test_api_course_selector_respects_acl(graph, client):
     assert resp.json()["courses"] == []
 
 
+async def test_api_course_selector_marks_course_with_latest_activity_as_current(graph, client):
+    """tsk-917 п.4: `is_current` — курс, где ученик работал ПОСЛЕДНИМ, а не
+    первый по порядку записи. Тот же принцип, что и в подборе домашней
+    работы вне программы (tsk-913): активность считается по всему дереву
+    курса, а не только по корню.
+    """
+    ids, db = graph["ids"], graph["db"]
+    second = (
+        await db.execute(
+            text(
+                "INSERT INTO courses (title, access_level) "
+                "VALUES (:t, 'self_guided') RETURNING id"
+            ),
+            {"t": f"{_TAG} второй курс"},
+        )
+    ).scalar()
+    difficulty_id = (
+        await db.execute(text("SELECT id FROM difficulties ORDER BY id LIMIT 1"))
+    ).scalar()
+    second_task = (
+        await db.execute(
+            text(
+                "INSERT INTO tasks (task_content, solution_rules, course_id, "
+                "difficulty_id, external_uid, max_score, order_position) "
+                "VALUES (CAST(:tc AS jsonb), CAST(:sr AS jsonb), :cid, :did, "
+                ":uid, 10, 1) RETURNING id"
+            ),
+            {
+                "tc": json.dumps({"type": "SA", "stem": f"{_TAG} условие"}),
+                "sr": json.dumps({"max_score": 10}),
+                "cid": second,
+                "did": difficulty_id,
+                "uid": f"{_TAG}-second-{random.randint(10**8, 10**10)}",
+            },
+        )
+    ).scalar()
+    try:
+        # Записан ПОСЛЕ корня (order_number больше) — по порядку записи он
+        # был бы вторым, не первым.
+        await db.execute(
+            text(
+                "INSERT INTO user_courses (user_id, course_id, is_active, order_number) "
+                "VALUES (:u, :c, true, 2)"
+            ),
+            {"u": ids["student"], "c": second},
+        )
+        await db.commit()
+
+        # Сначала решает в корне, ПОТОМ во втором курсе — второй курс должен
+        # стать активным, несмотря на то, что записан позже.
+        await _submit_result(db, ids["student"], ids["task_root_a"], score=10)
+        await db.commit()
+        await _submit_result(db, ids["student"], second_task, score=10)
+        await db.commit()
+
+        headers = {"Authorization": f"Bearer {graph['tokens']['teacher']}"}
+        resp = await client.get(
+            f"/api/v1/teacher/students/{ids['student']}/progress", headers=headers,
+        )
+        assert resp.status_code == 200, resp.text
+        courses = {c["course_id"]: c["is_current"] for c in resp.json()["courses"]}
+        assert courses == {ids["root"]: False, second: True}, (
+            "активным должен стать курс с ПОСЛЕДНЕЙ сдачей, а не первый по order_number"
+        )
+    finally:
+        await db.rollback()
+        await db.execute(
+            text("DELETE FROM task_results WHERE task_id = :t"), {"t": second_task}
+        )
+        await db.execute(
+            text("DELETE FROM attempts WHERE user_id = :u AND course_id = :c"),
+            {"u": ids["student"], "c": second},
+        )
+        await db.execute(
+            text("DELETE FROM user_courses WHERE user_id = :u AND course_id = :c"),
+            {"u": ids["student"], "c": second},
+        )
+        await db.execute(text("DELETE FROM tasks WHERE id = :t"), {"t": second_task})
+        await db.execute(text("DELETE FROM courses WHERE id = :c"), {"c": second})
+        await db.commit()
+
+
+async def test_api_course_selector_current_defaults_to_first_when_no_activity(graph, client):
+    """Без активности вовсе — активен первый по порядку записи, как и раньше
+    (поведение экрана до tsk-917 не должно измениться для этого случая)."""
+    ids = graph["ids"]
+    headers = {"Authorization": f"Bearer {graph['tokens']['teacher']}"}
+    resp = await client.get(
+        f"/api/v1/teacher/students/{ids['student']}/progress", headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    courses = resp.json()["courses"]
+    assert len(courses) == 1 and courses[0]["course_id"] == ids["root"]
+    assert courses[0]["is_current"] is True
+
+
 async def test_api_bulk_endpoint(graph, client):
     """Массовый эндпоинт по узлу отдаёт счётчики по всему поддереву."""
     ids = graph["ids"]
@@ -1468,7 +1564,11 @@ async def test_batch_task_states_match_individual_compute(graph):
     )
     by_id = {(i["item_type"], i["item_id"]): i for i in data["items"]}
     for tid in task_ids:
-        assert by_id[("task", tid)]["status"] == individual[tid].state, (
+        # tsk-918: пропущенное задание карточка показывает SKIPPED — движок
+        # про пропуск (tsk-111) не знает и держит OPEN; это единственное
+        # законное расхождение.
+        expected = "SKIPPED" if tid == ids["task_quiz"] else individual[tid].state
+        assert by_id[("task", tid)]["status"] == expected, (
             f"task {tid}: карточка ученика разошлась с поэлементным расчётом движка"
         )
 

@@ -38,6 +38,9 @@ class StudentDashboardCourseRead(BaseModel):
     pace_level: CohortLevel
     current_section_title: Optional[str] = None
     current_item_title: Optional[str] = None
+    behind_count: int = 0
+    behind_section_title: Optional[str] = None
+    behind_item_title: Optional[str] = None
     forecast_completion_date: Optional[date] = None
     is_completed: bool
 

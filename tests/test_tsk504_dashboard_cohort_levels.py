@@ -100,9 +100,12 @@ async def _new_task(db, *, course_id: int, uid: str) -> int:
     return (
         await db.execute(
             text(
+                # tsk-918: содержимое старше сдач в тестах — иначе правило
+                # tsk-692 сочтёт его досыпанным после прохождения и простит.
                 "INSERT INTO tasks (task_content, solution_rules, course_id, "
-                "difficulty_id, external_uid, max_score, order_position) "
-                "VALUES (CAST(:tc AS jsonb), CAST(:sr AS jsonb), :cid, :did, :uid, 10, 1) "
+                "difficulty_id, external_uid, max_score, order_position, created_at) "
+                "VALUES (CAST(:tc AS jsonb), CAST(:sr AS jsonb), :cid, :did, :uid, 10, 1, "
+                "  now() - interval '400 days') "
                 "RETURNING id"
             ),
             {
@@ -443,6 +446,8 @@ async def test_response_does_not_leak_peer_identity_or_raw_values(db, client):
     assert set(course.keys()) == {
         "course_id", "title", "percent_complete", "pace_level",
         "current_section_title", "current_item_title",
+        # tsk-918: хвосты позади фронта — число и первое название, без id пиров.
+        "behind_count", "behind_section_title", "behind_item_title",
         "forecast_completion_date", "is_completed",
     }
     assert set(body["attendance"].keys()) == {

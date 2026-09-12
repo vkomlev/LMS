@@ -153,9 +153,12 @@ async def _new_task(db, *, course_id: int, uid: str) -> int:
     return (
         await db.execute(
             text(
+                # tsk-918: содержимое старше сдач в тестах — иначе правило
+                # tsk-692 сочтёт его досыпанным после прохождения и простит.
                 "INSERT INTO tasks (task_content, solution_rules, course_id, "
-                "difficulty_id, external_uid, max_score, order_position) "
-                "VALUES (CAST(:tc AS jsonb), CAST(:sr AS jsonb), :cid, :did, :uid, 10, 1) "
+                "difficulty_id, external_uid, max_score, order_position, created_at) "
+                "VALUES (CAST(:tc AS jsonb), CAST(:sr AS jsonb), :cid, :did, :uid, 10, 1, "
+                "  now() - interval '400 days') "
                 "RETURNING id"
             ),
             {
@@ -202,8 +205,9 @@ async def _new_material(db, *, course_id: int, title: str) -> int:
     return (
         await db.execute(
             text(
-                "INSERT INTO materials (course_id, title, type, content, order_position) "
-                "VALUES (:c, :t, 'text', CAST(:content AS jsonb), 1) RETURNING id"
+                "INSERT INTO materials (course_id, title, type, content, order_position, created_at) "
+                "VALUES (:c, :t, 'text', CAST(:content AS jsonb), 1, now() - interval '400 days') "
+                "RETURNING id"
             ),
             {"c": course_id, "t": title, "content": json.dumps({"body": "x"})},
         )

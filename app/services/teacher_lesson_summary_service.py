@@ -37,6 +37,7 @@ from app.auth.current_user import CurrentUser
 from app.repos.lesson_calendar_repository import LessonOccurrenceParticipantRepository
 from app.services import (
     attendance_service,
+    course_position,
     help_requests_service,
     homework_service,
     lesson_occurrence_service,
@@ -556,8 +557,8 @@ async def _load_course_progress_and_blocked(
     лимитом попыток заданий (текущий снепшот, не оконный) — всё берётся из
     уже посчитанного `get_student_progress`, без новой агрегации.
 
-    Текущая позиция — первый НЕзавершённый элемент (`DONE_STATUSES`) в
-    учебном порядке `items` (материалы/задания, узлы `course` пропускаются).
+    Текущая позиция — ФРОНТ: первый незавершённый элемент после последнего
+    завершённого (tsk-918); незавершённое позади фронта — хвосты, отдельно.
     Раздел — заголовок его непосредственного `parent_course_id`; если элемент
     лежит прямо в корне запрошенного курса (раздела как такового нет) или
     курс пройден целиком — `None`."""
@@ -605,28 +606,21 @@ async def _load_course_progress_and_blocked(
             )
         ]
         countable = [i for i in items if i["item_type"] != "course"]
-        done = sum(1 for i in countable if i["status"] in DONE_STATUSES)
-        total = len(countable)
-        percent = round(done / total * 100) if total else 0
-
-        section_titles = {i["item_id"]: i["title"] for i in items if i["item_type"] == "course"}
-        current_section_title: Optional[str] = None
-        current_item_title: Optional[str] = None
-        for i in countable:
-            if i["status"] in DONE_STATUSES:
-                continue
-            current_item_title = i["title"]
-            parent_id = i.get("parent_course_id")
-            if parent_id is not None and parent_id != course_id:
-                current_section_title = section_titles.get(parent_id)
-            break
+        # tsk-918: «сейчас» — фронт ученика, хвосты позади — отдельно. Расчёт
+        # общий с дашбордом (`course_position`), чтобы родитель и
+        # преподаватель видели одно.
+        anchor = await course_position.anchor_for(db, student_id=student_id, items=items)
+        pos = course_position.position(items, course_id=course_id, anchor=anchor)
 
         progress.append({
             "course_id": course_id,
             "title": course["title"],
-            "percent_complete": percent,
-            "current_section_title": current_section_title,
-            "current_item_title": current_item_title,
+            "percent_complete": pos.percent_complete,
+            "current_section_title": pos.current_section_title,
+            "current_item_title": pos.current_item_title,
+            "behind_count": pos.behind_count,
+            "behind_section_title": pos.behind_section_title,
+            "behind_item_title": pos.behind_item_title,
             "is_service": bool(service_course_ids and course_id in service_course_ids),
         })
         for i in countable:
