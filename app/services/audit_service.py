@@ -27,6 +27,8 @@ AUTH_TEST_SESSION_ISSUED = "auth.test.session_issued"
 # tsk-297 event types (штатная правка прогресса ученика преподавателем)
 TEACHER_PROGRESS_GRANTED = "teacher.progress.granted"
 TEACHER_PROGRESS_REVOKED = "teacher.progress.revoked"
+TEACHER_TASK_SKIPPED = "teacher.progress.task_skipped"
+TEACHER_TASK_UNSKIPPED = "teacher.progress.task_unskipped"
 
 # tsk-335 event types (выдача попыток без ручного ввода числа + explicit-путь)
 TEACHER_LIMIT_OVERRIDE = "teacher.limit.overridden"

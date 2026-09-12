@@ -568,6 +568,111 @@ async def grant_task(
     }
 
 
+async def skip_task(
+    db: AsyncSession,
+    *,
+    student_id: int,
+    task_id: int,
+    skipped_by: Optional[int],
+) -> dict[str, Any]:
+    """Пропустить задание ученику — сделать его необязательным ДЛЯ НЕГО (tsk-919).
+
+    Не зачёт: строка `student_task_progress = skipped` — та же, что даёт
+    ученику кнопка «пропустить» на необязательных (tsk-111). Все счётчики её
+    понимают как «с элементом покончено»: остаток программы, норма ДЗ,
+    «сейчас» в сводке, состав выдачи. Реальные попытки не трогаются: если
+    ученик потом задание решит — оно станет PASSED поверх пропуска.
+
+    Повод (оператор 12.09, Нуженко): задание с файлом Excel, которое ученик
+    перепрыгнул, — «в необязательные ему». До этого у преподавателя была
+    только кнопка «зачесть», а зачёт — ложь про сделанное.
+
+    Идемпотентно: повторный пропуск — ``already=True``, не ошибка.
+    """
+    from app.services import learning_events_service
+
+    await _lock(db, student_id, task_id)
+    task = await _load_task(db, task_id)
+    already = (
+        await db.execute(
+            text(
+                "SELECT 1 FROM student_task_progress "
+                " WHERE student_id = :s AND task_id = :t AND status = 'skipped'"
+            ),
+            {"s": student_id, "t": task_id},
+        )
+    ).first() is not None
+    if not already:
+        await learning_events_service.set_task_skipped(db, student_id, task_id)
+        await audit_service.log_event(
+            db,
+            audit_service.TEACHER_TASK_SKIPPED,
+            user_id=skipped_by,
+            details={
+                "student_id": student_id,
+                "item_type": "task",
+                "item_id": task_id,
+                "course_id": task["course_id"],
+            },
+        )
+        await _refresh_course_state(db, student_id, int(task["course_id"]))
+    logger.info(
+        "tsk-919: пропуск задания %s ученику %s преподавателем %s (already=%s)",
+        task_id, student_id, skipped_by, already,
+    )
+    return {
+        "student_id": student_id,
+        "item_type": "task",
+        "item_id": task_id,
+        "skipped": True,
+        "already": already,
+    }
+
+
+async def unskip_task(
+    db: AsyncSession,
+    *,
+    student_id: int,
+    task_id: int,
+    unskipped_by: Optional[int],
+) -> dict[str, Any]:
+    """Вернуть пропущенное задание в обязательные (tsk-919). Идемпотентно."""
+    await _lock(db, student_id, task_id)
+    task = await _load_task(db, task_id)
+    result = await db.execute(
+        text(
+            "DELETE FROM student_task_progress "
+            " WHERE student_id = :s AND task_id = :t AND status = 'skipped'"
+        ),
+        {"s": student_id, "t": task_id},
+    )
+    removed = int(result.rowcount or 0)
+    if removed:
+        await audit_service.log_event(
+            db,
+            audit_service.TEACHER_TASK_UNSKIPPED,
+            user_id=unskipped_by,
+            details={
+                "student_id": student_id,
+                "item_type": "task",
+                "item_id": task_id,
+                "course_id": task["course_id"],
+            },
+        )
+        await _refresh_course_state(db, student_id, int(task["course_id"]))
+    logger.info(
+        "tsk-919: возврат задания %s ученику %s преподавателем %s (removed=%s)",
+        task_id, student_id, unskipped_by, removed,
+    )
+    return {
+        "student_id": student_id,
+        "item_type": "task",
+        "item_id": task_id,
+        "skipped": False,
+        "already": removed == 0,
+    }
+
+
 async def revoke_task(
     db: AsyncSession,
     *,

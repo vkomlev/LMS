@@ -69,6 +69,16 @@ class ProgressItemResponse(BaseModel):
     )
 
 
+class ProgressSkipResponse(BaseModel):
+    """Ответ операции «пропустить / вернуть задание ученику» (tsk-919)."""
+
+    student_id: int
+    item_type: Literal["task"]
+    item_id: int
+    skipped: bool = Field(description="True — задание пропущено для ученика, False — возвращено")
+    already: bool = Field(description="True — состояние уже было таким, ничего не менялось")
+
+
 class ProgressBulkResponse(BaseModel):
     """Ответ массовой операции по дереву узла."""
 
@@ -329,6 +339,53 @@ async def revoke_task(
     )
     await db.commit()
     return ProgressItemResponse(**result)
+
+
+@router.post(
+    _BASE + "/tasks/{task_id}/skip",
+    response_model=ProgressSkipResponse,
+    summary="Пропустить задание ученику (сделать необязательным для него)",
+)
+async def skip_task(
+    student_id: int = Path(..., ge=1),
+    task_id: int = Path(..., ge=1),
+    db: AsyncSession = Depends(get_bare_db),
+    current_user: CurrentUser = Depends(_PROGRESS_GATE),
+) -> ProgressSkipResponse:
+    """Не зачёт: задание помечается пропущенным для этого ученика (tsk-919) —
+    уходит из остатка программы, нормы ДЗ и «сейчас», но не считается
+    решённым. Реальные попытки не трогаются."""
+    course_id = await _course_of_task(db, task_id)
+    await manual_progress_service.ensure_can_edit_progress(
+        db, current_user, student_id, course_id
+    )
+    result = await manual_progress_service.skip_task(
+        db, student_id=student_id, task_id=task_id, skipped_by=_actor_id(current_user),
+    )
+    await db.commit()
+    return ProgressSkipResponse(**result)
+
+
+@router.delete(
+    _BASE + "/tasks/{task_id}/skip",
+    response_model=ProgressSkipResponse,
+    summary="Вернуть пропущенное задание в обязательные",
+)
+async def unskip_task(
+    student_id: int = Path(..., ge=1),
+    task_id: int = Path(..., ge=1),
+    db: AsyncSession = Depends(get_bare_db),
+    current_user: CurrentUser = Depends(_PROGRESS_GATE),
+) -> ProgressSkipResponse:
+    course_id = await _course_of_task(db, task_id)
+    await manual_progress_service.ensure_can_edit_progress(
+        db, current_user, student_id, course_id
+    )
+    result = await manual_progress_service.unskip_task(
+        db, student_id=student_id, task_id=task_id, unskipped_by=_actor_id(current_user),
+    )
+    await db.commit()
+    return ProgressSkipResponse(**result)
 
 
 @router.post(

@@ -1783,3 +1783,55 @@ async def test_progress_tree_blocked_limit_marks_attention_without_extra_signals
     other2 = {(i["item_type"], i["item_id"]): i for i in data2["items"]}[("task", ids["task_root_b"])]
     assert other2["status"] != "BLOCKED_LIMIT"
     assert other2["needs_attention"] is False, "несколько неудачных попыток без блокировки — не сигнал"
+
+
+# ─── tsk-919: пропустить задание ученику ─────────────────────────────────────
+
+
+async def test_api_skip_task_makes_it_optional_for_the_student(graph, client):
+    """Пропуск — не зачёт: задание уходит из незакрытых (SKIPPED), но не PASSED;
+    возврат снимает пропуск. Нуженко 12.09: задание с файлом Excel, которое он
+    перепрыгнул, — «в необязательные ему»."""
+    ids = graph["ids"]
+    headers = {"Authorization": f"Bearer {graph['tokens']['teacher']}"}
+    base = f"/api/v1/teacher/students/{ids['student']}/progress"
+    task_id = ids["task_root_a"]
+
+    skipped = await client.post(f"{base}/tasks/{task_id}/skip", headers=headers)
+    assert skipped.status_code == 200, skipped.text
+    assert skipped.json() == {
+        "student_id": ids["student"], "item_type": "task", "item_id": task_id,
+        "skipped": True, "already": False,
+    }
+    # Повтор — идемпотентно.
+    again = await client.post(f"{base}/tasks/{task_id}/skip", headers=headers)
+    assert again.status_code == 200 and again.json()["already"] is True
+
+    tree = await client.get(f"{base}?course_id={ids['root']}", headers=headers)
+    item = next(
+        i for i in tree.json()["items"]
+        if i["item_type"] == "task" and i["item_id"] == task_id
+    )
+    assert item["status"] == "SKIPPED" and item["manual"] is False, (
+        "пропуск должен читаться как SKIPPED, а не как ручной зачёт"
+    )
+
+    returned = await client.delete(f"{base}/tasks/{task_id}/skip", headers=headers)
+    assert returned.status_code == 200, returned.text
+    assert returned.json()["skipped"] is False and returned.json()["already"] is False
+    tree = await client.get(f"{base}?course_id={ids['root']}", headers=headers)
+    item = next(
+        i for i in tree.json()["items"]
+        if i["item_type"] == "task" and i["item_id"] == task_id
+    )
+    assert item["status"] == "OPEN"
+
+
+async def test_api_skip_denied_to_unlinked_teacher(graph, client):
+    """Тот же ACL, что у зачёта: чужой преподаватель — 403."""
+    ids = graph["ids"]
+    resp = await client.post(
+        f"/api/v1/teacher/students/{ids['student']}/progress/tasks/{ids['task_root_a']}/skip",
+        headers={"Authorization": f"Bearer {graph['tokens']['other']}"},
+    )
+    assert resp.status_code == 403, resp.text

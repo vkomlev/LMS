@@ -21659,6 +21659,223 @@
         }
       }
     },
+    "/api/v1/teacher/students/{student_id}/progress/tasks/{task_id}/skip": {
+      "post": {
+        "tags": [
+          "teacher_progress"
+        ],
+        "summary": "Пропустить задание ученику (сделать необязательным для него)",
+        "description": "Не зачёт: задание помечается пропущенным для этого ученика (tsk-919) —\nуходит из остатка программы, нормы ДЗ и «сейчас», но не считается\nрешённым. Реальные попытки не трогаются.",
+        "operationId": "skip_task_api_v1_teacher_students__student_id__progress_tasks__task_id__skip_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "student_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "title": "Student Id"
+            }
+          },
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "title": "Task Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProgressSkipResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "teacher_progress"
+        ],
+        "summary": "Вернуть пропущенное задание в обязательные",
+        "operationId": "unskip_task_api_v1_teacher_students__student_id__progress_tasks__task_id__skip_delete",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "student_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "title": "Student Id"
+            }
+          },
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "title": "Task Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProgressSkipResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/teacher/students/{student_id}/progress/materials/{material_id}": {
       "post": {
         "tags": [
@@ -59745,6 +59962,43 @@
         ],
         "title": "ProgressItemResponse",
         "description": "Ответ единичной операции над заданием/материалом."
+      },
+      "ProgressSkipResponse": {
+        "properties": {
+          "student_id": {
+            "type": "integer",
+            "title": "Student Id"
+          },
+          "item_type": {
+            "type": "string",
+            "const": "task",
+            "title": "Item Type"
+          },
+          "item_id": {
+            "type": "integer",
+            "title": "Item Id"
+          },
+          "skipped": {
+            "type": "boolean",
+            "title": "Skipped",
+            "description": "True — задание пропущено для ученика, False — возвращено"
+          },
+          "already": {
+            "type": "boolean",
+            "title": "Already",
+            "description": "True — состояние уже было таким, ничего не менялось"
+          }
+        },
+        "type": "object",
+        "required": [
+          "student_id",
+          "item_type",
+          "item_id",
+          "skipped",
+          "already"
+        ],
+        "title": "ProgressSkipResponse",
+        "description": "Ответ операции «пропустить / вернуть задание ученику» (tsk-919)."
       },
       "ProgressTreeItem": {
         "properties": {
