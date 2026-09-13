@@ -40366,6 +40366,48 @@
         }
       }
     },
+    "/api/v1/public/leads": {
+      "post": {
+        "tags": [
+          "public_leads"
+        ],
+        "summary": "Заявка с формы на продающем лендинге сайта",
+        "description": "Принять контакт с формы на лендинге перед переходом в Telegram.\n\nHoneypot `hp`: бот заполняет все поля формы, человек скрытое CSS-полем не\nвидит и не трогает. Заполнено — молча отвечаем так же, как при успехе, но\nлида не заводим: явная ошибка подсказала бы боту, какое поле убрать.",
+        "operationId": "submit_website_lead_api_v1_public_leads_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebsiteLeadRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebsiteLeadResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/media/{sha_ext}": {
       "get": {
         "tags": [
@@ -73680,6 +73722,60 @@
         ],
         "title": "WebinarLinkResponse",
         "description": "Ответ на отправку ссылки на разбор."
+      },
+      "WebsiteLeadRequest": {
+        "properties": {
+          "full_name": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Full Name",
+            "description": "Имя"
+          },
+          "contact": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 3,
+            "title": "Contact",
+            "description": "Телефон, Telegram или e-mail"
+          },
+          "page": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Page",
+            "description": "Слаг лендинга-источника на сайте"
+          },
+          "hp": {
+            "type": "string",
+            "maxLength": 200,
+            "title": "Hp",
+            "description": "Honeypot — скрытое от человека поле, должно оставаться пустым",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "full_name",
+          "contact",
+          "page"
+        ],
+        "title": "WebsiteLeadRequest",
+        "description": "Тело `POST /public/leads` — форма на продающем лендинге сайта (tsk-929).\n\nПубличная форма встаёт ПЕРЕД кнопкой «Написать в Telegram», а не заменяет\nеё (решение оператора 13.09): канал жёстко «Сайт», клиент его не выбирает.\n`page` — какой лендинг прислал заявку (slug WP-страницы); не обязан\nсовпадать с существующим курсом в LMS — часть лендингов ещё без курса."
+      },
+      "WebsiteLeadResponse": {
+        "properties": {
+          "lead_id": {
+            "type": "integer",
+            "title": "Lead Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "lead_id"
+        ],
+        "title": "WebsiteLeadResponse",
+        "description": "Ответ на `POST /public/leads`."
       },
       "app__api__v1__messages_extra__UnreadCountResponse": {
         "properties": {

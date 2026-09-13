@@ -526,6 +526,12 @@ app.include_router(methodist_breaks_router, prefix=API_PREFIX)
 from app.api.v1.methodist_attention_summary import router as methodist_attention_summary_router
 app.include_router(methodist_attention_summary_router, prefix=API_PREFIX)
 
+# tsk-929: форма захвата заявки на продающих лендингах сайта — перед переходом
+# в Telegram, а не вместо него. Публичный контур без гостевой сессии, защита —
+# rate-limit по IP + honeypot.
+from app.api.v1.public_leads import router as public_leads_router
+app.include_router(public_leads_router, prefix=API_PREFIX)
+
 # tsk-110 ADR-0040: CAS media endpoint (публичный, без auth)
 app.include_router(media_router, prefix=API_PREFIX)
 app.include_router(ai_tutor_router, prefix=API_PREFIX)  # tsk-572: ИИ-наставник

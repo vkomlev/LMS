@@ -131,6 +131,40 @@ class ExternalLeadStatusList(BaseModel):
     leads: list[ExternalLeadStatus]
 
 
+class WebsiteLeadRequest(BaseModel):
+    """Тело `POST /public/leads` — форма на продающем лендинге сайта (tsk-929).
+
+    Публичная форма встаёт ПЕРЕД кнопкой «Написать в Telegram», а не заменяет
+    её (решение оператора 13.09): канал жёстко «Сайт», клиент его не выбирает.
+    `page` — какой лендинг прислал заявку (slug WP-страницы); не обязан
+    совпадать с существующим курсом в LMS — часть лендингов ещё без курса.
+    """
+
+    full_name: str = Field(min_length=1, max_length=200, description="Имя")
+    contact: str = Field(min_length=3, max_length=200, description="Телефон, Telegram или e-mail")
+    page: str = Field(min_length=1, max_length=200, description="Слаг лендинга-источника на сайте")
+    hp: str = Field(
+        default="",
+        max_length=200,
+        description="Honeypot — скрытое от человека поле, должно оставаться пустым",
+    )
+
+    @model_validator(mode="after")
+    def _stripped_and_filled(self) -> "WebsiteLeadRequest":
+        self.full_name = self.full_name.strip()
+        self.contact = self.contact.strip()
+        self.page = self.page.strip()
+        if not self.full_name or not self.contact or not self.page:
+            raise ValueError("Имя, контакт и страница обязательны")
+        return self
+
+
+class WebsiteLeadResponse(BaseModel):
+    """Ответ на `POST /public/leads`."""
+
+    lead_id: int
+
+
 class LeadLinkRequest(BaseModel):
     student_id: int
 
