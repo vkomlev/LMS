@@ -473,18 +473,11 @@ async def _accumulate_course_scales(
     return totals
 
 
-def quiz_scale_matched(condition: dict[str, Any], totals: dict[str, int]) -> bool:
-    """
-    Совпало ли правило ``quiz_scale`` с накопленными шкалами.
+def _quiz_scale_condition_matched(condition: dict[str, Any], totals: dict[str, int]) -> bool:
+    """Одиночное условие ``{scale, min_score}`` или ``{scale, mode: argmax}``.
 
-    Публичная (tsk-053): тем же правилом ``assignment_rule`` пользуется гостевой
-    квиз-лид-магнит, только вместо назначения курса ученику он показывает
-    рекомендацию посетителю. Условие подбора должно быть одно на оба контура —
-    иначе методист настроит правило, а на витрине увидит другой ответ.
-
-    ``min_score`` имеет приоритет: ``totals[scale] >= min_score``. Иначе режим
-    ``argmax``: шкала строго максимальна (уникальный победитель, балл > 0). При
-    отсутствии накопленных шкал — не срабатывает.
+    Вынесено из ``quiz_scale_matched``, чтобы тем же примитивом пользовались
+    и основное условие правила, и элементы исключающего списка ``none``.
     """
     scale = condition.get("scale")
     if not scale or scale not in totals:
@@ -501,6 +494,33 @@ def quiz_scale_matched(condition: dict[str, Any], totals: dict[str, int]) -> boo
     if target <= 0:
         return False
     return all(target > other for s, other in totals.items() if s != scale)
+
+
+def quiz_scale_matched(condition: dict[str, Any], totals: dict[str, int]) -> bool:
+    """
+    Совпало ли правило ``quiz_scale`` с накопленными шкалами.
+
+    Публичная (tsk-053): тем же правилом ``assignment_rule`` пользуется гостевой
+    квиз-лид-магнит, только вместо назначения курса ученику он показывает
+    рекомендацию посетителю. Условие подбора должно быть одно на оба контура —
+    иначе методист настроит правило, а на витрине увидит другой ответ.
+
+    Основное условие — как раньше, ``min_score`` или ``argmax`` (см.
+    ``_quiz_scale_condition_matched``). Необязательный ключ ``none`` (tsk-306) —
+    список условий той же формы: правило не срабатывает, если хотя бы одно из
+    них истинно. Нужен, когда шкала-победитель сама по себе неоднозначна между
+    аудиториями (например, интерес к Python общий для школьника и взрослого) и
+    другое правило должно перехватывать пересекающийся случай.
+    """
+    if not _quiz_scale_condition_matched(condition, totals):
+        return False
+
+    exclusions = condition.get("none")
+    if exclusions:
+        if any(_quiz_scale_condition_matched(excl, totals) for excl in exclusions):
+            return False
+
+    return True
 
 
 async def _evaluate_quiz_scale(
