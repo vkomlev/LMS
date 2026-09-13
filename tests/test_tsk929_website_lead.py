@@ -131,3 +131,40 @@ async def test_website_lead_different_ips_have_independent_limits(client):
 
     resp = await _post_lead(client, page=f"{_PAGE_PREFIX}-b-0", ip="203.0.113.11")
     assert resp.status_code == 201
+
+
+@pytest.mark.asyncio
+async def test_widget_renders_form_with_page_embedded(client):
+    """Виджет для iframe отдаёт форму и подставляет слаг лендинга в JS.
+
+    Пилот tsk-929 упёрся в то, что WordPress вырезает `<form>/<input>/<script>`
+    из HTML-виджета Elementor при записи через REST API — даже у администратора.
+    `<iframe>` эту фильтрацию переживает, поэтому форма переехала на LMS и
+    встраивается через iframe, а не публикуется как контент WordPress.
+    """
+    resp = await client.get(
+        "/api/v1/public/leads/widget", params={"page": f"{_PAGE_PREFIX}-widget"}
+    )
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/html")
+    body = resp.text
+    assert "<form" in body
+    assert "<script" in body
+    assert f'"{_PAGE_PREFIX}-widget"' in body
+
+
+@pytest.mark.asyncio
+async def test_widget_escapes_page_against_script_injection(client):
+    """`page` не может закрыть `<script>` раньше времени и внедрить свой код."""
+    payload = "</script><script>alert(1)</script>"
+    resp = await client.get("/api/v1/public/leads/widget", params={"page": payload})
+    assert resp.status_code == 200
+    assert "<script>alert(1)</script>" not in resp.text
+    assert "<\\/script>" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_widget_requires_page_param(client):
+    """Без `page` виджет не знает, какой лендинг прислал заявку — 422."""
+    resp = await client.get("/api/v1/public/leads/widget")
+    assert resp.status_code == 422

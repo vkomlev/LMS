@@ -14,9 +14,11 @@ JS-фетчем с чужого домена (WordPress), и cookie с доме�
 """
 from __future__ import annotations
 
+import json
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi.responses import HTMLResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
@@ -94,3 +96,108 @@ async def submit_website_lead(
     )
     logger.info("website_lead: заявка с лендинга page=%s lead_id=%s", body.page, lead_id)
     return WebsiteLeadResponse(lead_id=lead_id)
+
+
+#: Виджет отдаётся тем же доменом, что принимает POST — фетч внутри iframe
+#: идёт same-origin, CORS не участвует вовсе (в отличие от прямой формы на
+#: WordPress). Причина такого решения — `<form>/<input>/<script>` вырезаются
+#: WordPress при записи через REST API даже у администратора с
+#: `unfiltered_html`, а `<iframe>` эту фильтрацию переживает (проверено
+#: живьём на лендинге 4609, tsk-929).
+_WIDGET_HTML_TEMPLATE = """<!doctype html>
+<html lang="ru"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  body {{ margin:0; padding:16px; font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;
+          background:#fafafa; box-sizing:border-box; }}
+  * {{ box-sizing:border-box; }}
+  p.title {{ margin:0 0 14px; font-weight:600; font-size:18px; }}
+  label {{ display:block; margin-bottom:4px; }}
+  .field {{ margin-bottom:12px; }}
+  input {{ width:100%; padding:10px; border:1px solid #ccc; border-radius:8px; font-size:16px; }}
+  button {{ width:100%; padding:12px; border:none; border-radius:8px; background:#2aabee;
+            color:#fff; font-size:16px; font-weight:600; cursor:pointer; }}
+  button:disabled {{ opacity:.6; cursor:default; }}
+  #status {{ margin:10px 0 0; font-size:14px; min-height:18px; }}
+  .hp {{ position:absolute; left:-9999px; top:-9999px; }}
+</style></head>
+<body>
+  <form id="lead-form">
+    <p class="title">Оставьте контакт — отвечу в Телеграме</p>
+    <div class="field">
+      <label for="full_name">Как вас зовут?</label>
+      <input id="full_name" name="full_name" type="text" required maxlength="200">
+    </div>
+    <div class="field">
+      <label for="contact">Телефон, Telegram или e-mail</label>
+      <input id="contact" name="contact" type="text" required minlength="3" maxlength="200">
+    </div>
+    <div class="hp" aria-hidden="true">
+      <label for="hp">Не заполняйте это поле</label>
+      <input id="hp" name="hp" type="text" tabindex="-1" autocomplete="off">
+    </div>
+    <button type="submit" id="submit-btn">Отправить заявку</button>
+    <p id="status" role="status"></p>
+  </form>
+<script>
+(function () {{
+  var PAGE = {page_json};
+  var form = document.getElementById('lead-form');
+  var status = document.getElementById('status');
+  var btn = document.getElementById('submit-btn');
+  form.addEventListener('submit', function (e) {{
+    e.preventDefault();
+    btn.disabled = true;
+    status.style.color = '#333';
+    status.textContent = 'Отправляю...';
+    fetch('/api/v1/public/leads', {{
+      method: 'POST',
+      headers: {{ 'Content-Type': 'application/json' }},
+      body: JSON.stringify({{
+        full_name: document.getElementById('full_name').value,
+        contact: document.getElementById('contact').value,
+        page: PAGE,
+        hp: document.getElementById('hp').value
+      }})
+    }})
+      .then(function (resp) {{
+        if (resp.status === 429) {{
+          throw new Error('Слишком много заявок с вашего адреса, попробуйте позже.');
+        }}
+        if (!resp.ok) {{
+          throw new Error('Не получилось отправить, попробуйте ещё раз или напишите в Телеграм.');
+        }}
+        return resp.json();
+      }})
+      .then(function () {{
+        form.reset();
+        status.style.color = '#1a7a1a';
+        status.textContent = 'Спасибо! Заявка получена — теперь можно написать мне в Телеграм кнопкой ниже.';
+        btn.textContent = 'Отправлено';
+      }})
+      .catch(function (err) {{
+        status.style.color = '#c0392b';
+        status.textContent = err.message;
+        btn.disabled = false;
+      }});
+  }});
+}})();
+</script>
+</body></html>"""
+
+
+@router.get("/widget", response_class=HTMLResponse, include_in_schema=False)
+async def website_lead_widget(
+    page: str = Query(..., min_length=1, max_length=200),
+) -> HTMLResponse:
+    """Отдать HTML-страницу с формой для встраивания через `<iframe>` на лендинге.
+
+    Обходит ограничение WordPress: запись `<form>/<input>/<script>` через REST
+    API вырезается движком независимо от прав пользователя, а `<iframe src=...>`
+    эту фильтрацию переживает (см. `_WIDGET_HTML_TEMPLATE`). `page` экранируется
+    через `json.dumps`, а `</` дополнительно ломается, чтобы значение параметра
+    не могло закрыть тег `<script>` раньше времени.
+    """
+    page_json = json.dumps(page).replace("</", "<\\/")
+    html = _WIDGET_HTML_TEMPLATE.format(page_json=page_json)
+    return HTMLResponse(content=html)
