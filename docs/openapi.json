@@ -24615,6 +24615,106 @@
         }
       }
     },
+    "/api/v1/admin/students": {
+      "post": {
+        "tags": [
+          "auth-admin"
+        ],
+        "summary": "Создать ученика вручную (нет ВК, нет почты, никогда не входил)",
+        "description": "Заводит пустую карточку ученика в обход auto-create при первом входе — для случая, когда у человека нет вообще никакого способа войти самому. ФИО не запрашивается: welcome-форма (tsk-223) соберёт его у самого ученика при первом реальном входе.",
+        "operationId": "create_student_manually_api_v1_admin_students_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminCreateStudentRequest",
+                "default": {}
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminStudentCreatedRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/admin/students/{student_id}/issue-login-link": {
       "post": {
         "tags": [
@@ -44802,6 +44902,25 @@
         "title": "AddStudentRequest",
         "description": "Преподаватель добавляет ученика на занятие вручную (создаёт ad-hoc occurrence)."
       },
+      "AdminCreateStudentRequest": {
+        "properties": {
+          "note": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "type": "object",
+        "title": "AdminCreateStudentRequest",
+        "description": "tsk-931: свободная заметка оператора — не ФИО, уходит только в audit."
+      },
       "AdminLoginLinkIssuedRead": {
         "properties": {
           "student_id": {
@@ -44830,6 +44949,25 @@
           "expires_at"
         ],
         "title": "AdminLoginLinkIssuedRead"
+      },
+      "AdminStudentCreatedRead": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "created_at"
+        ],
+        "title": "AdminStudentCreatedRead"
       },
       "ApplyDerivedRequest": {
         "properties": {

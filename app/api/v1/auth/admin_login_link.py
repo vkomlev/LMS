@@ -1,12 +1,13 @@
 """
-Admin-выдача ссылки входа ученику вручную (tsk-930).
+Admin-ручки ученика в обход обычной регистрации (tsk-930, tsk-931).
 
-Запрос оператора: у ученика не работают оба обычных пути — нет ВК-аккаунта и
-не приходит magic-link на почту. Нужен административный способ выдать ему
-ПОЛНОЦЕННУЮ сессию (не read-only дашборд, как у `parent_access_links` tsk-498)
-для ручной передачи ссылки любым каналом (например, в Telegram).
+Запрос оператора (tsk-930): у ученика не работают оба обычных пути — нет
+ВК-аккаунта и не приходит magic-link на почту. Нужен административный способ
+выдать ему ПОЛНОЦЕННУЮ сессию (не read-only дашборд, как у
+`parent_access_links` tsk-498) для ручной передачи ссылки любым каналом
+(например, в Telegram).
 
-Решения оператора (13.09):
+Решения оператора (13.09, tsk-930):
 - поверх `magic_link_service`, НЕ прод-аналог `/auth/test/issue-session`;
 - TTL=24 ч (не обычные 15 мин письма — они не меняются этим путём);
 - выдача по `user_id` напрямую, без требования email-identity;
@@ -16,24 +17,57 @@ Admin-выдача ссылки входа ученику вручную (tsk-93
 
 Verify той же ссылки идёт через СУЩЕСТВУЮЩИЙ `/auth/magic-link/verify`
 (`app/api/v1/auth/magic_link.py`) — там же ветвление по `MagicLink.user_id`.
+
+Хвост tsk-931 (13.09, живая проверка tsk-930 на реальном клиенте): у части
+учеников нет ни ВК, ни почты вообще НИКОГДА — то есть нет и `user_id`, для
+которого выдавать ссылку. `POST /admin/students` заводит пустую карточку
+(роль `student`, `full_name=NULL` намеренно — см. `admin_student_service`),
+дальше в дело идёт уже готовая выдача ссылки выше.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Request, status
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_async_db, require_role
 from app.auth.current_user import CurrentUser
 from app.core.config import Settings
-from app.schemas.auth_admin_login_link import AdminLoginLinkIssuedRead
-from app.services import audit_service
+from app.schemas.auth_admin_login_link import (
+    AdminCreateStudentRequest,
+    AdminLoginLinkIssuedRead,
+    AdminStudentCreatedRead,
+)
+from app.services import admin_student_service, audit_service
 from app.services.auth import magic_link_service
 from app.services.audit_service import log_event
 
 router = APIRouter(prefix="/admin/students", tags=["auth-admin"])
 
 _ADMIN_LOGIN_LINK_GATE = require_role("admin")
+
+
+@router.post(
+    "",
+    response_model=AdminStudentCreatedRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="Создать ученика вручную (нет ВК, нет почты, никогда не входил)",
+    description=(
+        "Заводит пустую карточку ученика в обход auto-create при первом входе "
+        "— для случая, когда у человека нет вообще никакого способа войти "
+        "самому. ФИО не запрашивается: welcome-форма (tsk-223) соберёт его у "
+        "самого ученика при первом реальном входе."
+    ),
+)
+async def create_student_manually(
+    body: AdminCreateStudentRequest = Body(default=AdminCreateStudentRequest()),
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(_ADMIN_LOGIN_LINK_GATE),
+) -> AdminStudentCreatedRead:
+    user = await admin_student_service.create_student_manually(
+        db, created_by_user_id=current_user.id, note=body.note,
+    )
+    return AdminStudentCreatedRead(id=user.id, created_at=user.created_at)
 
 
 @router.post(

@@ -56,6 +56,10 @@ STAFF_SUBSCRIPTION_CHANGED = "staff.subscription.changed"
 # по тому же `student_id`/времени, отдельное событие не заводим (см. login_magic_link).
 AUTH_ADMIN_LOGIN_LINK_ISSUED = "auth.admin.login_link_issued"
 
+# tsk-931: admin создал ученика вручную, минуя auto-create при первом входе —
+# для ученика, у которого никогда не было ни ВК, ни рабочей почты.
+ADMIN_STUDENT_CREATED_MANUALLY = "admin.student.created_manually"
+
 
 async def log_event(
     db: AsyncSession,
