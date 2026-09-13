@@ -1,4 +1,4 @@
-﻿# Date/Time Type Safety Checks
+# Date/Time Type Safety Checks
 
 ## Raw SQL to Domain Types
 - For fields from `text(...)`/raw SQL rows, is there explicit normalization helper before any comparison?

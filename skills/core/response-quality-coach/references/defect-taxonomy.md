@@ -25,4 +25,3 @@
 - `S1`: could cause incorrect high-impact decisions or unsafe changes
 - `S2`: blocks efficient execution or likely causes rework
 - `S3`: cosmetic/readability issue with low risk
-

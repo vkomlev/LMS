@@ -51,4 +51,3 @@ Website researcher: collect evidence and produce parser, SEO, mapping, competito
 - Prefer hidden APIs over brittle HTML parsing only when endpoint behavior is evidenced.
 - Mark unverified selectors or endpoints as `unverified`.
 - Store artifacts as UTF-8 when writing.
-

@@ -50,4 +50,3 @@ Default to `update` when `AGENTS.md` or `README.md` already exists.
 - Never include secret values.
 - Prefer update with minimal diffs over rewriting existing docs.
 - All docs must be UTF-8.
-

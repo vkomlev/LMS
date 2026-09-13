@@ -58,4 +58,3 @@ Context auditor: compare the current artifact against original intent and durabl
 - Every problematic item needs a source file, conversation anchor, or explicit local evidence.
 - Do not perform code quality review; route quality defects to `techlead-code-reviewer` or `review-gate`.
 - Keep covered items compact and spend detail on losses, drift, and regressions.
-

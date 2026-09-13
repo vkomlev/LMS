@@ -24,4 +24,3 @@
 ## Branch Policy
 - Default mode: direct work in main/master with stronger pre-commit controls.
 - Separate branches: only for fully autonomous long-running agent work.
-

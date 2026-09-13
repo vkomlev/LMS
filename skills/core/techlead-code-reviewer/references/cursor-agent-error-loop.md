@@ -38,4 +38,3 @@ For each logged Cursor-agent mistake, add at least one preventive action:
 - tighten project rules,
 - add validation/test command,
 - add reusable helper/template to remove ambiguity.
-

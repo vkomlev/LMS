@@ -14,4 +14,3 @@ Prevent silent implementation drift caused by ambiguous requirements.
 - Classify as `Blocking` if it affects critical path.
 - Require explicit contract update in spec/TZ.
 - Require implementation to reference exact target behavior (state/screen id).
-

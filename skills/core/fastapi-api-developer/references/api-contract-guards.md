@@ -32,4 +32,3 @@ Mock-only success is insufficient for external write paths. Require either:
 ## Spec Test List
 
 If a tech spec names test files or edge cases, every named test must be present and passing, or the implementation remains `NOT_READY`.
-

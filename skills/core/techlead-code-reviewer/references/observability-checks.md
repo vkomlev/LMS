@@ -1,4 +1,4 @@
-﻿# Observability Checks
+# Observability Checks
 
 ## Logging
 - Are important state transitions and failures logged?

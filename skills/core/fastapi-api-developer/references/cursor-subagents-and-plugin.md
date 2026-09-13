@@ -31,4 +31,3 @@ Bundle candidates:
 1. Pilot on `LMS` only.
 2. Validate one feature and one bugfix cycle.
 3. If stable, add to broader fleet with `sync-skills.ps1`.
-

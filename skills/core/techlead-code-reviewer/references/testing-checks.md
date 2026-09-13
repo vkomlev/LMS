@@ -1,4 +1,4 @@
-﻿# Testing Checks
+# Testing Checks
 
 ## Coverage Depth
 - Do tests cover changed behavior and key regressions?

@@ -22,4 +22,3 @@ python d:/Work/IDE_booster/skills/fastapi-api-developer/scripts/log_triage.py --
 3. Correlate with MCP DB check (missing rows, FK mismatch, invalid state).
 4. Apply minimal fix in repo/service/api layer.
 5. Re-run smoke + log triage until no new blocking errors appear.
-

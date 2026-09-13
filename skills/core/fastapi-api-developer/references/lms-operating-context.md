@@ -23,4 +23,3 @@
 - Smoke checks for health + changed endpoints.
 - Log validation from `logs/app.log`.
 - DB checks through MCP for data/state verification.
-

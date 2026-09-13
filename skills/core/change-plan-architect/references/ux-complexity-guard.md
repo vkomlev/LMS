@@ -12,4 +12,3 @@ Prevent unnecessary intermediate screens/steps that increase user friction.
 ## Decision Rule
 - If an intermediate screen has no distinct user value, remove it.
 - Mark deliberate complexity as `justified` with explicit reason and acceptance test.
-

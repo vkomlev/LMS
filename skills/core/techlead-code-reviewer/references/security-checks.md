@@ -1,4 +1,4 @@
-﻿# Security Checks
+# Security Checks
 
 ## Input and Access Control
 - Are inputs validated and normalized at boundaries?

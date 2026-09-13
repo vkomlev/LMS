@@ -85,6 +85,8 @@ changed URL, method, status code, request schema, response schema, or hardcoded
 public URL requires same-task backsync or an explicit deviation note.
 For bugfix or QA loops, re-run the original caller path and smoke the concrete
 endpoint or schema that failed before marking the contract fixed.
+Smoke every changed contract enumerated in the specification; treat `404`,
+`422`, or a schema mismatch as unresolved drift that blocks closure.
 
 ## Cross-Agent Coordination
 

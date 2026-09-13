@@ -1,4 +1,4 @@
-﻿# Architecture Checks
+# Architecture Checks
 
 ## Layering and Boundaries
 - Are module boundaries explicit and respected?

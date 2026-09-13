@@ -1,4 +1,4 @@
-﻿# Migration Checks
+# Migration Checks
 
 ## Safety
 - Is migration reversible with explicit downgrade?
