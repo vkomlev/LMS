@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 
 _TOKEN_BYTES = 32
 _TTL_MINUTES = 15
+ADMIN_ISSUED_TTL_HOURS = 24  # tsk-930: публичная — endpoint ссылается на неё в audit-деталях
 _RESEND_API_URL = "https://api.resend.com/emails"
 
 
@@ -52,6 +53,33 @@ async def create_magic_link(
     db.add(link)
     await db.flush()
     return raw.hex()
+
+
+async def create_magic_link_for_user(
+    db: AsyncSession,
+    user_id: int,
+    issued_by_user_id: int,
+    ttl_hours: int = ADMIN_ISSUED_TTL_HOURS,
+) -> tuple["MagicLink", str]:
+    """Admin-выдача (tsk-930): токен напрямую на `user_id`, без email.
+
+    В отличие от `create_magic_link` (по email, TTL=15 мин — не трогается
+    этим путём), verify резолвит пользователя НАПРЯМУЮ по `user_id`, минуя
+    email/identity_link — ровно случай ученика без привязанной почты и ВК.
+    TTL длиннее (по умолчанию 24 ч): передача ссылки «в лс» не мгновенна.
+    Возвращает (строка БД, СЫРОЙ hex-токен) — токен виден вызывающему один раз.
+    """
+    raw = os.urandom(_TOKEN_BYTES)
+    link = MagicLink(
+        email=None,
+        user_id=user_id,
+        issued_by_user_id=issued_by_user_id,
+        token_hash=_hash_token(raw),
+        expires_at=_now() + timedelta(hours=ttl_hours),
+    )
+    db.add(link)
+    await db.flush()
+    return link, raw.hex()
 
 
 async def is_known_recipient(db: AsyncSession, email: str) -> bool:

@@ -50,6 +50,12 @@ TEACHER_HELP_REQUEST_CLAIM_TAKEN_OVER = "teacher.help_request.claim_taken_over"
 # только «кто и зачем», без ip и без прежнего значения.
 STAFF_SUBSCRIPTION_CHANGED = "staff.subscription.changed"
 
+# tsk-930: admin выдал ссылку входа ученику вручную (нет ВК, не приходит
+# почта) — обход обычной проверки владения каналом связи, требует явного следа
+# «кто кому и когда»; факт использования смотреть в `magic_link.consumed_at`
+# по тому же `student_id`/времени, отдельное событие не заводим (см. login_magic_link).
+AUTH_ADMIN_LOGIN_LINK_ISSUED = "auth.admin.login_link_issued"
+
 
 async def log_event(
     db: AsyncSession,

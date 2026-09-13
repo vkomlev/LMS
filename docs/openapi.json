@@ -24615,6 +24615,105 @@
         }
       }
     },
+    "/api/v1/admin/students/{student_id}/issue-login-link": {
+      "post": {
+        "tags": [
+          "auth-admin"
+        ],
+        "summary": "Выдать ученику ссылку входа вручную (нет ВК, не приходит почта)",
+        "description": "Возвращает готовую ссылку с полноценной сессией ученика — письмо не отправляется, ссылку передаёт оператор лично. Токен виден в ответе ЕДИНСТВЕННЫЙ раз (в базе только хеш). TTL 24 часа, одноразовый.",
+        "operationId": "issue_admin_login_link_api_v1_admin_students__student_id__issue_login_link_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "student_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Student Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminLoginLinkIssuedRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/me": {
       "get": {
         "tags": [
@@ -44702,6 +44801,35 @@
         ],
         "title": "AddStudentRequest",
         "description": "Преподаватель добавляет ученика на занятие вручную (создаёт ad-hoc occurrence)."
+      },
+      "AdminLoginLinkIssuedRead": {
+        "properties": {
+          "student_id": {
+            "type": "integer",
+            "title": "Student Id"
+          },
+          "issued_by_user_id": {
+            "type": "integer",
+            "title": "Issued By User Id"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Expires At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "student_id",
+          "issued_by_user_id",
+          "url",
+          "expires_at"
+        ],
+        "title": "AdminLoginLinkIssuedRead"
       },
       "ApplyDerivedRequest": {
         "properties": {

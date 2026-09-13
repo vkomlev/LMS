@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_bare_db
 from app.core.config import Settings
+from app.models.users import Users
 from app.schemas.auth import (
     AuthTokenResponse,
     MagicLinkRequest,
@@ -120,25 +121,34 @@ async def verify_magic_link(
     if link is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Токен недействителен или истёк")
 
-    email = link.email
-
-    try:
-        user, created = await magic_link_service.get_or_create_user_by_email(
-            db, email, ip=ip, user_agent=ua,
-        )
-    except IdentityConflictError as e:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            detail={
-                "error": "identity_conflict",
-                "conflict_kind": e.conflict_kind,
-                "existing_identity_kinds": e.existing_kinds,
-                "message": (
-                    "Email уже привязан к другому аккаунту в нестандартном состоянии. "
-                    "Обратитесь к администратору."
-                ),
-            },
-        )
+    if link.user_id is not None:
+        # tsk-930: admin-выдача — токен привязан к КОНКРЕТНОМУ user_id
+        # напрямую, email/identity_link здесь ни при чём (у ученика может не
+        # быть ни того, ни другого). Никакого auto-create — пользователь уже
+        # существует, иначе ссылку было бы не выпустить (see admin_login_link.py).
+        user = await db.get(Users, link.user_id)
+        if user is None:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Токен недействителен или истёк")
+        created = False
+    else:
+        email = link.email
+        try:
+            user, created = await magic_link_service.get_or_create_user_by_email(
+                db, email, ip=ip, user_agent=ua,
+            )
+        except IdentityConflictError as e:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                detail={
+                    "error": "identity_conflict",
+                    "conflict_kind": e.conflict_kind,
+                    "existing_identity_kinds": e.existing_kinds,
+                    "message": (
+                        "Email уже привязан к другому аккаунту в нестандартном состоянии. "
+                        "Обратитесь к администратору."
+                    ),
+                },
+            )
 
     # tsk-432: заблокированному отказываем ДО создания сеанса — иначе он
     # «вошёл бы» и упёрся в отказ на первом же экране, не понимая причины.
@@ -148,7 +158,11 @@ async def verify_magic_link(
         await attribute_guest_session(db, body.guest_session_id, user.id)
 
     access_token, refresh_token, _ = await session_service.create_session(db, user.id, ua)
-    await log_event(db, "login_magic_link", user_id=user.id, ip=ip)
+    login_details = (
+        {"admin_issued": True, "issued_by_user_id": link.issued_by_user_id}
+        if link.user_id is not None else None
+    )
+    await log_event(db, "login_magic_link", user_id=user.id, ip=ip, details=login_details)
     # tsk-172: role-holder без student-роли → заявка на student в очередь
     # одобрения админ-бота. Soft-fail: сбой не должен блокировать вход.
     try:
