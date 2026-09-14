@@ -170,7 +170,11 @@ def _parse(raw: str, items: List[Dict[str, Any]]) -> Dict[str, Any]:
             text_ = text_[4:]
         text_ = text_.strip()
 
-    data = json.loads(text_)
+    # tsk-937: тот же приём, что в двух других разборщиках вердикта модели
+    # (`code_review_service`, `text_authorship_service`) — `raw_decode`
+    # переживает лишний текст после JSON, `strict=False` переживает
+    # непроэкранированный перенос строки в значении.
+    data, _ = json.JSONDecoder(strict=False).raw_decode(text_)
     if not isinstance(data, dict):
         # Модель вернула массив или строку вместо объекта. Проверка явная, а не
         # «наверное придёт словарь»: `data.get` на списке бросает AttributeError,

@@ -142,6 +142,30 @@ def test_long_answer_is_reviewed_and_trimmed() -> None:
     assert pick_text_for_review(f"  {long_text}  ") == long_text
 
 
+def test_parse_verdict_survives_extra_data_and_raw_newline() -> None:
+    """
+    tsk-937: модель кладёт валидный JSON и следом лишний текст, либо
+    непроэкранированный перенос строки внутри значения — раньше оба случая
+    роняли `json.loads` (`Extra data` / `Invalid control character`), и такая
+    работа молча уходила в `done` без проверки на признак ИИ-авторства. На
+    проде за 14 дней это дало 6 из 15 потерянных вердиктов. Тот же приём —
+    в `code_review_service` и `rubric_review_service`.
+    """
+    from app.services.text_authorship_service import _parse_verdict
+
+    trailing_junk = _parse_verdict(
+        '{"ai_authorship":{"verdict":"ai_likely","reasoning":"r"}}\n'
+        '  Повторяю тот же ответ на случай, если он не дошёл: ...'
+    )
+    assert trailing_junk["ai_authorship"]["verdict"] == "ai_likely"
+
+    raw_newline = _parse_verdict(
+        '{"ai_authorship":{"verdict":"student_likely",'
+        '"reasoning":"первая строка\nвторая строка"}}'
+    )
+    assert raw_newline["ai_authorship"]["verdict"] == "student_likely"
+
+
 # ─────────────────────────── Кривой ответ модели ─────────────────────────────
 
 

@@ -267,7 +267,13 @@ def _parse_verdict(raw: str) -> Dict[str, Any]:
             text_ = text_[4:]
         text_ = text_.strip()
 
-    data = json.loads(text_)
+    # tsk-937: тот же приём, что в `code_review_service._parse_verdict` —
+    # `raw_decode` переживает лишний текст после JSON (`Extra data`),
+    # `strict=False` переживает непроэкранированный перенос строки в значении
+    # (`Invalid control character`). Без этого такая работа молча уходила в
+    # `done` без проверки на признак ИИ-авторства — то есть ровно тот случай,
+    # который эта проверка обязана ловить.
+    data, _ = json.JSONDecoder(strict=False).raw_decode(text_)
     if not isinstance(data, dict):
         # Модель вернула массив или строку вместо объекта. Проверка явная, а не
         # «наверное придёт словарь»: `data.get` на списке бросает AttributeError,

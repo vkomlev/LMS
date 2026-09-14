@@ -362,6 +362,24 @@ def test_parse_verdict_survives_model_quirks() -> None:
     out_of_range = _parse_verdict('{"code_quality":{"score":99}}')
     assert out_of_range["code_quality"]["score"] == 10
 
+    # tsk-937: модель кладёт валидный JSON и следом лишний текст (повтор
+    # ответа, комментарий) — на проде за 14 дней это дало половину всех
+    # потерянных вердиктов (`unparsable_verdict`), и такая работа молча
+    # уходила в `done` без проверки на признак ИИ-авторства.
+    trailing_junk = _parse_verdict(
+        '{"ai_authorship":{"verdict":"ai_likely","reasoning":"r"}}\n'
+        '  Повторяю тот же ответ на случай, если он не дошёл: ...'
+    )
+    assert trailing_junk["ai_authorship"]["verdict"] == "ai_likely"
+
+    # tsk-937: непроэкранированный перенос строки внутри значения строки
+    # (`Invalid control character`) — вторая половина той же потери.
+    raw_newline = _parse_verdict(
+        '{"ai_authorship":{"verdict":"student_likely",'
+        '"reasoning":"первая строка\nвторая строка"}}'
+    )
+    assert raw_newline["ai_authorship"]["verdict"] == "student_likely"
+
 
 @pytest.mark.parametrize(
     "broken", ['[{"code_quality": {"score": 7}}]', '"просто строка"', "не json вовсе"],

@@ -504,7 +504,15 @@ def _parse_verdict(raw: str) -> Dict[str, Any]:
             text = text[4:]
         text = text.strip()
 
-    data = json.loads(text)
+    # tsk-937: модель иногда кладёт валидный JSON, а следом — лишний текст
+    # (повтор ответа, комментарий). `json.loads` в этом случае падает с
+    # `Extra data`, хотя первый объект разобрать можно. `raw_decode` берёт
+    # ровно первое значение и не требует, чтобы строка им и кончалась.
+    # `strict=False` заодно чинит `Invalid control character` — непроэкранированный
+    # перенос строки внутри значения. На проде за 14 дней оба случая вместе
+    # дали 6 из 15 потерянных вердиктов (`unparsable_verdict`) — работа
+    # молча уходила в `done` без проверки на признак ИИ-авторства.
+    data, _ = json.JSONDecoder(strict=False).raw_decode(text)
     if not isinstance(data, dict):
         # Модель вернула массив или строку вместо объекта. Проверка явная, а не
         # «наверное придёт словарь»: `data.get` на списке бросает AttributeError,

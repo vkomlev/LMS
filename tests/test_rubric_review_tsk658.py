@@ -71,6 +71,29 @@ def test_broken_rules_do_not_raise() -> None:
     assert rubric_review_service.rubric_items({"text_answer": {"rubric": "мусор"}}) == []
 
 
+def test_parse_survives_extra_data_and_raw_newline() -> None:
+    """
+    tsk-937: модель кладёт валидный JSON и следом лишний текст, либо
+    непроэкранированный перенос строки внутри значения — раньше оба случая
+    роняли `json.loads` (`Extra data` / `Invalid control character`). Тот же
+    приём — в `code_review_service` и `text_authorship_service`.
+    """
+    items = rubric_review_service.rubric_items(_RUBRIC)
+
+    trailing_junk = rubric_review_service._parse(
+        '{"items":[{"id":"c1","met":"yes"}],"summary":"s"}\n'
+        '  Повторяю тот же ответ на случай, если он не дошёл: ...',
+        items,
+    )
+    assert {i["id"]: i["met"] for i in trailing_junk["items"]}["c1"] == "yes"
+
+    raw_newline = rubric_review_service._parse(
+        '{"items":[{"id":"c1","met":"yes","evidence":"строка1\nстрока2"}]}',
+        items,
+    )
+    assert {i["id"]: i["met"] for i in raw_newline["items"]}["c1"] == "yes"
+
+
 def test_criteria_without_weights_give_items_but_no_score() -> None:
     """Критерии из `grading_criteria` весов не имеют — цифру предлагать нечем."""
     rules = {
