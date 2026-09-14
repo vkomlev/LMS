@@ -24,11 +24,11 @@ import logging
 from typing import Optional
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import Settings
+from app.core.cron_registry import register_interval_job
 from app.db.session import async_session_factory
 from app.services import retention_service
 
@@ -95,13 +95,14 @@ def start_scheduler() -> Optional[AsyncIOScheduler]:
     interval_min = int(settings.retention_achievements_cron_interval_min)
 
     scheduler = AsyncIOScheduler(timezone="UTC")
-    scheduler.add_job(
+    # tsk-940: первый проход — вскоре после старта (класс бага
+    # tsk-653/tsk-939 — см. docstring app/core/cron_registry.py).
+    register_interval_job(
+        scheduler,
         retention_achievements_cron_tick,
-        trigger=IntervalTrigger(minutes=interval_min),
-        id="tsk032_retention_achievements_cron",
-        replace_existing=True,
-        coalesce=True,
-        max_instances=1,
+        job_id="tsk032_retention_achievements_cron",
+        startup_delay_min=settings.retention_achievements_cron_startup_delay_min,
+        minutes=interval_min,
     )
     scheduler.start()
     _scheduler = scheduler

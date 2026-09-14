@@ -57,9 +57,9 @@ import time
 from typing import Optional
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.interval import IntervalTrigger
 
 from app.core.config import Settings
+from app.core.cron_registry import register_interval_job
 from app.services.llm import Budget, LLMError, LLMMessage, complete, cooldown, providers, stream
 from app.services.llm.contracts import LLMCooldown, LLMTimeout
 
@@ -368,18 +368,18 @@ def start_scheduler() -> Optional[AsyncIOScheduler]:
     hours = int(getattr(settings, "llm_chain_check_interval_hours", 168))
     delay_min = int(getattr(settings, "llm_chain_check_startup_delay_min", 5))
     scheduler = AsyncIOScheduler(timezone="UTC")
-    scheduler.add_job(
+    # tsk-940: регистрация — через общий хелпер, см. docstring
+    # app/core/cron_registry.py. Первый проход — вскоре после запуска, а не
+    # через неделю. Причины две: порядок очереди живёт в памяти процесса и
+    # после перезапуска забывается, и свежий выкат не должен неделю ждать,
+    # чтобы узнать про мёртвую модель. Не в сам момент старта: приложению
+    # есть чем заняться в первые секунды.
+    register_interval_job(
+        scheduler,
         llm_chain_check_tick,
-        trigger=IntervalTrigger(hours=hours),
-        id="llm_chain_check_tick",
-        # Первый проход — вскоре после запуска, а не через неделю. Причины две:
-        # порядок очереди живёт в памяти процесса и после перезапуска забывается,
-        # и свежий выкат не должен неделю ждать, чтобы узнать про мёртвую модель.
-        # Не в сам момент старта: приложению есть чем заняться в первые секунды.
-        next_run_time=_startup_run_at(delay_min),
-        coalesce=True,
-        max_instances=1,
-        replace_existing=True,
+        job_id="llm_chain_check_tick",
+        startup_delay_min=delay_min,
+        hours=hours,
     )
     scheduler.start()
     _scheduler = scheduler
@@ -389,12 +389,6 @@ def start_scheduler() -> Optional[AsyncIOScheduler]:
     )
     return scheduler
 
-
-def _startup_run_at(delay_min: int):
-    """Момент первого прохода. Вынесено функцией, чтобы тест не ждал минутами."""
-    from datetime import datetime, timedelta, timezone as _tz
-
-    return datetime.now(_tz.utc) + timedelta(minutes=max(0, delay_min))
 
 
 def stop_scheduler() -> None:

@@ -31,12 +31,12 @@ import logging
 from typing import Any, Dict, Optional
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core import settings_store
 from app.core.config import Settings
+from app.core.cron_registry import register_interval_job
 from app.db.session import async_session_factory
 from app.services.code_quality_service import analyze_student_code_quality
 from app.services.code_review_service import (
@@ -456,13 +456,16 @@ def start_scheduler() -> Optional[AsyncIOScheduler]:
         return _scheduler
 
     scheduler = AsyncIOScheduler(timezone="UTC")
-    scheduler.add_job(
+    # tsk-940: первый проход — вскоре после старта, а не через полный
+    # интервал (класс бага tsk-653/tsk-939 — см. docstring
+    # app/core/cron_registry.py). До этой миграции здесь не было поправки
+    # вовсе — тик на 2-минутном интервале был живым примером для копипасты.
+    register_interval_job(
+        scheduler,
         code_review_cron_tick,
-        trigger=IntervalTrigger(minutes=int(settings.code_review_cron_interval_min)),
-        id="tsk302_code_review_cron",
-        replace_existing=True,
-        coalesce=True,
-        max_instances=1,
+        job_id="tsk302_code_review_cron",
+        startup_delay_min=settings.code_review_cron_startup_delay_min,
+        minutes=int(settings.code_review_cron_interval_min),
     )
     scheduler.start()
     _scheduler = scheduler

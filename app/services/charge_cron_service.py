@@ -66,12 +66,12 @@ from datetime import date, datetime, timezone
 from typing import Any, Optional
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core import settings_store
 from app.core.config import Settings
+from app.core.cron_registry import register_interval_job
 from app.db.session import async_session_factory
 from app.services import charge_service, inbox_service
 
@@ -514,35 +514,23 @@ def start_scheduler() -> None:
 
     delay_min = settings.charge_cron_startup_delay_min
     _scheduler = AsyncIOScheduler(timezone="UTC")
-    _scheduler.add_job(
+    # tsk-940: регистрация — через общий хелпер, см. docstring
+    # app/core/cron_registry.py (tsk-939: первый проход вскоре после старта,
+    # а не через сутки — иначе крон начислений почти никогда не тикал: 0
+    # завершённых тиков за 26 рестартов подряд, тот же класс бага, что в
+    # tsk-653).
+    register_interval_job(
+        _scheduler,
         _safe_tick,
-        IntervalTrigger(hours=settings.charge_cron_interval_hours),
-        id="charge_cron_tick",
-        # tsk-939: первый проход — вскоре после старта, а не через сутки.
-        # `IntervalTrigger` без `next_run_time` отсчитывает интервал от момента
-        # РЕГИСТРАЦИИ джобы, то есть от последнего рестарта процесса. На проде
-        # рестарт (деплой) случается в среднем раз в 2-4 часа — без этой
-        # поправки крон начислений почти никогда не тикал (0 завершённых тиков
-        # за 26 рестартов подряд, tsk-939), тот же класс бага, что в tsk-653.
-        next_run_time=_startup_run_at(delay_min),
-        max_instances=1,
-        # Пропущенные прогоны не догоняем пачкой: результат у них одинаковый,
-        # а нагрузка тройная.
-        coalesce=True,
-        replace_existing=True,
+        job_id="charge_cron_tick",
+        startup_delay_min=delay_min,
+        hours=settings.charge_cron_interval_hours,
     )
     _scheduler.start()
     logger.info(
         "tsk-596: автопересчёт начислений запущен, интервал %s ч, первый проход через %s мин",
         settings.charge_cron_interval_hours, delay_min,
     )
-
-
-def _startup_run_at(delay_min: int):
-    """Момент первого прохода. Вынесено функцией, чтобы тест не ждал минутами."""
-    from datetime import datetime, timedelta, timezone as _tz
-
-    return datetime.now(_tz.utc) + timedelta(minutes=max(0, delay_min))
 
 
 def stop_scheduler() -> None:

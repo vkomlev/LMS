@@ -447,3 +447,35 @@ async def test_no_show_does_not_touch_confirmed_participant(db, db_session_facto
         )
     ).fetchone()
     assert row[0] == "confirmed"
+
+
+@pytest.mark.asyncio
+async def test_scheduler_first_run_survives_frequent_restarts():
+    """tsk-940: первый проход планировщика — минуты, а не полный интервал.
+
+    До миграции на общий хелпер (`app/core/cron_registry.py`) у этого
+    сервиса не было поправки `next_run_time` вовсе — 5-минутный тик
+    напоминаний/no_show был живым примером БЕЗ фикса для копипасты.
+    `IntervalTrigger(minutes=5)` без `next_run_time` отсчитывает интервал от
+    МОМЕНТА РЕГИСТРАЦИИ джобы, то есть от последнего рестарта процесса — тот
+    же класс бага, что в tsk-653 и tsk-939, только острее: рестарт (деплой)
+    на проде случается в среднем раз в 2-4 часа, то есть чаще, чем сам
+    интервал тика.
+
+    `AsyncIOScheduler.start()` требует работающий event loop — отсюда
+    `async def`, хотя сама проверка синхронна.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from app.services import lesson_attendance_cron_service as cron
+
+    cron.stop_scheduler()
+    try:
+        scheduler = cron.start_scheduler()
+        assert scheduler is not None
+        job = scheduler.get_job("tsk429_lesson_attendance_cron")
+        assert job is not None
+        now = datetime.now(timezone.utc)
+        assert job.next_run_time <= now + timedelta(minutes=10)
+    finally:
+        cron.stop_scheduler()

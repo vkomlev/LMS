@@ -24,11 +24,12 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import settings_store
+from app.core.config import Settings
+from app.core.cron_registry import register_interval_job
 from app.db.session import async_session_factory
 from app.services import curator_activity_service, inbox_service  # noqa: F401
 
@@ -200,14 +201,18 @@ def start_scheduler() -> Optional[AsyncIOScheduler]:
     global _scheduler
     if _scheduler is not None and _scheduler.running:
         return _scheduler
+    settings = Settings()
     _scheduler = AsyncIOScheduler(timezone="UTC")
-    _scheduler.add_job(
+    # tsk-940: первый проход — вскоре после старта (класс бага
+    # tsk-653/tsk-939 — см. docstring app/core/cron_registry.py). Меняет
+    # только момент ПЕРВОГО прохода тика (1ч); недельный гейт по дню/часу
+    # рассылки внутри `curator_report_tick` этим не затронут.
+    register_interval_job(
+        _scheduler,
         curator_report_tick,
-        IntervalTrigger(hours=1),
-        id="curator_weekly_report",
-        replace_existing=True,
-        max_instances=1,
-        coalesce=True,
+        job_id="curator_weekly_report",
+        startup_delay_min=settings.curator_report_cron_startup_delay_min,
+        hours=1,
     )
     _scheduler.start()
     logger.info("кураторство: планировщик недельного отчёта поднят")

@@ -396,3 +396,33 @@ async def test_earned_at_appears_after_tick(db, db_session_factory):
     after = await retention_service.get_retention(db, student_id=student_id)
     week_badge = [a for a in after["achievements"] if a["name"] == "Неделя между занятиями"]
     assert week_badge and week_badge[0]["earned_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_scheduler_first_run_survives_frequent_restarts():
+    """tsk-940: первый проход планировщика — минуты, а не полный интервал.
+
+    До миграции на общий хелпер (`app/core/cron_registry.py`) у этого
+    сервиса не было поправки `next_run_time` вовсе — 15-минутный тик фиксации
+    вех был живым примером БЕЗ фикса для копипасты.
+    `IntervalTrigger(minutes=15)` без `next_run_time` отсчитывает интервал от
+    МОМЕНТА РЕГИСТРАЦИИ джобы, то есть от последнего рестарта процесса — тот
+    же класс бага, что в tsk-653 и tsk-939.
+
+    `AsyncIOScheduler.start()` требует работающий event loop — отсюда
+    `async def`, хотя сама проверка синхронна.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from app.services import retention_achievements_cron_service as cron
+
+    cron.stop_scheduler()
+    try:
+        scheduler = cron.start_scheduler()
+        assert scheduler is not None
+        job = scheduler.get_job("tsk032_retention_achievements_cron")
+        assert job is not None
+        now = datetime.now(timezone.utc)
+        assert job.next_run_time <= now + timedelta(minutes=10)
+    finally:
+        cron.stop_scheduler()

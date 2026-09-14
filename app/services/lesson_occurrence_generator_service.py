@@ -24,12 +24,12 @@ from typing import Optional
 from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core import settings_store
 from app.core.config import Settings
+from app.core.cron_registry import register_interval_job
 from app.db.session import async_session_factory
 from app.models.lesson_slot import LessonSlot
 from app.models.lesson_slot_student import LessonSlotStudent
@@ -249,13 +249,14 @@ def start_scheduler() -> AsyncIOScheduler:
     interval_min = int(settings.lesson_occurrence_cron_interval_min)
 
     scheduler = AsyncIOScheduler(timezone="UTC")
-    scheduler.add_job(
+    # tsk-940: первый проход — вскоре после старта (класс бага
+    # tsk-653/tsk-939 — см. docstring app/core/cron_registry.py).
+    register_interval_job(
+        scheduler,
         lesson_occurrence_generator_tick,
-        trigger=IntervalTrigger(minutes=interval_min),
-        id="tsk428_lesson_occurrence_generator_cron",
-        replace_existing=True,
-        coalesce=True,
-        max_instances=1,
+        job_id="tsk428_lesson_occurrence_generator_cron",
+        startup_delay_min=settings.lesson_occurrence_cron_startup_delay_min,
+        minutes=interval_min,
     )
     scheduler.start()
     _scheduler = scheduler

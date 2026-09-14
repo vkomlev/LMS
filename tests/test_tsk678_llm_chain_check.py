@@ -359,3 +359,32 @@ async def test_repeated_timeout_still_demotes(monkeypatch):
     assert summary["judge_bad"] == 3 and summary["tutor_bad"] == 2
     assert cooldown.is_cooling("model:judge-a")
     assert any("первая модель наставника" in a for a in summary["alerts"])
+
+
+@pytest.mark.asyncio
+async def test_scheduler_first_run_survives_frequent_restarts():
+    """Первый проход планировщика — минуты, а не неделю, после старта (tsk-940).
+
+    До tsk-940 у этого сервиса не было регрессионного теста на `next_run_time`
+    вовсе, хотя фикс (`next_run_time=_startup_run_at(...)`) уже стоял в коде —
+    единственный из шести "починенных" сервисов без такой проверки. Порядок
+    очереди `llm_chain_check` живёт в памяти процесса и после рестарта
+    забывается: `IntervalTrigger(hours=168)` без `next_run_time` отсчитывал бы
+    неделю от момента КАЖДОГО рестарта (тот же класс бага, что в tsk-653 и
+    tsk-939), и свежий выкат неделю не узнавал бы про мёртвую модель.
+
+    `AsyncIOScheduler.start()` требует работающий event loop — отсюда
+    `async def`, хотя сама проверка синхронна.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    chain_check.stop_scheduler()
+    try:
+        scheduler = chain_check.start_scheduler()
+        assert scheduler is not None
+        job = scheduler.get_job("llm_chain_check_tick")
+        assert job is not None
+        now = datetime.now(timezone.utc)
+        assert job.next_run_time <= now + timedelta(minutes=10)
+    finally:
+        chain_check.stop_scheduler()

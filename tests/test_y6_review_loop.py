@@ -1049,3 +1049,34 @@ async def test_y6_course_completion_escalation_catches_manual_sa_com(db):
         await _cleanup_tasks_and_course(
             db, task_ids=[task_id], course_id=course_id, result_ids=[]
         )
+
+
+@pytest.mark.asyncio
+async def test_escalation_scheduler_first_run_survives_frequent_restarts():
+    """tsk-940: первый проход планировщика — минуты, а не полный интервал.
+
+    До миграции на общий хелпер (`app/core/cron_registry.py`) у этого
+    сервиса не было поправки `next_run_time` вовсе — 5-минутный тик эскалации
+    был живым примером БЕЗ фикса для копипасты. `IntervalTrigger(minutes=5)`
+    без `next_run_time` отсчитывает интервал от МОМЕНТА РЕГИСТРАЦИИ джобы, то
+    есть от последнего рестарта процесса — тот же класс бага, что в tsk-653 и
+    tsk-939, только острее: рестарт (деплой) на проде случается в среднем раз
+    в 2-4 часа, то есть чаще, чем сам интервал тика.
+
+    `AsyncIOScheduler.start()` требует работающий event loop — отсюда
+    `async def`, хотя сама проверка синхронна.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from app.services import escalation_service
+
+    escalation_service.stop_scheduler()
+    try:
+        scheduler = escalation_service.start_scheduler()
+        assert scheduler is not None
+        job = scheduler.get_job("y6_escalation_cron")
+        assert job is not None
+        now = datetime.now(timezone.utc)
+        assert job.next_run_time <= now + timedelta(minutes=10)
+    finally:
+        escalation_service.stop_scheduler()

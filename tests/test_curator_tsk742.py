@@ -926,3 +926,35 @@ async def test_report_text_names_the_gap(db, graph):
     assert "Кураторство, неделя" in body
     assert f"{_TAG}-teacher_a" in body
     assert "без внимания" in body
+
+
+@pytest.mark.asyncio
+async def test_scheduler_first_run_survives_frequent_restarts():
+    """tsk-940: первый проход планировщика — минуты, а не полный интервал.
+
+    До миграции на общий хелпер (`app/core/cron_registry.py`) у этого
+    сервиса не было поправки `next_run_time` вовсе — часовой тик опроса был
+    живым примером БЕЗ фикса для копипасты. `IntervalTrigger(hours=1)` без
+    `next_run_time` отсчитывает интервал от МОМЕНТА РЕГИСТРАЦИИ джобы, то
+    есть от последнего рестарта процесса — тот же класс бага, что в tsk-653 и
+    tsk-939. Тик сам решает по дню/часу, слать ли отчёт (недельный гейт
+    внутри `curator_report_tick`) — эта миграция его не трогает, проверяется
+    только момент, когда тик впервые ПРОСЫПАЕТСЯ.
+
+    `AsyncIOScheduler.start()` требует работающий event loop — отсюда
+    `async def`, хотя сама проверка синхронна.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from app.services import curator_report_cron_service as cron
+
+    cron.stop_scheduler()
+    try:
+        scheduler = cron.start_scheduler()
+        assert scheduler is not None
+        job = scheduler.get_job("curator_weekly_report")
+        assert job is not None
+        now = datetime.now(timezone.utc)
+        assert job.next_run_time <= now + timedelta(minutes=10)
+    finally:
+        cron.stop_scheduler()

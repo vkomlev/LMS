@@ -31,10 +31,10 @@ import logging
 from typing import Any, Optional
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.cron_registry import register_interval_job
 from app.db.session import async_session_factory
 from app.services import inbox_service
 from app.services.schedule_preference_service import (
@@ -270,30 +270,21 @@ def start_scheduler() -> None:
         return
 
     _scheduler = AsyncIOScheduler(timezone="UTC")
-    _scheduler.add_job(
+    # tsk-940: регистрация — через общий хелпер, см. docstring
+    # app/core/cron_registry.py. tsk-939: первый проход — вскоре после
+    # старта, см. _STARTUP_DELAY_MIN.
+    register_interval_job(
+        _scheduler,
         _safe_tick,
-        IntervalTrigger(hours=_TICK_INTERVAL_HOURS),
-        id="schedule_preference_reminder_tick",
-        # tsk-939: первый проход — вскоре после старта, см. _STARTUP_DELAY_MIN.
-        next_run_time=_startup_run_at(_STARTUP_DELAY_MIN),
-        max_instances=1,
-        # Пропущенные прогоны не догоняем пачкой: результат одинаковый, а
-        # человек получил бы три одинаковых сообщения подряд.
-        coalesce=True,
-        replace_existing=True,
+        job_id="schedule_preference_reminder_tick",
+        startup_delay_min=_STARTUP_DELAY_MIN,
+        hours=_TICK_INTERVAL_HOURS,
     )
     _scheduler.start()
     logger.info(
         "tsk-674: напоминания о пожеланиях запущены, интервал %s ч, первый проход через %s мин",
         _TICK_INTERVAL_HOURS, _STARTUP_DELAY_MIN,
     )
-
-
-def _startup_run_at(delay_min: int):
-    """Момент первого прохода. Вынесено функцией, чтобы тест не ждал минутами."""
-    from datetime import datetime, timedelta, timezone as _tz
-
-    return datetime.now(_tz.utc) + timedelta(minutes=max(0, delay_min))
 
 
 def stop_scheduler() -> None:

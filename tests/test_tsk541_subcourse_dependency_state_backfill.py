@@ -300,3 +300,31 @@ async def test_background_tick_backfills_state_for_dependency_added_via_raw_sql(
         f"записанной в обход API: state={state!r}"
     )
     assert not await _is_blocked(db, student_id=student, required_course_id=ids["child_a"])
+
+
+@pytest.mark.asyncio
+async def test_scheduler_first_run_survives_frequent_restarts():
+    """tsk-940: первый проход планировщика — минуты, а не полный интервал.
+
+    До миграции на общий хелпер (`app/core/cron_registry.py`) у этого
+    сервиса не было поправки `next_run_time` вовсе — 15-минутный тик
+    пересчёта был живым примером БЕЗ фикса для копипасты.
+    `IntervalTrigger(minutes=15)` без `next_run_time` отсчитывает интервал от
+    МОМЕНТА РЕГИСТРАЦИИ джобы, то есть от последнего рестарта процесса — тот
+    же класс бага, что в tsk-653 и tsk-939.
+
+    `AsyncIOScheduler.start()` требует работающий event loop — отсюда
+    `async def`, хотя сама проверка синхронна.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    course_dependency_state_cron_service.stop_scheduler()
+    try:
+        scheduler = course_dependency_state_cron_service.start_scheduler()
+        assert scheduler is not None
+        job = scheduler.get_job("tsk541_course_dependency_state_cron")
+        assert job is not None
+        now = datetime.now(timezone.utc)
+        assert job.next_run_time <= now + timedelta(minutes=10)
+    finally:
+        course_dependency_state_cron_service.stop_scheduler()

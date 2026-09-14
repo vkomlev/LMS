@@ -14,10 +14,10 @@ import logging
 from typing import Optional
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.interval import IntervalTrigger
 
 from app.core import settings_store
 from app.core.config import Settings
+from app.core.cron_registry import register_interval_job
 from app.db.session import async_session_factory
 from app.services import learning_gap_signals_service
 
@@ -61,26 +61,17 @@ def start_scheduler() -> Optional[AsyncIOScheduler]:
     hours = int(getattr(settings, "learning_gaps_cron_interval_hours", 24))
     delay_min = int(getattr(settings, "learning_gaps_cron_startup_delay_min", 5))
     scheduler = AsyncIOScheduler(timezone="UTC")
-    scheduler.add_job(
+    # tsk-940: регистрация — через общий хелпер, см. docstring
+    # app/core/cron_registry.py. tsk-653: первый проход — вскоре после
+    # старта, а не через сутки (обнаружено при разборе tsk-653: 1 завершённый
+    # тик и 23 рестарта планировщика за доступное окно логов). Не в сам
+    # момент старта: приложению есть чем заняться в первые секунды.
+    register_interval_job(
+        scheduler,
         learning_gaps_tick,
-        trigger=IntervalTrigger(hours=hours),
-        id="learning_gaps_tick",
-        # tsk-653: первый проход — вскоре после старта, а не через сутки.
-        # `IntervalTrigger` без `next_run_time` отсчитывает интервал от момента
-        # РЕГИСТРАЦИИ джобы, то есть от последнего рестарта процесса. На проде
-        # рестарт (деплой) случается в среднем раз в 2-3 часа — без этой
-        # поправки датчик почти никогда не накапливал суток непрерывной работы
-        # и реально срабатывал единицы раз за три недели вместо ежедневного
-        # прохода (обнаружено при разборе tsk-653: 1 завершённый тик и 23
-        # рестарта планировщика за доступное окно логов). Тот же приём уже
-        # применён в `llm_chain_check_cron_service` по той же причине. Не в сам
-        # момент старта: приложению есть чем заняться в первые секунды.
-        next_run_time=_startup_run_at(delay_min),
-        # Пропущенный прогон не догоняем пачкой: три отложенных прохода подряд
-        # дадут одни и те же темы и ничего нового, кроме шума в логе.
-        coalesce=True,
-        max_instances=1,
-        replace_existing=True,
+        job_id="learning_gaps_tick",
+        startup_delay_min=delay_min,
+        hours=hours,
     )
     scheduler.start()
     _scheduler = scheduler
@@ -89,13 +80,6 @@ def start_scheduler() -> Optional[AsyncIOScheduler]:
         hours, delay_min,
     )
     return scheduler
-
-
-def _startup_run_at(delay_min: int):
-    """Момент первого прохода. Вынесено функцией, чтобы тест не ждал минутами."""
-    from datetime import datetime, timedelta, timezone as _tz
-
-    return datetime.now(_tz.utc) + timedelta(minutes=max(0, delay_min))
 
 
 def stop_scheduler() -> None:

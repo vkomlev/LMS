@@ -429,3 +429,34 @@ async def test_presence_requires_login(client):
     """Без входа пульс не принимается."""
     resp = await client.post("/api/v1/me/presence", json={"interacted": True})
     assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_scheduler_first_run_survives_frequent_restarts():
+    """tsk-940: первый проход планировщика — минуты, а не полный интервал.
+
+    До миграции на общий хелпер (`app/core/cron_registry.py`) у этого
+    сервиса не было поправки `next_run_time` вовсе — 3-минутный тик простоя
+    был живым примером БЕЗ фикса для копипасты. `IntervalTrigger(minutes=3)`
+    без `next_run_time` отсчитывает интервал от МОМЕНТА РЕГИСТРАЦИИ джобы, то
+    есть от последнего рестарта процесса — тот же класс бага, что в tsk-653 и
+    tsk-939, только острее: рестарт (деплой) на проде случается в среднем раз
+    в 2-4 часа, то есть чаще, чем сам интервал тика.
+
+    `AsyncIOScheduler.start()` требует работающий event loop — отсюда
+    `async def`, хотя сама проверка синхронна.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from app.services import lesson_idle_cron_service as cron
+
+    cron.stop_scheduler()
+    try:
+        scheduler = cron.start_scheduler()
+        assert scheduler is not None
+        job = scheduler.get_job("tsk591_lesson_idle_cron")
+        assert job is not None
+        now = datetime.now(timezone.utc)
+        assert job.next_run_time <= now + timedelta(minutes=10)
+    finally:
+        cron.stop_scheduler()

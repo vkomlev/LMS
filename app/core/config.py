@@ -273,6 +273,12 @@ class Settings:
         self.course_dependency_state_cron_interval_min: int = int(
             os.getenv("COURSE_DEPENDENCY_STATE_CRON_INTERVAL_MIN", "15")
         )
+        # tsk-940: первый проход — вскоре после старта, а не через полный
+        # интервал (класс бага tsk-653/tsk-939 — см. docstring
+        # app/core/cron_registry.py).
+        self.course_dependency_state_cron_startup_delay_min: float = float(
+            os.getenv("COURSE_DEPENDENCY_STATE_CRON_STARTUP_DELAY_MIN", "2")
+        )
 
         # tsk-302 этап 3: фоновая оценка кода ученика (чистота + признак
         # ИИ-авторства). Синхронно её делать нельзя — это внешний вызов модели
@@ -292,6 +298,14 @@ class Settings:
         ).lower() in ("true", "1", "yes")
         self.code_review_cron_interval_min: int = int(
             os.getenv("CODE_REVIEW_CRON_INTERVAL_MIN", "2")
+        )
+        # tsk-940: первый проход — вскоре после старта (класс бага
+        # tsk-653/tsk-939 — см. docstring app/core/cron_registry.py). Меньше
+        # самого интервала (2 мин) — иначе первый тик после каждого рестарта
+        # всё равно ждал бы дольше, чем обычный, то есть воспроизводил бы тот
+        # же баг в миниатюре.
+        self.code_review_cron_startup_delay_min: float = float(
+            os.getenv("CODE_REVIEW_CRON_STARTUP_DELAY_MIN", "0.5")
         )
         # За тик берём немного: оценка одной работы — сетевой вызов на секунды,
         # а очередь всё равно разгребётся следующими тиками. Заодно это потолок
@@ -539,6 +553,11 @@ class Settings:
         self.escalation_cron_interval_min: int = int(
             os.getenv("ESCALATION_CRON_INTERVAL_MIN", "5")
         )
+        # tsk-940: первый проход — вскоре после старта (класс бага
+        # tsk-653/tsk-939 — см. docstring app/core/cron_registry.py).
+        self.escalation_cron_startup_delay_min: float = float(
+            os.getenv("ESCALATION_CRON_STARTUP_DELAY_MIN", "1")
+        )
         # METHODIST_RATE_LIMIT_PER_DAY_PER_COURSE — verhinder spam:
         # не более N escalation push'ей по одному курсу в сутки.
         self.methodist_rate_limit_per_day_per_course: int = int(
@@ -553,6 +572,11 @@ class Settings:
         # Интервал APScheduler-тика генератора occurrence.
         self.lesson_occurrence_cron_interval_min: int = int(
             os.getenv("LESSON_OCCURRENCE_CRON_INTERVAL_MIN", "60")
+        )
+        # tsk-940: первый проход — вскоре после старта (класс бага
+        # tsk-653/tsk-939 — см. docstring app/core/cron_registry.py).
+        self.lesson_occurrence_cron_startup_delay_min: float = float(
+            os.getenv("LESSON_OCCURRENCE_CRON_STARTUP_DELAY_MIN", "5")
         )
 
         # tsk-429 (Календарь LMS, Фаза 2): за сколько минут до occurrence
@@ -586,10 +610,20 @@ class Settings:
         self.retention_achievements_cron_interval_min: int = int(
             os.getenv("RETENTION_ACHIEVEMENTS_CRON_INTERVAL_MIN", "15")
         )
+        # tsk-940: первый проход — вскоре после старта (класс бага
+        # tsk-653/tsk-939 — см. docstring app/core/cron_registry.py).
+        self.retention_achievements_cron_startup_delay_min: float = float(
+            os.getenv("RETENTION_ACHIEVEMENTS_CRON_STARTUP_DELAY_MIN", "2")
+        )
         # Интервал APScheduler-тика reminder+no_show (чаще генератора —
         # десятиминутный порог no_show требует более мелкой гранулярности).
         self.lesson_attendance_cron_interval_min: int = int(
             os.getenv("LESSON_ATTENDANCE_CRON_INTERVAL_MIN", "5")
+        )
+        # tsk-940: первый проход — вскоре после старта (класс бага
+        # tsk-653/tsk-939 — см. docstring app/core/cron_registry.py).
+        self.lesson_attendance_cron_startup_delay_min: float = float(
+            os.getenv("LESSON_ATTENDANCE_CRON_STARTUP_DELAY_MIN", "1")
         )
         # tsk-455: запас до начала occurrence, в пределах которого реальное
         # учебное действие (сдача ответа/завершение материала) всё ещё
@@ -607,6 +641,13 @@ class Settings:
         self.lesson_idle_cron_interval_min: int = int(
             os.getenv("LESSON_IDLE_CRON_INTERVAL_MIN", "3")
         )
+        # tsk-940: первый проход — вскоре после старта (класс бага
+        # tsk-653/tsk-939 — см. docstring app/core/cron_registry.py). Меньше
+        # интервала (3 мин), иначе первый тик после каждого рестарта
+        # воспроизводил бы тот же баг в миниатюре.
+        self.lesson_idle_cron_startup_delay_min: float = float(
+            os.getenv("LESSON_IDLE_CRON_STARTUP_DELAY_MIN", "0.5")
+        )
         # Порог тишины. 10 минут — решение оператора 2026-08-09.
         self.lesson_idle_threshold_minutes: int = int(
             os.getenv("LESSON_IDLE_THRESHOLD_MINUTES", "10")
@@ -621,4 +662,14 @@ class Settings:
         # превращать ученика в «ушёл».
         self.presence_stale_seconds: int = int(
             os.getenv("PRESENCE_STALE_SECONDS", "420")
+        )
+
+        # Кураторские еженедельные отчёты (см.
+        # app/services/curator_report_cron_service.py). Интервал самого тика
+        # (1ч) не равен реальной периодичности рассылки — недельный гейт по
+        # дню/часу живёт ВНУТРИ тика и tsk-940 его не меняет.
+        # tsk-940: первый проход — вскоре после старта (класс бага
+        # tsk-653/tsk-939 — см. docstring app/core/cron_registry.py).
+        self.curator_report_cron_startup_delay_min: float = float(
+            os.getenv("CURATOR_REPORT_CRON_STARTUP_DELAY_MIN", "5")
         )
