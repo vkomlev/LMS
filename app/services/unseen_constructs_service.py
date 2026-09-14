@@ -50,6 +50,18 @@
 каталога): решение оператора 12.09 — практики со списками мельком объяснённый
 метод не даёт, пометка важнее риска лишний раз показаться. Для всех остальных
 14 конструкций правило tsk-864 не изменилось.
+
+**Продолжение 14.09: `course_covers=False` сам по себе не хватало.** Он
+глушит только АВТОМАТИЧЕСКИЙ зачёт всего текущего курса — а материал
+«Строковые методы» лежит в том же курсе 108, где выдаются и задания на
+списки, и ученик отмечает его пройденным ЛИЧНО в обычном порядке прохождения,
+задолго до такого задания. Личная отметка засчитывалась как обычно,
+независимо от курса материала, — то есть флаг не срабатывал вообще ни у кого,
+кто прошёл курс 108 по порядку (живой случай: Киселёва Елизавета). Решение
+оператора 14.09: для конструкций с `course_covers=False` материал того же
+курса, где сдано ЗАДАНИЕ, не даёт зачёта, даже отмеченный лично — нужен
+материал из ДРУГОГО курса (настоящая практика со списками, а не мимоходом
+упомянутый в соседнем уроке метод).
 """
 from __future__ import annotations
 
@@ -332,7 +344,7 @@ def codes_in_material(content_json: Optional[str], *, wanted: Optional[Set[str]]
 #: темы позже — а в момент сдачи конструкции он действительно не знал. На живом
 #: пути параметр не передаётся: там «сейчас» и есть момент сдачи.
 _SEEN_SQL = """
-    SELECT m.content::text AS content
+    SELECT m.content::text AS content, m.course_id AS material_course_id
     FROM student_material_progress smp
     JOIN materials m ON m.id = smp.material_id
     WHERE smp.student_id = :student_id
@@ -369,8 +381,11 @@ async def covered_codes(
     принадлежали одному ученику; без кэша его материалы читались бы четырежды.
 
     :param student_id: Чьи отметки о пройденных материалах берём.
-    :param course_id: Тема, в которой сдана работа: её материалы считаются
-        доступными ученику целиком, даже неотмеченные.
+    :param course_id: Тема, в которой сдана работа. Её материалы считаются
+        доступными ученику целиком, даже неотмеченные (кроме конструкций с
+        `course_covers=False` — им это не идёт в зачёт вовсе, см. ниже).
+        Личные отметки студента по материалам ЭТОГО ЖЕ курса для таких
+        конструкций тоже не считаются — нужен материал из другого курса.
     :param as_of: Учитывать только материалы, пройденные до этого момента.
         Нужен пересчёту истории; на живом пути не передаётся.
     :param cache: Словарь на время прохода. Живёт ровно столько, сколько идёт
@@ -380,16 +395,40 @@ async def covered_codes(
     """
     box = cache if cache is not None else {}
 
+    # tsk-916 продолжение (2026-09-14): по каждому материалу помним ЕГО СОБСТВЕННЫЙ
+    # course_id, а не только набор конструкций — комбинирование ниже зависит от
+    # курса ТЕКУЩЕГО задания, а курс задания у разных вызовов разный, поэтому
+    # закэшировать готовый союз сразу нельзя.
     student_key = ("student", student_id, as_of)
     if student_key not in box:
-        seen: Set[str] = set()
+        per_material: List[Tuple[Set[str], Optional[int]]] = []
         rows = (await db.execute(
             text(_SEEN_SQL), {"student_id": student_id, "as_of": as_of}
         )).fetchall()
-        for (content,) in rows:
-            seen |= codes_in_material(content)
-        box[student_key] = (seen, len(rows))
-    student_seen, materials_seen = box[student_key]
+        for content, material_course_id in rows:
+            codes = codes_in_material(content)
+            if codes:
+                per_material.append((codes, material_course_id))
+        box[student_key] = (per_material, len(rows))
+    per_material, materials_seen = box[student_key]
+
+    # Живой случай 14.09: у `split_join` (`course_covers=False`) ровно тот
+    # материал, что мельком упоминает `.split()`/`.join()` без практики со
+    # списками («Строковые методы»), лежит В ТОМ ЖЕ курсе 108, где выдаются и
+    # задания на списки. Обычное прохождение курса по порядку отмечает его
+    # пройденным задолго до такого задания — и `course_covers=False` это не
+    # ловит: он глушит только АВТОМАТИЧЕСКИЙ зачёт всего курса, а материал,
+    # отмеченный студентом ЛИЧНО, засчитывался как обычно, независимо от того,
+    # в каком курсе он лежит. Решение оператора 14.09: материал своего же
+    # курса (где сдано ЭТО задание) не даёт зачёта конструкциям с
+    # `course_covers=False`, даже отмеченный лично — нужен материал из ДРУГОГО
+    # курса (настоящая практика, а не мимоходом упомянутый метод).
+    student_seen: Set[str] = set()
+    for codes, material_course_id in per_material:
+        for code in codes:
+            construct = _BY_CODE[code]
+            if construct.course_covers or material_course_id != course_id:
+                student_seen.add(code)
 
     course_seen: Set[str] = set()
     if course_id is not None:

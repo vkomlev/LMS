@@ -14,9 +14,12 @@ tsk-915: каталог непройденных конструкций не з�
   льгота «текущая тема пройдена целиком» для этих двух кодов не действует
   (`course_covers=False`, решение оператора 12.09: практики метод не даёт,
   пометка важнее риска лишний раз показаться);
-- при этом СОБСТВЕННЫЙ прогресс ученика (реально отмеченные материалы, из
-  любого курса) по-прежнему гасит пометку как обычно — льгота не действует
-  только на «бесплатный» проход от текущего курса;
+- при этом СОБСТВЕННЫЙ прогресс ученика (реально отмеченные материалы) по-прежнему
+  гасит пометку как обычно, ЕСЛИ материал лежит в ДРУГОМ курсе — льгота не
+  действует ни на «бесплатный» проход от текущего курса, ни (продолжение
+  14.09, живой случай Киселёвой) на личную отметку материала ИЗ ТОГО ЖЕ
+  курса, где сдано задание: иначе обычное прохождение курса по порядку тихо
+  гасит пометку у всех;
 - для остальных конструкций каталога (`course_covers=True` по умолчанию)
   правило tsk-864 не изменилось.
 """
@@ -161,6 +164,56 @@ async def test_current_course_does_not_silence_split_join(
         ), {"r": result_id})).scalar_one()
         unseen = review["unseen_constructs"]
         assert unseen is not None, "сверять было с чем - нейтральный материал отмечен"
+        assert "split_join" in [i["code"] for i in unseen["items"]]
+    finally:
+        await _cleanup(db, result_id, past, user_id)
+
+
+async def test_own_course_material_marked_personally_does_not_silence_split_join(
+    db, db_session_factory, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Живой случай 14.09 (Киселёва Елизавета, задание 10377 «Работа со строками
+    в Python»): материал «Строковые методы» лежит в ТОМ ЖЕ курсе, что и
+    задание на списки, и ученица отмечает его пройденным в обычном порядке
+    прохождения курса - задолго до самого задания. Личная отметка материала
+    СВОЕГО ЖЕ курса не должна гасить пометку для `course_covers=False`:
+    иначе флаг не сработает вообще ни у кого, кто просто прошёл курс по
+    порядку - `course_covers=False` глушил только БЕСПЛАТНЫЙ (неотмеченный)
+    проход от всего курса, а личная отметка того же материала обходила его
+    стороной. Продолжение tsk-916, решение оператора 14.09.
+    """
+    result_id, past, user_id = await _seed(
+        db,
+        code='words = "a b c".split()\nprint(" ".join(words))\n',
+        course_materials=[_STRINGS_MATERIAL_MENTIONS_SPLIT_JOIN],
+        completed_materials=[],
+    )
+    # Материал ТЕКУЩЕГО курса (тот самый, что уже лежит там от `_seed`),
+    # отмеченный ЛИЧНО - как ученица реально отмечает уроки по ходу курса,
+    # а не «бесплатный проход» от факта пребывания в теме.
+    material_id = (await db.execute(sqltext(
+        """
+        SELECT m.id FROM task_results tr
+        JOIN tasks t ON t.id = tr.task_id
+        JOIN materials m ON m.course_id = t.course_id
+        WHERE tr.id = :r
+        """
+    ), {"r": result_id})).scalar_one()
+    await db.execute(sqltext(
+        "INSERT INTO student_material_progress (student_id, material_id, status, completed_at, source) "
+        "VALUES (:u, :m, 'completed', now(), 'system')"
+    ), {"u": user_id, "m": material_id})
+    await db.commit()
+
+    _stub_model(monkeypatch)
+    try:
+        await code_review_cron_service.code_review_cron_tick(db_session_factory)
+        review = (await db.execute(sqltext(
+            "SELECT code_review FROM task_results WHERE id = :r"
+        ), {"r": result_id})).scalar_one()
+        unseen = review["unseen_constructs"]
+        assert unseen is not None
         assert "split_join" in [i["code"] for i in unseen["items"]]
     finally:
         await _cleanup(db, result_id, past, user_id)
