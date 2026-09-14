@@ -397,6 +397,17 @@ class Settings:
         # видят преподаватель и методист, поэтому выключается без развёртывания.
         self.learning_gaps_cron_enabled: bool = os.getenv("LEARNING_GAPS_CRON_ENABLED", "true").lower() in ("true", "1", "yes")
         self.learning_gaps_cron_interval_hours: int = int(os.getenv("LEARNING_GAPS_CRON_INTERVAL_HOURS", "24"))
+        # tsk-653: первый проход — вскоре после старта, а не через сутки. На
+        # проде (lms.service) рестарт случается в среднем каждые 2-3 часа
+        # (деплои), а `IntervalTrigger(hours=24)` без `next_run_time` отсчитывает
+        # 24 часа от МОМЕНТА РЕГИСТРАЦИИ джобы — то есть от последнего рестарта.
+        # Без этой правки датчик почти никогда не накапливал сутки непрерывной
+        # работы и реально срабатывал единицы раз за три недели вместо
+        # ежедневного прохода. Тот же приём уже применён в
+        # `llm_chain_check_cron_service` по той же причине.
+        self.learning_gaps_cron_startup_delay_min: int = int(
+            os.getenv("LEARNING_GAPS_CRON_STARTUP_DELAY_MIN", "5")
+        )
 
         # tsk-647: окно признака «ученик затих» в днях. 14 — по замеру на
         # боевых данных (docs/qa/2026-08-28-tsk647-dropout-signal.md): 10 дней

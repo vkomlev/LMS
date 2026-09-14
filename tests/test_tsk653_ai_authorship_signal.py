@@ -524,3 +524,35 @@ async def test_service_key_does_not_pretend_to_be_a_person(db):
         assert meta["resolved_at"]
     finally:
         await _cleanup(db, [student, teacher], [root])
+
+
+@pytest.mark.asyncio
+async def test_scheduler_first_run_survives_frequent_restarts():
+    """Первый проход планировщика — минуты, а не сутки, после старта.
+
+    На проде (lms.service) рестарт случается в среднем раз в 2-3 часа
+    (деплои). `IntervalTrigger(hours=24)` без `next_run_time` отсчитывает
+    интервал от МОМЕНТА РЕГИСТРАЦИИ джобы, то есть от последнего рестарта —
+    без этой поправки датчик почти никогда не накапливал суток непрерывной
+    работы (обнаружено при разборе tsk-653: 1 завершённый тик за три недели
+    вместо ежедневных). Регрессия ловится здесь: следующий запуск джобы
+    обязан быть в пределах `learning_gaps_cron_startup_delay_min`, а не
+    где-то через 24 часа.
+
+    `AsyncIOScheduler.start()` требует работающий event loop — отсюда
+    `async def`, хотя сама проверка синхронна.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from app.services import learning_gaps_cron_service as cron
+
+    cron.stop_scheduler()
+    try:
+        scheduler = cron.start_scheduler()
+        assert scheduler is not None
+        job = scheduler.get_job("learning_gaps_tick")
+        assert job is not None
+        now = datetime.now(timezone.utc)
+        assert job.next_run_time <= now + timedelta(minutes=10)
+    finally:
+        cron.stop_scheduler()
