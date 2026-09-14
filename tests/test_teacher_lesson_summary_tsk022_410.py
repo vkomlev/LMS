@@ -1253,6 +1253,68 @@ async def test_summary_ongoing_lesson_still_shows_scheduled_ones(db, client):
 
 
 @pytest.mark.asyncio
+async def test_summary_ongoing_lesson_hides_declined_and_rescheduled(db, client):
+    """Регрессия 14.09: занятие ИДЁТ (не кончилось) — declined/rescheduled
+    всё равно не должны быть в итогах, в отличие от `scheduled`.
+
+    До фикса гасили эти статусы только после `lesson_ends_at`, а «Подвести
+    итоги» открывается раньше (`wrapup_from`) — весь этот промежуток
+    отказавшиеся и перенесённые участники протекали в сводку. Живой пример:
+    occurrence 15058, сводку открыли за 7 минут до конца, декабрь/declined
+    (Зудов Михаил) и rescheduled (Евстигнеев Алексей) были видны.
+    """
+    teacher_id, token = await _new_user(db, role="teacher", name="teach")
+    still_scheduled, _ = await _new_user(db, role="student", name="stillsched")
+    declined, _ = await _new_user(db, role="student", name="decl2")
+    moved, _ = await _new_user(db, role="student", name="moved2")
+
+    occ_id = await _create_occurrence_with_participant(
+        db, student_id=still_scheduled, teacher_id=teacher_id,
+        scheduled_at=datetime.now(UTC) - timedelta(minutes=10),
+        status="scheduled", duration_minutes=60,
+    )
+    db.add(LessonOccurrenceParticipant(occurrence_id=occ_id, student_id=declined, status="declined"))
+    db.add(LessonOccurrenceParticipant(occurrence_id=occ_id, student_id=moved, status="rescheduled"))
+    await db.commit()
+
+    resp = await client.get(
+        f"/api/v1/teacher/lesson-occurrences/{occ_id}/summary",
+        params={"teacher_id": teacher_id, "include_progress": "false"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200, resp.text
+    ids = {p["student_id"] for p in resp.json()["participants"]}
+    assert ids == {still_scheduled}, (
+        "declined/rescheduled не должны показываться в итогах даже пока занятие ещё идёт"
+    )
+
+
+@pytest.mark.asyncio
+async def test_summary_future_lesson_hides_declined_and_rescheduled(db, client):
+    """То же самое ДО начала занятия: declined/rescheduled решены заранее,
+    показывать их итоги незачем независимо от времени."""
+    teacher_id, token = await _new_user(db, role="teacher", name="teach")
+    still_scheduled, _ = await _new_user(db, role="student", name="stillsched2")
+    declined, _ = await _new_user(db, role="student", name="decl3")
+
+    occ_id = await _create_occurrence_with_participant(
+        db, student_id=still_scheduled, teacher_id=teacher_id,
+        scheduled_at=datetime.now(UTC) + timedelta(hours=1), status="scheduled",
+    )
+    db.add(LessonOccurrenceParticipant(occurrence_id=occ_id, student_id=declined, status="declined"))
+    await db.commit()
+
+    resp = await client.get(
+        f"/api/v1/teacher/lesson-occurrences/{occ_id}/summary",
+        params={"teacher_id": teacher_id, "include_progress": "false"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200, resp.text
+    ids = {p["student_id"] for p in resp.json()["participants"]}
+    assert ids == {still_scheduled}
+
+
+@pytest.mark.asyncio
 async def test_summary_past_lesson_shows_present_regardless_of_how_they_joined(db, client):
     """Пришедший не по записи (добавлен уже после начала, но подтвердил
     явку) остаётся в итогах — признак ровно тот же (`confirmed`), второго
