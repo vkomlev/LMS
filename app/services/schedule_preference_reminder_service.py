@@ -54,6 +54,13 @@ _REMINDER_LOCK_KEY = 0x50524546  # ascii "PREF"
 #: истекла, и тех, кто зарегистрировался вчера.
 _TICK_INTERVAL_HOURS = 24
 
+#: tsk-939: первый проход — вскоре после старта, а не через сутки.
+#: `IntervalTrigger` без `next_run_time` отсчитывает интервал от момента
+#: РЕГИСТРАЦИИ джобы, то есть от последнего рестарта процесса — тот же класс
+#: бага, что в tsk-653 (0 завершённых тиков за 26 рестартов lms.service
+#: подряд, tsk-939).
+_STARTUP_DELAY_MIN = 5
+
 _scheduler: Optional[AsyncIOScheduler] = None
 
 #: Вид уведомления. Отдельный от `lesson_reminder`: у бота для них разные
@@ -267,6 +274,8 @@ def start_scheduler() -> None:
         _safe_tick,
         IntervalTrigger(hours=_TICK_INTERVAL_HOURS),
         id="schedule_preference_reminder_tick",
+        # tsk-939: первый проход — вскоре после старта, см. _STARTUP_DELAY_MIN.
+        next_run_time=_startup_run_at(_STARTUP_DELAY_MIN),
         max_instances=1,
         # Пропущенные прогоны не догоняем пачкой: результат одинаковый, а
         # человек получил бы три одинаковых сообщения подряд.
@@ -275,8 +284,16 @@ def start_scheduler() -> None:
     )
     _scheduler.start()
     logger.info(
-        "tsk-674: напоминания о пожеланиях запущены, интервал %s ч", _TICK_INTERVAL_HOURS
+        "tsk-674: напоминания о пожеланиях запущены, интервал %s ч, первый проход через %s мин",
+        _TICK_INTERVAL_HOURS, _STARTUP_DELAY_MIN,
     )
+
+
+def _startup_run_at(delay_min: int):
+    """Момент первого прохода. Вынесено функцией, чтобы тест не ждал минутами."""
+    from datetime import datetime, timedelta, timezone as _tz
+
+    return datetime.now(_tz.utc) + timedelta(minutes=max(0, delay_min))
 
 
 def stop_scheduler() -> None:

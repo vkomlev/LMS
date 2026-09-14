@@ -737,3 +737,34 @@ async def test_ack_endpoint_marks_and_unmarks(client, db):
         r for r in summary_after.json()["students"] if r["student_id"] == student_id
     )
     assert row_after["is_filled"] is False
+
+
+@pytest.mark.asyncio
+async def test_scheduler_first_run_survives_frequent_restarts():
+    """Первый проход планировщика — минуты, а не сутки, после старта.
+
+    tsk-939: `IntervalTrigger` без `next_run_time` отсчитывает интервал от
+    МОМЕНТА РЕГИСТРАЦИИ джобы, то есть от последнего рестарта процесса. На
+    проде (`lms.service`) рестарт (деплой) случается в среднем каждые 2-4
+    часа — без этой поправки суточный проход напоминаний почти не успевал
+    накопить интервал (обнаружено при разборе tsk-939: 0 завершённых тиков
+    за 26 рестартов подряд, тот же класс бага, что в tsk-653). Регрессия
+    ловится здесь: следующий запуск джобы обязан быть в пределах
+    `_STARTUP_DELAY_MIN`, а не где-то через сутки.
+
+    `AsyncIOScheduler.start()` требует работающий event loop — отсюда
+    `async def`, хотя сама проверка синхронна.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from app.services import schedule_preference_reminder_service as reminder_cron
+
+    reminder_cron.stop_scheduler()
+    try:
+        reminder_cron.start_scheduler()
+        job = reminder_cron._scheduler.get_job("schedule_preference_reminder_tick")
+        assert job is not None
+        now = datetime.now(timezone.utc)
+        assert job.next_run_time <= now + timedelta(minutes=10)
+    finally:
+        reminder_cron.stop_scheduler()

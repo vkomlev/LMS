@@ -201,6 +201,11 @@ class Settings:
         self.link_audit_interval_hours: int = int(
             os.getenv("LINK_AUDIT_INTERVAL_HOURS", "24")
         )
+        # tsk-939: первый проход — вскоре после старта, а не через сутки (класс
+        # бага tsk-653 — см. learning_gaps_cron_startup_delay_min ниже).
+        self.link_audit_startup_delay_min: int = int(
+            os.getenv("LINK_AUDIT_STARTUP_DELAY_MIN", "5")
+        )
         # Проверяем только своё — то, что сами и чиним. Чужие сайты массово
         # отвечают 418/429 на автоматические запросы (защита от роботов), и это
         # не признак битой ссылки.
@@ -239,6 +244,11 @@ class Settings:
         ).lower() in ("true", "1", "yes")
         self.attachment_audit_interval_hours: int = int(
             os.getenv("ATTACHMENT_AUDIT_INTERVAL_HOURS", "24")
+        )
+        # tsk-939: первый проход — вскоре после старта, а не через сутки (класс
+        # бага tsk-653 — см. learning_gaps_cron_startup_delay_min ниже).
+        self.attachment_audit_startup_delay_min: int = int(
+            os.getenv("ATTACHMENT_AUDIT_STARTUP_DELAY_MIN", "5")
         )
         self.attachment_audit_notify_cooldown_hours: int = int(
             os.getenv("ATTACHMENT_AUDIT_NOTIFY_COOLDOWN_HOURS", "24")
@@ -425,6 +435,15 @@ class Settings:
         ).lower() in ("true", "1", "yes")
         self.charge_cron_interval_hours: int = int(
             os.getenv("CHARGE_CRON_INTERVAL_HOURS", "24")
+        )
+        # tsk-939: первый проход — вскоре после старта, а не через сутки (класс
+        # бага tsk-653 — см. learning_gaps_cron_startup_delay_min ниже). Крон
+        # начислений — денежный, поэтому эта поправка приоритетнее остальных
+        # трёх: без неё детектор «ходит, но не выставлен» почти не успевал
+        # тикать между рестартами (0 завершённых тиков за 26 рестартов подряд,
+        # tsk-939).
+        self.charge_cron_startup_delay_min: int = int(
+            os.getenv("CHARGE_CRON_STARTUP_DELAY_MIN", "5")
         )
         # Молчание при чистом прогоне; при находках — не чаще раза в сутки,
         # иначе ежедневный тик превратит одного невыставленного ученика в поток.

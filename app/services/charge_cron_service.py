@@ -512,11 +512,19 @@ def start_scheduler() -> None:
     if _scheduler is not None:
         return
 
+    delay_min = settings.charge_cron_startup_delay_min
     _scheduler = AsyncIOScheduler(timezone="UTC")
     _scheduler.add_job(
         _safe_tick,
         IntervalTrigger(hours=settings.charge_cron_interval_hours),
         id="charge_cron_tick",
+        # tsk-939: первый проход — вскоре после старта, а не через сутки.
+        # `IntervalTrigger` без `next_run_time` отсчитывает интервал от момента
+        # РЕГИСТРАЦИИ джобы, то есть от последнего рестарта процесса. На проде
+        # рестарт (деплой) случается в среднем раз в 2-4 часа — без этой
+        # поправки крон начислений почти никогда не тикал (0 завершённых тиков
+        # за 26 рестартов подряд, tsk-939), тот же класс бага, что в tsk-653.
+        next_run_time=_startup_run_at(delay_min),
         max_instances=1,
         # Пропущенные прогоны не догоняем пачкой: результат у них одинаковый,
         # а нагрузка тройная.
@@ -525,9 +533,16 @@ def start_scheduler() -> None:
     )
     _scheduler.start()
     logger.info(
-        "tsk-596: автопересчёт начислений запущен, интервал %s ч",
-        settings.charge_cron_interval_hours,
+        "tsk-596: автопересчёт начислений запущен, интервал %s ч, первый проход через %s мин",
+        settings.charge_cron_interval_hours, delay_min,
     )
+
+
+def _startup_run_at(delay_min: int):
+    """Момент первого прохода. Вынесено функцией, чтобы тест не ждал минутами."""
+    from datetime import datetime, timedelta, timezone as _tz
+
+    return datetime.now(_tz.utc) + timedelta(minutes=max(0, delay_min))
 
 
 def stop_scheduler() -> None:

@@ -387,3 +387,31 @@ async def test_tick_notifies_methodist_once_per_day(db, db_session_factory):
         ).scalar()
     )
     assert still == 1
+
+
+async def test_scheduler_first_run_survives_frequent_restarts():
+    """Первый проход планировщика — минуты, а не сутки, после старта.
+
+    tsk-939: `IntervalTrigger` без `next_run_time` отсчитывает интервал от
+    МОМЕНТА РЕГИСТРАЦИИ джобы, то есть от последнего рестарта процесса. На
+    проде (`lms.service`) рестарт (деплой) случается в среднем каждые 2-4
+    часа — без этой поправки суточный крон начислений почти не успевал
+    накопить интервал (обнаружено при разборе tsk-939: 0 завершённых тиков
+    за 26 рестартов подряд, тот же класс бага, что в tsk-653). Регрессия
+    ловится здесь: следующий запуск джобы обязан быть в пределах
+    `charge_cron_startup_delay_min`, а не где-то через сутки.
+
+    `AsyncIOScheduler.start()` требует работающий event loop — отсюда
+    `async def`, хотя сама проверка синхронна.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    charge_cron_service.stop_scheduler()
+    try:
+        charge_cron_service.start_scheduler()
+        job = charge_cron_service._scheduler.get_job("charge_cron_tick")
+        assert job is not None
+        now = datetime.now(timezone.utc)
+        assert job.next_run_time <= now + timedelta(minutes=10)
+    finally:
+        charge_cron_service.stop_scheduler()

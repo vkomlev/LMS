@@ -173,3 +173,31 @@ async def test_storage_outage_aborts_run(db, db_session_factory, monkeypatch):
         assert summary["missing"] == 0
     finally:
         await _cleanup(db, [result_id], [name])
+
+
+async def test_scheduler_first_run_survives_frequent_restarts():
+    """Первый проход планировщика — минуты, а не сутки, после старта.
+
+    tsk-939: `IntervalTrigger` без `next_run_time` отсчитывает интервал от
+    МОМЕНТА РЕГИСТРАЦИИ джобы, то есть от последнего рестарта процесса. На
+    проде (`lms.service`) рестарт (деплой) случается в среднем каждые 2-4
+    часа — без этой поправки суточная проверка вложений почти не успевала
+    накопить интервал (обнаружено при разборе tsk-939: 0 завершённых тиков
+    за 26 рестартов подряд, тот же класс бага, что в tsk-653). Регрессия
+    ловится здесь: следующий запуск джобы обязан быть в пределах
+    `attachment_audit_startup_delay_min`, а не где-то через сутки.
+
+    `AsyncIOScheduler.start()` требует работающий event loop — отсюда
+    `async def`, хотя сама проверка синхронна.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    audit.stop_scheduler()
+    try:
+        audit.start_scheduler()
+        job = audit._scheduler.get_job("attachment_audit_tick")
+        assert job is not None
+        now = datetime.now(timezone.utc)
+        assert job.next_run_time <= now + timedelta(minutes=10)
+    finally:
+        audit.stop_scheduler()

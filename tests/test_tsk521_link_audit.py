@@ -393,3 +393,32 @@ def test_own_host_detection(url, hosts, expected):
 # `test_tsk521_link_audit_lock.py`: там нужны два НЕЗАВИСИМЫХ соединения, а
 # значит собственный engine — и весь такой модуль выпадает из транзакционной
 # изоляции. Держать из-за одного теста без изоляции ещё девять не за что.
+
+
+@pytest.mark.asyncio
+async def test_scheduler_first_run_survives_frequent_restarts():
+    """Первый проход планировщика — минуты, а не сутки, после старта.
+
+    tsk-939: `IntervalTrigger` без `next_run_time` отсчитывает интервал от
+    МОМЕНТА РЕГИСТРАЦИИ джобы, то есть от последнего рестарта процесса. На
+    проде (`lms.service`) рестарт (деплой) случается в среднем каждые 2-4
+    часа — без этой поправки суточная проверка ссылок почти не успевала
+    накопить интервал (обнаружено при разборе tsk-939: 0 завершённых тиков
+    за 26 рестартов подряд, тот же класс бага, что в tsk-653). Регрессия
+    ловится здесь: следующий запуск джобы обязан быть в пределах
+    `link_audit_startup_delay_min`, а не где-то через сутки.
+
+    `AsyncIOScheduler.start()` требует работающий event loop — отсюда
+    `async def`, хотя сама проверка синхронна.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    link_audit_service.stop_scheduler()
+    try:
+        link_audit_service.start_scheduler()
+        job = link_audit_service._scheduler.get_job("link_audit_tick")
+        assert job is not None
+        now = datetime.now(timezone.utc)
+        assert job.next_run_time <= now + timedelta(minutes=10)
+    finally:
+        link_audit_service.stop_scheduler()
