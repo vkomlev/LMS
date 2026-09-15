@@ -350,13 +350,56 @@ def run_lms(*, apply: bool) -> None:
     logger.info("отчёт: %s (%s строк)", report, len(rows))
 
 
+#: Подсказка к полю ответа (`task_content.prompt`). Прежняя обещала «код и ответ
+#: проверит учитель» — после включения тестов это неправда, и живой прогон
+#: 2026-09-15 показал её прямо над редактором программы.
+OLD_PROMPT_MARK = "проверит учитель"
+NEW_PROMPT = (
+    "Напишите программу по условию: она читает данные через input() и печатает "
+    "результат через print(). После отправки программа будет запущена на тестах — "
+    "результат появится сразу."
+)
+
+
+def run_prompts(*, apply: bool) -> None:
+    """Заменить подсказку «проверит учитель» у 30 заданий на подсказку про тесты."""
+    rows: List[Dict[str, Any]] = []
+    for task_id in SPECS:
+        current = _api("GET", f"/tasks/{task_id}")
+        content = dict(current.get("task_content") or {})
+        prompt = content.get("prompt") or ""
+        if OLD_PROMPT_MARK not in prompt:
+            logger.info("id=%s: подсказка уже без «%s», пропуск", task_id, OLD_PROMPT_MARK)
+            continue
+        content["prompt"] = NEW_PROMPT
+        row = {"id": task_id, "prompt_before": prompt}
+        if apply:
+            updated = _api("PATCH", f"/tasks/{task_id}", {"task_content": content})
+            row["prompt_after"] = (updated.get("task_content") or {}).get("prompt")
+            logger.info("id=%s: подсказка обновлена", task_id)
+        else:
+            logger.info("id=%s: подсказка будет заменена", task_id)
+        rows.append(row)
+    REPORT_DIR.mkdir(parents=True, exist_ok=True)
+    (REPORT_DIR / ("prompts_apply.json" if apply else "prompts_dry_run.json")).write_text(
+        json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    logger.info("подсказки: %s заданий", len(rows))
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--corpus", action="store_true", help="прогнать корпус верных и неверных решений")
     parser.add_argument("--dry-run", action="store_true", help="показать «было → стало» по проду")
     parser.add_argument("--apply", action="store_true", help="записать io_tests через PATCH /tasks/{id}")
+    parser.add_argument("--prompts", action="store_true",
+                        help="только подсказка к полю ответа (task_content.prompt), с --dry-run/--apply")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+
+    if args.prompts:
+        run_prompts(apply=args.apply)
+        return 0
 
     rules_by_task = {task_id: rules_with_tests(task_id) for task_id in SPECS}
     for task_id, rules in rules_by_task.items():
