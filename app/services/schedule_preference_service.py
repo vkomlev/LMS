@@ -35,8 +35,28 @@ from app.schemas.schedule_preference import (
     SchedulePreferenceHour,
     SchedulePreferenceWrite,
 )
+from app.services import inbox_service
 
 logger = logging.getLogger(__name__)
+
+#: Вид уведомления методисту о заполнении «Пожеланий к расписанию» (tsk-944).
+#: Тот же канал доставки, что у `schedule_booking_service.REQUEST_KIND`
+#: (`schedule_slot_request`, tsk-674 фаза 3) — тот же список kind'ов читает и
+#: кабинет (`GET /methodist/escalations/pending`), и бот методиста в TG_LMS —
+#: но другое событие: не «не нашёл время», а «прислал анкету».
+SUBMISSION_KIND = "schedule_preference_submitted"
+
+#: Дни недели словами — для текста уведомления методисту (см. тот же список
+#: в `schedule_booking_service.WEEKDAY_SHORT`; отдельная копия, а не импорт —
+#: `schedule_booking_service` сам импортирует этот модуль, обратный импорт
+#: замкнул бы модули друг на друга).
+_WEEKDAY_SHORT = ("пн", "вт", "ср", "чт", "пт", "сб", "вс")
+
+
+def _hour_label(weekday: int, start_time: time) -> str:
+    day = _WEEKDAY_SHORT[weekday] if 0 <= weekday < len(_WEEKDAY_SHORT) else str(weekday)
+    return f"{day} {start_time:%H:%M}"
+
 
 #: Тарифы, которым опрос не показывается: выпускник уже отучился, демо — ещё
 #: не ученик школы в смысле расписания.
@@ -412,6 +432,16 @@ async def save_preference(
             "by": changed_by,
         },
     )
+
+    await _notify_methodists_of_submission(
+        db,
+        student_id=student_id,
+        lessons_per_week=body.lessons_per_week,
+        hours=hours,
+        comment=body.comment,
+        source=body.source,
+    )
+
     await db.commit()
 
     logger.info(
@@ -424,6 +454,92 @@ async def save_preference(
         body.source,
     )
     return await get_preference(db, student_id)
+
+
+async def _notify_methodists_of_submission(
+    db: AsyncSession,
+    *,
+    student_id: int,
+    lessons_per_week: int,
+    hours: list[SchedulePreferenceHour],
+    comment: Optional[str],
+    source: str,
+) -> int:
+    """Сказать методистам, что ученик заполнил «Пожелания к расписанию» (tsk-944).
+
+    Без этого хука заполнение анкеты видно только на сводке
+    (`GET /methodist/schedule-preferences/summary`) — за ней методист сам не
+    ходит между вёрстками расписания, тот же урок, что и в [[tsk-652]].
+
+    Доставка идёт тем же каналом, что и `schedule_booking_service._notify_methodists`
+    (`schedule_slot_request`): без квоты/тихих часов — этого нет и у соседнего
+    `schedule_slot_request` в том же общем поллере методиста
+    (`GET /methodist/escalations/pending`), и добавлять их только этому виду
+    значило бы городить отдельный watermark поверх общего id-курсора одного
+    методиста ради одного вида уведомлений. Если поток окажется шумным на
+    практике — заводить отдельный поллер по образцу `poll_teacher_attention`
+    (tsk-652), не точечный патч сюда.
+    """
+    methodist_ids = [
+        int(r[0])
+        for r in (
+            await db.execute(
+                text(
+                    "SELECT ur.user_id FROM user_roles ur "
+                    "  JOIN roles r ON r.id = ur.role_id "
+                    " WHERE r.name = 'methodist'"
+                )
+            )
+        ).fetchall()
+    ]
+    if not methodist_ids:
+        logger.warning(
+            "tsk-944: пожелание ученика %s некому передать — методистов в системе нет",
+            student_id,
+        )
+        return 0
+
+    student_name = (
+        await db.execute(
+            text("SELECT full_name FROM users WHERE id = :id"), {"id": student_id}
+        )
+    ).scalar()
+    who = student_name or f"ученик #{student_id}"
+
+    preferred = [_hour_label(h.weekday, h.start_time) for h in hours if h.kind == "preferred"]
+    possible = [_hour_label(h.weekday, h.start_time) for h in hours if h.kind == "possible"]
+
+    lines = [f"{who} заполнил(а) пожелания к расписанию."]
+    lines.append(f"Занятий в неделю нужно: {lessons_per_week}.")
+    lines.append(
+        "Желательные часы: " + (", ".join(preferred) if preferred else "не выбраны")
+    )
+    if possible:
+        lines.append("Возможные часы: " + ", ".join(possible))
+    if comment:
+        lines.append(f"Своими словами: {comment}")
+
+    payload = {
+        "student_id": student_id,
+        "student_name": student_name,
+        "lessons_per_week": lessons_per_week,
+        "preferred": preferred,
+        "possible": possible,
+        "comment": comment,
+        "source": source,
+        "trigger": "schedule_preference_saved",
+    }
+    for mid in methodist_ids:
+        await inbox_service.create_for_user(
+            db,
+            user_id=mid,
+            kind=SUBMISSION_KIND,
+            title="Ученик заполнил пожелания к расписанию",
+            content="\n".join(lines),
+            payload=payload,
+            created_by=student_id,
+        )
+    return len(methodist_ids)
 
 
 async def clear_preference(

@@ -77,9 +77,12 @@ async def list_pending_escalations(
     `help_request_escalated` (tsk-303, уровень 3 лестницы помощи — ученику не
     помог даже индивидуальный разбор с преподавателем; заявка остаётся
     открытой, методист закрывает её через
-    `POST /teacher/help-requests/{id}/close`) и `schedule_slot_request`
+    `POST /teacher/help-requests/{id}/close`), `schedule_slot_request`
     (tsk-674 фаза 3 — ученик не нашёл подходящего времени в расписании;
-    заявка ждёт разбора в `GET /methodist/schedule-slot-requests`).
+    заявка ждёт разбора в `GET /methodist/schedule-slot-requests`) и
+    `schedule_preference_submitted` (tsk-944 — ученик заполнил «Пожелания к
+    расписанию»; сама анкета — в
+    `GET /methodist/schedule-preferences/{student_id}`).
 
     tsk-298: проверка НАЛИЧИЯ роли `methodist` централизована в
     `require_role("methodist")` (service-token — bypass, как и раньше);
@@ -106,7 +109,7 @@ async def list_pending_escalations(
             "FROM notifications n "
             "WHERE n.user_id = :uid "
             "  AND n.kind IN ('review_escalated','course_pending_review','broken_media_links',"
-            "'help_request_escalated','schedule_slot_request') "
+            "'help_request_escalated','schedule_slot_request','schedule_preference_submitted') "
             f"  {since_clause}"  # nosec B608 — since_clause из закрытого набора (либо "", либо литерал с :since bind)
             "ORDER BY n.modified_at DESC "
             "LIMIT :limit"
