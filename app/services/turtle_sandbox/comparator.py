@@ -72,3 +72,68 @@ def compare_traces(
         return False, "финальное направление не совпадает"
 
     return True, None
+
+
+# ---------------------------------------------------------------------------
+# tsk-953: сравнение вывода программы с ожидаемым (режим stdin → stdout)
+# ---------------------------------------------------------------------------
+
+def _output_lines(text: str) -> List[str]:
+    """Строки вывода без пробелов по краям и без хвостовых пустых строк."""
+    lines = [line.strip() for line in text.replace("\r\n", "\n").split("\n")]
+    while lines and lines[-1] == "":
+        lines.pop()
+    return lines
+
+
+def _as_number(token: str) -> Optional[float]:
+    """Число из значения вывода; запятая как разделитель дробной части принимается."""
+    try:
+        return float(token.replace(",", ".", 1))
+    except ValueError:
+        return None
+
+
+def compare_stdout(
+    expected: str,
+    actual: str,
+    *,
+    mode: str = "lines",
+    float_tolerance: float = 0.0,
+) -> Tuple[bool, Optional[str]]:
+    """
+    Совпадает ли вывод программы с ожидаемым (tsk-953).
+
+    Режимы — см. `IoCompareMode` в схеме правил: `lines` (построчно, пробелы
+    по краям строк и хвостовые пустые строки несущественны), `tokens` (по
+    значениям через любые пробельные символы), `numeric` (как tokens, но пара
+    чисел сравнивается с допуском).
+
+    Returns:
+        (совпало, причина расхождения для лога либо None).
+    """
+    if mode == "lines":
+        exp_lines = _output_lines(expected)
+        act_lines = _output_lines(actual)
+        if exp_lines == act_lines:
+            return True, None
+        if len(exp_lines) != len(act_lines):
+            return False, f"строк в выводе {len(act_lines)}, ожидалось {len(exp_lines)}"
+        for i, (e, a) in enumerate(zip(exp_lines, act_lines), start=1):
+            if e != a:
+                return False, f"строка {i}: получено {a!r}, ожидалось {e!r}"
+        return False, "вывод не совпал"
+
+    exp_tokens = expected.split()
+    act_tokens = actual.split()
+    if len(exp_tokens) != len(act_tokens):
+        return False, f"значений в выводе {len(act_tokens)}, ожидалось {len(exp_tokens)}"
+    for i, (e, a) in enumerate(zip(exp_tokens, act_tokens), start=1):
+        if e == a:
+            continue
+        if mode == "numeric":
+            e_num, a_num = _as_number(e), _as_number(a)
+            if e_num is not None and a_num is not None and abs(e_num - a_num) <= float_tolerance:
+                continue
+        return False, f"значение {i}: получено {a!r}, ожидалось {e!r}"
+    return True, None

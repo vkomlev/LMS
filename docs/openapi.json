@@ -55895,6 +55895,116 @@
         "title": "IndividualReviewResponse",
         "description": "Ответ POST /learning/help-requests/{id}/request-individual-review."
       },
+      "IoTestCase": {
+        "properties": {
+          "stdin": {
+            "type": "string",
+            "maxLength": 10000,
+            "title": "Stdin",
+            "description": "Текст, подаваемый программе на стандартный ввод (строки через \\n).",
+            "default": "",
+            "examples": [
+              "3\n10\n25\n12\n"
+            ]
+          },
+          "expected_stdout": {
+            "type": "string",
+            "maxLength": 10000,
+            "minLength": 1,
+            "title": "Expected Stdout",
+            "description": "Ожидаемый вывод программы целиком.",
+            "examples": [
+              "25\n",
+              "74\nNO\n"
+            ]
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 100
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label",
+            "description": "Пометка для методиста: откуда тест («пример из условия», «N=1»).",
+            "examples": [
+              null,
+              "пример из условия"
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "expected_stdout"
+        ],
+        "title": "IoTestCase",
+        "description": "Один тест ввода/вывода (tsk-953): что подать программе и что она должна напечатать."
+      },
+      "IoTestsRules": {
+        "properties": {
+          "tests": {
+            "items": {
+              "$ref": "#/components/schemas/IoTestCase"
+            },
+            "type": "array",
+            "maxItems": 20,
+            "minItems": 1,
+            "title": "Tests",
+            "description": "Тесты по порядку: первый обычно — пример из условия."
+          },
+          "compare": {
+            "type": "string",
+            "enum": [
+              "lines",
+              "tokens",
+              "numeric"
+            ],
+            "title": "Compare",
+            "description": "Режим сравнения вывода: lines | tokens | numeric (см. IoCompareMode).",
+            "default": "lines",
+            "examples": [
+              "lines",
+              "numeric"
+            ]
+          },
+          "float_tolerance": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Float Tolerance",
+            "description": "Допуск при сравнении чисел в режиме numeric (абсолютный). 0.05 — для «среднего с одним знаком после запятой»: «75.45» и «75.5» равны.",
+            "default": 0.0,
+            "examples": [
+              0.0,
+              0.05
+            ]
+          },
+          "timeout_sec": {
+            "type": "number",
+            "maximum": 10.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Timeout Sec",
+            "description": "Лимит времени на ОДИН тест (wall-clock) — защита от бесконечного цикла.",
+            "default": 2.0
+          },
+          "max_output_chars": {
+            "type": "integer",
+            "maximum": 200000.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Max Output Chars",
+            "description": "Потолок вывода программы за один тест — защита от печати в бесконечном цикле.",
+            "default": 20000
+          }
+        },
+        "type": "object",
+        "required": [
+          "tests"
+        ],
+        "title": "IoTestsRules",
+        "description": "Проверка программы ученика прогоном на тестах ввода/вывода (tsk-953).\n\nТретий способ проверки кода рядом с `short_answer.normalization=code_ast`\n(сравнение ИСХОДНИКА как программы) и `turtle_sim` (сравнение РИСУНКА).\nЗамер tsk-950 на 61 верном решении ОГЭ-16 показал, что сравнение кода\nзасчитывает 18 % верных программ: «напишите программу, которая читает N\nчисел и выводит…» решают десятками способов, и единственная честная\nпроверка — исполнить программу на тестовых входах и сравнить вывод.\n\nКод исполняется в той же песочнице, что и `turtle_sim`\n(`app/services/turtle_sandbox/`, режим stdin → stdout), каждый тест —\nотдельный процесс с лимитом времени. Тесты идут по порядку до первого\nнепройденного: ученик видит номер теста, ввод и ожидаемый вывод."
+      },
       "KpiSeries": {
         "properties": {
           "current": {
@@ -65825,6 +65935,17 @@
             ],
             "description": "Правила проверки через безопасное исполнение кода ученика (tsk-412, курс 165). Тип задачи остаётся SA (эталон — response.value = полная программа), но при заполненном turtle_sim CheckingService НЕ делает code_ast/текстовое сравнение — вместо этого исполняет код в песочнице и сравнивает получившуюся трассу с эталонной."
           },
+          "io_tests": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IoTestsRules"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Правила проверки программы прогоном на тестах ввода/вывода (tsk-953, ОГЭ-16 курса 1181). Тип задачи остаётся SA/SA_COM; при заполненном io_tests CheckingService НЕ сравнивает код как текст/AST — исполняет программу в песочнице на каждом тесте и сравнивает вывод. Считается эталоном (`has_reference_answer` → true): гасит оптимистичный зачёт SA_COM и открывает задание машинной проверке. Программа берётся оттуда, где её реально написал ученик: value → comment → вложение."
+          },
           "table": {
             "anyOf": [
               {
@@ -71437,6 +71558,12 @@
             "title": "Has Reference Answer",
             "description": "Есть ли эталон для сверки response.value. False только у типов с коротким/табличным ответом (SA/SA_COM/TBL_COM) без заведённого эталона: отвечать нужно комментарием или файлом, и клиент может не показывать поле ввода ответа (tsk-547). Для остальных типов всегда true. Default true — сохраняет прежнее поведение клиента, если поле не пришло.",
             "default": true
+          },
+          "has_io_tests": {
+            "type": "boolean",
+            "title": "Has Io Tests",
+            "description": "Задание проверяется исполнением программы ученика на тестах ввода/вывода (solution_rules.io_tests, tsk-953). Клиент показывает редактор кода как основное поле ответа и отправляет программу в response.value; комментарий и файл необязательны. Default false.",
+            "default": false
           }
         },
         "type": "object",

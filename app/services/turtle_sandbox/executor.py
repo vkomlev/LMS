@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import subprocess
 import sys
 import tempfile
@@ -29,6 +30,14 @@ from typing import Any, Dict, List, Optional
 _PROJECT_ROOT = Path(__file__).resolve().parents[3]
 _RUNNER_PATH = Path(__file__).resolve().parent / "runner.py"
 _LINT_RUNNER_PATH = Path(__file__).resolve().parent / "lint_runner.py"
+_STDIO_RUNNER_PATH = Path(__file__).resolve().parent / "stdio_runner.py"
+
+# tsk-953: коды возврата, которыми ядро снимает процесс за превышение RLIMIT_CPU
+# (SIGXCPU) или после него (SIGKILL). subprocess отдаёт их отрицательными.
+# На Windows этих сигналов нет — там бесконечный цикл ловит wall-clock таймаут.
+_CPU_LIMIT_RETURN_CODES = frozenset(
+    -getattr(signal, name) for name in ("SIGXCPU", "SIGKILL") if hasattr(signal, name)
+)
 
 # Запас поверх timeout_sec самой задачи — время на старт unshare/интерпретатора.
 _SUBPROCESS_OVERHEAD_SEC = 3.0
@@ -60,6 +69,15 @@ _LINT_SEMAPHORE = threading.Semaphore(_LINT_CONCURRENCY_LIMIT)
 class SandboxResult:
     ok: bool
     trace: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+    message: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class StdioResult:
+    """Итог одного прогона программы на одном тесте (tsk-953)."""
+    ok: bool
+    stdout: Optional[str] = None
     error: Optional[str] = None
     message: Optional[str] = None
 
@@ -171,6 +189,99 @@ def _run_student_code_locked(
     if not data.get("ok"):
         return SandboxResult(ok=False, error=data.get("error", "unknown"), message=data.get("message"))
     return SandboxResult(ok=True, trace=data.get("trace"))
+
+
+def run_student_program_stdio(
+    code: str,
+    *,
+    stdin: str,
+    timeout_sec: float,
+    max_output_chars: int,
+) -> StdioResult:
+    """
+    Исполняет программу ученика на ОДНОМ тесте ввода/вывода (tsk-953) в той же
+    изоляции и под тем же семафором, что и `run_student_code` (черепаха):
+    прогон тестами — такая же корректностная проверка, и делить с ней бюджет
+    одновременных процессов правильно (в отличие от анализа стиля, см. Б1).
+
+    Вызывающая сторона (CheckingService) идёт по тестам последовательно и
+    останавливается на первом непройденном, поэтому один ответ занимает слот
+    не дольше, чем `timeout_sec` × число тестов до первой ошибки.
+    """
+    if not _SANDBOX_SEMAPHORE.acquire(timeout=_SEMAPHORE_WAIT_SEC):
+        return StdioResult(
+            ok=False, error="sandbox_busy",
+            message="Песочница перегружена — попробуйте отправить ответ ещё раз через несколько секунд.",
+        )
+    try:
+        return _run_student_program_stdio_locked(
+            code, stdin=stdin, timeout_sec=timeout_sec, max_output_chars=max_output_chars,
+        )
+    finally:
+        _SANDBOX_SEMAPHORE.release()
+
+
+def _run_student_program_stdio_locked(
+    code: str,
+    *,
+    stdin: str,
+    timeout_sec: float,
+    max_output_chars: int,
+) -> StdioResult:
+    payload = json.dumps({"code": code, "stdin": stdin, "max_output_chars": max_output_chars})
+    command = _build_command(_STDIO_RUNNER_PATH)
+    env = {
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+        "PYTHONPATH": str(_PROJECT_ROOT),
+    }
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="stdio_sandbox_") as scratch_dir:
+            try:
+                proc = subprocess.run(
+                    command,
+                    input=payload,
+                    capture_output=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=timeout_sec + _SUBPROCESS_OVERHEAD_SEC,
+                    env=env,
+                    cwd=scratch_dir,
+                )
+            except subprocess.TimeoutExpired:
+                return StdioResult(ok=False, error="timeout", message="Превышено время исполнения программы.")
+    except OSError as exc:
+        # Как в анализе стиля (находка Б2): бинарь unshare/интерпретатор
+        # недоступен, нет места на диске — сбой песочницы, а не ответа ученика.
+        return StdioResult(
+            ok=False, error="sandbox_error",
+            message=f"Песочница не запустилась: {type(exc).__name__}: {exc}",
+        )
+
+    if proc.returncode != 0 or not proc.stdout.strip():
+        # На проде бесконечный цикл ловит не wall-clock таймаут subprocess'а, а
+        # RLIMIT_CPU=2с внутри runner'а (см. runner._set_resource_limits): ядро
+        # снимает процесс сигналом SIGXCPU/SIGKILL раньше, чем истечёт
+        # `timeout_sec + overhead`. Для CheckingService это ТАЙМАУТ программы
+        # ученика, а не авария песочницы: авария уводит ответ преподавателю без
+        # вердикта, а «зациклился» — честный незачёт с подсказкой про цикл.
+        if proc.returncode in _CPU_LIMIT_RETURN_CODES:
+            return StdioResult(ok=False, error="timeout", message="Превышено время исполнения программы (лимит CPU).")
+        stderr_tail = (proc.stderr or "").strip().splitlines()[-1:] or [""]
+        return StdioResult(
+            ok=False,
+            error="sandbox_killed",
+            message=f"Песочница завершилась аварийно (код {proc.returncode}): {stderr_tail[0][:200]}",
+        )
+
+    try:
+        data = json.loads(proc.stdout.strip().splitlines()[-1])
+    except (json.JSONDecodeError, IndexError):
+        return StdioResult(ok=False, error="bad_output", message="Не удалось разобрать результат песочницы.")
+
+    if not data.get("ok"):
+        return StdioResult(ok=False, error=data.get("error", "unknown"), message=data.get("message"))
+    return StdioResult(ok=True, stdout=str(data.get("stdout") or ""))
 
 
 def run_code_quality_check(code: str, *, timeout_sec: float = 5.0) -> CodeQualityResult:

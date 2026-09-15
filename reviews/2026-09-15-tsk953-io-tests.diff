@@ -1,0 +1,1864 @@
+diff --git a/app/api/v1/attempts.py b/app/api/v1/attempts.py
+index 1a151b6..2b2150b 100644
+--- a/app/api/v1/attempts.py
++++ b/app/api/v1/attempts.py
+@@ -42,7 +42,11 @@ from app.services.tasks_service import TasksService
+ from app.services.checking_service import CheckingService
+ # tsk-302 этап 3: сам анализ переехал в фоновый тик
+ # (`code_review_cron_service`), здесь работа только помечается к оценке.
+-from app.services.code_review_service import pick_code_attachment, pick_code_for_review
++from app.services.code_review_service import (
++    pick_code_attachment,
++    pick_code_for_review,
++    pick_program_for_io_tests,
++)
+ # tsk-646: та же очередь, но для развёрнутых текстовых работ — там разбирается
+ # не чистота кода, а признак ИИ-авторства прозы.
+ from app.services.text_authorship_service import pick_text_for_review
+@@ -748,11 +752,32 @@ async def submit_attempt_answers(
+         # песочницы (subprocess.run с таймаутом до неск. секунд). Для остальных
+         # типов задач это по-прежнему быстрый sync-вызов, накладные расходы
+         # thread-пула пренебрежимо малы.
++        #
++        # tsk-953: у задания с тестами ввода/вывода программа берётся оттуда,
++        # где её реально написал ученик (value → comment → вложение — тот же
++        # урок, что у снимка кода ниже). Сервис проверки сравнивает только
++        # `response.value`, поэтому ему отдаётся КОПИЯ ответа с найденной
++        # программой в `value`; сам `answer` не трогаем — в `answer_json`
++        # ученик должен остаться таким, каким сдал. Чтение вложения — сетевой
++        # ввод-вывод, поэтому тоже в потоке.
++        check_answer = answer
++        if solution_rules.io_tests is not None:
++            picked_program = await asyncio.to_thread(
++                pick_program_for_io_tests,
++                answer.response.value,
++                answer.response.comment,
++                (answer.response.meta or {}).get("attachments"),
++                attempt_id=attempt_id,
++                task_id=task.id,
++            )
++            check_answer = answer.model_copy(deep=True)
++            check_answer.response.value = picked_program or ""
++
+         check_result: CheckResult = await asyncio.to_thread(
+             checking_service.check_task,
+             task_content=task_content,
+             solution_rules=solution_rules,
+-            answer=answer,
++            answer=check_answer,
+         )
+ 
+         # 2.3b.1 tsk-302 (направление 1): статический анализ стиля кода (pylint/
+@@ -1061,8 +1086,15 @@ async def submit_attempt_answers(
+         # оператора. Гейт после форса вложения намеренно — если вложение уже
+         # обязательно и его нет, сообщение 2.3e важнее (файл конкретно требуется),
+         # а не общее "комментарий или файл".
++        #
++        # tsk-953: у задания с тестами ввода/вывода доказательство решения —
++        # сама программа, и она уже исполнена выше. Требовать сверх неё
++        # комментарий значило бы заставлять ученика вписывать код дважды
++        # (форма SPW кладёт программу в `value`), а вердикт тестов затирался бы
++        # этим гейтом на верном решении.
+         if (
+             task_content.type in COMMENT_TASK_TYPES
++            and solution_rules.io_tests is None
+             and not attempt.time_expired
+             and not (
+                 solution_rules.requires_attachment
+diff --git a/app/api/v1/learning.py b/app/api/v1/learning.py
+index cac70bb..956d6b5 100644
+--- a/app/api/v1/learning.py
++++ b/app/api/v1/learning.py
+@@ -631,11 +631,15 @@ async def get_task_state(
+             if task_type in SHORT_ANSWER_TASK_TYPES
+             else True
+         )
++        # tsk-953: проверка прогоном программы на тестах — клиент показывает
++        # редактор кода как основное поле и кладёт программу в response.value.
++        has_io_tests = rules.io_tests is not None
+     except Exception:
+         # Некорректные solution_rules не должны ломать выдачу состояния задания.
+         requires_attachment = False
+         partial_auto_check = False
+         has_reference_answer = True
++        has_io_tests = False
+     if state.state == "BLOCKED_LIMIT":
+         await get_or_create_blocked_limit_help_request(
+             db,
+@@ -664,6 +668,7 @@ async def get_task_state(
+         requires_attachment=requires_attachment,
+         partial_auto_check=partial_auto_check,
+         has_reference_answer=has_reference_answer,
++        has_io_tests=has_io_tests,
+     )
+ 
+ 
+diff --git a/app/schemas/learning_api.py b/app/schemas/learning_api.py
+index 11b8cf5..7cb49f2 100644
+--- a/app/schemas/learning_api.py
++++ b/app/schemas/learning_api.py
+@@ -168,6 +168,18 @@ class TaskStateResponse(BaseModel):
+             "сохраняет прежнее поведение клиента, если поле не пришло."
+         ),
+     )
++    # tsk-953: задание проверяется прогоном программы на тестах ввода/вывода.
++    # Тот же класс сигнала, что и has_reference_answer: клиент показывает
++    # редактор кода как основное поле и кладёт программу в response.value.
++    has_io_tests: bool = Field(
++        default=False,
++        description=(
++            "Задание проверяется исполнением программы ученика на тестах ввода/вывода "
++            "(solution_rules.io_tests, tsk-953). Клиент показывает редактор кода как "
++            "основное поле ответа и отправляет программу в response.value; "
++            "комментарий и файл необязательны. Default false."
++        ),
++    )
+ 
+ 
+ # ----- Request help -----
+diff --git a/app/schemas/solution_rules.py b/app/schemas/solution_rules.py
+index 0bac70f..ed8c4ce 100644
+--- a/app/schemas/solution_rules.py
++++ b/app/schemas/solution_rules.py
+@@ -554,6 +554,113 @@ class TurtleSimRules(BaseModel):
+     )
+ 
+ 
++#: Режим сравнения вывода программы с ожидаемым (tsk-953).
++#:   lines   — построчно, у каждой строки срезаются пробелы по краям, хвостовые
++#:             пустые строки не считаются (по умолчанию: ученики ставят лишний
++#:             пробел или перевод строки, а не иной ответ);
++#:   tokens  — по значениям через любые пробельные символы: «74 NO» и «74\nNO»
++#:             равны (когда условие не оговаривает разбивку строк);
++#:   numeric — как tokens, но пара числовых значений сравнивается как числа
++#:             с допуском `float_tolerance` (запятая как разделитель дробной
++#:             части принимается): «75.5», «75,5» и «75.50» — одно и то же.
++IoCompareMode = Literal["lines", "tokens", "numeric"]
++
++IO_TESTS_MAX_CASES = 20
++IO_TESTS_MAX_STDIN_CHARS = 10_000
++IO_TESTS_MAX_EXPECTED_CHARS = 10_000
++
++
++class IoTestCase(BaseModel):
++    """Один тест ввода/вывода (tsk-953): что подать программе и что она должна напечатать."""
++
++    stdin: str = Field(
++        default="",
++        description="Текст, подаваемый программе на стандартный ввод (строки через \\n).",
++        examples=["3\n10\n25\n12\n"],
++        max_length=IO_TESTS_MAX_STDIN_CHARS,
++    )
++    expected_stdout: str = Field(
++        ...,
++        description="Ожидаемый вывод программы целиком.",
++        examples=["25\n", "74\nNO\n"],
++        min_length=1,
++        max_length=IO_TESTS_MAX_EXPECTED_CHARS,
++    )
++    label: Optional[str] = Field(
++        default=None,
++        description="Пометка для методиста: откуда тест («пример из условия», «N=1»).",
++        examples=[None, "пример из условия"],
++        max_length=100,
++    )
++
++    @model_validator(mode="after")
++    def validate_expected(self) -> "IoTestCase":
++        """Ожидаемый вывод из одних пробелов — тест, который нечем сверять."""
++        if not self.expected_stdout.strip():
++            raise ValueError("io_tests: expected_stdout не может быть пустым")
++        return self
++
++
++class IoTestsRules(BaseModel):
++    """
++    Проверка программы ученика прогоном на тестах ввода/вывода (tsk-953).
++
++    Третий способ проверки кода рядом с `short_answer.normalization=code_ast`
++    (сравнение ИСХОДНИКА как программы) и `turtle_sim` (сравнение РИСУНКА).
++    Замер tsk-950 на 61 верном решении ОГЭ-16 показал, что сравнение кода
++    засчитывает 18 % верных программ: «напишите программу, которая читает N
++    чисел и выводит…» решают десятками способов, и единственная честная
++    проверка — исполнить программу на тестовых входах и сравнить вывод.
++
++    Код исполняется в той же песочнице, что и `turtle_sim`
++    (`app/services/turtle_sandbox/`, режим stdin → stdout), каждый тест —
++    отдельный процесс с лимитом времени. Тесты идут по порядку до первого
++    непройденного: ученик видит номер теста, ввод и ожидаемый вывод.
++    """
++
++    tests: List[IoTestCase] = Field(
++        ...,
++        description="Тесты по порядку: первый обычно — пример из условия.",
++        min_length=1,
++        max_length=IO_TESTS_MAX_CASES,
++    )
++    compare: IoCompareMode = Field(
++        default="lines",
++        description="Режим сравнения вывода: lines | tokens | numeric (см. IoCompareMode).",
++        examples=["lines", "numeric"],
++    )
++    float_tolerance: float = Field(
++        default=0.0,
++        ge=0,
++        description=(
++            "Допуск при сравнении чисел в режиме numeric (абсолютный). 0.05 — "
++            "для «среднего с одним знаком после запятой»: «75.45» и «75.5» равны."
++        ),
++        examples=[0.0, 0.05],
++    )
++    timeout_sec: float = Field(
++        default=2.0,
++        gt=0,
++        le=10.0,
++        description="Лимит времени на ОДИН тест (wall-clock) — защита от бесконечного цикла.",
++    )
++    max_output_chars: int = Field(
++        default=20_000,
++        gt=0,
++        le=200_000,
++        description="Потолок вывода программы за один тест — защита от печати в бесконечном цикле.",
++    )
++
++    @model_validator(mode="after")
++    def validate_tolerance_mode(self) -> "IoTestsRules":
++        """Допуск без числового режима молча не работал бы — лучше 422 на входе."""
++        if self.float_tolerance > 0 and self.compare != "numeric":
++            raise ValueError(
++                "io_tests.float_tolerance > 0 имеет смысл только при compare='numeric'"
++            )
++        return self
++
++
+ class SolutionRules(BaseModel):
+     """
+     Структура JSON-поля tasks.solution_rules.
+@@ -640,6 +747,21 @@ class SolutionRules(BaseModel):
+         ),
+     )
+ 
++    # Для «напишите программу» (tsk-953): исполнение кода ученика на тестах
++    # ввода/вывода и сравнение напечатанного, а не самого кода.
++    io_tests: Optional[IoTestsRules] = Field(
++        default=None,
++        description=(
++            "Правила проверки программы прогоном на тестах ввода/вывода (tsk-953, "
++            "ОГЭ-16 курса 1181). Тип задачи остаётся SA/SA_COM; при заполненном "
++            "io_tests CheckingService НЕ сравнивает код как текст/AST — исполняет "
++            "программу в песочнице на каждом тесте и сравнивает вывод. Считается "
++            "эталоном (`has_reference_answer` → true): гасит оптимистичный зачёт "
++            "SA_COM и открывает задание машинной проверке. Программа берётся оттуда, "
++            "где её реально написал ученик: value → comment → вложение."
++        ),
++    )
++
+     # Для табличного ответа (TBL_COM); эталон берётся из short_answer
+     table: Optional[TableAnswerRules] = Field(
+         default=None,
+@@ -746,6 +868,28 @@ class SolutionRules(BaseModel):
+             )
+         return self
+ 
++    @model_validator(mode="after")
++    def validate_io_tests(self) -> "SolutionRules":
++        """Прогон тестами (tsk-953) не совмещается с другими режимами исполнения.
++
++        Два исполняющих режима на одном задании — `turtle_sim` и `io_tests` —
++        дали бы два разных вердикта на один ответ; гибридный режим
++        (`partial_auto_check`) держит балл до преподавателя, а тесты выносят
++        законченный вердикт. Обе комбинации молча выбрали бы одну ветку в
++        `check_task`, и методист узнал бы об этом по жалобе ученика. Тот же
++        принцип, что у `validate_partial_auto_check`: проверять на входе.
++        """
++        if self.io_tests is None:
++            return self
++        if self.turtle_sim is not None:
++            raise ValueError("io_tests и turtle_sim не могут быть заданы вместе")
++        if self.partial_auto_check:
++            raise ValueError(
++                "io_tests несовместим с partial_auto_check: прогон тестами выносит "
++                "законченный вердикт, гибридный режим держит балл до преподавателя"
++            )
++        return self
++
+     def has_reference_answer(self) -> bool:
+         """Есть ли эталон для авто-сверки `response.value` (SA/SA_COM/TBL_COM).
+ 
+@@ -768,6 +912,12 @@ class SolutionRules(BaseModel):
+         """
+         if self.turtle_sim is not None:
+             return True
++        # tsk-953: тесты ввода/вывода — тоже эталон, только исполняемый. Через
++        # этот же предикат они гасят оптимистичный зачёт SA_COM (`attempts.py`,
++        # 2.3d), открывают задание машинной проверке (`ai_check_policy`) и
++        # показывают клиенту поле программы (`TaskStateResponse`).
++        if self.io_tests is not None:
++            return True
+         rules = self.short_answer
+         if rules is None:
+             return False
+diff --git a/app/services/checking_service.py b/app/services/checking_service.py
+index 222665c..221232e 100644
+--- a/app/services/checking_service.py
++++ b/app/services/checking_service.py
+@@ -10,7 +10,7 @@ from collections import Counter
+ from typing import List, Optional, Set, Dict
+ 
+ from app.schemas.task_content import TaskContent, TaskType
+-from app.schemas.solution_rules import SolutionRules, ShortAnswerRules
++from app.schemas.solution_rules import IoTestCase, SolutionRules, ShortAnswerRules
+ from app.schemas.checking import (
+     StudentAnswer,
+     CheckResult,
+@@ -135,6 +135,12 @@ class CheckingService:
+         if task_type in ("SC_Qw", "MC_Qw"):
+             return self._check_quiz(task_content, solution_rules, answer)
+         if task_type in ("SA", "SA_COM"):
++            # tsk-953: прогон тестами — раньше остальных ветвей, включая гейт
++            # manual_review_required в `_check_short_answer`: тесты выносят
++            # законченный вердикт (решение оператора 2026-09-15), а обязательность
++            # ручной проверки у таких заданий снимается при заведении тестов.
++            if solution_rules.io_tests is not None:
++                return self._check_io_tests(solution_rules, answer)
+             if solution_rules.turtle_sim is not None:
+                 return self._check_turtle_sim(solution_rules, answer)
+             return self._check_short_answer(task_content, solution_rules, answer)
+@@ -893,6 +899,153 @@ class CheckingService:
+             ),
+         )
+ 
++    # ---------- Проверка io_tests (tsk-953) ----------
++
++    #: Сообщения ученику по категории ошибки песочницы. Без вывода самой
++    #: программы (решение оператора 2026-09-15): ученик может запустить её у
++    #: себя, а песочница не должна быть каналом вывода чего-либо с сервера.
++    _IO_ERROR_FEEDBACK: Dict[str, str] = {
++        "syntax_error": "В программе синтаксическая ошибка. Проверьте код.",
++        "forbidden_construct": (
++            "В программе есть конструкции, которые здесь не поддерживаются "
++            "(импорт непредусмотренных модулей, try/with, обращение к служебным атрибутам)."
++        ),
++        "timeout": "Программа выполнялась слишком долго — проверьте условие выхода из цикла.",
++        "input_exhausted": (
++            "Программа запросила ввод, когда данные уже закончились. Проверьте, сколько "
++            "чисел читает программа: столько ли, сколько сказано в условии."
++        ),
++        "output_limit_exceeded": "Программа печатает слишком много — похоже на бесконечный цикл.",
++        "runtime_error": "Программа завершилась с ошибкой при выполнении.",
++        "sandbox_busy": "Песочница перегружена — попробуйте отправить ответ ещё раз через несколько секунд.",
++    }
++
++    def _check_io_tests(
++        self,
++        solution_rules: SolutionRules,
++        answer: StudentAnswer,
++    ) -> CheckResult:
++        """
++        Проверка «напишите программу» прогоном на тестах ввода/вывода (tsk-953).
++
++        Программа ученика берётся из `response.value`: вызывающий эндпоинт
++        (`attempts.py`) заранее кладёт туда код с того места, где его на самом
++        деле написал ученик (value → comment → вложение, см.
++        `pick_program_for_io_tests`), — сервис проверки остаётся без БД и
++        хранилища. Каждый тест — отдельный процесс песочницы; идём по порядку и
++        останавливаемся на первом непройденном: ученику сообщается номер теста,
++        ввод и ожидаемый вывод. Балл — всё или ничего: программа либо решает
++        задачу на всех тестах, либо нет (как на ОГЭ).
++        """
++        from app.services.turtle_sandbox.comparator import compare_stdout
++        from app.services.turtle_sandbox.executor import run_student_program_stdio
++
++        rules = solution_rules.io_tests
++        if rules is None:
++            raise DomainError(
++                detail="io_tests не задан, хотя проверка была выбрана как io_tests.",
++                status_code=500,
++            )
++
++        code = answer.response.value or ""
++        if not code.strip():
++            return CheckResult(
++                is_correct=False,
++                score=0,
++                max_score=solution_rules.max_score,
++                details=None,
++                feedback=CheckFeedback(general="Программа не найдена. Вставьте код на Python."),
++            )
++
++        total = len(rules.tests)
++        for index, test in enumerate(rules.tests, start=1):
++            result = run_student_program_stdio(
++                code,
++                stdin=test.stdin,
++                timeout_sec=rules.timeout_sec,
++                max_output_chars=rules.max_output_chars,
++            )
++            if not result.ok:
++                logger.info(
++                    "io_tests: тест %s/%s не выполнен (error=%s): %s",
++                    index, total, result.error, result.message,
++                )
++                # Сбой самой песочницы (не программы ученика) — не незачёт, а
++                # «сверить не удалось»: ответ принимается, вердикта нет, работа
++                # уходит преподавателю, как SA_COM без эталона. Иначе авария на
++                # сервере превратилась бы в «неверно» и сожгла попытку.
++                if result.error in ("sandbox_error", "sandbox_killed", "bad_output", "unknown"):
++                    logger.warning("io_tests: сбой песочницы, вердикт не вынесен: %s", result.message)
++                    return CheckResult(
++                        is_correct=None,
++                        score=0,
++                        max_score=solution_rules.max_score,
++                        details=None,
++                        feedback=CheckFeedback(
++                            general="Не удалось проверить программу автоматически — "
++                                    "ответ принят и передан преподавателю."
++                        ),
++                    )
++                general = self._IO_ERROR_FEEDBACK.get(
++                    result.error or "", "Не удалось выполнить программу."
++                )
++                if result.error != "sandbox_busy":
++                    general = f"{general} {self._io_test_hint(index, total, test)}"
++                return CheckResult(
++                    is_correct=False,
++                    score=0,
++                    max_score=solution_rules.max_score,
++                    details=None,
++                    feedback=CheckFeedback(general=general),
++                )
++
++            matches, reason = compare_stdout(
++                test.expected_stdout,
++                result.stdout or "",
++                mode=rules.compare,
++                float_tolerance=rules.float_tolerance,
++            )
++            if not matches:
++                logger.info("io_tests: тест %s/%s не пройден: %s", index, total, reason)
++                return CheckResult(
++                    is_correct=False,
++                    score=0,
++                    max_score=solution_rules.max_score,
++                    details=None,
++                    feedback=CheckFeedback(
++                        general=f"Вывод программы не совпал с ожидаемым. "
++                                f"{self._io_test_hint(index, total, test)}"
++                    ),
++                )
++
++        return CheckResult(
++            is_correct=True,
++            score=solution_rules.max_score,
++            max_score=solution_rules.max_score,
++            details=None,
++            feedback=CheckFeedback(
++                general=f"Отлично! Программа прошла все тесты ({total} из {total})."
++            ),
++        )
++
++    @staticmethod
++    def _io_test_hint(index: int, total: int, test: IoTestCase) -> str:
++        """«Тест N из M не пройден. Ввод: … Ожидаемый вывод: …» — для ученика.
++
++        Ввод и ожидаемый вывод показываются значениями через пробел (в условии
++        каждое число — с новой строки), длинный ввод обрезается.
++        """
++        def _flat(text: str, limit: int = 200) -> str:
++            flat = " ".join(text.split())
++            return flat if len(flat) <= limit else flat[:limit] + "…"
++
++        stdin_view = _flat(test.stdin) or "(пусто)"
++        return (
++            f"Тест {index} из {total} не пройден. "
++            f"Ввод (по одному значению в строке): {stdin_view}. "
++            f"Ожидаемый вывод: {_flat(test.expected_stdout)}."
++        )
++
+     # ---------- Проверка TBL_COM (табличный ответ) ----------
+ 
+     def _check_table_answer(
+diff --git a/app/services/code_review_service.py b/app/services/code_review_service.py
+index 9189671..a8de6ca 100644
+--- a/app/services/code_review_service.py
++++ b/app/services/code_review_service.py
+@@ -477,6 +477,54 @@ def _pick_code_for_review(
+     return None
+ 
+ 
++def pick_program_for_io_tests(
++    value: Optional[str],
++    comment: Optional[str],
++    attachments: Any = None,
++    *,
++    attempt_id: Optional[int],
++    task_id: Optional[int] = None,
++) -> Optional[str]:
++    """
++    Программа ученика для прогона тестами (tsk-953): value → comment → вложение.
++
++    Тот же урок, что у `pick_code_for_review`: программу берут оттуда, где её
++    на самом деле написал ученик. Форма SPW для задания с тестами кладёт код в
++    `value`; старая форма (до обновления клиента) и TG-бот кладут его в
++    `comment`; часть учеников присылает файл. Порядок отличается от оценки
++    стиля — там вложение первое, потому что в `value` лежит ВЫВОД программы;
++    здесь `value` — основное поле, и текстовые поля идут раньше файла.
++
++    Текстовый кандидат должен выглядеть как код (`looks_like_source_code`),
++    иначе короткий ответ «25» из старой формы ушёл бы в песочницу вместо
++    программы из комментария. Если ни один кандидат на код не похож —
++    возвращается первое непустое текстовое поле: однострочная программа
++    (`print(int(input()) * 2)`) порога «две строки кода» не берёт, а
++    песочница сама скажет, программа это или нет.
++
++    Исключений не бросает: чтение вложения — то же `read_code_attachment`, и
++    его отказ означает «в этом месте программы нет», а не сбой приёма ответа.
++    """
++    try:
++        for candidate in (value, comment):
++            if isinstance(candidate, str) and looks_like_source_code(candidate.strip()):
++                return candidate.strip()
++        for candidate_file in iter_code_attachments(attachments):
++            code = read_code_attachment(
++                candidate_file.get("attachment_id"),
++                attempt_id=attempt_id,
++                task_id=task_id,
++            )
++            if looks_like_program(code):
++                return code.strip()
++    except Exception:  # noqa: BLE001 — намеренно широкий: см. докстринг
++        logger.exception("tsk-953: не удалось выбрать программу для прогона тестами")
++    for candidate in (value, comment):
++        if isinstance(candidate, str) and candidate.strip():
++            return candidate.strip()
++    return None
++
++
+ def _build_user_message(code: str, *, task_stem: Optional[str]) -> str:
+     """Код подаётся отдельной секцией — чтобы промпт не смешивался с данными ученика."""
+     parts = []
+diff --git a/app/services/turtle_sandbox/comparator.py b/app/services/turtle_sandbox/comparator.py
+index 6d616a2..01340b1 100644
+--- a/app/services/turtle_sandbox/comparator.py
++++ b/app/services/turtle_sandbox/comparator.py
+@@ -72,3 +72,68 @@ def compare_traces(
+         return False, "финальное направление не совпадает"
+ 
+     return True, None
++
++
++# ---------------------------------------------------------------------------
++# tsk-953: сравнение вывода программы с ожидаемым (режим stdin → stdout)
++# ---------------------------------------------------------------------------
++
++def _output_lines(text: str) -> List[str]:
++    """Строки вывода без пробелов по краям и без хвостовых пустых строк."""
++    lines = [line.strip() for line in text.replace("\r\n", "\n").split("\n")]
++    while lines and lines[-1] == "":
++        lines.pop()
++    return lines
++
++
++def _as_number(token: str) -> Optional[float]:
++    """Число из значения вывода; запятая как разделитель дробной части принимается."""
++    try:
++        return float(token.replace(",", ".", 1))
++    except ValueError:
++        return None
++
++
++def compare_stdout(
++    expected: str,
++    actual: str,
++    *,
++    mode: str = "lines",
++    float_tolerance: float = 0.0,
++) -> Tuple[bool, Optional[str]]:
++    """
++    Совпадает ли вывод программы с ожидаемым (tsk-953).
++
++    Режимы — см. `IoCompareMode` в схеме правил: `lines` (построчно, пробелы
++    по краям строк и хвостовые пустые строки несущественны), `tokens` (по
++    значениям через любые пробельные символы), `numeric` (как tokens, но пара
++    чисел сравнивается с допуском).
++
++    Returns:
++        (совпало, причина расхождения для лога либо None).
++    """
++    if mode == "lines":
++        exp_lines = _output_lines(expected)
++        act_lines = _output_lines(actual)
++        if exp_lines == act_lines:
++            return True, None
++        if len(exp_lines) != len(act_lines):
++            return False, f"строк в выводе {len(act_lines)}, ожидалось {len(exp_lines)}"
++        for i, (e, a) in enumerate(zip(exp_lines, act_lines), start=1):
++            if e != a:
++                return False, f"строка {i}: получено {a!r}, ожидалось {e!r}"
++        return False, "вывод не совпал"
++
++    exp_tokens = expected.split()
++    act_tokens = actual.split()
++    if len(exp_tokens) != len(act_tokens):
++        return False, f"значений в выводе {len(act_tokens)}, ожидалось {len(exp_tokens)}"
++    for i, (e, a) in enumerate(zip(exp_tokens, act_tokens), start=1):
++        if e == a:
++            continue
++        if mode == "numeric":
++            e_num, a_num = _as_number(e), _as_number(a)
++            if e_num is not None and a_num is not None and abs(e_num - a_num) <= float_tolerance:
++                continue
++        return False, f"значение {i}: получено {a!r}, ожидалось {e!r}"
++    return True, None
+diff --git a/app/services/turtle_sandbox/executor.py b/app/services/turtle_sandbox/executor.py
+index 2bb4e90..b668883 100644
+--- a/app/services/turtle_sandbox/executor.py
++++ b/app/services/turtle_sandbox/executor.py
+@@ -18,6 +18,7 @@ from __future__ import annotations
+ 
+ import json
+ import os
++import signal
+ import subprocess
+ import sys
+ import tempfile
+@@ -29,6 +30,14 @@ from typing import Any, Dict, List, Optional
+ _PROJECT_ROOT = Path(__file__).resolve().parents[3]
+ _RUNNER_PATH = Path(__file__).resolve().parent / "runner.py"
+ _LINT_RUNNER_PATH = Path(__file__).resolve().parent / "lint_runner.py"
++_STDIO_RUNNER_PATH = Path(__file__).resolve().parent / "stdio_runner.py"
++
++# tsk-953: коды возврата, которыми ядро снимает процесс за превышение RLIMIT_CPU
++# (SIGXCPU) или после него (SIGKILL). subprocess отдаёт их отрицательными.
++# На Windows этих сигналов нет — там бесконечный цикл ловит wall-clock таймаут.
++_CPU_LIMIT_RETURN_CODES = frozenset(
++    -getattr(signal, name) for name in ("SIGXCPU", "SIGKILL") if hasattr(signal, name)
++)
+ 
+ # Запас поверх timeout_sec самой задачи — время на старт unshare/интерпретатора.
+ _SUBPROCESS_OVERHEAD_SEC = 3.0
+@@ -64,6 +73,15 @@ class SandboxResult:
+     message: Optional[str] = None
+ 
+ 
++@dataclass(frozen=True)
++class StdioResult:
++    """Итог одного прогона программы на одном тесте (tsk-953)."""
++    ok: bool
++    stdout: Optional[str] = None
++    error: Optional[str] = None
++    message: Optional[str] = None
++
++
+ @dataclass(frozen=True)
+ class CodeQualityResult:
+     """Результат статического анализа стиля кода (tsk-302, направление 1)."""
+@@ -173,6 +191,99 @@ def _run_student_code_locked(
+     return SandboxResult(ok=True, trace=data.get("trace"))
+ 
+ 
++def run_student_program_stdio(
++    code: str,
++    *,
++    stdin: str,
++    timeout_sec: float,
++    max_output_chars: int,
++) -> StdioResult:
++    """
++    Исполняет программу ученика на ОДНОМ тесте ввода/вывода (tsk-953) в той же
++    изоляции и под тем же семафором, что и `run_student_code` (черепаха):
++    прогон тестами — такая же корректностная проверка, и делить с ней бюджет
++    одновременных процессов правильно (в отличие от анализа стиля, см. Б1).
++
++    Вызывающая сторона (CheckingService) идёт по тестам последовательно и
++    останавливается на первом непройденном, поэтому один ответ занимает слот
++    не дольше, чем `timeout_sec` × число тестов до первой ошибки.
++    """
++    if not _SANDBOX_SEMAPHORE.acquire(timeout=_SEMAPHORE_WAIT_SEC):
++        return StdioResult(
++            ok=False, error="sandbox_busy",
++            message="Песочница перегружена — попробуйте отправить ответ ещё раз через несколько секунд.",
++        )
++    try:
++        return _run_student_program_stdio_locked(
++            code, stdin=stdin, timeout_sec=timeout_sec, max_output_chars=max_output_chars,
++        )
++    finally:
++        _SANDBOX_SEMAPHORE.release()
++
++
++def _run_student_program_stdio_locked(
++    code: str,
++    *,
++    stdin: str,
++    timeout_sec: float,
++    max_output_chars: int,
++) -> StdioResult:
++    payload = json.dumps({"code": code, "stdin": stdin, "max_output_chars": max_output_chars})
++    command = _build_command(_STDIO_RUNNER_PATH)
++    env = {
++        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
++        "PYTHONPATH": str(_PROJECT_ROOT),
++    }
++
++    try:
++        with tempfile.TemporaryDirectory(prefix="stdio_sandbox_") as scratch_dir:
++            try:
++                proc = subprocess.run(
++                    command,
++                    input=payload,
++                    capture_output=True,
++                    encoding="utf-8",
++                    errors="replace",
++                    timeout=timeout_sec + _SUBPROCESS_OVERHEAD_SEC,
++                    env=env,
++                    cwd=scratch_dir,
++                )
++            except subprocess.TimeoutExpired:
++                return StdioResult(ok=False, error="timeout", message="Превышено время исполнения программы.")
++    except OSError as exc:
++        # Как в анализе стиля (находка Б2): бинарь unshare/интерпретатор
++        # недоступен, нет места на диске — сбой песочницы, а не ответа ученика.
++        return StdioResult(
++            ok=False, error="sandbox_error",
++            message=f"Песочница не запустилась: {type(exc).__name__}: {exc}",
++        )
++
++    if proc.returncode != 0 or not proc.stdout.strip():
++        # На проде бесконечный цикл ловит не wall-clock таймаут subprocess'а, а
++        # RLIMIT_CPU=2с внутри runner'а (см. runner._set_resource_limits): ядро
++        # снимает процесс сигналом SIGXCPU/SIGKILL раньше, чем истечёт
++        # `timeout_sec + overhead`. Для CheckingService это ТАЙМАУТ программы
++        # ученика, а не авария песочницы: авария уводит ответ преподавателю без
++        # вердикта, а «зациклился» — честный незачёт с подсказкой про цикл.
++        if proc.returncode in _CPU_LIMIT_RETURN_CODES:
++            return StdioResult(ok=False, error="timeout", message="Превышено время исполнения программы (лимит CPU).")
++        stderr_tail = (proc.stderr or "").strip().splitlines()[-1:] or [""]
++        return StdioResult(
++            ok=False,
++            error="sandbox_killed",
++            message=f"Песочница завершилась аварийно (код {proc.returncode}): {stderr_tail[0][:200]}",
++        )
++
++    try:
++        data = json.loads(proc.stdout.strip().splitlines()[-1])
++    except (json.JSONDecodeError, IndexError):
++        return StdioResult(ok=False, error="bad_output", message="Не удалось разобрать результат песочницы.")
++
++    if not data.get("ok"):
++        return StdioResult(ok=False, error=data.get("error", "unknown"), message=data.get("message"))
++    return StdioResult(ok=True, stdout=str(data.get("stdout") or ""))
++
++
+ def run_code_quality_check(code: str, *, timeout_sec: float = 5.0) -> CodeQualityResult:
+     """
+     Статический анализ стиля кода ученика (pylint/radon, tsk-302) в ТОЙ ЖЕ
+diff --git a/app/services/turtle_sandbox/guard.py b/app/services/turtle_sandbox/guard.py
+index 55efa20..48d340d 100644
+--- a/app/services/turtle_sandbox/guard.py
++++ b/app/services/turtle_sandbox/guard.py
+@@ -38,7 +38,7 @@ from __future__ import annotations
+ 
+ import ast
+ import re
+-from typing import List
++from typing import FrozenSet, List, Literal
+ 
+ ALLOWED_IMPORT_MODULES = frozenset({"turtle", "math", "random", "colorsys"})
+ 
+@@ -48,6 +48,23 @@ FORBIDDEN_CALL_NAMES = frozenset({
+     "dir", "help", "breakpoint", "exit", "quit", "memoryview",
+ })
+ 
++# tsk-953: профиль «stdin → stdout» для заданий «напишите программу» (ОГЭ-16).
++# Отличия от черепашьего профиля — ровно те, без которых задачу решить нельзя:
++#   - `input` разрешён (это и есть способ получить данные), `print` — тоже;
++#   - генераторы и генераторные выражения разрешены: 8 из 61 верного решения
++#     корпуса tsk-950 написаны как `max(x for x in a if …)` / `sum(1 for …)`.
++#     Довод стража против них — доступ к живому фрейму через `.gi_frame` —
++#     остаётся закрыт списком запрещённых атрибутов, запретом `getattr` и
++#     dunder-имён; try/with/async по-прежнему запрещены (в решениях ОГЭ их нет);
++#   - модули: без turtle/colorsys, зато стандартные «вычислительные».
++SandboxProfile = Literal["turtle", "stdio"]
++
++STDIO_ALLOWED_IMPORT_MODULES = frozenset({
++    "math", "random", "itertools", "functools", "string", "collections",
++    "fractions", "decimal", "statistics",
++})
++STDIO_FORBIDDEN_CALL_NAMES = FORBIDDEN_CALL_NAMES - {"input"}
++
+ # Belt-and-suspenders поверх статьи о фреймах выше: если конструкции ниже
+ # всё же где-то просочатся (баг в этом же страже), эти имена ловятся отдельно.
+ _FORBIDDEN_ATTR_NAMES = frozenset({
+@@ -81,16 +98,29 @@ def _is_dunder(name: str) -> bool:
+     return bool(_DUNDER_RE.match(name))
+ 
+ 
+-def check_code_is_safe(source: str) -> None:
++def check_code_is_safe(source: str, profile: SandboxProfile = "turtle") -> None:
+     """
+     Разбирает `source` в AST и проверяет на запрещённые конструкции.
+ 
++    Args:
++        source: код ученика.
++        profile: `turtle` (tsk-412, по умолчанию) или `stdio` (tsk-953) — см.
++            комментарий у `SandboxProfile`.
++
+     Raises:
+         GuardViolation: обнаружена запрещённая конструкция (сообщение —
+             для ученика/лога, без внутренних деталей песочницы).
+         SyntaxError: код не парсится как Python (пробрасывается как есть,
+             вызывающий код (runner.py) отличает этот случай от GuardViolation).
+     """
++    allowed_modules: FrozenSet[str] = ALLOWED_IMPORT_MODULES
++    forbidden_names: FrozenSet[str] = FORBIDDEN_CALL_NAMES
++    generators_allowed = False
++    if profile == "stdio":
++        allowed_modules = STDIO_ALLOWED_IMPORT_MODULES
++        forbidden_names = STDIO_FORBIDDEN_CALL_NAMES
++        generators_allowed = True
++
+     tree = ast.parse(source, mode="exec")
+     violations: List[str] = []
+ 
+@@ -98,11 +128,11 @@ def check_code_is_safe(source: str) -> None:
+         if isinstance(node, ast.Import):
+             for alias in node.names:
+                 root_module = alias.name.split(".")[0]
+-                if root_module not in ALLOWED_IMPORT_MODULES:
++                if root_module not in allowed_modules:
+                     violations.append(f"import '{alias.name}' запрещён")
+         elif isinstance(node, ast.ImportFrom):
+             module = (node.module or "").split(".")[0]
+-            if module not in ALLOWED_IMPORT_MODULES:
++            if module not in allowed_modules:
+                 violations.append(f"from '{node.module}' import ... запрещён")
+         elif isinstance(node, ast.Attribute):
+             if _is_dunder(node.attr) or node.attr in _FORBIDDEN_ATTR_NAMES:
+@@ -110,13 +140,15 @@ def check_code_is_safe(source: str) -> None:
+         elif isinstance(node, ast.Name):
+             if _is_dunder(node.id):
+                 violations.append(f"обращение к имени '{node.id}' запрещено")
+-            elif node.id in FORBIDDEN_CALL_NAMES:
++            elif node.id in forbidden_names:
+                 violations.append(f"использование '{node.id}' запрещено")
+         elif isinstance(node, _FORBIDDEN_STATEMENT_TYPES):
+             violations.append(
+                 f"конструкция '{type(node).__name__}' запрещена (try/with/async — "
+                 "источник живых объектов фрейма/трейсбека/корутины)"
+             )
++        elif generators_allowed:
++            continue
+         elif isinstance(node, (ast.Yield, ast.YieldFrom, ast.GeneratorExp)):
+             violations.append(
+                 f"конструкция '{type(node).__name__}' запрещена (генератор даёт "
+diff --git a/app/services/turtle_sandbox/stdio_runner.py b/app/services/turtle_sandbox/stdio_runner.py
+new file mode 100644
+index 0000000..5946f0b
+--- /dev/null
++++ b/app/services/turtle_sandbox/stdio_runner.py
+@@ -0,0 +1,186 @@
++# app/services/turtle_sandbox/stdio_runner.py
++"""
++Точка входа песочницы в режиме «stdin → stdout» (tsk-953) — исполняется
++ОТДЕЛЬНЫМ OS-процессом (на проде — под `unshare --user --net --pid`, см.
++`executor.py`), по одному процессу на один тест.
++
++Протокол: один JSON-объект на stdin
++    {"code": str, "stdin": str, "max_output_chars": int}
++и один JSON-объект на stdout:
++    {"ok": true, "stdout": "<что напечатала программа>"}
++    {"ok": false, "error": "<категория>", "message": "<для лога/фидбека>"}
++
++Категории ошибок (каждая — отдельное сообщение ученику в CheckingService):
++    syntax_error, forbidden_construct, input_exhausted (программа просит ввод,
++    когда данные закончились — чаще всего цикл «до 0» без чтения нуля или
++    чтение N+1 чисел), output_limit_exceeded (печать в бесконечном цикле),
++    runtime_error (любое исключение: ValueError на int('abc'), деление на
++    ноль, IndexError, …).
++
++Отличие от `runner.py` (черепаха): вместо заглушки turtle подставляются
++`input`, читающий заранее поданные строки, и `print`, пишущий в буфер с
++потолком. Всё остальное — тот же стдлиб-минимум и те же лимиты процесса.
++Ученик не видит своего stdout напрямую (решение оператора 2026-09-15):
++песочница не должна быть каналом вывода чего-либо с сервера, поэтому наружу
++уходит только вердикт сравнения.
++"""
++
++from __future__ import annotations
++
++import io
++import json
++import sys
++from typing import Any, Dict, List
++
++from app.services.turtle_sandbox.runner import _emit, _set_resource_limits
++
++
++class OutputLimitExceeded(RuntimeError):
++    """Программа напечатала больше, чем разрешено правилом."""
++
++
++class _StdinLines:
++    """Замена `input()`: отдаёт заранее поданные строки, в конце — EOFError.
++
++    Как настоящий Python на исчерпанном stdin: `input()` поднимает `EOFError`,
++    а не блокируется. Это важно для программ с бесконечным `input()` — они
++    падают мгновенно категорией `input_exhausted`, а не ждут таймаута.
++    """
++
++    def __init__(self, text: str) -> None:
++        # Как sys.stdin.readline(): строка — до перевода строки; последняя без
++        # перевода тоже считается строкой; пустой хвост после финального \n —
++        # нет (иначе «3\n10\n» дал бы третью, пустую строку).
++        self._lines: List[str] = text.split("\n")
++        if self._lines and self._lines[-1] == "":
++            self._lines.pop()
++        self._pos = 0
++
++    def readline(self, prompt: Any = None) -> str:
++        if self._pos >= len(self._lines):
++            raise EOFError("Программа запросила ввод, а данные закончились.")
++        line = self._lines[self._pos]
++        self._pos += 1
++        # input() отрезает перевод строки; \r (Windows-ввод в тестах) — тоже.
++        return line.rstrip("\r")
++
++
++def _make_print(buffer: io.StringIO, max_chars: int):
++    def _print(*args: Any, sep: Any = " ", end: Any = "\n", file: Any = None, flush: Any = False) -> None:
++        # `file=` игнорируется намеренно: никакого другого потока у программы нет.
++        if sep is None:
++            sep = " "
++        if end is None:
++            end = "\n"
++        buffer.write(str(sep).join(str(a) for a in args))
++        buffer.write(str(end))
++        if buffer.tell() > max_chars:
++            raise OutputLimitExceeded(
++                f"Программа напечатала больше {max_chars} символов — похоже на бесконечный цикл."
++            )
++    return _print
++
++
++def build_stdio_globals(stdin_text: str, buffer: io.StringIO, max_chars: int) -> Dict[str, Any]:
++    """globals() для exec() кода ученика: безопасные builtins + input/print.
++
++    Набор builtins — тот же, что у черепашьей заглушки, плюс то, без чего не
++    пишут консольную программу: `input`, `print`, `ord`/`chr`, `iter`/`next`,
++    `repr`/`format`, `EOFError`. `open`, `exec`, `getattr`, `type`, `object`
++    и прочее, дающее рефлексию или доступ к системе, по-прежнему не определены.
++    """
++    stdin = _StdinLines(stdin_text)
++    safe_builtins: Dict[str, Any] = {
++        "__import__": _stdio_import,
++        "abs": abs, "min": min, "max": max, "round": round, "len": len,
++        "range": range, "enumerate": enumerate, "zip": zip, "map": map,
++        "filter": filter, "sorted": sorted, "reversed": reversed, "sum": sum,
++        "any": any, "all": all, "divmod": divmod, "pow": pow,
++        "int": int, "float": float, "str": str, "bool": bool, "complex": complex,
++        "list": list, "tuple": tuple, "dict": dict, "set": set, "frozenset": frozenset,
++        "isinstance": isinstance, "ord": ord, "chr": chr, "bin": bin, "hex": hex, "oct": oct,
++        "iter": iter, "next": next, "repr": repr, "format": format, "hash": hash,
++        "input": stdin.readline,
++        "print": _make_print(buffer, max_chars),
++        "True": True, "False": False, "None": None,
++        "Exception": Exception, "ValueError": ValueError, "TypeError": TypeError,
++        "RuntimeError": RuntimeError, "ZeroDivisionError": ZeroDivisionError,
++        "StopIteration": StopIteration, "IndexError": IndexError, "KeyError": KeyError,
++        "ArithmeticError": ArithmeticError, "OverflowError": OverflowError,
++        "EOFError": EOFError, "NameError": NameError, "AttributeError": AttributeError,
++        "__build_class__": __builtins__["__build_class__"] if isinstance(__builtins__, dict) else __builtins__.__build_class__,
++    }
++    return {"__builtins__": safe_builtins, "__name__": "__main__"}
++
++
++def _stdio_import(
++    name: str,
++    globals: Any = None,  # noqa: A002 — сигнатура builtins.__import__
++    locals: Any = None,  # noqa: A002
++    fromlist: Any = (),
++    level: int = 0,
++) -> Any:
++    """Замена `__import__`: пропускает только модули профиля stdio (см. guard.py)."""
++    from app.services.turtle_sandbox.guard import STDIO_ALLOWED_IMPORT_MODULES  # noqa: PLC0415
++
++    root = name.split(".")[0]
++    if root not in STDIO_ALLOWED_IMPORT_MODULES:
++        raise ImportError(f"Импорт модуля '{name}' запрещён в этом задании.")
++    import builtins as _builtins  # noqa: PLC0415
++
++    return _builtins.__import__(name, globals, locals, fromlist, level)
++
++
++def main() -> None:
++    if hasattr(sys.stdin, "reconfigure"):
++        sys.stdin.reconfigure(encoding="utf-8")
++    if hasattr(sys.stdout, "reconfigure"):
++        sys.stdout.reconfigure(encoding="utf-8")
++
++    _set_resource_limits()
++
++    try:
++        payload = json.loads(sys.stdin.read())
++    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
++        _emit({"ok": False, "error": "bad_input", "message": str(exc)})
++        return
++
++    code = payload.get("code", "")
++    stdin_text = payload.get("stdin") or ""
++    max_chars = int(payload.get("max_output_chars") or 20_000)
++
++    from app.services.turtle_sandbox.guard import GuardViolation, check_code_is_safe  # noqa: PLC0415
++
++    try:
++        check_code_is_safe(code, profile="stdio")
++    except GuardViolation as exc:
++        _emit({"ok": False, "error": "forbidden_construct", "message": str(exc)})
++        return
++    except SyntaxError as exc:
++        _emit({"ok": False, "error": "syntax_error", "message": str(exc)})
++        return
++
++    buffer = io.StringIO()
++    restricted_globals = build_stdio_globals(stdin_text, buffer, max_chars)
++
++    try:
++        compiled = compile(code, "<student_code>", "exec")
++        exec(compiled, restricted_globals)  # noqa: S102 — намеренно, это и есть песочница
++    except OutputLimitExceeded as exc:
++        _emit({"ok": False, "error": "output_limit_exceeded", "message": str(exc)})
++        return
++    except EOFError as exc:
++        _emit({"ok": False, "error": "input_exhausted", "message": str(exc)})
++        return
++    except SyntaxError as exc:
++        _emit({"ok": False, "error": "syntax_error", "message": str(exc)})
++        return
++    except BaseException as exc:  # noqa: BLE001 — код ученика может кинуть что угодно
++        _emit({"ok": False, "error": "runtime_error", "message": f"{type(exc).__name__}: {exc}"})
++        return
++
++    _emit({"ok": True, "stdout": buffer.getvalue()})
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/scripts/tsk953_fill_io_tests.py b/scripts/tsk953_fill_io_tests.py
+new file mode 100644
+index 0000000..b8d5050
+--- /dev/null
++++ b/scripts/tsk953_fill_io_tests.py
+@@ -0,0 +1,380 @@
++# -*- coding: utf-8 -*-
++"""tsk-953: тесты ввода/вывода для 30 заданий ОГЭ-16 (курс 1181) и прогон корпуса.
++
++Собирает для каждого задания блок `solution_rules.io_tests` из спецификаций
++tsk-950 (`tsk950_oge16_specs.py`): пример из условия, дополнительные примеры
++из условия (7244), N=1, «все числа подходят», «подходит только гарантированное»
++и случайные тесты с закреплённым сидом — всего не меньше 6 (решение оператора
++2026-09-15). Ожидаемый вывод считается образцовой функцией из
++`tsk950_codeast_measure._ref` и сверяется исполнением ВСЕХ эталонов задания
++в той же песочнице, что работает на проде (`CheckingService`).
++
++Режимы:
++    python scripts/tsk953_fill_io_tests.py                 # план: тесты по заданиям, эталоны прогнаны
++    python scripts/tsk953_fill_io_tests.py --corpus        # шаг 5 задачи: 61 верное + неверные решения
++    LMS_API_KEY=... python scripts/tsk953_fill_io_tests.py --dry-run   # «было → стало» по проду, без записи
++    LMS_API_KEY=... python scripts/tsk953_fill_io_tests.py --apply     # PATCH /tasks/{id} (после /db-check)
++
++Правило задания при записи: текущее правило + `io_tests` +
++`manual_review_required=false` (вердикт тестов окончателен, решение оператора);
++критерии, штрафы и остальное не трогаются. `content_provenance` у всех 30
++заданий уже `manual_web` (tsk-947/950) — PATCH лишь обновит отметку времени.
++"""
++from __future__ import annotations
++
++import argparse
++import json
++import logging
++import os
++import random
++import sys
++import time
++from pathlib import Path
++from typing import Any, Callable, Dict, List, Tuple
++
++sys.path.insert(0, str(Path(__file__).resolve().parent))
++sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
++
++from tsk950_codeast_measure import _gen_input, _ref  # noqa: E402
++from tsk950_oge16_specs import SPECS, build_etalons  # noqa: E402
++from tsk950_oge16_variants import VARIANTS  # noqa: E402
++
++from app.schemas.checking import StudentAnswer, StudentResponse  # noqa: E402
++from app.schemas.solution_rules import SolutionRules  # noqa: E402
++from app.schemas.task_content import TaskContent  # noqa: E402
++from app.services.checking_service import CheckingService  # noqa: E402
++
++logger = logging.getLogger("tsk953")
++
++API_BASE = os.environ.get("LMS_API_BASE", "https://api.learn.victor-komlev.ru/api/v1")
++REPORT_DIR = Path(__file__).resolve().parents[1] / "reviews" / "tsk953"
++MIN_TESTS = 6
++
++#: Задание 7245 — средняя скорость с одним знаком после запятой: числовое
++#: сравнение с допуском 0,05 и запятой как разделителем (решение оператора).
++NUMERIC_TASKS = {7245: 0.05}
++
++
++# ---------------------------------------------------------------------------
++# Сборка тестов
++# ---------------------------------------------------------------------------
++
++def _pred(task_id: int) -> Callable[[int], bool]:
++    kind, k = SPECS[task_id]["pred"]
++    return (lambda x: x % k == 0) if kind == "div" else (lambda x: x % 10 == k)
++
++
++def _good(task_id: int, rnd: random.Random) -> int:
++    kind, k = SPECS[task_id]["pred"]
++    return k * rnd.randint(1, 50) if kind == "div" else rnd.randint(0, 29) * 10 + k
++
++
++def _bad(task_id: int, rnd: random.Random, *, lo: int = 1, hi: int = 300) -> int:
++    pred = _pred(task_id)
++    while True:
++        x = rnd.randint(lo, hi)
++        if not pred(x):
++            return x
++
++
++def _fmt_n(nums: List[int]) -> str:
++    return f"{len(nums)}\n" + "\n".join(map(str, nums)) + "\n"
++
++
++def _fmt_zero(nums: List[int]) -> str:
++    return "\n".join(map(str, nums)) + "\n0\n"
++
++
++def _boundary_inputs(task_id: int, rnd: random.Random) -> List[Tuple[str, str, List[int]]]:
++    """Граничные тесты семейства: (метка, stdin, числа)."""
++    s = SPECS[task_id]
++    fam = s["fam"]
++    if fam == "A":
++        one = _good(task_id, rnd)
++        all_match = [_good(task_id, rnd) for _ in range(5)]
++        # подходит только одно число, остальные больше/меньше него — ловит
++        # «агрегат среди всех чисел» и перепутанный предикат
++        only = [_bad(task_id, rnd, lo=150, hi=300) for _ in range(5)] + [_good(task_id, rnd)]
++        rnd.shuffle(only)
++        return [
++            ("N=1", _fmt_n([one]), [one]),
++            ("все числа подходят", _fmt_n(all_match), all_match),
++            ("подходит только одно", _fmt_n(only), only),
++        ]
++    if fam == "B":
++        d = s["end"]
++        good = [x for x in range(1, 301) if x % 6 == 0 and x % 10 == d]
++        one = rnd.choice(good)
++        all_match = rnd.sample(good, 4)
++        # кратные 6 без нужной цифры и с нужной цифрой без кратности 6 — ловит
++        # половину условия
++        half = [x for x in range(1, 301) if (x % 6 == 0) != (x % 10 == d)]
++        only = rnd.sample(half, 5) + [rnd.choice(good)]
++        rnd.shuffle(only)
++        return [
++            ("одно число до 0", _fmt_zero([one]), [one]),
++            ("все числа подходят", _fmt_zero(all_match), all_match),
++            ("подходит только одно", _fmt_zero(only), only),
++        ]
++    if fam == "C":
++        two = [rnd.randint(1, 300), rnd.randint(1, 300)]
++        neg = [-5, 12, -30, 7, 25]
++        same = [10, 10, 10, 10]
++        return [
++            ("два числа", _fmt_zero(two), two),
++            ("есть отрицательные", _fmt_zero(neg), neg),
++            ("все одинаковые", _fmt_zero(same), same),
++        ]
++    op, lim = s["cond"]
++    yes = {"<": lim - 5, ">": lim + 5, ">=": lim}[op]
++    no = {"<": lim + 5, ">": lim - 5, ">=": lim - 1}[op]
++    # ровно граничное значение и одно «мимо»: отличает < от <=, > от >=, >= от >
++    edge = [lim, lim + 1 if op == "<" else lim - 1]
++    return [
++        ("N=1, условие выполнено", _fmt_n([yes]), [yes]),
++        ("N=1, условие не выполнено", _fmt_n([no]), [no]),
++        ("ровно на границе", _fmt_n(edge), edge),
++    ]
++
++
++def build_io_tests(task_id: int) -> Dict[str, Any]:
++    """Блок `io_tests` задания: не меньше MIN_TESTS тестов, вывод — от образцовой функции."""
++    s = SPECS[task_id]
++    ref = _ref(task_id)
++    rnd = random.Random(953_000 + task_id)
++    tests: List[Dict[str, str]] = []
++
++    stdin, expected = s["sample"]
++    tests.append({"stdin": stdin, "expected_stdout": expected.rstrip("\n") + "\n", "label": "пример из условия"})
++    for stdin, expected in s.get("extra", []):
++        tests.append({"stdin": stdin, "expected_stdout": expected.rstrip("\n") + "\n", "label": "пример из условия"})
++    for label, stdin, nums in _boundary_inputs(task_id, rnd):
++        tests.append({"stdin": stdin, "expected_stdout": ref(nums) + "\n", "label": label})
++    while len(tests) < MIN_TESTS:
++        stdin, nums = _gen_input(task_id, rnd)
++        tests.append({"stdin": stdin, "expected_stdout": ref(nums) + "\n", "label": "случайный"})
++
++    block: Dict[str, Any] = {"tests": tests, "compare": "lines", "timeout_sec": 2.0}
++    if task_id in NUMERIC_TASKS:
++        block["compare"] = "numeric"
++        block["float_tolerance"] = NUMERIC_TASKS[task_id]
++    return block
++
++
++def rules_with_tests(task_id: int, current: Dict[str, Any] | None = None) -> SolutionRules:
++    base = dict(current or {"max_score": 1})
++    base["io_tests"] = build_io_tests(task_id)
++    base["manual_review_required"] = False
++    return SolutionRules.model_validate(base)
++
++
++# ---------------------------------------------------------------------------
++# Прогон через ту же проверку, что на проде
++# ---------------------------------------------------------------------------
++
++_SERVICE = CheckingService()
++_CONTENT = TaskContent(type="SA_COM", stem="tsk-953")
++
++
++def check(code: str, rules: SolutionRules) -> Tuple[bool, str]:
++    result = _SERVICE.check_task(
++        _CONTENT, rules, StudentAnswer(type="SA_COM", response=StudentResponse(value=code))
++    )
++    return bool(result.is_correct), (result.feedback.general if result.feedback else "")
++
++
++def verify_etalons(rules_by_task: Dict[int, SolutionRules]) -> bool:
++    ok = True
++    for task_id, rules in rules_by_task.items():
++        for i, code in enumerate(build_etalons(task_id), start=1):
++            passed, msg = check(code, rules)
++            if not passed:
++                ok = False
++                logger.error("id=%s эталон %s НЕ прошёл свои тесты: %s", task_id, i, msg)
++    return ok
++
++
++def wrong_solutions(task_id: int) -> List[Tuple[str, str]]:
++    """Заведомо неверные программы «как ошибаются ученики» — ни одна не должна пройти."""
++    s = SPECS[task_id]
++    fam = s["fam"]
++    out: List[Tuple[str, str]] = []
++    if fam == "A":
++        kind, k = s["pred"]
++        agg = s["agg"]
++        init = {"max": "0", "min": "30001", "sum": "0", "count": "0"}[agg]
++        upd = {
++            "max": "if {p}x > m:\n        m = x", "min": "if {p}x < m:\n        m = x",
++            "sum": "if {p}True:\n        m += x", "count": "if {p}True:\n        m += 1",
++        }[agg]
++        p_ok = f"x % {k} == 0 and " if kind == "div" else f"x % 10 == {k} and "
++        p_wrong_k = f"x % {k + 1} == 0 and " if kind == "div" else f"x % 10 == {(k + 1) % 10} and "
++        p_swapped = f"x % 10 == {k % 10} and " if kind == "div" else f"x % {k if k else 7} == 0 and "
++        body_all = upd.format(p="")
++        body_wrong = upd.format(p=p_wrong_k)
++        body_swapped = upd.format(p=p_swapped)
++        body_ok = upd.format(p=p_ok)
++        head = "n = int(input())\nm = {init}\nfor i in range(n):\n    x = int(input())\n    {body}\nprint(m)\n"
++        out.append(("без условия отбора", head.format(init=init, body=body_all)))
++        out.append(("не тот делитель/цифра", head.format(init=init, body=body_wrong)))
++        out.append(("кратность вместо цифры", head.format(init=init, body=body_swapped)))
++        out.append(("чтение до 0 вместо N",
++                    f"m = {init}\nx = int(input())\nwhile x != 0:\n    {body_ok}\n    x = int(input())\nprint(m)\n"))
++        out.append(("читает N-1 чисел",
++                    f"n = int(input())\nm = {init}\nfor i in range(n - 1):\n    x = int(input())\n    {body_ok}\nprint(m)\n"))
++        other = {"max": "min", "min": "max", "sum": "count", "count": "sum"}[agg]
++        out.append(("другой агрегат", "n = int(input())\na = [int(input()) for i in range(n)]\n"
++                    f"print({'len' if other == 'count' else other}([x for x in a if {p_ok[:-5]}]))\n"))
++    elif fam == "B":
++        d = s["end"]
++        out.append(("только кратные 6", f"s = 0\nx = int(input())\nwhile x != 0:\n    if x % 6 == 0:\n        s += x\n    x = int(input())\nprint(s)\n"))
++        out.append(("только оканчивающиеся на цифру", f"s = 0\nx = int(input())\nwhile x != 0:\n    if x % 10 == {d}:\n        s += x\n    x = int(input())\nprint(s)\n"))
++        out.append(("или вместо и", f"s = 0\nx = int(input())\nwhile x != 0:\n    if x % 6 == 0 or x % 10 == {d}:\n        s += x\n    x = int(input())\nprint(s)\n"))
++        out.append(("считает количество", f"s = 0\nx = int(input())\nwhile x != 0:\n    if x % 6 == 0 and x % 10 == {d}:\n        s += 1\n    x = int(input())\nprint(s)\n"))
++        out.append(("читает N чисел", f"n = int(input())\ns = 0\nfor i in range(n):\n    x = int(input())\n    if x % 6 == 0 and x % 10 == {d}:\n        s += x\nprint(s)\n"))
++    elif fam == "C":
++        out.append(("наибольшее и наименьшее по одному", "a = []\nx = int(input())\nwhile x != 0:\n    a.append(x)\n    x = int(input())\na.sort()\nprint(a[-1])\nprint(a[0])\n"))
++        out.append(("суммы перепутаны местами", "a = []\nx = int(input())\nwhile x != 0:\n    a.append(x)\n    x = int(input())\na.sort()\nprint(a[0] + a[1])\nprint(a[-1] + a[-2])\n"))
++        out.append(("ноль попал в список", "a = []\nwhile True:\n    x = int(input())\n    a.append(x)\n    if x == 0:\n        break\na.sort()\nprint(a[-1] + a[-2])\nprint(a[0] + a[1])\n"))
++    else:
++        op, lim = s["cond"]
++        agg = s["agg"]
++        first = {"max": "print(max(a))", "min": "print(min(a))", "avg": "print(round(sum(a) / n, 1))"}[agg]
++        rev = {"<": ">", ">": "<", ">=": "<="}[op]
++        strict = {"<": "<=", ">": ">=", ">=": ">"}[op]
++        head = "n = int(input())\na = [int(input()) for i in range(n)]\n"
++        yn = "    print('YES')\nelse:\n    print('NO')\n"
++        out.append(("обратное условие", head + f"{first}\nif any(v {rev} {lim} for v in a):\n{yn}"))
++        out.append(("YES/NO без проверки", head + f"{first}\nprint('YES')\n"))
++        other = {"max": "print(min(a))", "min": "print(max(a))", "avg": "print(sum(a))"}[agg]
++        out.append(("не тот агрегат", head + f"{other}\nif any(v {op} {lim} for v in a):\n{yn}"))
++        out.append(("строгость границы", head + f"{first}\nif any(v {strict} {lim} for v in a):\n{yn}"))
++    return out
++
++
++def run_corpus(rules_by_task: Dict[int, SolutionRules]) -> int:
++    """Шаг 5 задачи: ≥95 % зачётов на верных решениях, 0 ложных зачётов на неверных."""
++    correct_total = correct_pass = 0
++    for task_id, codes in VARIANTS.items():
++        for i, code in enumerate(codes, start=1):
++            passed, msg = check(code, rules_by_task[task_id])
++            correct_total += 1
++            correct_pass += int(passed)
++            if not passed:
++                logger.warning("id=%s верное решение %s НЕ зачтено: %s", task_id, i, msg)
++    wrong_total = wrong_pass = 0
++    for task_id, rules in rules_by_task.items():
++        for label, code in wrong_solutions(task_id):
++            passed, _ = check(code, rules)
++            wrong_total += 1
++            wrong_pass += int(passed)
++            if passed:
++                logger.error("id=%s НЕВЕРНОЕ решение «%s» зачтено — ложный зачёт", task_id, label)
++    share = 100.0 * correct_pass / correct_total if correct_total else 0.0
++    logger.info("верные: зачтено %s из %s (%.1f %%); неверные: ложных зачётов %s из %s",
++                correct_pass, correct_total, share, wrong_pass, wrong_total)
++    REPORT_DIR.mkdir(parents=True, exist_ok=True)
++    (REPORT_DIR / "corpus_result.json").write_text(json.dumps({
++        "correct_total": correct_total, "correct_pass": correct_pass, "share_pct": round(share, 1),
++        "wrong_total": wrong_total, "wrong_pass": wrong_pass,
++    }, ensure_ascii=False, indent=2), encoding="utf-8")
++    return 0 if share >= 95.0 and wrong_pass == 0 else 1
++
++
++# ---------------------------------------------------------------------------
++# Прод через API
++# ---------------------------------------------------------------------------
++
++def _api(method: str, path: str, body: Any | None = None) -> Any:
++    import urllib.error
++    import urllib.request
++
++    key = os.environ.get("LMS_API_KEY")
++    if not key:
++        raise RuntimeError("LMS_API_KEY не задан")
++    data = json.dumps(body, ensure_ascii=False).encode("utf-8") if body is not None else None
++    req = urllib.request.Request(
++        f"{API_BASE}{path}", data=data, method=method,
++        headers={"X-API-Key": key, "Content-Type": "application/json", "Accept": "application/json"},
++    )
++    for attempt in range(1, 4):
++        try:
++            with urllib.request.urlopen(req, timeout=60) as resp:
++                return json.loads(resp.read().decode("utf-8"))
++        except urllib.error.HTTPError as e:
++            detail = e.read().decode("utf-8", errors="replace")
++            raise RuntimeError(f"{method} {path} → {e.code}: {detail[:2000]}") from e
++        except (urllib.error.URLError, TimeoutError, ConnectionError, OSError) as e:
++            if attempt == 3:
++                raise
++            logger.warning("%s %s: сеть (%s), повтор %s/3", method, path, e, attempt + 1)
++            time.sleep(3 * attempt)
++    raise AssertionError("unreachable")
++
++
++def run_lms(*, apply: bool) -> None:
++    rows: List[Dict[str, Any]] = []
++    report = REPORT_DIR / ("apply_result.json" if apply else "dry_run.json")
++    for task_id in SPECS:
++        current = _api("GET", f"/tasks/{task_id}")
++        cur_rules = dict(current.get("solution_rules") or {})
++        if cur_rules.get("io_tests"):
++            logger.info("id=%s: io_tests уже заведён (%s тестов), пропуск",
++                        task_id, len(cur_rules["io_tests"].get("tests") or []))
++            continue
++        new_rules = rules_with_tests(task_id, cur_rules).model_dump()
++        row: Dict[str, Any] = {
++            "id": task_id, "external_uid": current.get("external_uid"),
++            "mrr_before": cur_rules.get("manual_review_required"),
++            "criteria_status": (cur_rules.get("grading_criteria") or {}).get("status"),
++            "tests": [(t["label"], t["stdin"].replace("\n", " ").strip(), t["expected_stdout"].strip())
++                      for t in new_rules["io_tests"]["tests"]],
++            "compare": new_rules["io_tests"]["compare"],
++        }
++        if apply:
++            updated = _api("PATCH", f"/tasks/{task_id}", {"solution_rules": new_rules})
++            up_rules = updated.get("solution_rules") or {}
++            row["result"] = {
++                "io_tests": len((up_rules.get("io_tests") or {}).get("tests") or []),
++                "mrr": up_rules.get("manual_review_required"),
++                "criteria_status": (up_rules.get("grading_criteria") or {}).get("status"),
++                "provenance": (updated.get("content_provenance") or {}).get("source"),
++            }
++            logger.info("id=%s: записано %s", task_id, row["result"])
++        else:
++            logger.info("id=%s: %s тестов (%s), mrr %s → False, критерии %s", task_id,
++                        len(row["tests"]), row["compare"], row["mrr_before"], row["criteria_status"])
++        rows.append(row)
++        REPORT_DIR.mkdir(parents=True, exist_ok=True)
++        report.write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
++    logger.info("отчёт: %s (%s строк)", report, len(rows))
++
++
++def main() -> int:
++    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
++    parser.add_argument("--corpus", action="store_true", help="прогнать корпус верных и неверных решений")
++    parser.add_argument("--dry-run", action="store_true", help="показать «было → стало» по проду")
++    parser.add_argument("--apply", action="store_true", help="записать io_tests через PATCH /tasks/{id}")
++    args = parser.parse_args()
++    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
++
++    rules_by_task = {task_id: rules_with_tests(task_id) for task_id in SPECS}
++    for task_id, rules in rules_by_task.items():
++        assert rules.io_tests is not None
++        logger.info("id=%s: %s тестов, compare=%s", task_id, len(rules.io_tests.tests), rules.io_tests.compare)
++    if not verify_etalons(rules_by_task):
++        logger.error("эталоны не проходят собственные тесты — стоп")
++        return 2
++    logger.info("все %s эталонов прошли свои тесты", sum(len(build_etalons(t)) for t in SPECS))
++
++    if args.corpus:
++        # Только локальная песочница, к проду не обращается (`--dry-run` рядом
++        # допустим — это подсказка хуку db_write_gate, что записи нет).
++        return run_corpus(rules_by_task)
++    if args.dry_run or args.apply:
++        run_lms(apply=args.apply)
++    return 0
++
++
++if __name__ == "__main__":
++    sys.exit(main())
+diff --git a/tests/test_io_tests_tsk953.py b/tests/test_io_tests_tsk953.py
+new file mode 100644
+index 0000000..6695c1d
+--- /dev/null
++++ b/tests/test_io_tests_tsk953.py
+@@ -0,0 +1,426 @@
++# tests/test_io_tests_tsk953.py
++"""
++Прогон программы ученика на тестах ввода/вывода (tsk-953).
++
++Зачем. Замер tsk-950 на 61 верном решении ОГЭ-16 показал, что сравнение кода
++через `code_ast` засчитывает 18 % верных программ. Решение оператора
++2026-09-15 — исполнять программу на тестовых входах и сравнивать вывод.
++
++Покрывает:
++- (а) схема `io_tests`: осмысленные предпосылки → ошибка валидации, а не
++      молчаливое выключение (допуск без numeric, два исполняющих режима,
++      гибрид, пустой ожидаемый вывод); `has_reference_answer()` → True;
++- (б) страж профиля stdio: `input` и генераторы разрешены, `os`/`try` — нет;
++      черепаший профиль не изменился;
++- (в) песочница: вывод, исчерпанный ввод, бесконечная печать, синтаксис, таймаут;
++- (г) сравнение вывода: lines / tokens / numeric с допуском и запятой;
++- (д) CheckingService: все тесты → полный балл; провал → номер теста, ввод и
++      ожидаемый вывод без вывода программы ученика; сбой песочницы → вердикта
++      нет (is_correct=None), а не незачёт;
++- (е) выбор программы: value → comment → вложение, короткий ответ в value не
++      заслоняет программу в комментарии, однострочная программа не теряется;
++- (ж) сдача через API: верное решение в `value` без комментария → зачёт (гейт
++      «комментарий или файл» не применяется, оптимистичного зачёта нет);
++      неверное → незачёт с 0 баллов; программа в `comment` (старая форма) →
++      зачёт; `GET /learning/tasks/{id}/state` отдаёт `has_io_tests`.
++"""
++from __future__ import annotations
++
++import uuid
++from typing import Optional
++
++import pytest
++from pydantic import ValidationError
++from sqlalchemy import text
++
++from app.core.config import Settings
++from app.schemas.checking import StudentAnswer, StudentResponse
++from app.schemas.solution_rules import IoTestsRules, SolutionRules
++from app.schemas.task_content import TaskContent
++from app.services.checking_service import CheckingService
++from app.services.code_review_service import pick_program_for_io_tests
++from app.services.turtle_sandbox.comparator import compare_stdout
++from app.services.turtle_sandbox.executor import StdioResult, run_student_program_stdio
++from app.services.turtle_sandbox.guard import GuardViolation, check_code_is_safe
++
++_settings = Settings()
++
++MAX5_CODE = (
++    "n = int(input())\nm = 0\nfor i in range(n):\n    x = int(input())\n"
++    "    if x % 5 == 0 and x > m:\n        m = x\nprint(m)\n"
++)
++MAX5_GENEXP_CODE = (
++    "n = int(input())\na = [int(input()) for i in range(n)]\n"
++    "print(max(x for x in a if x % 5 == 0))\n"
++)
++# Перепутанное условие: максимум среди ВСЕХ чисел, а не кратных 5.
++MAX_ANY_CODE = (
++    "n = int(input())\nm = 0\nfor i in range(n):\n    x = int(input())\n"
++    "    if x > m:\n        m = x\nprint(m)\n"
++)
++# Чтение «до 0» вместо N чисел — на входе с N программа просит лишний ввод.
++READ_UNTIL_ZERO_CODE = (
++    "m = 0\nx = int(input())\nwhile x != 0:\n    if x % 5 == 0 and x > m:\n"
++    "        m = x\n    x = int(input())\nprint(m)\n"
++)
++
++MAX5_TESTS = [
++    {"stdin": "3\n10\n25\n12\n", "expected_stdout": "25\n", "label": "пример из условия"},
++    {"stdin": "1\n15\n", "expected_stdout": "15\n", "label": "N=1"},
++    # 33 больше 30, но не кратно 5 — ловит «максимум среди всех чисел»
++    {"stdin": "4\n7\n30\n11\n33\n", "expected_stdout": "30\n"},
++]
++
++
++def _rules(**overrides) -> SolutionRules:
++    payload = {"max_score": 1, "io_tests": {"tests": MAX5_TESTS}}
++    payload.update(overrides)
++    return SolutionRules.model_validate(payload)
++
++
++def _answer(code: str, task_type: str = "SA_COM") -> StudentAnswer:
++    return StudentAnswer(type=task_type, response=StudentResponse(value=code))
++
++
++def _content(task_type: str = "SA_COM") -> TaskContent:
++    return TaskContent(type=task_type, stem="Напишите программу.")
++
++
++# ── (а) схема ────────────────────────────────────────────────────────────────
++
++
++def test_schema_io_tests_is_reference_answer():
++    rules = _rules()
++    assert rules.io_tests is not None and len(rules.io_tests.tests) == 3
++    assert rules.has_reference_answer() is True
++    assert rules.io_tests.compare == "lines"
++    assert rules.io_tests.timeout_sec == 2.0
++
++
++def test_schema_tolerance_requires_numeric_mode():
++    with pytest.raises(ValidationError, match="numeric"):
++        _rules(io_tests={"tests": MAX5_TESTS, "float_tolerance": 0.05})
++    ok = _rules(io_tests={"tests": MAX5_TESTS, "compare": "numeric", "float_tolerance": 0.05})
++    assert ok.io_tests is not None and ok.io_tests.float_tolerance == 0.05
++
++
++def test_schema_io_tests_excludes_turtle_and_hybrid():
++    turtle = {
++        "expected_trace": {"segments": [], "final_state": {"position": [0, 0], "heading": 0, "pen_down": True}},
++    }
++    with pytest.raises(ValidationError, match="turtle_sim"):
++        _rules(turtle_sim=turtle)
++    with pytest.raises(ValidationError, match="partial_auto_check"):
++        _rules(partial_auto_check=True, manual_review_required=True)
++
++
++def test_schema_rejects_blank_expected_and_empty_tests():
++    with pytest.raises(ValidationError):
++        _rules(io_tests={"tests": [{"stdin": "1\n", "expected_stdout": "  \n"}]})
++    with pytest.raises(ValidationError):
++        _rules(io_tests={"tests": []})
++    with pytest.raises(ValidationError):
++        IoTestsRules.model_validate({"tests": MAX5_TESTS, "timeout_sec": 60})
++
++
++# ── (б) страж ────────────────────────────────────────────────────────────────
++
++
++def test_guard_stdio_allows_input_and_generators():
++    check_code_is_safe(MAX5_CODE, profile="stdio")
++    check_code_is_safe(MAX5_GENEXP_CODE, profile="stdio")
++    check_code_is_safe("import math\nprint(math.sqrt(int(input())))\n", profile="stdio")
++
++
++@pytest.mark.parametrize(
++    "code",
++    [
++        "import os\nprint(os.getcwd())\n",
++        "import sys\nprint(sys.stdin.read())\n",
++        "try:\n    x = int(input())\nexcept ValueError:\n    x = 0\nprint(x)\n",
++        "print(open('/etc/passwd').read())\n",
++        "print(getattr(1, '__class__'))\n",
++        "import turtle\n",
++    ],
++)
++def test_guard_stdio_forbids_system_access(code):
++    with pytest.raises(GuardViolation):
++        check_code_is_safe(code, profile="stdio")
++
++
++def test_guard_turtle_profile_unchanged():
++    """Черепаший профиль по-прежнему запрещает input и генераторы."""
++    with pytest.raises(GuardViolation):
++        check_code_is_safe("x = input()\n")
++    with pytest.raises(GuardViolation):
++        check_code_is_safe("print(sum(i for i in range(3)))\n")
++
++
++# ── (в) песочница ────────────────────────────────────────────────────────────
++
++
++def _run(code: str, stdin: str = "3\n10\n25\n12\n", timeout: float = 2.0) -> StdioResult:
++    return run_student_program_stdio(code, stdin=stdin, timeout_sec=timeout, max_output_chars=2000)
++
++
++def test_sandbox_runs_program_and_captures_stdout():
++    result = _run(MAX5_CODE)
++    assert result.ok, result
++    assert result.stdout == "25\n"
++    assert _run(MAX5_GENEXP_CODE).stdout == "25\n"
++
++
++def test_sandbox_input_exhausted_is_its_own_category():
++    result = _run(READ_UNTIL_ZERO_CODE)
++    assert not result.ok
++    assert result.error == "input_exhausted"
++
++
++def test_sandbox_output_limit_and_syntax_and_runtime():
++    assert _run("while True:\n    print(1)\n").error == "output_limit_exceeded"
++    assert _run("n = int(input()\nprint(n)\n").error == "syntax_error"
++    assert _run("print(1 / 0)\n").error == "runtime_error"
++    assert _run("import os\n").error == "forbidden_construct"
++
++
++def test_sandbox_timeout_on_infinite_loop():
++    result = _run("while True:\n    pass\n", timeout=1.0)
++    assert not result.ok
++    assert result.error == "timeout"
++
++
++def test_sandbox_cpu_limit_kill_is_timeout_not_crash(monkeypatch):
++    """На проде цикл снимает RLIMIT_CPU (SIGXCPU) — это таймаут программы, не авария песочницы."""
++    import subprocess
++    import app.services.turtle_sandbox.executor as executor
++
++    class _Proc:
++        returncode = -24
++        stdout = ""
++        stderr = ""
++
++    monkeypatch.setattr(executor, "_CPU_LIMIT_RETURN_CODES", frozenset({-24, -9}))
++    monkeypatch.setattr(executor.subprocess, "run", lambda *a, **kw: _Proc())
++    assert subprocess is executor.subprocess
++    result = _run("while True:\n    pass\n")
++    assert result.error == "timeout"
++
++
++def test_sandbox_print_kwargs_and_no_file_access():
++    result = _run("print(1, 2, sep='-', end='!')\nprint()\n", stdin="")
++    assert result.ok and result.stdout == "1-2!\n"
++
++
++# ── (г) сравнение вывода ─────────────────────────────────────────────────────
++
++
++def test_compare_lines_ignores_edge_spaces_and_trailing_newlines():
++    assert compare_stdout("25\n", "25")[0]
++    assert compare_stdout("74\nNO\n", " 74 \nNO\n\n")[0]
++    assert not compare_stdout("74\nNO\n", "74 NO\n")[0]
++    assert not compare_stdout("25\n", "26\n")[0]
++
++
++def test_compare_tokens_and_numeric():
++    assert compare_stdout("74\nNO\n", "74 NO", mode="tokens")[0]
++    assert compare_stdout("75.5\nYES", "75,45\nYES", mode="numeric", float_tolerance=0.05)[0]
++    assert compare_stdout("75.5\nYES", "75.50\nYES", mode="numeric")[0]
++    assert not compare_stdout("75.5\nYES", "75.4\nYES", mode="numeric", float_tolerance=0.05)[0]
++    assert not compare_stdout("75.5\nYES", "75.5\nNO", mode="numeric", float_tolerance=0.05)[0]
++
++
++# ── (д) CheckingService ──────────────────────────────────────────────────────
++
++
++def test_checking_all_tests_pass_gives_full_score():
++    service = CheckingService()
++    for code in (MAX5_CODE, MAX5_GENEXP_CODE):
++        result = service.check_task(_content(), _rules(), _answer(code))
++        assert result.is_correct is True, result
++        assert result.score == 1
++        assert "3 из 3" in (result.feedback.general if result.feedback else "")
++
++
++def test_checking_failure_names_test_input_and_expected_only():
++    """Перепутанное условие проваливается на первом тесте, где есть число больше максимума кратных 5."""
++    result = CheckingService().check_task(_content(), _rules(), _answer(MAX_ANY_CODE))
++    assert result.is_correct is False and result.score == 0
++    general = result.feedback.general if result.feedback else ""
++    assert "Тест 3 из 3" in general
++    assert "7 30 11 33" in general
++    assert "Ожидаемый вывод: 30" in general
++    # вывод программы ученика наружу не уходит — только ввод и ожидание
++    assert "получено" not in general and "вывела" not in general
++    assert result.details is None
++
++
++def test_checking_input_exhausted_message():
++    result = CheckingService().check_task(_content(), _rules(), _answer(READ_UNTIL_ZERO_CODE))
++    assert result.is_correct is False
++    general = result.feedback.general if result.feedback else ""
++    assert "данные уже закончились" in general
++    assert "Тест 1 из 3" in general
++
++
++def test_checking_empty_program_and_sa_type():
++    result = CheckingService().check_task(_content(), _rules(), _answer("   "))
++    assert result.is_correct is False and "Программа не найдена" in result.feedback.general
++    sa = CheckingService().check_task(_content("SA"), _rules(), _answer(MAX5_CODE, "SA"))
++    assert sa.is_correct is True
++
++
++def test_checking_ignores_manual_review_flag_with_io_tests():
++    """Тесты выносят вердикт даже при manual_review_required=true (ветка идёт раньше гейта)."""
++    rules = _rules(manual_review_required=True)
++    result = CheckingService().check_task(_content(), rules, _answer(MAX5_CODE))
++    assert result.is_correct is True and result.score == 1
++
++
++def test_checking_sandbox_failure_gives_no_verdict(monkeypatch):
++    import app.services.turtle_sandbox.executor as executor
++
++    def _broken(code, *, stdin, timeout_sec, max_output_chars):
++        return StdioResult(ok=False, error="sandbox_error", message="unshare не найден")
++
++    monkeypatch.setattr(executor, "run_student_program_stdio", _broken)
++    result = CheckingService().check_task(_content(), _rules(), _answer(MAX5_CODE))
++    assert result.is_correct is None and result.score == 0
++    assert "передан преподавателю" in result.feedback.general
++
++
++def test_checking_stops_at_first_failed_test(monkeypatch):
++    import app.services.turtle_sandbox.executor as executor
++
++    calls: list[str] = []
++
++    def _fake(code, *, stdin, timeout_sec, max_output_chars):
++        calls.append(stdin)
++        return StdioResult(ok=True, stdout="0\n")
++
++    monkeypatch.setattr(executor, "run_student_program_stdio", _fake)
++    CheckingService().check_task(_content(), _rules(), _answer(MAX5_CODE))
++    assert len(calls) == 1
++
++
++# ── (е) выбор программы ──────────────────────────────────────────────────────
++
++
++def test_pick_program_prefers_value_then_comment():
++    assert pick_program_for_io_tests(MAX5_CODE, "пояснение", attempt_id=1) == MAX5_CODE.strip()
++    # старая форма: короткий ответ в value, программа в комментарии
++    assert pick_program_for_io_tests("25", MAX5_CODE, attempt_id=1) == MAX5_CODE.strip()
++    # однострочная программа порога «две строки кода» не берёт, но не теряется
++    assert pick_program_for_io_tests("print(int(input()) * 2)", None, attempt_id=1) == "print(int(input()) * 2)"
++    assert pick_program_for_io_tests("", "  ", attempt_id=1) is None
++
++
++# ── (ж) сдача через API ──────────────────────────────────────────────────────
++
++
++def _headers() -> dict[str, str]:
++    return {"X-API-Key": next(iter(_settings.valid_api_keys))}
++
++
++async def _make_student(db) -> int:
++    r = await db.execute(
++        text("INSERT INTO users (email, full_name) VALUES (:e, 'tsk953 student') RETURNING id"),
++        {"e": f"tsk953_{uuid.uuid4().hex[:8]}@example.com"},
++    )
++    sid = int(r.scalar())
++    await db.commit()
++    return sid
++
++
++async def _make_course(db) -> int:
++    r = await db.execute(
++        text("INSERT INTO courses (title, access_level) VALUES (:t, 'auto_check') RETURNING id"),
++        {"t": f"tsk953 {uuid.uuid4().hex[:8]}"},
++    )
++    cid = int(r.scalar())
++    await db.commit()
++    return cid
++
++
++async def _make_task(db, course_id: int) -> int:
++    import json
++
++    diff = (await db.execute(text("SELECT id FROM difficulties LIMIT 1"))).scalar()
++    tc = json.dumps({"type": "SA_COM", "stem": "Напишите программу (tsk-953)."}, ensure_ascii=False)
++    sr = json.dumps({"max_score": 1, "manual_review_required": False, "io_tests": {"tests": MAX5_TESTS}}, ensure_ascii=False)
++    r = await db.execute(
++        text(
++            "INSERT INTO tasks (course_id, difficulty_id, task_content, solution_rules, max_score) "
++            "VALUES (:cid, :did, CAST(:tc AS jsonb), CAST(:sr AS jsonb), 1) RETURNING id"
++        ),
++        {"cid": course_id, "did": diff, "tc": tc, "sr": sr},
++    )
++    tid = int(r.scalar())
++    await db.commit()
++    return tid
++
++
++async def _cleanup(db, *, course_id: int, student_id: int) -> None:
++    await db.execute(text("DELETE FROM courses WHERE id = :cid"), {"cid": course_id})
++    await db.execute(text("DELETE FROM users WHERE id = :sid"), {"sid": student_id})
++    await db.commit()
++
++
++async def _submit(client, attempt_id: int, task_id: int, *, value: str, comment: Optional[str] = None) -> dict:
++    response: dict = {"value": value}
++    if comment is not None:
++        response["comment"] = comment
++    resp = await client.post(
++        f"/api/v1/attempts/{attempt_id}/answers",
++        json={"items": [{"task_id": task_id, "answer": {"type": "SA_COM", "response": response}}]},
++        headers=_headers(),
++    )
++    assert resp.status_code == 200, resp.text
++    return resp.json()["results"][0]["check_result"]
++
++
++@pytest.mark.asyncio
++async def test_api_submit_io_tests_task(client, db):
++    student_id = await _make_student(db)
++    course_id = await _make_course(db)
++    task_id = await _make_task(db, course_id)
++    try:
++        state = await client.get(
++            f"/api/v1/learning/tasks/{task_id}/state?student_id={student_id}", headers=_headers()
++        )
++        assert state.status_code == 200, state.text
++        assert state.json()["has_io_tests"] is True
++        assert state.json()["has_reference_answer"] is True
++
++        async def _attempt() -> int:
++            resp = await client.post(
++                "/api/v1/attempts",
++                json={"user_id": student_id, "course_id": course_id, "source_system": "test"},
++                headers=_headers(),
++            )
++            assert resp.status_code == 201, resp.text
++            return int(resp.json()["id"])
++
++        # верное решение в value, без комментария и файла → зачёт (гейт 2.3f не применяется)
++        result = await _submit(client, await _attempt(), task_id, value=MAX5_CODE)
++        assert result["is_correct"] is True and result["score"] == 1, result
++
++        # неверное решение → незачёт, оптимистичный зачёт SA_COM не подменяет
++        result = await _submit(client, await _attempt(), task_id, value=MAX_ANY_CODE, comment="решил")
++        assert result["is_correct"] is False and result["score"] == 0, result
++        assert "Тест 3 из 3" in (result.get("feedback") or {}).get("general", "")
++
++        # старая форма: value пустой, программа в комментарии → зачёт
++        result = await _submit(client, await _attempt(), task_id, value="", comment=MAX5_GENEXP_CODE)
++        assert result["is_correct"] is True and result["score"] == 1, result
++
++        # answer_json хранит ответ таким, каким сдал ученик (value пуст, код в comment)
++        row = (await db.execute(
++            text(
++                "SELECT answer_json->'response'->>'value', answer_json->'response'->>'comment' "
++                "FROM task_results WHERE user_id = :u AND task_id = :t ORDER BY id DESC LIMIT 1"
++            ),
++            {"u": student_id, "t": task_id},
++        )).fetchone()
++        assert row is not None and (row[0] or "") == "" and "input()" in (row[1] or "")
++    finally:
++        await _cleanup(db, course_id=course_id, student_id=student_id)

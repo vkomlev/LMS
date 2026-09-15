@@ -477,6 +477,54 @@ def _pick_code_for_review(
     return None
 
 
+def pick_program_for_io_tests(
+    value: Optional[str],
+    comment: Optional[str],
+    attachments: Any = None,
+    *,
+    attempt_id: Optional[int],
+    task_id: Optional[int] = None,
+) -> Optional[str]:
+    """
+    Программа ученика для прогона тестами (tsk-953): value → comment → вложение.
+
+    Тот же урок, что у `pick_code_for_review`: программу берут оттуда, где её
+    на самом деле написал ученик. Форма SPW для задания с тестами кладёт код в
+    `value`; старая форма (до обновления клиента) и TG-бот кладут его в
+    `comment`; часть учеников присылает файл. Порядок отличается от оценки
+    стиля — там вложение первое, потому что в `value` лежит ВЫВОД программы;
+    здесь `value` — основное поле, и текстовые поля идут раньше файла.
+
+    Текстовый кандидат должен выглядеть как код (`looks_like_source_code`),
+    иначе короткий ответ «25» из старой формы ушёл бы в песочницу вместо
+    программы из комментария. Если ни один кандидат на код не похож —
+    возвращается первое непустое текстовое поле: однострочная программа
+    (`print(int(input()) * 2)`) порога «две строки кода» не берёт, а
+    песочница сама скажет, программа это или нет.
+
+    Исключений не бросает: чтение вложения — то же `read_code_attachment`, и
+    его отказ означает «в этом месте программы нет», а не сбой приёма ответа.
+    """
+    try:
+        for candidate in (value, comment):
+            if isinstance(candidate, str) and looks_like_source_code(candidate.strip()):
+                return candidate.strip()
+        for candidate_file in iter_code_attachments(attachments):
+            code = read_code_attachment(
+                candidate_file.get("attachment_id"),
+                attempt_id=attempt_id,
+                task_id=task_id,
+            )
+            if looks_like_program(code):
+                return code.strip()
+    except Exception:  # noqa: BLE001 — намеренно широкий: см. докстринг
+        logger.exception("tsk-953: не удалось выбрать программу для прогона тестами")
+    for candidate in (value, comment):
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()
+    return None
+
+
 def _build_user_message(code: str, *, task_stem: Optional[str]) -> str:
     """Код подаётся отдельной секцией — чтобы промпт не смешивался с данными ученика."""
     parts = []

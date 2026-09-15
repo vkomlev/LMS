@@ -554,6 +554,113 @@ class TurtleSimRules(BaseModel):
     )
 
 
+#: Режим сравнения вывода программы с ожидаемым (tsk-953).
+#:   lines   — построчно, у каждой строки срезаются пробелы по краям, хвостовые
+#:             пустые строки не считаются (по умолчанию: ученики ставят лишний
+#:             пробел или перевод строки, а не иной ответ);
+#:   tokens  — по значениям через любые пробельные символы: «74 NO» и «74\nNO»
+#:             равны (когда условие не оговаривает разбивку строк);
+#:   numeric — как tokens, но пара числовых значений сравнивается как числа
+#:             с допуском `float_tolerance` (запятая как разделитель дробной
+#:             части принимается): «75.5», «75,5» и «75.50» — одно и то же.
+IoCompareMode = Literal["lines", "tokens", "numeric"]
+
+IO_TESTS_MAX_CASES = 20
+IO_TESTS_MAX_STDIN_CHARS = 10_000
+IO_TESTS_MAX_EXPECTED_CHARS = 10_000
+
+
+class IoTestCase(BaseModel):
+    """Один тест ввода/вывода (tsk-953): что подать программе и что она должна напечатать."""
+
+    stdin: str = Field(
+        default="",
+        description="Текст, подаваемый программе на стандартный ввод (строки через \\n).",
+        examples=["3\n10\n25\n12\n"],
+        max_length=IO_TESTS_MAX_STDIN_CHARS,
+    )
+    expected_stdout: str = Field(
+        ...,
+        description="Ожидаемый вывод программы целиком.",
+        examples=["25\n", "74\nNO\n"],
+        min_length=1,
+        max_length=IO_TESTS_MAX_EXPECTED_CHARS,
+    )
+    label: Optional[str] = Field(
+        default=None,
+        description="Пометка для методиста: откуда тест («пример из условия», «N=1»).",
+        examples=[None, "пример из условия"],
+        max_length=100,
+    )
+
+    @model_validator(mode="after")
+    def validate_expected(self) -> "IoTestCase":
+        """Ожидаемый вывод из одних пробелов — тест, который нечем сверять."""
+        if not self.expected_stdout.strip():
+            raise ValueError("io_tests: expected_stdout не может быть пустым")
+        return self
+
+
+class IoTestsRules(BaseModel):
+    """
+    Проверка программы ученика прогоном на тестах ввода/вывода (tsk-953).
+
+    Третий способ проверки кода рядом с `short_answer.normalization=code_ast`
+    (сравнение ИСХОДНИКА как программы) и `turtle_sim` (сравнение РИСУНКА).
+    Замер tsk-950 на 61 верном решении ОГЭ-16 показал, что сравнение кода
+    засчитывает 18 % верных программ: «напишите программу, которая читает N
+    чисел и выводит…» решают десятками способов, и единственная честная
+    проверка — исполнить программу на тестовых входах и сравнить вывод.
+
+    Код исполняется в той же песочнице, что и `turtle_sim`
+    (`app/services/turtle_sandbox/`, режим stdin → stdout), каждый тест —
+    отдельный процесс с лимитом времени. Тесты идут по порядку до первого
+    непройденного: ученик видит номер теста, ввод и ожидаемый вывод.
+    """
+
+    tests: List[IoTestCase] = Field(
+        ...,
+        description="Тесты по порядку: первый обычно — пример из условия.",
+        min_length=1,
+        max_length=IO_TESTS_MAX_CASES,
+    )
+    compare: IoCompareMode = Field(
+        default="lines",
+        description="Режим сравнения вывода: lines | tokens | numeric (см. IoCompareMode).",
+        examples=["lines", "numeric"],
+    )
+    float_tolerance: float = Field(
+        default=0.0,
+        ge=0,
+        description=(
+            "Допуск при сравнении чисел в режиме numeric (абсолютный). 0.05 — "
+            "для «среднего с одним знаком после запятой»: «75.45» и «75.5» равны."
+        ),
+        examples=[0.0, 0.05],
+    )
+    timeout_sec: float = Field(
+        default=2.0,
+        gt=0,
+        le=10.0,
+        description="Лимит времени на ОДИН тест (wall-clock) — защита от бесконечного цикла.",
+    )
+    max_output_chars: int = Field(
+        default=20_000,
+        gt=0,
+        le=200_000,
+        description="Потолок вывода программы за один тест — защита от печати в бесконечном цикле.",
+    )
+
+    @model_validator(mode="after")
+    def validate_tolerance_mode(self) -> "IoTestsRules":
+        """Допуск без числового режима молча не работал бы — лучше 422 на входе."""
+        if self.float_tolerance > 0 and self.compare != "numeric":
+            raise ValueError(
+                "io_tests.float_tolerance > 0 имеет смысл только при compare='numeric'"
+            )
+        return self
+
+
 class SolutionRules(BaseModel):
     """
     Структура JSON-поля tasks.solution_rules.
@@ -637,6 +744,21 @@ class SolutionRules(BaseModel):
             "программа), но при заполненном turtle_sim CheckingService НЕ делает "
             "code_ast/текстовое сравнение — вместо этого исполняет код в песочнице "
             "и сравнивает получившуюся трассу с эталонной."
+        ),
+    )
+
+    # Для «напишите программу» (tsk-953): исполнение кода ученика на тестах
+    # ввода/вывода и сравнение напечатанного, а не самого кода.
+    io_tests: Optional[IoTestsRules] = Field(
+        default=None,
+        description=(
+            "Правила проверки программы прогоном на тестах ввода/вывода (tsk-953, "
+            "ОГЭ-16 курса 1181). Тип задачи остаётся SA/SA_COM; при заполненном "
+            "io_tests CheckingService НЕ сравнивает код как текст/AST — исполняет "
+            "программу в песочнице на каждом тесте и сравнивает вывод. Считается "
+            "эталоном (`has_reference_answer` → true): гасит оптимистичный зачёт "
+            "SA_COM и открывает задание машинной проверке. Программа берётся оттуда, "
+            "где её реально написал ученик: value → comment → вложение."
         ),
     )
 
@@ -746,6 +868,28 @@ class SolutionRules(BaseModel):
             )
         return self
 
+    @model_validator(mode="after")
+    def validate_io_tests(self) -> "SolutionRules":
+        """Прогон тестами (tsk-953) не совмещается с другими режимами исполнения.
+
+        Два исполняющих режима на одном задании — `turtle_sim` и `io_tests` —
+        дали бы два разных вердикта на один ответ; гибридный режим
+        (`partial_auto_check`) держит балл до преподавателя, а тесты выносят
+        законченный вердикт. Обе комбинации молча выбрали бы одну ветку в
+        `check_task`, и методист узнал бы об этом по жалобе ученика. Тот же
+        принцип, что у `validate_partial_auto_check`: проверять на входе.
+        """
+        if self.io_tests is None:
+            return self
+        if self.turtle_sim is not None:
+            raise ValueError("io_tests и turtle_sim не могут быть заданы вместе")
+        if self.partial_auto_check:
+            raise ValueError(
+                "io_tests несовместим с partial_auto_check: прогон тестами выносит "
+                "законченный вердикт, гибридный режим держит балл до преподавателя"
+            )
+        return self
+
     def has_reference_answer(self) -> bool:
         """Есть ли эталон для авто-сверки `response.value` (SA/SA_COM/TBL_COM).
 
@@ -767,6 +911,12 @@ class SolutionRules(BaseModel):
         :returns: True — эталон задан (списком принимаемых ответов либо regex).
         """
         if self.turtle_sim is not None:
+            return True
+        # tsk-953: тесты ввода/вывода — тоже эталон, только исполняемый. Через
+        # этот же предикат они гасят оптимистичный зачёт SA_COM (`attempts.py`,
+        # 2.3d), открывают задание машинной проверке (`ai_check_policy`) и
+        # показывают клиенту поле программы (`TaskStateResponse`).
+        if self.io_tests is not None:
             return True
         rules = self.short_answer
         if rules is None:

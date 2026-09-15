@@ -42,7 +42,11 @@ from app.services.tasks_service import TasksService
 from app.services.checking_service import CheckingService
 # tsk-302 этап 3: сам анализ переехал в фоновый тик
 # (`code_review_cron_service`), здесь работа только помечается к оценке.
-from app.services.code_review_service import pick_code_attachment, pick_code_for_review
+from app.services.code_review_service import (
+    pick_code_attachment,
+    pick_code_for_review,
+    pick_program_for_io_tests,
+)
 # tsk-646: та же очередь, но для развёрнутых текстовых работ — там разбирается
 # не чистота кода, а признак ИИ-авторства прозы.
 from app.services.text_authorship_service import pick_text_for_review
@@ -748,11 +752,32 @@ async def submit_attempt_answers(
         # песочницы (subprocess.run с таймаутом до неск. секунд). Для остальных
         # типов задач это по-прежнему быстрый sync-вызов, накладные расходы
         # thread-пула пренебрежимо малы.
+        #
+        # tsk-953: у задания с тестами ввода/вывода программа берётся оттуда,
+        # где её реально написал ученик (value → comment → вложение — тот же
+        # урок, что у снимка кода ниже). Сервис проверки сравнивает только
+        # `response.value`, поэтому ему отдаётся КОПИЯ ответа с найденной
+        # программой в `value`; сам `answer` не трогаем — в `answer_json`
+        # ученик должен остаться таким, каким сдал. Чтение вложения — сетевой
+        # ввод-вывод, поэтому тоже в потоке.
+        check_answer = answer
+        if solution_rules.io_tests is not None:
+            picked_program = await asyncio.to_thread(
+                pick_program_for_io_tests,
+                answer.response.value,
+                answer.response.comment,
+                (answer.response.meta or {}).get("attachments"),
+                attempt_id=attempt_id,
+                task_id=task.id,
+            )
+            check_answer = answer.model_copy(deep=True)
+            check_answer.response.value = picked_program or ""
+
         check_result: CheckResult = await asyncio.to_thread(
             checking_service.check_task,
             task_content=task_content,
             solution_rules=solution_rules,
-            answer=answer,
+            answer=check_answer,
         )
 
         # 2.3b.1 tsk-302 (направление 1): статический анализ стиля кода (pylint/
@@ -1061,8 +1086,15 @@ async def submit_attempt_answers(
         # оператора. Гейт после форса вложения намеренно — если вложение уже
         # обязательно и его нет, сообщение 2.3e важнее (файл конкретно требуется),
         # а не общее "комментарий или файл".
+        #
+        # tsk-953: у задания с тестами ввода/вывода доказательство решения —
+        # сама программа, и она уже исполнена выше. Требовать сверх неё
+        # комментарий значило бы заставлять ученика вписывать код дважды
+        # (форма SPW кладёт программу в `value`), а вердикт тестов затирался бы
+        # этим гейтом на верном решении.
         if (
             task_content.type in COMMENT_TASK_TYPES
+            and solution_rules.io_tests is None
             and not attempt.time_expired
             and not (
                 solution_rules.requires_attachment

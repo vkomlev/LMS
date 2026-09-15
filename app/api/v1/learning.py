@@ -631,11 +631,15 @@ async def get_task_state(
             if task_type in SHORT_ANSWER_TASK_TYPES
             else True
         )
+        # tsk-953: проверка прогоном программы на тестах — клиент показывает
+        # редактор кода как основное поле и кладёт программу в response.value.
+        has_io_tests = rules.io_tests is not None
     except Exception:
         # Некорректные solution_rules не должны ломать выдачу состояния задания.
         requires_attachment = False
         partial_auto_check = False
         has_reference_answer = True
+        has_io_tests = False
     if state.state == "BLOCKED_LIMIT":
         await get_or_create_blocked_limit_help_request(
             db,
@@ -664,6 +668,7 @@ async def get_task_state(
         requires_attachment=requires_attachment,
         partial_auto_check=partial_auto_check,
         has_reference_answer=has_reference_answer,
+        has_io_tests=has_io_tests,
     )
 
 

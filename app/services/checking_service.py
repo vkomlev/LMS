@@ -10,7 +10,7 @@ from collections import Counter
 from typing import List, Optional, Set, Dict
 
 from app.schemas.task_content import TaskContent, TaskType
-from app.schemas.solution_rules import SolutionRules, ShortAnswerRules
+from app.schemas.solution_rules import IoTestCase, SolutionRules, ShortAnswerRules
 from app.schemas.checking import (
     StudentAnswer,
     CheckResult,
@@ -135,6 +135,12 @@ class CheckingService:
         if task_type in ("SC_Qw", "MC_Qw"):
             return self._check_quiz(task_content, solution_rules, answer)
         if task_type in ("SA", "SA_COM"):
+            # tsk-953: прогон тестами — раньше остальных ветвей, включая гейт
+            # manual_review_required в `_check_short_answer`: тесты выносят
+            # законченный вердикт (решение оператора 2026-09-15), а обязательность
+            # ручной проверки у таких заданий снимается при заведении тестов.
+            if solution_rules.io_tests is not None:
+                return self._check_io_tests(solution_rules, answer)
             if solution_rules.turtle_sim is not None:
                 return self._check_turtle_sim(solution_rules, answer)
             return self._check_short_answer(task_content, solution_rules, answer)
@@ -891,6 +897,153 @@ class CheckingService:
                          "Проверьте координаты, углы поворота и порядок команд."
                 )
             ),
+        )
+
+    # ---------- Проверка io_tests (tsk-953) ----------
+
+    #: Сообщения ученику по категории ошибки песочницы. Без вывода самой
+    #: программы (решение оператора 2026-09-15): ученик может запустить её у
+    #: себя, а песочница не должна быть каналом вывода чего-либо с сервера.
+    _IO_ERROR_FEEDBACK: Dict[str, str] = {
+        "syntax_error": "В программе синтаксическая ошибка. Проверьте код.",
+        "forbidden_construct": (
+            "В программе есть конструкции, которые здесь не поддерживаются "
+            "(импорт непредусмотренных модулей, try/with, обращение к служебным атрибутам)."
+        ),
+        "timeout": "Программа выполнялась слишком долго — проверьте условие выхода из цикла.",
+        "input_exhausted": (
+            "Программа запросила ввод, когда данные уже закончились. Проверьте, сколько "
+            "чисел читает программа: столько ли, сколько сказано в условии."
+        ),
+        "output_limit_exceeded": "Программа печатает слишком много — похоже на бесконечный цикл.",
+        "runtime_error": "Программа завершилась с ошибкой при выполнении.",
+        "sandbox_busy": "Песочница перегружена — попробуйте отправить ответ ещё раз через несколько секунд.",
+    }
+
+    def _check_io_tests(
+        self,
+        solution_rules: SolutionRules,
+        answer: StudentAnswer,
+    ) -> CheckResult:
+        """
+        Проверка «напишите программу» прогоном на тестах ввода/вывода (tsk-953).
+
+        Программа ученика берётся из `response.value`: вызывающий эндпоинт
+        (`attempts.py`) заранее кладёт туда код с того места, где его на самом
+        деле написал ученик (value → comment → вложение, см.
+        `pick_program_for_io_tests`), — сервис проверки остаётся без БД и
+        хранилища. Каждый тест — отдельный процесс песочницы; идём по порядку и
+        останавливаемся на первом непройденном: ученику сообщается номер теста,
+        ввод и ожидаемый вывод. Балл — всё или ничего: программа либо решает
+        задачу на всех тестах, либо нет (как на ОГЭ).
+        """
+        from app.services.turtle_sandbox.comparator import compare_stdout
+        from app.services.turtle_sandbox.executor import run_student_program_stdio
+
+        rules = solution_rules.io_tests
+        if rules is None:
+            raise DomainError(
+                detail="io_tests не задан, хотя проверка была выбрана как io_tests.",
+                status_code=500,
+            )
+
+        code = answer.response.value or ""
+        if not code.strip():
+            return CheckResult(
+                is_correct=False,
+                score=0,
+                max_score=solution_rules.max_score,
+                details=None,
+                feedback=CheckFeedback(general="Программа не найдена. Вставьте код на Python."),
+            )
+
+        total = len(rules.tests)
+        for index, test in enumerate(rules.tests, start=1):
+            result = run_student_program_stdio(
+                code,
+                stdin=test.stdin,
+                timeout_sec=rules.timeout_sec,
+                max_output_chars=rules.max_output_chars,
+            )
+            if not result.ok:
+                logger.info(
+                    "io_tests: тест %s/%s не выполнен (error=%s): %s",
+                    index, total, result.error, result.message,
+                )
+                # Сбой самой песочницы (не программы ученика) — не незачёт, а
+                # «сверить не удалось»: ответ принимается, вердикта нет, работа
+                # уходит преподавателю, как SA_COM без эталона. Иначе авария на
+                # сервере превратилась бы в «неверно» и сожгла попытку.
+                if result.error in ("sandbox_error", "sandbox_killed", "bad_output", "unknown"):
+                    logger.warning("io_tests: сбой песочницы, вердикт не вынесен: %s", result.message)
+                    return CheckResult(
+                        is_correct=None,
+                        score=0,
+                        max_score=solution_rules.max_score,
+                        details=None,
+                        feedback=CheckFeedback(
+                            general="Не удалось проверить программу автоматически — "
+                                    "ответ принят и передан преподавателю."
+                        ),
+                    )
+                general = self._IO_ERROR_FEEDBACK.get(
+                    result.error or "", "Не удалось выполнить программу."
+                )
+                if result.error != "sandbox_busy":
+                    general = f"{general} {self._io_test_hint(index, total, test)}"
+                return CheckResult(
+                    is_correct=False,
+                    score=0,
+                    max_score=solution_rules.max_score,
+                    details=None,
+                    feedback=CheckFeedback(general=general),
+                )
+
+            matches, reason = compare_stdout(
+                test.expected_stdout,
+                result.stdout or "",
+                mode=rules.compare,
+                float_tolerance=rules.float_tolerance,
+            )
+            if not matches:
+                logger.info("io_tests: тест %s/%s не пройден: %s", index, total, reason)
+                return CheckResult(
+                    is_correct=False,
+                    score=0,
+                    max_score=solution_rules.max_score,
+                    details=None,
+                    feedback=CheckFeedback(
+                        general=f"Вывод программы не совпал с ожидаемым. "
+                                f"{self._io_test_hint(index, total, test)}"
+                    ),
+                )
+
+        return CheckResult(
+            is_correct=True,
+            score=solution_rules.max_score,
+            max_score=solution_rules.max_score,
+            details=None,
+            feedback=CheckFeedback(
+                general=f"Отлично! Программа прошла все тесты ({total} из {total})."
+            ),
+        )
+
+    @staticmethod
+    def _io_test_hint(index: int, total: int, test: IoTestCase) -> str:
+        """«Тест N из M не пройден. Ввод: … Ожидаемый вывод: …» — для ученика.
+
+        Ввод и ожидаемый вывод показываются значениями через пробел (в условии
+        каждое число — с новой строки), длинный ввод обрезается.
+        """
+        def _flat(text: str, limit: int = 200) -> str:
+            flat = " ".join(text.split())
+            return flat if len(flat) <= limit else flat[:limit] + "…"
+
+        stdin_view = _flat(test.stdin) or "(пусто)"
+        return (
+            f"Тест {index} из {total} не пройден. "
+            f"Ввод (по одному значению в строке): {stdin_view}. "
+            f"Ожидаемый вывод: {_flat(test.expected_stdout)}."
         )
 
     # ---------- Проверка TBL_COM (табличный ответ) ----------

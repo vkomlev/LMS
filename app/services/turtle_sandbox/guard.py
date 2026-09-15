@@ -38,7 +38,7 @@ from __future__ import annotations
 
 import ast
 import re
-from typing import List
+from typing import FrozenSet, List, Literal
 
 ALLOWED_IMPORT_MODULES = frozenset({"turtle", "math", "random", "colorsys"})
 
@@ -47,6 +47,23 @@ FORBIDDEN_CALL_NAMES = frozenset({
     "getattr", "setattr", "delattr", "vars", "globals", "locals",
     "dir", "help", "breakpoint", "exit", "quit", "memoryview",
 })
+
+# tsk-953: профиль «stdin → stdout» для заданий «напишите программу» (ОГЭ-16).
+# Отличия от черепашьего профиля — ровно те, без которых задачу решить нельзя:
+#   - `input` разрешён (это и есть способ получить данные), `print` — тоже;
+#   - генераторы и генераторные выражения разрешены: 8 из 61 верного решения
+#     корпуса tsk-950 написаны как `max(x for x in a if …)` / `sum(1 for …)`.
+#     Довод стража против них — доступ к живому фрейму через `.gi_frame` —
+#     остаётся закрыт списком запрещённых атрибутов, запретом `getattr` и
+#     dunder-имён; try/with/async по-прежнему запрещены (в решениях ОГЭ их нет);
+#   - модули: без turtle/colorsys, зато стандартные «вычислительные».
+SandboxProfile = Literal["turtle", "stdio"]
+
+STDIO_ALLOWED_IMPORT_MODULES = frozenset({
+    "math", "random", "itertools", "functools", "string", "collections",
+    "fractions", "decimal", "statistics",
+})
+STDIO_FORBIDDEN_CALL_NAMES = FORBIDDEN_CALL_NAMES - {"input"}
 
 # Belt-and-suspenders поверх статьи о фреймах выше: если конструкции ниже
 # всё же где-то просочатся (баг в этом же страже), эти имена ловятся отдельно.
@@ -81,9 +98,14 @@ def _is_dunder(name: str) -> bool:
     return bool(_DUNDER_RE.match(name))
 
 
-def check_code_is_safe(source: str) -> None:
+def check_code_is_safe(source: str, profile: SandboxProfile = "turtle") -> None:
     """
     Разбирает `source` в AST и проверяет на запрещённые конструкции.
+
+    Args:
+        source: код ученика.
+        profile: `turtle` (tsk-412, по умолчанию) или `stdio` (tsk-953) — см.
+            комментарий у `SandboxProfile`.
 
     Raises:
         GuardViolation: обнаружена запрещённая конструкция (сообщение —
@@ -91,6 +113,14 @@ def check_code_is_safe(source: str) -> None:
         SyntaxError: код не парсится как Python (пробрасывается как есть,
             вызывающий код (runner.py) отличает этот случай от GuardViolation).
     """
+    allowed_modules: FrozenSet[str] = ALLOWED_IMPORT_MODULES
+    forbidden_names: FrozenSet[str] = FORBIDDEN_CALL_NAMES
+    generators_allowed = False
+    if profile == "stdio":
+        allowed_modules = STDIO_ALLOWED_IMPORT_MODULES
+        forbidden_names = STDIO_FORBIDDEN_CALL_NAMES
+        generators_allowed = True
+
     tree = ast.parse(source, mode="exec")
     violations: List[str] = []
 
@@ -98,11 +128,11 @@ def check_code_is_safe(source: str) -> None:
         if isinstance(node, ast.Import):
             for alias in node.names:
                 root_module = alias.name.split(".")[0]
-                if root_module not in ALLOWED_IMPORT_MODULES:
+                if root_module not in allowed_modules:
                     violations.append(f"import '{alias.name}' запрещён")
         elif isinstance(node, ast.ImportFrom):
             module = (node.module or "").split(".")[0]
-            if module not in ALLOWED_IMPORT_MODULES:
+            if module not in allowed_modules:
                 violations.append(f"from '{node.module}' import ... запрещён")
         elif isinstance(node, ast.Attribute):
             if _is_dunder(node.attr) or node.attr in _FORBIDDEN_ATTR_NAMES:
@@ -110,13 +140,15 @@ def check_code_is_safe(source: str) -> None:
         elif isinstance(node, ast.Name):
             if _is_dunder(node.id):
                 violations.append(f"обращение к имени '{node.id}' запрещено")
-            elif node.id in FORBIDDEN_CALL_NAMES:
+            elif node.id in forbidden_names:
                 violations.append(f"использование '{node.id}' запрещено")
         elif isinstance(node, _FORBIDDEN_STATEMENT_TYPES):
             violations.append(
                 f"конструкция '{type(node).__name__}' запрещена (try/with/async — "
                 "источник живых объектов фрейма/трейсбека/корутины)"
             )
+        elif generators_allowed:
+            continue
         elif isinstance(node, (ast.Yield, ast.YieldFrom, ast.GeneratorExp)):
             violations.append(
                 f"конструкция '{type(node).__name__}' запрещена (генератор даёт "
