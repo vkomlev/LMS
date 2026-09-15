@@ -1,0 +1,31 @@
+{
+  "allow_empty": true,
+  "items": [
+    {
+      "task_id": 4106,
+      "external_uid": "wp_nav:6:1578b1e9",
+      "title": "Точки внутри области по квадрату",
+      "before": [
+        "https://vk.com/video-53400615_456239419",
+        "https://vk.com/video-53400615_456239435"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239419",
+        "https://vk.com/video-53400615_456239435"
+      ],
+      "after": []
+    },
+    {
+      "task_id": 4108,
+      "external_uid": "wp_nav:6:1831f26f",
+      "title": "Положительные точки внутри шестиугольника",
+      "before": [
+        "https://vk.com/video-53400615_456239765"
+      ],
+      "drop": [
+        "https://vk.com/video-53400615_456239765"
+      ],
+      "after": []
+    }
+  ]
+}
