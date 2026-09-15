@@ -969,12 +969,20 @@ async def test_reminder_survives_student_without_homework(db, db_session_factory
 
 async def _lesson_with_status(
     db, *, student_id: int, teacher_id: int, days_ago: int, status: str,
-    rescheduled_to: int | None = None,
+    rescheduled_to: int | None = None, anchor: datetime | None = None,
 ) -> int:
-    """Прошедшее занятие ученика в нужном статусе участия."""
+    """Прошедшее занятие ученика в нужном статусе участия.
+
+    `anchor` — момент, от которого отсчитывается `days_ago` (по умолчанию
+    реальное «сейчас»). Тесты, где несколько занятий должны попасть в ОДНУ
+    календарную неделю (недельная сверка плана — tsk-914), обязаны передать
+    фиксированный `anchor`: иначе исход зависит от дня недели прогона
+    (tsk-818/tsk-941 — `days_ago` относительно `datetime.now()` пересекает
+    границу ISO-недели по-разному в разные дни).
+    """
     occurrence_id = await _create_occurrence(
         db, student_id=student_id, teacher_id=teacher_id,
-        scheduled_at=datetime.now(UTC) - timedelta(days=days_ago),
+        scheduled_at=(anchor or datetime.now(UTC)) - timedelta(days=days_ago),
     )
     await db.execute(
         text(
@@ -1148,7 +1156,15 @@ async def test_miss_is_paid_off_by_the_week_hours(db):
     уже созданные занятия четверга остались с ним как участником — два
     `no_show` при двух отработанных субботних часах в неделю. Оператор:
     «пропуск добавляет норматив урока, но только если он не погашен».
+
+    Три занятия обязаны попасть в ОДНУ календарную неделю, чтобы сверка «план
+    против факта» вообще сработала (`attendance_service._WEEKLY_SQL` считает
+    по `date_trunc('week', ...)`) — поэтому дни отсчитываются не от реального
+    `datetime.now()` (tsk-941: 15.09 — вторник, `days_ago=4` уходил в
+    предыдущую ISO-неделю относительно `days_ago=1/2`, и пропуск не гасился),
+    а от зафиксированной субботы, совпадающей с датой случая Курунова.
     """
+    anchor = _PACE_NOW + timedelta(days=5)  # суббота 12.09.2026, как у Курунова
     student_id, _ = await _student_with_pace(db)
     teacher_id, _ = await _new_user(db, role="teacher", name="teach")
     # План — два часа в неделю.
@@ -1156,15 +1172,18 @@ async def test_miss_is_paid_off_by_the_week_hours(db):
     await _slot(db, teacher_id=teacher_id, student_id=student_id, weekday=5, hour=11)
     # На той же неделе: призрачный пропуск и два отработанных часа.
     await _lesson_with_status(
-        db, student_id=student_id, teacher_id=teacher_id, days_ago=4, status="no_show",
+        db, student_id=student_id, teacher_id=teacher_id, days_ago=4,
+        status="no_show", anchor=anchor,
     )
     await _lesson_with_status(
-        db, student_id=student_id, teacher_id=teacher_id, days_ago=2, status="confirmed",
+        db, student_id=student_id, teacher_id=teacher_id, days_ago=2,
+        status="confirmed", anchor=anchor,
     )
     await _lesson_with_status(
-        db, student_id=student_id, teacher_id=teacher_id, days_ago=1, status="confirmed",
+        db, student_id=student_id, teacher_id=teacher_id, days_ago=1,
+        status="confirmed", anchor=anchor,
     )
-    plan = await homework_volume_service.compute(db, student_id=student_id)
+    plan = await homework_volume_service.compute(db, student_id=student_id, now=anchor)
 
     assert plan.missed_lessons == 1
     assert plan.missed_unpaid == 0, "пропуск погашен двумя отработанными часами, а нагон остался"
@@ -1197,21 +1216,28 @@ async def test_work_during_someone_elses_hour_pays_off_a_miss(db):
 
     Оператор 12.09: «ученик штатно не перенёс занятие, но фактически был на
     другом часе — это тоже нужно отслеживать».
+
+    Оба часа обязаны попасть в одну календарную неделю (tsk-941: `days_ago=3`
+    и `days_ago=2` относительно реального `datetime.now()` расходятся по
+    неделям в зависимости от дня недели прогона) — отсчитываются от
+    зафиксированного `anchor`.
     """
+    anchor = _PACE_NOW + timedelta(days=5)
     student_id, course_id = await _student_with_pace(db)
     other_id, _ = await _new_user(db, name="other")
     teacher_id, _ = await _new_user(db, role="teacher", name="teach")
     await _lesson_with_status(
-        db, student_id=student_id, teacher_id=teacher_id, days_ago=3, status="no_show",
+        db, student_id=student_id, teacher_id=teacher_id, days_ago=3,
+        status="no_show", anchor=anchor,
     )
     # Чужой час на той же неделе: наш ученик в нём не участник, но работал.
-    foreign_at = datetime.now(UTC) - timedelta(days=2)
+    foreign_at = anchor - timedelta(days=2)
     await _create_occurrence(
         db, student_id=other_id, teacher_id=teacher_id, scheduled_at=foreign_at,
     )
     await _work_in_window(db, student_id=student_id, course_id=course_id, at=foreign_at)
 
-    plan = await homework_volume_service.compute(db, student_id=student_id)
+    plan = await homework_volume_service.compute(db, student_id=student_id, now=anchor)
     assert plan.missed_lessons == 1 and plan.missed_unpaid == 0
 
 
