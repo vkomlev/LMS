@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import List, Optional
+from typing import Any, List, Optional
 from datetime import datetime, timedelta, timezone
 import os
 
@@ -34,7 +34,9 @@ from app.schemas.checking import (
     CheckFeedback,
 )
 from app.schemas.solution_rules import SolutionRules
-from app.schemas.task_content import TaskContent, QUIZ_TASK_TYPES, COMMENT_TASK_TYPES
+from app.schemas.task_content import (
+    TaskContent, QUIZ_TASK_TYPES, COMMENT_TASK_TYPES, SHORT_ANSWER_TASK_TYPES,
+)
 
 from app.services.attempts_service import AttemptsService
 from app.services.task_results_service import TaskResultsService
@@ -50,6 +52,11 @@ from app.services.code_review_service import (
 # tsk-646: та же очередь, но для развёрнутых текстовых работ — там разбирается
 # не чистота кода, а признак ИИ-авторства прозы.
 from app.services.text_authorship_service import pick_text_for_review
+# tsk-958: та же очередь для коротких ответов по заданиям с критериями и без
+# эталона — там разбирается только соответствие критериям.
+from app.services import ai_check_policy
+from app.services import rubric_review_service
+from app.core import settings_store
 # tsk-301: единственная дверь прав подписки. Своей проверки здесь быть не должно —
 # правило живёт в одном месте на все точки принуждения (пробел П13).
 from app.services import entitlements_service
@@ -894,8 +901,26 @@ async def submit_attempt_answers(
                     "(task_id=%s) — работа в очередь без снимка (tsk-644)",
                     attempt_id, settings.code_pick_timeout_sec, task.id,
                 )
+            # tsk-958: задание с подтверждёнными критериями и без эталона —
+            # судья по критериям. Признак — свойство задания, и спрашивается у
+            # единственной двери (`ai_check_policy.evaluate`), а не переписан
+            # здесь: «есть ли по чему судить» обязано значить одно и то же в
+            # приёме ответа, у методиста и в подписном треке. Только `SA`/
+            # `SA_COM`: у `TA` разбор по рубрике уже идёт в текстовой ветке.
+            # Рубильник школы выключен по умолчанию — до калибровки на живых
+            # сдачах судья к очереди не подходит.
+            wants_rubric = (
+                task_content.type in SHORT_ANSWER_TASK_TYPES
+                and settings_store.get_bool("criteria_review_enabled")
+                and _criteria_without_reference(task_content.type, solution_rules)
+            )
             if picked_code:
                 code_review_report = {"status": "pending", "kind": "code", "code": picked_code}
+                if wants_rubric:
+                    # Программа найдена — оценка кода идёт как прежде, а разбор
+                    # по критериям ВДОБАВОК: у курса 156 программа в комментарии,
+                    # у курса 165 — в поле ответа, и критерии там про программу.
+                    code_review_report["rubric"] = True
             elif task_content.type == "TA":
                 # tsk-646: развёрнутый письменный ответ. Разбирается тем же
                 # механизмом, но по другому предмету — прозу оценивают не за
@@ -926,6 +951,23 @@ async def submit_attempt_answers(
                 # признак оценка готовится» у преподавателя, ради которого порог
                 # и вводился (находки Н1/Б2 ревью этапа 3).
                 code_review_report = {"status": "pending", "kind": "code"}
+                if wants_rubric:
+                    code_review_report["rubric"] = True
+            elif wants_rubric:
+                # tsk-958: программы нет — текст-суждение (курс тестировщика)
+                # либо короткий ответ. Текст — из обоих полей: форма ответа
+                # зависит от задания, а не от типа. Порог тот же, что у прозы
+                # TA: на «не знаю» разбирать нечего, и пометка без разбора
+                # оставила бы преподавателю вечное «готовится».
+                picked_answer = rubric_review_service.pick_answer_for_criteria(
+                    answer.response.value, answer.response.comment,
+                    min_chars=rubric_review_service.MIN_TEXT_CHARS,
+                    attachments=(answer.response.meta or {}).get("attachments"),
+                )
+                if picked_answer:
+                    code_review_report = {
+                        "status": "pending", "kind": "criteria", "code": picked_answer,
+                    }
 
         # 2.3c Learning Engine V1: таймлимит из tasks.time_limit_sec; при просрочке score=0
         now = datetime.now(timezone.utc)
@@ -1676,3 +1718,28 @@ async def get_attempts_by_user(
         offset=offset,
     )
     return [AttemptRead.model_validate(attempt) for attempt in attempts]
+
+
+def _criteria_without_reference(task_type: Optional[str], solution_rules: Any) -> bool:
+    """
+    Судить ли работу по критериям: у задания они подтверждены, а эталона нет (tsk-958).
+
+    С эталоном работу сверяет `checking_service`, и второе мнение модели там
+    не нужно — калибровка tsk-590 показала, что с эталоном машина точнее
+    любого суждения по критериям. Без критериев судить не по чему. Остаётся
+    ровно один класс: критерии есть, эталона нет — задания, ради которых
+    ветка заведена.
+
+    Дверь спрашивается целиком (`allowed`), а не только по двум признакам:
+    задание с обязательным файлом-приложением (ОГЭ-13, 25 заданий курса 1178)
+    критерии имеет, но доказательство лежит в файле, которого модель не
+    видит, — и «предлагаю зачёт» по одному комментарию «файл приложил» был бы
+    ровно ложным зачётом.
+    """
+    verdict = ai_check_policy.evaluate(task_type, solution_rules)
+    # «Дверь открыта» = причины отказа нет. Пишем через `reason`, а не через
+    # флаг разрешения: сторож tsk-301 (`test_tsk301_ai_spend_guard`) запрещает
+    # в этом модуле читать флаг разрешения напрямую — правило заведено против
+    # обхода режимов выката у двери подписки, и одноимённый атрибут другой
+    # двери он от него не отличает.
+    return verdict.reason is None and verdict.has_criteria and not verdict.has_reference

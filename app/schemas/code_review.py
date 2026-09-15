@@ -167,6 +167,16 @@ class RubricReviewItem(BaseModel):
     evidence: Optional[str] = Field(
         None, description="Цитата из ответа ученика либо объяснение, почему пункт не засчитан"
     )
+    kind: Optional[str] = Field(
+        None,
+        description=(
+            "tsk-958: род пункта. `must` — обязательное требование (met=yes — "
+            "выполнено); `reject` — типичная ошибка, которую нельзя засчитывать "
+            "(met=yes — в ответе она ЕСТЬ, и это довод против зачёта). Пусто у "
+            "отчётов до tsk-958 — они все про `must`"
+        ),
+        examples=["must", "reject"],
+    )
 
 
 class RubricReview(BaseModel):
@@ -194,6 +204,27 @@ class RubricReview(BaseModel):
     )
     max_score: Optional[int] = Field(
         None, description="Потолок рубрики — чтобы предложенный балл читался («4 из 6»)"
+    )
+    source: Optional[str] = Field(
+        None,
+        description=(
+            "tsk-958: откуда критерии. `text_rubric` — рубрика развёрнутого ответа "
+            "с весами (итог — предложенный балл); `grading_criteria` — критерии "
+            "без весов (итог — предложенный вердикт)"
+        ),
+        examples=["text_rubric", "grading_criteria"],
+    )
+    suggested_verdict: Optional[str] = Field(
+        None,
+        description=(
+            "tsk-958: предложение по критериям без весов, считает код, не модель. "
+            "`pass` — все обязательные пункты выполнены и ни одна из ошибок из "
+            "`reject` не найдена; `fail` — хоть один обязательный пункт не выполнен "
+            "либо найдена ошибка из `reject`; `unclear` — по тексту не решить, нужен "
+            "человек. Пусто у рубрики с весами. Предложение, а не оценка: зачёт "
+            "ставит преподаватель"
+        ),
+        examples=["pass", "fail", "unclear", None],
     )
     summary: Optional[str] = Field(
         None, description="1–2 предложения: что в работе есть, чего не хватает"
@@ -231,10 +262,12 @@ class CodeReviewReport(BaseModel):
         None,
         description=(
             "Что именно разобрано: `code` — программа (tsk-302), `text` — развёрнутый "
-            "письменный ответ (tsk-646). Пусто у отчётов, созданных до появления "
+            "письменный ответ (tsk-646), `criteria` — короткий ответ по заданию с "
+            "критериями и без эталона (tsk-958; только разбор по критериям, без "
+            "признака авторства). Пусто у отчётов, созданных до появления "
             "текстовой ветки: они все про код"
         ),
-        examples=["code", "text"],
+        examples=["code", "text", "criteria"],
     )
     language: Optional[str] = Field(None, examples=["Python", "C++ (Arduino)"])
     code_quality: Optional[CodeReviewQuality] = None
@@ -259,8 +292,9 @@ class CodeReviewReport(BaseModel):
     rubric_review: Optional[RubricReview] = Field(
         None,
         description=(
-            "Раскладка развёрнутого ответа по рубрике задания (tsk-658). Есть только "
-            "у текстовых работ, у которых задание несёт критерии. Опора для "
+            "Раскладка ответа по критериям задания (tsk-658). Есть у текстовых работ "
+            "с рубрикой и — с tsk-958 — у коротких ответов (`kind=criteria`, а также "
+            "у кодовых работ по заданиям с критериями без эталона). Опора для "
             "преподавателя: зачёт по таким работам ставит человек"
         ),
     )

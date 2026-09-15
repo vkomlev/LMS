@@ -78,9 +78,13 @@ _PENDING_SQL = """
            -- ветки, ключа нет — они все про код, отсюда COALESCE.
            COALESCE(tr.code_review->>'kind', 'code') AS kind,
            tr.answer_json->'response'->>'text'     AS body_text,
-           -- tsk-658: критерии задания. Нужны только текстовой ветке — по ним
-           -- раскладывается ответ; у кода своя рубрика в промпте.
-           t.solution_rules                        AS solution_rules
+           -- tsk-658: критерии задания. По ним раскладывается ответ в текстовой
+           -- ветке и — с tsk-958 — у коротких ответов по критериям.
+           t.solution_rules                        AS solution_rules,
+           -- tsk-958: у кодовой работы по заданию с критериями без эталона
+           -- разбор по критериям идёт ВДОБАВОК к оценке кода. Пометку ставит
+           -- приём ответа; у прежних работ ключа нет — отсюда COALESCE.
+           COALESCE((tr.code_review->>'rubric')::bool, false) AS wants_rubric
     FROM task_results tr
     JOIN tasks t ON t.id = tr.task_id
     WHERE tr.code_review->>'status' = 'pending'
@@ -173,7 +177,21 @@ async def code_review_cron_tick(
     for row in rows:
         (result_id, student_id, attempt_id, task_id, course_id, value, comment,
          stem, attachments, attempts, backfill, code_snapshot, kind, body_text,
-         solution_rules) = row
+         solution_rules, wants_rubric) = row
+
+        # tsk-958: короткий ответ по заданию с критериями и без эталона.
+        # Ни линтера, ни признака авторства: для `SA_COM` детектор выключен
+        # намеренно (tsk-646), а здесь нужен только разбор по критериям.
+        if kind == "criteria":
+            await _process_criteria_row(
+                factory, summary,
+                result_id=result_id, student_id=student_id, stem=stem,
+                snapshot=code_snapshot, value=value, comment=comment,
+                attachments=attachments, solution_rules=solution_rules,
+                attempts=attempts, backfill=backfill,
+                max_attempts=settings.code_review_max_attempts,
+            )
+            continue
 
         # tsk-646: развёрнутый письменный ответ разбирается другой рубрикой
         # и без линтера — предмет другой, механизм очереди тот же.
@@ -238,8 +256,24 @@ async def code_review_cron_tick(
         )
 
         error = verdict.get("error")
+        attempts_done = int(attempts) + 1
+        can_retry = bool(verdict.get("retryable")) and attempts_done < settings.code_review_max_attempts
+
+        # tsk-958: разбор по критериям задания — отдельным вызовом, независимо
+        # от оценки кода (довод tsk-646 про оси). Судье уходит и программа, и
+        # поля ответа: у курса 156 в поле ответа — вывод, а критерии могут быть
+        # и про него. При повторе не считаем: работа остаётся в очереди целиком.
+        rubric: Dict[str, Any] = {}
+        if wants_rubric and not (error and can_retry):
+            rubric = await _rubric_for_criteria(
+                rubric_review_service.pick_answer_for_criteria(
+                    value, comment, code, attachments=attachments,
+                ),
+                solution_rules=solution_rules, stem=stem, student_id=student_id,
+            )
+
         if not error:
-            payload: Dict[str, Any] = {"status": "done", **verdict}
+            payload: Dict[str, Any] = {"status": "done", **verdict, **rubric}
             if static_ok:
                 payload["static"] = static
             if unseen is not None:
@@ -248,31 +282,38 @@ async def code_review_cron_tick(
             summary["reviewed"] += 1
             continue
 
-        attempts_done = int(attempts) + 1
-        can_retry = bool(verdict.get("retryable")) and attempts_done < settings.code_review_max_attempts
         if can_retry:
             # Остаёмся в очереди: следующий тик попробует снова. Переносим
             # ФАКТИЧЕСКИ использованный код, а не то, что лежало в снимке:
             # если снимка не было и код прочитан из файла, повтор иначе
             # остался бы ни с чем — файл к тому времени мог исчезнуть.
+            # Пометку «нужен разбор по критериям» переносим по той же причине:
+            # запись идёт целиком, без переноса она пропала бы на первом повторе.
             await _write(factory, result_id, {
                 "status": "pending",
                 "attempts": attempts_done,
                 "last_error": error,
+                **({"rubric": True} if wants_rubric else {}),
             }, backfill=backfill, code_snapshot=code)
             summary["retried"] += 1
         else:
             # Модель недоступна окончательно — но статический анализ мог
             # сработать. Отдаём что есть: это ровно тот отчёт, который
             # преподаватель видел до этапа 3.
+            # tsk-958: посчитанный разбор по критериям — такая же проверяемая
+            # часть отчёта, как pylint: с ним работа закрывается, а не числится
+            # неудачей с пустым отчётом.
+            has_rubric = bool(rubric.get("rubric_review", {}).get("items"))
             payload = {
-                "status": "done" if static_ok else "failed",
+                "status": "done" if (static_ok or has_rubric) else "failed",
                 "attempts": attempts_done,
                 "error": error,
                 "message": verdict.get("message"),
+                **rubric,
             }
             if static_ok:
                 payload["static"] = static
+            if static_ok or has_rubric:
                 payload["degraded"] = True
             # Признак непройденной конструкции модели не требует — значит и при
             # её отказе преподаватель получает его, а не пустой отчёт.
@@ -281,7 +322,7 @@ async def code_review_cron_tick(
             await _write(factory, result_id, payload, backfill=backfill)
             # Считаем раздельно: в БД у деградированной работы `done`, и
             # называть её в логе провалом — врать самому себе при разборе.
-            summary["degraded" if static_ok else "failed"] += 1
+            summary["degraded" if (static_ok or has_rubric) else "failed"] += 1
 
     logger.info(
         "tsk-302 code_review_cron_tick done picked=%s reviewed=%s degraded=%s "
@@ -402,6 +443,122 @@ async def _process_text_row(
         payload["degraded"] = True
     await _write(factory, result_id, payload, backfill=backfill)
     summary["degraded" if (signals or has_rubric) else "failed"] += 1
+
+
+async def _rubric_for_criteria(
+    body: Optional[str],
+    *,
+    solution_rules: Any,
+    stem: Optional[str],
+    student_id: Optional[int],
+) -> Dict[str, Any]:
+    """
+    Разбор короткого ответа по критериям задания (tsk-958) — одна точка вызова.
+
+    Рубильник `criteria_review_enabled` проверяется здесь, в момент разбора,
+    а не только при постановке в очередь: выключил оператор настройку — и
+    работы, помеченные до выключения, за модель не платят. Выключенный разбор
+    — пустой результат, как и «разбирать не по чему».
+
+    Порога длины нет: сюда приходит и программа (две строки кода бывают полным
+    ответом), а короткие текстовые ответы отсёк приём ответа при постановке
+    в очередь (`MIN_TEXT_CHARS`).
+    """
+    if not body or not settings_store.get_bool("criteria_review_enabled"):
+        return {}
+    return await rubric_review_service.review_against_rubric(
+        body, solution_rules=solution_rules, task_stem=stem, student_id=student_id,
+        purpose=rubric_review_service.CRITERIA_PURPOSE, min_chars=0,
+    )
+
+
+async def _process_criteria_row(
+    factory: async_sessionmaker[AsyncSession],
+    summary: Dict[str, Any],
+    *,
+    result_id: int,
+    student_id: Optional[int],
+    stem: Optional[str],
+    snapshot: Optional[str],
+    value: Optional[str],
+    comment: Optional[str],
+    attachments: Any,
+    solution_rules: Any,
+    attempts: int,
+    backfill: bool,
+    max_attempts: int,
+) -> None:
+    """
+    Разбор одной работы вида `criteria` (tsk-958): короткий ответ без программы
+    по заданию с подтверждёнными критериями и без эталона.
+
+    Отличия от текстовой ветки (`_process_text_row`) по существу: признака
+    авторства здесь нет вовсе (для `SA_COM` он выключен по замеру tsk-646),
+    и потому единственный вызов модели — сам разбор по критериям. Снимок
+    ответа снят при приёме; если его нет (пометка поставлена иначе), текст
+    собирается из полей ответа заново — они у сданной работы неизменны.
+    """
+    body = snapshot or rubric_review_service.pick_answer_for_criteria(
+        value, comment, attachments=attachments,
+    )
+    if not body:
+        await _write(factory, result_id, {
+            "status": "skipped", "kind": "criteria", "reason": "too_short",
+        }, backfill=backfill)
+        summary["skipped"] += 1
+        return
+
+    if not settings_store.get_bool("criteria_review_enabled"):
+        # Выключили после постановки в очередь. Не «failed» и не вечный
+        # «pending»: преподаватель увидит честное «разбор не делали».
+        await _write(factory, result_id, {
+            "status": "skipped", "kind": "criteria", "reason": "disabled",
+        }, backfill=backfill)
+        summary["skipped"] += 1
+        return
+
+    rubric = await _rubric_for_criteria(
+        body, solution_rules=solution_rules, stem=stem, student_id=student_id,
+    )
+    if not rubric:
+        # Критерии у задания пропали между сдачей и тиком (методист снял
+        # подтверждение) — разбирать не по чему.
+        await _write(factory, result_id, {
+            "status": "skipped", "kind": "criteria", "reason": "no_criteria",
+        }, backfill=backfill)
+        summary["skipped"] += 1
+        return
+
+    review = rubric.get("rubric_review") or {}
+    error = review.get("error")
+    if not error:
+        await _write(
+            factory, result_id, {"status": "done", "kind": "criteria", **rubric},
+            backfill=backfill,
+        )
+        summary["reviewed"] += 1
+        return
+
+    attempts_done = int(attempts) + 1
+    if bool(review.get("retryable")) and attempts_done < max_attempts:
+        await _write(factory, result_id, {
+            "status": "pending",
+            "kind": "criteria",
+            "attempts": attempts_done,
+            "last_error": error,
+        }, backfill=backfill, code_snapshot=body)
+        summary["retried"] += 1
+        return
+
+    await _write(factory, result_id, {
+        "status": "failed",
+        "kind": "criteria",
+        "attempts": attempts_done,
+        "error": error,
+        "message": review.get("message"),
+        **rubric,
+    }, backfill=backfill)
+    summary["failed"] += 1
 
 
 async def _write(
