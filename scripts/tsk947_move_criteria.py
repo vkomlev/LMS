@@ -34,6 +34,7 @@
     python scripts/tsk947_move_criteria.py --source       # правка исходника
     LMS_API_KEY=... python scripts/tsk947_move_criteria.py --dry-run
     LMS_API_KEY=... python scripts/tsk947_move_criteria.py --apply [--with-reference --status draft]
+    LMS_API_KEY=... python scripts/tsk947_move_criteria.py --approve-drafts [--apply]   # после вычитки оператором
 """
 from __future__ import annotations
 
@@ -346,6 +347,42 @@ def run_lms(ids: list[int], *, apply: bool, add_criteria: bool, status: str, rep
     logger.info("отчёт: %s (%s строк)", report, len(rows))
 
 
+def approve_drafts(ids: list[int], *, apply: bool, report: Path) -> None:
+    """Подтвердить черновики критериев (`draft` → `approved`, reviewed_by=2).
+
+    Оператор вычитал 39 черновиков заданий с эталоном 2026-09-15 и согласовал
+    пакетом. `POST /tasks/{id}/grading-criteria` с approve сервисному ключу
+    запрещён (403 — защита от самоподтверждения), поэтому, как в tsk-590,
+    подтверждение идёт общим `PATCH` с явным именем подтвердившего.
+    """
+    rows: list[dict[str, Any]] = []
+    for task_id in ids:
+        current = _api("GET", f"/tasks/{task_id}")
+        rules = dict(current.get("solution_rules") or {})
+        gc = dict(rules.get("grading_criteria") or {})
+        if gc.get("status") != "draft":
+            logger.info("id=%s: критерии %s, пропуск", task_id, gc.get("status"))
+            continue
+        gc.update({
+            "status": "approved", "reviewed_by": REVIEWED_BY,
+            "reviewed_at": datetime.now(timezone.utc).isoformat(),
+            "notes": ((gc.get("notes") or "").rstrip(".") + ". Подтверждено оператором пакетом 2026-09-15 (tsk-947).").lstrip(". "),
+        })
+        rules["grading_criteria"] = gc
+        row: dict[str, Any] = {"id": task_id, "external_uid": current.get("external_uid"), "must": gc["must"]}
+        if apply:
+            updated = _api("PATCH", f"/tasks/{task_id}", {"solution_rules": rules})
+            new_gc = (updated.get("solution_rules") or {}).get("grading_criteria") or {}
+            row["result"] = {"status": new_gc.get("status"), "reviewed_by": new_gc.get("reviewed_by")}
+            logger.info("id=%s: критерии → %s (reviewed_by=%s)", task_id, new_gc.get("status"), new_gc.get("reviewed_by"))
+        else:
+            logger.info("id=%s: draft → approved (план), must=%s", task_id, len(gc["must"]))
+        rows.append(row)
+        report.parent.mkdir(parents=True, exist_ok=True)
+        _dump(report, rows)
+    logger.info("подтверждение: %s заданий, отчёт %s", len(rows), report)
+
+
 def plan_source() -> None:
     changes = process_source(write=False)
     by_course: dict[str, int] = {}
@@ -368,12 +405,21 @@ def main() -> int:
                         help="включить 40 заданий с эталоном (им критерии кладутся в правило)")
     parser.add_argument("--status", choices=("approved", "draft"), default="draft",
                         help="статус критериев для заданий с эталоном (по умолчанию draft)")
+    parser.add_argument("--approve-drafts", action="store_true",
+                        help="подтвердить черновики критериев у заданий с эталоном (с --apply — записать)")
     parser.add_argument("--ids", type=str, default=None, help="только эти id через запятую (пробный прогон)")
     parser.add_argument("--report", type=Path,
                         default=Path("reviews") / "tsk947" / f"lms-{datetime.now():%Y%m%d-%H%M%S}.json")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(message)s", stream=sys.stdout)
 
+    if args.approve_drafts:
+        ids = list(REFERENCE_IDS)
+        if args.ids:
+            wanted = {int(x) for x in args.ids.split(",")}
+            ids = [i for i in ids if i in wanted]
+        approve_drafts(ids, apply=args.apply, report=args.report)
+        return 0
     if not (args.source or args.dry_run or args.apply):
         plan_source()
         return 0
