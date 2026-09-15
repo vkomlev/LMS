@@ -1,0 +1,197 @@
+итог: ok=81 fail=0
+OK   1.1-chto-takoe-testirovanie "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-1-osnovy-testirovaniya/qa-chto-takoe-testirovanie/"
+OK   1.2-oshibka-defekt-otkaz "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-1-osnovy-testirovaniya/qa-oshibka-defekt-otkaz/"
+OK   1.3-verifikaciya-validaciya "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-1-osnovy-testirovaniya/qa-verifikaciya-validaciya/"
+OK   1.4-sem-principov "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-1-osnovy-testirovaniya/qa-sem-principov/"
+OK   1.5-test-process-testware "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-1-osnovy-testirovaniya/qa-test-process-testware/"
+OK   1.6-testovye-dannye "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-1-osnovy-testirovaniya/qa-testovye-dannye/"
+OK   10.1-chto-eto-i-kogda-silnee-testkeisov "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-10-issledovatelskoe-testirovanie/qa-chto-takoe-issledovatelskoe-testirovanie/"
+OK   10.2-test-tury-chit-listy "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-10-issledovatelskoe-testirovanie/qa-test-tury-chit-listy/"
+OK   10.3-mnemoniki-testirovshchika "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-10-issledovatelskoe-testirovanie/qa-mnemoniki-testirovshchika/"
+OK   10.4-sessionnoe-testirovanie-hartiya-otchet "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-10-issledovatelskoe-testirovanie/qa-sessionnoe-testirovanie-hartiya-otchet/"
+OK   11.1-specifika-mobilnogo-testirovaniya "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-11-mobilnoe-testirovanie/qa-specifika-mobilnogo-testirovaniya/"
+OK   11.2-mobilnyy-cheklist "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-11-mobilnoe-testirovanie/qa-mobilnyy-cheklist/"
+OK   11.3-mobilnaya-vyorstka-sborki-dokazatelstva "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-11-mobilnoe-testirovanie/qa-mobilnaya-vyorstka-sborki-dokazatelstva/"
+OK   12.1-bezopasnost-dlya-manual-qa "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-12-bezopasnost-proizvoditelnost/qa-bezopasnost-dlya-manual-qa/"
+OK   12.2-granicy-otvetstvennosti "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-12-bezopasnost-proizvoditelnost/qa-granicy-otvetstvennosti/"
+OK   12.3-nagruzka-jmeter-obzorno "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-12-bezopasnost-proizvoditelnost/qa-nagruzka-jmeter-obzorno/"
+OK   13.1-test-plan-zachem-i-chto-vnutri "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-13-upravlenie-testovoy-deyatelnostyu/qa-test-plan-zachem-i-chto-vnutri/"
+OK   13.2-kriterii-vhoda-vyhoda "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-13-upravlenie-testovoy-deyatelnostyu/qa-kriterii-vhoda-vyhoda/"
+OK   13.3-riski-produkta-i-proekta "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-13-upravlenie-testovoy-deyatelnostyu/qa-riski-produkta-i-proekta/"
+OK   13.4-monitoring-kontrol-metriki "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-13-upravlenie-testovoy-deyatelnostyu/qa-monitoring-kontrol-metriki/"
+OK   13.5-zavershenie-otchet-kommunikaciya "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-13-upravlenie-testovoy-deyatelnostyu/qa-zavershenie-otchet-kommunikaciya/"
+OK   14.1-gde-ii-uskoryaet "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-14-ii-pomoshchnik-testirovshchika/qa-gde-ii-uskoryaet/"
+OK   14.2-granicy-i-riski-ii "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-14-ii-pomoshchnik-testirovshchika/qa-granicy-i-riski-ii/"
+OK   15.1-chto-avtomatizirovat-piramida-roi "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-15-avtomatizaciya-obzor-i-most/qa-chto-avtomatizirovat-piramida-roi/"
+OK   17.1-rezyume-portfolio-bez-kommercheskogo-opyta "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-17-trudoustroystvo/qa-rezyume-portfolio-bez-kommercheskogo-opyta/"
+OK   17.2-gde-iskat-rabotu-lichnyy-brend-vybor-kompanii "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-17-trudoustroystvo/qa-gde-iskat-rabotu-lichnyy-brend-vybor-kompanii/"
+OK   17.3-tehnicheskoe-sobesedovanie-top-30-voprosov "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-17-trudoustroystvo/qa-tehnicheskoe-sobesedovanie-top-30-voprosov/"
+OK   17.4-testovoe-zadanie-otkazy-vyhod-na-rabotu-glossariy "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-17-trudoustroystvo/qa-testovoe-zadanie-otkazy-vyhod-na-rabotu-glossariy/"
+OK   2.1-sdlc-modeli "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-2-sdlc-agile/qa-sdlc-modeli/"
+OK   2.2-agile-scrum-kanban "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-2-sdlc-agile/qa-agile-scrum-kanban/"
+OK   2.3-urovni-testirovaniya "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-2-sdlc-agile/qa-urovni-testirovaniya/"
+OK   2.4-tipy-testirovaniya "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-2-sdlc-agile/qa-tipy-testirovaniya/"
+OK   2.5-smouk-sanity-regress-piramida "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-2-sdlc-agile/qa-smouk-sanity-regress-piramida/"
+OK   3.1-klient-server-arhitektura "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-3-kak-ustroeno-po/qa-klient-server-arhitektura/"
+OK   3.2-set-dlya-testirovshchika "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-3-kak-ustroeno-po/qa-set-dlya-testirovshchika/"
+OK   3.3-http-metody-idempotentnost "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-3-kak-ustroeno-po/qa-http-metody-idempotentnost/"
+OK   3.4-kody-otveta-https "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-3-kak-ustroeno-po/qa-kody-otveta-https/"
+OK   3.5-cookies-storage-auth "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-3-kak-ustroeno-po/qa-cookies-storage-auth/"
+OK   3.6-html-css-js-json-xml "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-3-kak-ustroeno-po/qa-html-css-js-json-xml/"
+OK   3.7-devtools "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-3-kak-ustroeno-po/qa-devtools/"
+OK   3.8-komandnaya-stroka-logi-git "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-3-kak-ustroeno-po/qa-komandnaya-stroka-logi-git/"
+OK   4.1-formaty-trebovaniy "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-4-trebovaniya-test-analiz/qa-formaty-trebovaniy/"
+OK   4.2-harakteristiki-trebovaniy "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-4-trebovaniya-test-analiz/qa-harakteristiki-trebovaniy/"
+OK   4.3-markery-neopredelennosti "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-4-trebovaniya-test-analiz/qa-markery-neopredelennosti/"
+OK   4.4-staticheskoe-testirovanie "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-4-trebovaniya-test-analiz/qa-statisticheskoe-testirovanie/"
+OK   4.5-tipy-obzora-trebovaniy "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-4-trebovaniya-test-analiz/qa-tipy-obzora-trebovaniy/"
+OK   4.6-test-analiz "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-4-trebovaniya-test-analiz/qa-test-analiz/"
+OK   5.1-pozitivnye-negativnye-proverki "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-5-test-dizayn/qa-pozitivnye-negativnye-proverki/"
+OK   5.4-tablicy-resheniy "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-5-test-dizayn/qa-tablicy-resheniy/"
+OK   5.5-sostoyaniya-perehody "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-5-test-dizayn/qa-sostoyaniya-perehody/"
+OK   5.6-poparnoe-testirovanie "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-5-test-dizayn/qa-poparnoe-testirovanie/"
+OK   5.7-error-guessing "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-5-test-dizayn/qa-error-guessing/"
+OK   5.8-pokrytie-testami "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-5-test-dizayn/qa-pokrytie-testami/"
+OK   5.9-checklist-vs-testcase "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-5-test-dizayn/qa-checklist-vs-testcase/"
+OK   6.1-checklisty "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-6-testovaya-dokumentaciya/qa-checklisty/"
+OK   6.2-test-keysy-syyty "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-6-testovaya-dokumentaciya/qa-test-keysy-syyty/"
+OK   6.3-testovye-scenarii "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-6-testovaya-dokumentaciya/qa-testovye-scenarii/"
+OK   6.4-bag-report "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-6-testovaya-dokumentaciya/qa-bag-report/"
+OK   6.5-lokalizaciya-generalizaciya "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-6-testovaya-dokumentaciya/qa-lokalizaciya-generalizaciya/"
+OK   6.6-severity-priority "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-6-testovaya-dokumentaciya/qa-severity-priority/"
+OK   6.7-bag-trekery "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-6-testovaya-dokumentaciya/qa-bag-trekery/"
+OK   6.8-test-menedzhment "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-6-testovaya-dokumentaciya/qa-test-menedzhment/"
+OK   7.1-iz-chego-sostoit-veb-produkt "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-7-veb-testirovanie/qa-iz-chego-sostoit-veb-produkt/"
+OK   7.2-vyorstka-adaptivnost "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-7-veb-testirovanie/qa-vyorstka-adaptivnost/"
+OK   7.3-formy-vvoda-validaciya "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-7-veb-testirovanie/qa-formy-vvoda-validaciya/"
+OK   7.4-krossbrauzernost-lokalizaciya "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-7-veb-testirovanie/qa-krossbrauzernost-lokalizaciya/"
+OK   7.5-dostupnost-bazovyy-chek "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-7-veb-testirovanie/qa-dostupnost-bazovyy-chek/"
+OK   7.6-yuzabiliti "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-7-veb-testirovanie/qa-yuzabiliti/"
+OK   8.1-api-rest-soap "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-8-api-postman/qa-api-rest-soap/"
+OK   8.2-postman-kollekcii-okruzheniya "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-8-api-postman/qa-postman-kollekcii-okruzheniya/"
+OK   8.3-testirovanie-po-dokumentacii-swagger "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-8-api-postman/qa-testirovanie-po-dokumentacii-swagger/"
+OK   8.4-proverki-otveta-api "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-8-api-postman/qa-proverki-otveta-api/"
+OK   8.5-avtorizaciya-uchebnyy-api "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-8-api-postman/qa-avtorizaciya-uchebnyy-api/"
+OK   8.6-negativnye-api-proverki "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-8-api-postman/qa-negativnye-api-proverki/"
+OK   9.1-sql-tablicy-klyuchi "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-9-sql-dannye/qa-sql-tablicy-klyuchi/"
+OK   9.2-select-where-like-order-limit "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-9-sql-dannye/qa-select-where-like-order-limit/"
+OK   9.3-funkcii-strok-daty "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-9-sql-dannye/qa-funkcii-strok-daty/"
+OK   9.4-join-proverka-svyazey "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-9-sql-dannye/qa-join-proverka-svyazey/"
+OK   9.5-group-by-agregaty "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-9-sql-dannye/qa-group-by-agregaty/"
+OK   9.6-podzaprosy-obzorno "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-9-sql-dannye/qa-podzaprosy-obzorno/"
+OK   9.7-insert-update-delete-ddl-riski "remote_url": "https://victor-komlev.ru/qa-manual-navigator-po-kursu/qa-tema-9-sql-dannye/qa-insert-update-delete-ddl-riski/"
+итог: ok=81 fail=0
+FAIL 2.5-smouk-sanity-regress-piramida
+    "lint": [],
+    "successful": 0,
+    "failed": 1,
+    "items": [
+      {
+        "global_uid": "authored:ruchnoe-testirovanie:smouk-sanity-regress-piramida",
+        "success": false,
+        "remote_id": null,
+        "remote_url": null,
+        "events": [],
+        "error": "slug lookup failed (не CREATE, чтобы не создать дубль): HTTPSConnectionPool(host='victor-komlev.ru', port=443): Read timed out. (read timeout=30)"
+      }
+    ]
+  }
+}
+FAIL 3.1-klient-server-arhitektura
+D:\Work\ContentBackbone\.venv\Scripts\python.exe: Error while finding module specification for 'monolith.app_cli.main' (ModuleNotFoundError: No module named 'monolith')
+FAIL 3.2-set-dlya-testirovshchika
+D:\Work\ContentBackbone\.venv\Scripts\python.exe: Error while finding module specification for 'monolith.app_cli.main' (ModuleNotFoundError: No module named 'monolith')
+FAIL 3.3-http-metody-idempotentnost
+D:\Work\ContentBackbone\.venv\Scripts\python.exe: Error while finding module specification for 'monolith.app_cli.main' (ModuleNotFoundError: No module named 'monolith')
+FAIL 3.4-kody-otveta-https
+D:\Work\ContentBackbone\.venv\Scripts\python.exe: Error while finding module specification for 'monolith.app_cli.main' (ModuleNotFoundError: No module named 'monolith')
+FAIL 3.5-cookies-storage-auth
+D:\Work\ContentBackbone\.venv\Scripts\python.exe: Error while finding module specification for 'monolith.app_cli.main' (ModuleNotFoundError: No module named 'monolith')
+FAIL 3.6-html-css-js-json-xml
+D:\Work\ContentBackbone\.venv\Scripts\python.exe: Error while finding module specification for 'monolith.app_cli.main' (ModuleNotFoundError: No module named 'monolith')
+FAIL 3.7-devtools
+D:\Work\ContentBackbone\.venv\Scripts\python.exe: Error while finding module specification for 'monolith.app_cli.main' (ModuleNotFoundError: No module named 'monolith')
+FAIL 3.8-komandnaya-stroka-logi-git
+D:\Work\ContentBackbone\.venv\Scripts\python.exe: Error while finding module specification for 'monolith.app_cli.main' (ModuleNotFoundError: No module named 'monolith')
+FAIL 4.1-formaty-trebovaniy
+D:\Work\ContentBackbone\.venv\Scripts\python.exe: Error while finding module specification for 'monolith.app_cli.main' (ModuleNotFoundError: No module named 'monolith')
+FAIL 4.2-harakteristiki-trebovaniy
+D:\Work\ContentBackbone\.venv\Scripts\python.exe: Error while finding module specification for 'monolith.app_cli.main' (ModuleNotFoundError: No module named 'monolith')
+FAIL 4.3-markery-neopredelennosti
+D:\Work\ContentBackbone\.venv\Scripts\python.exe: Error while finding module specification for 'monolith.app_cli.main' (ModuleNotFoundError: No module named 'monolith')
+FAIL 4.4-staticheskoe-testirovanie
+D:\Work\ContentBackbone\.venv\Scripts\python.exe: Error while finding module specification for 'monolith.app_cli.main' (ModuleNotFoundError: No module named 'monolith')
+FAIL 4.5-tipy-obzora-trebovaniy
+D:\Work\ContentBackbone\.venv\Scripts\python.exe: Error while finding module specification for 'monolith.app_cli.main' (ModuleNotFoundError: No module named 'monolith')
+FAIL 4.6-test-analiz
+D:\Work\ContentBackbone\.venv\Scripts\python.exe: Error while finding module specification for 'monolith.app_cli.main' (ModuleNotFoundError: No module named 'monolith')
+FAIL 5.1-pozitivnye-negativnye-proverki
+D:\Work\ContentBackbone\.venv\Scripts\python.exe: Error while finding module specification for 'monolith.app_cli.main' (ModuleNotFoundError: No module named 'monolith')
+FAIL 5.2-klassy-ekvivalentnosti
+D:\Work\ContentBackbone\.venv\Scripts\python.exe: Error while finding module specification for 'monolith.app_cli.main' (ModuleNotFoundError: No module named 'monolith')
+FAIL 5.4-tablicy-resheniy
+D:\Work\ContentBackbone\.venv\Scripts\python.exe: Error while finding module specification for 'monolith.app_cli.main' (ModuleNotFoundError: No module named 'monolith')
+FAIL 5.5-sostoyaniya-perehody
+D:\Work\ContentBackbone\.venv\Scripts\python.exe: Error while finding module specification for 'monolith.app_cli.main' (ModuleNotFoundError: No module named 'monolith')
+FAIL 5.6-poparnoe-testirovanie
+D:\Work\ContentBackbone\.venv\Scripts\python.exe: Error while finding module specification for 'monolith.app_cli.main' (ModuleNotFoundError: No module named 'monolith')
+FAIL 5.7-error-guessing
+D:\Work\ContentBackbone\.venv\Scripts\python.exe: Error while finding module specification for 'monolith.app_cli.main' (ModuleNotFoundError: No module named 'monolith')
+FAIL 5.8-pokrytie-testami
+D:\Work\ContentBackbone\.venv\Scripts\python.exe: Error while finding module specification for 'monolith.app_cli.main' (ModuleNotFoundError: No module named 'monolith')
+FAIL 5.9-checklist-vs-testcase
+D:\Work\ContentBackbone\.venv\Scripts\python.exe: Error while finding module specification for 'monolith.app_cli.main' (ModuleNotFoundError: No module named 'monolith')
+FAIL 6.1-checklisty
+D:\Work\ContentBackbone\.venv\Scripts\python.exe: Error while finding module specification for 'monolith.app_cli.main' (ModuleNotFoundError: No module named 'monolith')
+FAIL 6.2-test-keysy-syyty
+D:\Work\ContentBackbone\.venv\Scripts\python.exe: Error while finding module specification for 'monolith.app_cli.main' (ModuleNotFoundError: No module named 'monolith')
+FAIL 6.3-testovye-scenarii
+D:\Work\ContentBackbone\.venv\Scripts\python.exe: Error while finding module specification for 'monolith.app_cli.main' (ModuleNotFoundError: No module named 'monolith')
+FAIL 6.4-bag-report
+D:\Work\ContentBackbone\.venv\Scripts\python.exe: Error while finding module specification for 'monolith.app_cli.main' (ModuleNotFoundError: No module named 'monolith')
+FAIL 6.5-lokalizaciya-generalizaciya
+D:\Work\ContentBackbone\.venv\Scripts\python.exe: Error while finding module specification for 'monolith.app_cli.main' (ModuleNotFoundError: No module named 'monolith')
+FAIL 6.6-severity-priority
+D:\Work\ContentBackbone\.venv\Scripts\python.exe: Error while finding module specification for 'monolith.app_cli.main' (ModuleNotFoundError: No module named 'monolith')
+FAIL 6.7-bag-trekery
+D:\Work\ContentBackbone\.venv\Scripts\python.exe: Error while finding module specification for 'monolith.app_cli.main' (ModuleNotFoundError: No module named 'monolith')
+FAIL 6.8-test-menedzhment
+D:\Work\ContentBackbone\.venv\Scripts\python.exe: Error while finding module specification for 'monolith.app_cli.main' (ModuleNotFoundError: No module named 'monolith')
+FAIL 7.1-iz-chego-sostoit-veb-produkt
+D:\Work\ContentBackbone\.venv\Scripts\python.exe: Error while finding module specification for 'monolith.app_cli.main' (ModuleNotFoundError: No module named 'monolith')
+FAIL 7.2-vyorstka-adaptivnost
+D:\Work\ContentBackbone\.venv\Scripts\python.exe: Error while finding module specification for 'monolith.app_cli.main' (ModuleNotFoundError: No module named 'monolith')
+FAIL 7.3-formy-vvoda-validaciya
+D:\Work\ContentBackbone\.venv\Scripts\python.exe: Error while finding module specification for 'monolith.app_cli.main' (ModuleNotFoundError: No module named 'monolith')
+FAIL 7.4-krossbrauzernost-lokalizaciya
+D:\Work\ContentBackbone\.venv\Scripts\python.exe: Error while finding module specification for 'monolith.app_cli.main' (ModuleNotFoundError: No module named 'monolith')
+FAIL 7.5-dostupnost-bazovyy-chek
+D:\Work\ContentBackbone\.venv\Scripts\python.exe: Error while finding module specification for 'monolith.app_cli.main' (ModuleNotFoundError: No module named 'monolith')
+FAIL 7.6-yuzabiliti
+D:\Work\ContentBackbone\.venv\Scripts\python.exe: Error while finding module specification for 'monolith.app_cli.main' (ModuleNotFoundError: No module named 'monolith')
+FAIL 8.1-api-rest-soap
+D:\Work\ContentBackbone\.venv\Scripts\python.exe: Error while finding module specification for 'monolith.app_cli.main' (ModuleNotFoundError: No module named 'monolith')
+FAIL 8.2-postman-kollekcii-okruzheniya
+D:\Work\ContentBackbone\.venv\Scripts\python.exe: Error while finding module specification for 'monolith.app_cli.main' (ModuleNotFoundError: No module named 'monolith')
+FAIL 8.3-testirovanie-po-dokumentacii-swagger
+D:\Work\ContentBackbone\.venv\Scripts\python.exe: Error while finding module specification for 'monolith.app_cli.main' (ModuleNotFoundError: No module named 'monolith')
+FAIL 8.4-proverki-otveta-api
+D:\Work\ContentBackbone\.venv\Scripts\python.exe: Error while finding module specification for 'monolith.app_cli.main' (ModuleNotFoundError: No module named 'monolith')
+FAIL 8.5-avtorizaciya-uchebnyy-api
+D:\Work\ContentBackbone\.venv\Scripts\python.exe: Error while finding module specification for 'monolith.app_cli.main' (ModuleNotFoundError: No module named 'monolith')
+FAIL 8.6-negativnye-api-proverki
+D:\Work\ContentBackbone\.venv\Scripts\python.exe: Error while finding module specification for 'monolith.app_cli.main' (ModuleNotFoundError: No module named 'monolith')
+FAIL 9.1-sql-tablicy-klyuchi
+D:\Work\ContentBackbone\.venv\Scripts\python.exe: Error while finding module specification for 'monolith.app_cli.main' (ModuleNotFoundError: No module named 'monolith')
+FAIL 9.2-select-where-like-order-limit
+D:\Work\ContentBackbone\.venv\Scripts\python.exe: Error while finding module specification for 'monolith.app_cli.main' (ModuleNotFoundError: No module named 'monolith')
+FAIL 9.3-funkcii-strok-daty
+D:\Work\ContentBackbone\.venv\Scripts\python.exe: Error while finding module specification for 'monolith.app_cli.main' (ModuleNotFoundError: No module named 'monolith')
+FAIL 9.4-join-proverka-svyazey
+D:\Work\ContentBackbone\.venv\Scripts\python.exe: Error while finding module specification for 'monolith.app_cli.main' (ModuleNotFoundError: No module named 'monolith')
+FAIL 9.5-group-by-agregaty
+D:\Work\ContentBackbone\.venv\Scripts\python.exe: Error while finding module specification for 'monolith.app_cli.main' (ModuleNotFoundError: No module named 'monolith')
+FAIL 9.6-podzaprosy-obzorno
+D:\Work\ContentBackbone\.venv\Scripts\python.exe: Error while finding module specification for 'monolith.app_cli.main' (ModuleNotFoundError: No module named 'monolith')
+FAIL 9.7-insert-update-delete-ddl-riski
+D:\Work\ContentBackbone\.venv\Scripts\python.exe: Error while finding module specification for 'monolith.app_cli.main' (ModuleNotFoundError: No module named 'monolith')
