@@ -60,8 +60,14 @@ settings = Settings()
 ATTEMPTS = "attempts"
 MESSAGES = "messages"
 RECEIPTS = "receipts"
+#: tsk-943: вложения к заявкам помощи (скрин ошибки, файл, код) — отдельное
+#: пространство, а не переиспользование `MESSAGES`/`ATTEMPTS`: заявка не имеет
+#: своего message_id/attempt_id в момент загрузки файла (вложение грузится ДО
+#: создания строки `help_requests`), и круг читателей другой (сам ученик и его
+#: преподаватель по ACL заявки, а не собеседник переписки).
+HELP_REQUESTS = "help_requests"
 
-SPACES: Tuple[str, ...] = (ATTEMPTS, MESSAGES, RECEIPTS)
+SPACES: Tuple[str, ...] = (ATTEMPTS, MESSAGES, RECEIPTS, HELP_REQUESTS)
 
 _DEFAULT_CONTENT_TYPE = "application/octet-stream"
 
@@ -84,6 +90,7 @@ def prefix_for(space: str) -> str:
         ATTEMPTS: settings.attempt_attachments_s3_prefix,
         MESSAGES: settings.message_attachments_s3_prefix,
         RECEIPTS: settings.payment_receipts_s3_prefix,
+        HELP_REQUESTS: settings.help_request_attachments_s3_prefix,
     }[space]
 
 
@@ -101,6 +108,7 @@ def local_dir(space: str) -> Path:
         ATTEMPTS: fresh.attempt_attachments_upload_dir,
         MESSAGES: fresh.messages_upload_dir,
         RECEIPTS: fresh.payment_receipts_upload_dir,
+        HELP_REQUESTS: fresh.help_request_attachments_upload_dir,
     }[space]
 
 

@@ -28,9 +28,14 @@ def test_learning_api_routes_registered():
         "/api/v1/learning/tasks/{task_id}/start-or-get-attempt",
         "/api/v1/learning/tasks/{task_id}/state",
         "/api/v1/learning/tasks/{task_id}/request-help",
+        # tsk-943: вложение к заявке помощи + «Я не понял» по материалу.
+        "/api/v1/learning/help-requests/attachments",
+        "/api/v1/learning/help-requests/{request_id}/attachment",
+        "/api/v1/learning/materials/{material_id}/request-help",
         "/api/v1/teacher/task-limits/override",
         "/api/v1/teacher/help-requests",
         "/api/v1/teacher/help-requests/{request_id}",
+        "/api/v1/teacher/help-requests/{request_id}/attachment",
         "/api/v1/teacher/help-requests/{request_id}/close",
         "/api/v1/teacher/help-requests/{request_id}/reply",
     ]

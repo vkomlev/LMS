@@ -161,10 +161,12 @@ async def _fetch_help_requested(
                 SELECT hr.student_id, u.full_name AS student_name, hr.task_id,
                        COALESCE(hr.course_id, t.course_id) AS course_id,
                        t.external_uid, t.task_content->>'title' AS title_raw,
-                       t.task_content->>'stem' AS stem, hr.status, hr.created_at AS event_at
+                       t.task_content->>'stem' AS stem, hr.status, hr.created_at AS event_at,
+                       hr.material_id, m.title AS material_title
                 FROM help_requests hr
                 JOIN users u ON u.id = hr.student_id
                 LEFT JOIN tasks t ON t.id = hr.task_id
+                LEFT JOIN materials m ON m.id = hr.material_id
                 WHERE {where_sql}
                 ORDER BY hr.created_at DESC
                 LIMIT :limit
@@ -176,16 +178,27 @@ async def _fetch_help_requested(
     events: List[Dict[str, Any]] = []
     for r in rows:
         student = r["student_name"] or f"Ученик #{r['student_id']}"
-        title = humanize_task_title(r["task_id"], r["title_raw"], r["stem"], r["external_uid"])
+        # tsk-943: заявка либо по заданию (task_id), либо по материалу
+        # (material_id) — «Я не понял» на материале не имеет task_id вовсе,
+        # и голый int(None) здесь до этой правки падал бы на первой же такой
+        # заявке (обнаружено при разработке tsk-943, живых записей ещё не было).
+        task_id = r["task_id"]
+        material_id = r["material_id"]
+        if task_id is not None:
+            title = humanize_task_title(task_id, r["title_raw"], r["stem"], r["external_uid"])
+            summary = f"{student} — запросил помощь по заданию «{title}»"
+        else:
+            title = r["material_title"] or f"Материал #{material_id}"
+            summary = f"{student} — не понял материал «{title}»"
         events.append({
             "type": "help_requested",
             "student_id": int(r["student_id"]),
             "student_name": r["student_name"],
-            "task_id": int(r["task_id"]),
-            "material_id": None,
+            "task_id": int(task_id) if task_id is not None else None,
+            "material_id": int(material_id) if material_id is not None else None,
             "course_id": int(r["course_id"]) if r["course_id"] is not None else None,
             "timestamp": r["event_at"],
-            "summary": f"{student} — запросил помощь по заданию «{title}»",
+            "summary": summary,
             "outcome": r["status"],
         })
     return events

@@ -30,7 +30,10 @@ class HelpRequestClaimItem(BaseModel):
     status: str
     request_type: str
     student_id: int
-    task_id: int
+    # tsk-943: заявка либо по заданию, либо по материалу — task_id стал
+    # nullable (раньше заявки заводились только по заданиям).
+    task_id: Optional[int] = None
+    material_id: Optional[int] = Field(None, description="Материал заявки «Я не понял» (tsk-943)")
     course_id: Optional[int] = None
     created_at: datetime
     priority: int = 100

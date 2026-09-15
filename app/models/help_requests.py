@@ -44,6 +44,10 @@ class HelpRequests(Base):
             ["task_id"], ["tasks.id"], ondelete="CASCADE", name="help_requests_task_id_fkey"
         ),
         ForeignKeyConstraint(
+            ["material_id"], ["materials.id"], ondelete="CASCADE",
+            name="help_requests_material_id_fkey",
+        ),
+        ForeignKeyConstraint(
             ["course_id"], ["courses.id"], ondelete="SET NULL", name="help_requests_course_id_fkey"
         ),
         ForeignKeyConstraint(
@@ -84,7 +88,13 @@ class HelpRequests(Base):
         comment="Контекст заявки (attempts_used, trigger и т.д.)",
     )
     student_id: Mapped[int] = mapped_column(Integer, nullable=False)
-    task_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    # tsk-943: nullable — заявка либо по заданию (task_id), либо по материалу
+    # (material_id), ровно один из двух. Инвариант держит сервисный слой, не БД.
+    task_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    material_id: Mapped[Optional[int]] = mapped_column(
+        Integer, nullable=True,
+        comment="Материал, по которому задан вопрос «Я не понял» (tsk-943).",
+    )
     course_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     attempt_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     event_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
@@ -121,6 +131,14 @@ class HelpRequests(Base):
         DateTime(timezone=True), nullable=True,
         comment="Когда заявка ушла методисту (уровень 3).",
     )
+
+    # tsk-943: вложение к заявке (скрин ошибки, файл, код) — ключ в
+    # attachment_storage (пространство HELP_REQUESTS) + метаданные для показа
+    # преподавателю. Файла может не быть — вложение необязательно.
+    attachment_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    attachment_filename: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    attachment_content_type: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    attachment_size_bytes: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
     replies: Mapped[List["HelpRequestReplies"]] = relationship(
         "HelpRequestReplies",

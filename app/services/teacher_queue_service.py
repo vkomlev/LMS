@@ -302,7 +302,7 @@ async def claim_next_help_request(
             FROM cand
             WHERE hr.id = cand.id
             RETURNING hr.id, hr.status, hr.request_type, hr.student_id, hr.task_id, hr.course_id,
-                      hr.created_at, hr.priority, hr.due_at
+                      hr.created_at, hr.priority, hr.due_at, hr.material_id
         """),
         params,
     )
@@ -323,6 +323,7 @@ async def claim_next_help_request(
         "request_type": row[2],
         "student_id": row[3],
         "task_id": row[4],
+        "material_id": row[9] if len(row) > 9 else None,
         "course_id": row[5],
         "created_at": row[6],
         "priority": row[7] if len(row) > 7 else 100,
@@ -523,7 +524,7 @@ async def claim_help_request_by_id(
               AND hr.status = 'open'
               {free_cond}
             RETURNING hr.id, hr.status, hr.request_type, hr.student_id, hr.task_id,
-                      hr.course_id, hr.created_at, hr.priority, hr.due_at
+                      hr.course_id, hr.created_at, hr.priority, hr.due_at, hr.material_id
         """),  # nosec B608 — free_cond из закрытого набора литералов
         {
             "request_id": request_id,
@@ -553,6 +554,7 @@ async def claim_help_request_by_id(
         "request_type": urow[2],
         "student_id": urow[3],
         "task_id": urow[4],
+        "material_id": urow[9] if len(urow) > 9 else None,
         "course_id": urow[5],
         "created_at": urow[6],
         "priority": urow[7] if urow[7] is not None else 100,

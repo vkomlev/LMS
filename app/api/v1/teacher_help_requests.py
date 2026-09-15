@@ -13,6 +13,7 @@ from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Body, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_bare_db, get_current_user
@@ -51,8 +52,11 @@ from app.services.help_requests_service import (
     set_webinar_link,
     get_help_requests_pending_count,
     get_reopen_kpi,
+    get_help_request_attachment,
     MIN_REQUESTS_FOR_RATE,
 )
+from app.services import attachment_storage
+from app.utils.exceptions import DomainError
 from app.services import audit_service, roles_service
 from app.services.teacher_queue_service import (
     claim_help_request_by_id,
@@ -262,6 +266,57 @@ async def help_request_detail(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Нет доступа к заявке")
     detail["history"] = [HelpRequestReplyItem(**h) for h in detail["history"]]
     return HelpRequestDetailResponse(**detail)
+
+
+@router.get(
+    "/{request_id}/attachment",
+    summary="Скачать вложение заявки на помощь (скрин ошибки, файл, код)",
+    responses={
+        403: {"description": "Нет доступа к заявке"},
+        404: {"description": "Заявка не найдена либо у неё нет вложения"},
+        410: {"description": "Вложение было, но файла в хранилище больше нет"},
+    },
+)
+async def download_help_request_attachment(
+    request_id: int = Path(..., description="ID заявки"),
+    teacher_id: int = Query(..., description="ID преподавателя/методиста"),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_bare_db),
+):
+    """tsk-943: вложение ученика (скрин ошибки, файл, код) к заявке помощи.
+
+    ACL — тот же `can_access_help_request`, что у карточки заявки выше: свой
+    отдельный эндпоинт вместо поля с сырыми байтами в JSON, тот же принцип,
+    что у вложений ответа (`/attempts/{id}/attachments/{id}`) и сообщений
+    (`/messages/{id}/attachment`) — файл идёт потоком через проверку прав, не
+    прямой ссылкой на бакет.
+    """
+    if not current_user.is_service and current_user.id != teacher_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
+    meta = await get_help_request_attachment(db, request_id)
+    if meta is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Заявка не найдена или без вложения")
+    if not await can_access_help_request(db, request_id, teacher_id):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Нет доступа к заявке")
+
+    try:
+        opened = await attachment_storage.open_stream(
+            attachment_storage.HELP_REQUESTS, meta["attachment_id"]
+        )
+    except DomainError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail)
+    if opened is None:
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail="Файл вложения утрачен на сервере и восстановлению не подлежит.",
+        )
+    stream, media_type = opened
+    display_name = meta["attachment_filename"] or meta["attachment_id"]
+    return StreamingResponse(
+        stream,
+        media_type=meta["attachment_content_type"] or media_type,
+        headers={"Content-Disposition": attachment_storage.content_disposition(display_name)},
+    )
 
 
 @router.post(

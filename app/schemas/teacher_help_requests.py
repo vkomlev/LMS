@@ -27,8 +27,12 @@ class HelpRequestListItem(BaseModel):
     context: Dict[str, Any] = Field(default_factory=dict, description="Контекст (attempts_used, attempts_limit_effective и др.)")
     student_id: int
     student_name: Optional[str] = None
-    task_id: int
+    # tsk-943: заявка либо по заданию, либо по материалу — task_id стал
+    # nullable (был обязателен, пока заявки заводились только по заданиям).
+    task_id: Optional[int] = None
     task_title: Optional[str] = None
+    material_id: Optional[int] = Field(None, description="Материал заявки «Я не понял» (tsk-943)")
+    material_title: Optional[str] = None
     course_id: Optional[int] = None
     course_title: Optional[str] = None
     attempt_id: Optional[int] = None
@@ -72,6 +76,14 @@ class HelpRequestListItem(BaseModel):
     claimed_by_me: bool = Field(
         False, description="Захват принадлежит запрашивающему преподавателю"
     )
+    # tsk-943: вложение к заявке (скрин ошибки, файл, код) — необязательное.
+    attachment_id: Optional[str] = Field(None, description="Ключ файла в attachment_storage")
+    attachment_url: Optional[str] = Field(
+        None, description="Относительный URL скачивания; null — вложения нет"
+    )
+    attachment_filename: Optional[str] = None
+    attachment_content_type: Optional[str] = None
+    attachment_size_bytes: Optional[int] = None
 
 
 class HelpRequestListResponse(BaseModel):

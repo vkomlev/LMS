@@ -48,6 +48,12 @@ class Settings:
         )
         self.payment_receipts_upload_dir.mkdir(parents=True, exist_ok=True)
 
+        # tsk-943: вложения к заявкам помощи (скрин ошибки, файл, код).
+        self.help_request_attachments_upload_dir: Path = Path(
+            os.getenv("HELP_REQUEST_ATTACHMENTS_UPLOAD_DIR", "uploads/help_requests")
+        )
+        self.help_request_attachments_upload_dir.mkdir(parents=True, exist_ok=True)
+
         # Месяц оплачивается ДО СВОЕГО КОНЦА: за август платят до 31 августа.
         # Должником человек становится в сентябре, а не 5-го августа — цикл
         # школы именно такой (уточнено оператором 2026-08-02, до этого здесь
@@ -190,6 +196,9 @@ class Settings:
         ).strip("/")
         self.payment_receipts_s3_prefix: str = os.getenv(
             "PAYMENT_RECEIPTS_S3_PREFIX", "receipts"
+        ).strip("/")
+        self.help_request_attachments_s3_prefix: str = os.getenv(
+            "HELP_REQUEST_ATTACHMENTS_S3_PREFIX", "help_requests"
         ).strip("/")
 
         # ✅ Проверка целостности ссылок на файлы (tsk-521). Связи «материал → файл»

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional, Tuple
 
 from sqlalchemy import text
@@ -25,6 +25,7 @@ from app.services.learning_events_service import (
     record_help_request_closed,
     record_help_request_replied,
     record_attempt_limit_reached,
+    HELP_DEDUPE_MINUTES,
 )
 from app.services import inbox_service
 from app.services import methodist_notify_service
@@ -110,6 +111,30 @@ def _task_title_display(
     return humanize_task_title(task_id, title, stem, external_uid, max_len=max_len)
 
 
+def _item_title_display(
+    task_id: Optional[int],
+    material_id: Optional[int],
+    material_title: Optional[str],
+    external_uid: Optional[str] = None,
+    title: Optional[str] = None,
+    stem: Optional[str] = None,
+    *,
+    max_len: int = TITLE_MAX_LEN,
+) -> str:
+    """Заголовок заявки: задание ИЛИ материал (tsk-943).
+
+    `task_id`/`material_id` взаимоисключающи (инвариант держит сервисный слой
+    при создании заявки). У материала уже есть человекочитаемый `title`
+    (`materials.title` NOT NULL) — никакой humanize-логики не нужно, в отличие
+    от задания, где title почти всегда пуст (см. `humanize_task_title`).
+    """
+    if task_id is not None:
+        return _task_title_display(task_id, external_uid, title, stem, max_len=max_len)
+    if material_id is not None:
+        return material_title or f"Материал #{material_id}"
+    return "Заявка"
+
+
 async def resolve_assigned_teacher(
     db: AsyncSession,
     student_id: int,
@@ -141,11 +166,20 @@ async def get_or_create_help_request(
     course_id: Optional[int] = None,
     attempt_id: Optional[int] = None,
     deduplicated: bool = False,
+    attachment_id: Optional[str] = None,
+    attachment_filename: Optional[str] = None,
+    attachment_content_type: Optional[str] = None,
+    attachment_size_bytes: Optional[int] = None,
 ) -> Tuple[int, bool]:
     """
     После record_help_requested: получить или создать запись в help_requests.
     Если deduplicated и заявка с event_id уже есть — вернуть её id и created=False.
     Иначе создать новую, записать help_request_opened, вернуть (id, True).
+
+    tsk-943: вложение (`attachment_*`) пишется только при создании новой
+    заявки. Дедуп-ветка не перезаписывает вложение уже существующей заявки:
+    дедуп по event_id — это то же самое обращение (повтор в окне 5 минут), а
+    не новое сообщение с новым файлом.
     """
     r = await db.execute(
         text("SELECT id FROM help_requests WHERE event_id = :event_id LIMIT 1"),
@@ -165,8 +199,12 @@ async def get_or_create_help_request(
     r = await db.execute(
         text("""
             INSERT INTO help_requests
-            (status, request_type, auto_created, context_json, student_id, task_id, course_id, attempt_id, event_id, message, assigned_teacher_id, created_at, updated_at)
-            VALUES ('open', 'manual_help', false, '{}'::jsonb, :student_id, :task_id, :course_id, :attempt_id, :event_id, :message, :assigned_teacher_id, now(), now())
+            (status, request_type, auto_created, context_json, student_id, task_id, course_id, attempt_id, event_id, message, assigned_teacher_id,
+             attachment_id, attachment_filename, attachment_content_type, attachment_size_bytes,
+             created_at, updated_at)
+            VALUES ('open', 'manual_help', false, '{}'::jsonb, :student_id, :task_id, :course_id, :attempt_id, :event_id, :message, :assigned_teacher_id,
+                    :attachment_id, :attachment_filename, :attachment_content_type, :attachment_size_bytes,
+                    now(), now())
             RETURNING id
         """),
         {
@@ -177,6 +215,10 @@ async def get_or_create_help_request(
             "event_id": event_id,
             "message": msg_truncated,
             "assigned_teacher_id": assigned,
+            "attachment_id": attachment_id,
+            "attachment_filename": attachment_filename,
+            "attachment_content_type": attachment_content_type,
+            "attachment_size_bytes": attachment_size_bytes,
         },
     )
     new_id = r.scalar()
@@ -195,6 +237,98 @@ async def get_or_create_help_request(
             title="Новый вопрос от ученика",
             content=msg_truncated or "Ученик запросил помощь по заданию.",
             payload={"request_id": int(new_id), "task_id": task_id, "student_id": student_id},
+            created_by=student_id,
+        )
+    return (int(new_id), True)
+
+
+async def get_or_create_material_help_request(
+    db: AsyncSession,
+    *,
+    student_id: int,
+    material_id: int,
+    course_id: Optional[int],
+    message: str,
+    attachment_id: Optional[str] = None,
+    attachment_filename: Optional[str] = None,
+    attachment_content_type: Optional[str] = None,
+    attachment_size_bytes: Optional[int] = None,
+) -> Tuple[int, bool]:
+    """Заявка «Я не понял» по материалу (tsk-943) — сестра `get_or_create_help_request`.
+
+    Не заведена через `learning_events`/`record_help_requested`: тот пайплайн
+    весь построен вокруг `task_id` (дневник ученика, лента активности учителя,
+    темп по темам — везде `payload->>'task_id'` без NULL-ветки), и материал в
+    него не ложится без риска сломать эти потребители NULL-ом. Дедуп поэтому
+    не через `event_id`, а напрямую по открытой заявке — тот же принцип окна
+    в `HELP_DEDUPE_MINUTES`, что и у событийного дедупа.
+
+    Advisory-lock ключ (`student_id`, `-material_id`) — отрицательный
+    `material_id`, чтобы не столкнуться с локами `get_or_create_help_request`/
+    `get_or_create_blocked_limit_help_request`, которые используют второй
+    ключ `(student_id, task_id)`: id материала и задания — разные
+    последовательности, и один и тот же положительный номер иначе мог бы
+    временно, без вреда для корректности, но зря сериализовать два
+    несвязанных запроса.
+    """
+    await db.execute(
+        text("SELECT pg_advisory_xact_lock(:k1, :k2)"),
+        {"k1": student_id, "k2": -material_id},
+    )
+    since = datetime.now(timezone.utc) - timedelta(minutes=HELP_DEDUPE_MINUTES)
+    r = await db.execute(
+        text("""
+            SELECT id FROM help_requests
+            WHERE student_id = :student_id AND material_id = :material_id
+              AND status = 'open' AND request_type = 'manual_help'
+              AND created_at >= :since
+            ORDER BY created_at DESC LIMIT 1
+        """),
+        {"student_id": student_id, "material_id": material_id, "since": since},
+    )
+    row = r.fetchone()
+    if row is not None:
+        await db.execute(
+            text("UPDATE help_requests SET updated_at = now() WHERE id = :id"),
+            {"id": row[0]},
+        )
+        return (int(row[0]), False)
+
+    assigned = await resolve_assigned_teacher(db, student_id, course_id)
+    msg_truncated = message[:2000]
+
+    r = await db.execute(
+        text("""
+            INSERT INTO help_requests
+            (status, request_type, auto_created, context_json, student_id, material_id, course_id, message, assigned_teacher_id,
+             attachment_id, attachment_filename, attachment_content_type, attachment_size_bytes,
+             created_at, updated_at)
+            VALUES ('open', 'manual_help', false, '{}'::jsonb, :student_id, :material_id, :course_id, :message, :assigned_teacher_id,
+                    :attachment_id, :attachment_filename, :attachment_content_type, :attachment_size_bytes,
+                    now(), now())
+            RETURNING id
+        """),
+        {
+            "student_id": student_id,
+            "material_id": material_id,
+            "course_id": course_id,
+            "message": msg_truncated,
+            "assigned_teacher_id": assigned,
+            "attachment_id": attachment_id,
+            "attachment_filename": attachment_filename,
+            "attachment_content_type": attachment_content_type,
+            "attachment_size_bytes": attachment_size_bytes,
+        },
+    )
+    new_id = r.scalar()
+    if assigned is not None:
+        await inbox_service.create_for_user(
+            db,
+            user_id=assigned,
+            kind="help_request_opened",
+            title="Вопрос по материалу",
+            content=msg_truncated,
+            payload={"request_id": int(new_id), "material_id": material_id, "student_id": student_id},
             created_by=student_id,
         )
     return (int(new_id), True)
@@ -417,6 +551,36 @@ async def can_access_help_request(
     return False
 
 
+async def get_help_request_attachment(
+    db: AsyncSession,
+    request_id: int,
+) -> Optional[dict[str, Any]]:
+    """Метаданные вложения заявки для скачивания (tsk-943).
+
+    Возвращает None, если заявки нет ИЛИ у неё нет вложения — вызывающий сам
+    решает, как это различить (обе ветки отвечают одним и тем же 404).
+    ACL-проверка НЕ здесь: у скачивания два разных вызывающих (ученик-автор
+    заявки и преподаватель по `can_access_help_request`), и правило доступа
+    у каждого своё.
+    """
+    r = await db.execute(
+        text("""
+            SELECT student_id, attachment_id, attachment_filename, attachment_content_type
+            FROM help_requests WHERE id = :request_id
+        """),
+        {"request_id": request_id},
+    )
+    row = r.fetchone()
+    if row is None or row[1] is None:
+        return None
+    return {
+        "student_id": row[0],
+        "attachment_id": row[1],
+        "attachment_filename": row[2],
+        "attachment_content_type": row[3],
+    }
+
+
 def _order_by_sort(sort: str) -> str:
     """ORDER BY для списка заявок. sort: priority | created_at | due_at | closed_at.
 
@@ -516,12 +680,17 @@ async def list_help_requests(
                    -- поэтому второй преподаватель не видел занятость и брался
                    -- за ту же заявку.
                    hr.claimed_by, hr.claim_expires_at, cu.full_name AS claimed_by_name,
-                   hr.closed_at
+                   hr.closed_at,
+                   -- tsk-943: заявка по материалу (вместо задания) + вложение.
+                   hr.material_id, m.title AS material_title,
+                   hr.attachment_id, hr.attachment_filename,
+                   hr.attachment_content_type, hr.attachment_size_bytes
             FROM help_requests hr
             LEFT JOIN users u ON u.id = hr.student_id
             LEFT JOIN tasks t ON t.id = hr.task_id
             LEFT JOIN courses c ON c.id = hr.course_id
             LEFT JOIN users cu ON cu.id = hr.claimed_by
+            LEFT JOIN materials m ON m.id = hr.material_id
             WHERE {acl_sql} {status_cond} {type_cond} {student_cond} {overdue_cond}
             {order_sql}
             LIMIT :limit OFFSET :offset
@@ -535,6 +704,9 @@ async def list_help_requests(
         due_at = row[14] if len(row) > 14 else None
         due_at_norm = _normalize_due_at(due_at)
         priority_val = int(row[13]) if len(row) > 13 and row[13] is not None else 100
+        material_id = row[24] if len(row) > 24 else None
+        material_title = row[25] if len(row) > 25 else None
+        attachment_id = row[26] if len(row) > 26 else None
         items.append({
             "request_id": row[0],
             "status": row[1],
@@ -543,6 +715,7 @@ async def list_help_requests(
             "context": ctx if isinstance(ctx, dict) else {},
             "student_id": row[5],
             "task_id": row[6],
+            "material_id": material_id,
             "course_id": row[7],
             "attempt_id": row[8],
             "created_at": row[9],
@@ -553,8 +726,10 @@ async def list_help_requests(
             "due_at": due_at_norm,
             "is_overdue": due_at_norm is not None and due_at_norm < now,
             "student_name": row[15] if len(row) > 15 else None,
-            "task_title": _task_title_display(
+            "task_title": _item_title_display(
                 row[6],
+                material_id,
+                material_title,
                 row[16] if len(row) > 16 else None,
                 row[18] if len(row) > 18 else None,
                 row[19] if len(row) > 19 else None,
@@ -568,8 +743,17 @@ async def list_help_requests(
                 teacher_id,
                 now,
             ),
-            # tsk-924: дата закрытия — колонка 23, последняя в SELECT.
+            # tsk-924: дата закрытия — колонка 23.
             "closed_at": row[23] if len(row) > 23 else None,
+            # tsk-943: вложение — колонки 26-29.
+            "attachment_id": attachment_id,
+            "attachment_url": (
+                f"/api/v1/teacher/help-requests/{row[0]}/attachment"
+                if attachment_id else None
+            ),
+            "attachment_filename": row[27] if len(row) > 27 else None,
+            "attachment_content_type": row[28] if len(row) > 28 else None,
+            "attachment_size_bytes": row[29] if len(row) > 29 else None,
         })
     return (items, total)
 
@@ -609,12 +793,17 @@ async def get_help_request_detail(
                    (SELECT COUNT(*) FROM help_request_reopens rr
                      WHERE rr.request_id = hr.id) AS reopen_count,
                    -- tsk-592: занятость заявки, то же поле, что в списке.
-                   hr.claimed_by, hr.claim_expires_at, cu.full_name AS claimed_by_name
+                   hr.claimed_by, hr.claim_expires_at, cu.full_name AS claimed_by_name,
+                   -- tsk-943: заявка по материалу (вместо задания) + вложение.
+                   hr.material_id, m.title AS material_title,
+                   hr.attachment_id, hr.attachment_filename,
+                   hr.attachment_content_type, hr.attachment_size_bytes
             FROM help_requests hr
             LEFT JOIN users u ON u.id = hr.student_id
             LEFT JOIN tasks t ON t.id = hr.task_id
             LEFT JOIN courses c ON c.id = hr.course_id
             LEFT JOIN users cu ON cu.id = hr.claimed_by
+            LEFT JOIN materials m ON m.id = hr.material_id
             WHERE hr.id = :request_id
         """),
         {"request_id": request_id},
@@ -656,11 +845,15 @@ async def get_help_request_detail(
         for r in r2.fetchall()
     ]
 
+    material_id = row[31] if len(row) > 31 else None
+    material_title = row[32] if len(row) > 32 else None
+    attachment_id = row[33] if len(row) > 33 else None
     return ({
         "request_id": row[0],
         "status": row[1],
         "student_id": row[2],
         "task_id": row[3],
+        "material_id": material_id,
         "course_id": row[4],
         "attempt_id": row[5],
         "created_at": row[6],
@@ -678,8 +871,10 @@ async def get_help_request_detail(
         "due_at": due_at_norm,
         "is_overdue": is_overdue,
         "student_name": row[19] if len(row) > 19 else None,
-        "task_title": _task_title_display(
+        "task_title": _item_title_display(
             row[3],
+            material_id,
+            material_title,
             row[20] if len(row) > 20 else None,
             row[22] if len(row) > 22 else None,
             row[23] if len(row) > 23 else None,
@@ -687,14 +882,24 @@ async def get_help_request_detail(
         # tsk-342: полное условие задания (не обрезка в 80 симв., а под
         # разумный предел карточки) — учителю нужен весь контекст, чтобы
         # ответить на заявку помощи, не только фрагмент в шапке.
-        "task_full_title": _task_title_display(
+        "task_full_title": _item_title_display(
             row[3],
+            material_id,
+            material_title,
             row[20] if len(row) > 20 else None,
             row[22] if len(row) > 22 else None,
             row[23] if len(row) > 23 else None,
             max_len=HINT_MAX_LEN,
         ),
         "course_title": row[21] if len(row) > 21 else None,
+        # tsk-943: вложение — колонки 33-36.
+        "attachment_id": attachment_id,
+        "attachment_url": (
+            f"/api/v1/teacher/help-requests/{row[0]}/attachment" if attachment_id else None
+        ),
+        "attachment_filename": row[34] if len(row) > 34 else None,
+        "attachment_content_type": row[35] if len(row) > 35 else None,
+        "attachment_size_bytes": row[36] if len(row) > 36 else None,
         # tsk-303: колонки 24-27 — состояние лестницы помощи. Индексы считаются
         # от порядка SELECT выше; в этом же маппинге когда-то уже был сдвиг на
         # +1 (см. комментарий про off-by-one), поэтому новые поля добавлены в

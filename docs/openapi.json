@@ -18164,6 +18164,328 @@
         }
       }
     },
+    "/api/v1/learning/help-requests/attachments": {
+      "post": {
+        "tags": [
+          "learning"
+        ],
+        "summary": "Загрузить вложение к запросу помощи (скрин ошибки, файл, код)",
+        "description": "Загружает файл ДО создания заявки: `request-help`/`materials/.../request-help`\nпринимают вернувшиеся отсюда метаданные и пишут их в ту же строку `help_requests`,\nчто и текст. Переиспользует общий `attachment_storage` (tsk-593), пространство\n`HELP_REQUESTS` — тот же механизм, что у вложений ответа (tsk-227), отдельное\nпространство ключей.\n\nИдентификатор строится от `current_user.id`, а не от ещё не существующего\n`request_id` (в отличие от `/attempts/{attempt_id}/attachments`, где\n`attempt_id` уже есть на момент загрузки).",
+        "operationId": "upload_help_request_attachment_api_v1_learning_help_requests_attachments_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_help_request_attachment_api_v1_learning_help_requests_attachments_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HelpRequestAttachmentRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/learning/help-requests/{request_id}/attachment": {
+      "get": {
+        "tags": [
+          "learning"
+        ],
+        "summary": "Скачать вложение своей заявки помощи (ученик)",
+        "description": "Скачивание вложения СВОЕЙ заявки — сторона ученика.\n\nСимметричный эндпоинт для преподавателя — `GET /teacher/help-requests/\n{request_id}/attachment` (та же ACL-функция `can_access_help_request`,\nу ученика она не нужна: он либо автор, либо нет).",
+        "operationId": "download_own_help_request_attachment_api_v1_learning_help_requests__request_id__attachment_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "description": "ID заявки помощи",
+              "title": "Request Id"
+            },
+            "description": "ID заявки помощи"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "403": {
+            "description": "Не автор заявки"
+          },
+          "404": {
+            "description": "Заявка не найдена либо у неё нет вложения"
+          },
+          "410": {
+            "description": "Вложение было, но файла в хранилище больше нет"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/learning/materials/{material_id}/request-help": {
+      "post": {
+        "tags": [
+          "learning"
+        ],
+        "summary": "«Я не понял»: запрос помощи по материалу (не заданию)",
+        "description": "Сестра `request_help` (задание), но без лестницы подсказок: материал не\nимеет собственного `HintPanel`, кнопка ведёт сразу в модалку с текстом.\nТот же гейт тарифа (tsk-301, эскалация преподавателю не во всех тарифах)\nи та же проверка оплаты (tsk-010/tsk-617) — ресурс, который тратится\n(время преподавателя), один и тот же для задания и материала.",
+        "operationId": "material_request_help_api_v1_learning_materials__material_id__request_help_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "material_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "description": "ID материала",
+              "title": "Material Id"
+            },
+            "description": "ID материала"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MaterialRequestHelpRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MaterialRequestHelpResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "tsk-010: занятия закрыты за просроченную оплату — `payload.code = payment_overdue` (сумма, месяцы, `payments_url`); tsk-673: тариф закрывает работу в курсе — `payload.code = course_work_closed` (так устроен «Выпускник»: материалы читаются, ответы не принимаются); либо чужой `student_id`."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/learning/tasks/{task_id}/help-request": {
       "get": {
         "tags": [
@@ -19542,6 +19864,125 @@
           },
           "403": {
             "description": "Нет доступа"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/teacher/help-requests/{request_id}/attachment": {
+      "get": {
+        "tags": [
+          "teacher_help_requests"
+        ],
+        "summary": "Скачать вложение заявки на помощь (скрин ошибки, файл, код)",
+        "description": "tsk-943: вложение ученика (скрин ошибки, файл, код) к заявке помощи.\n\nACL — тот же `can_access_help_request`, что у карточки заявки выше: свой\nотдельный эндпоинт вместо поля с сырыми байтами в JSON, тот же принцип,\nчто у вложений ответа (`/attempts/{id}/attachments/{id}`) и сообщений\n(`/messages/{id}/attachment`) — файл идёт потоком через проверку прав, не\nпрямой ссылкой на бакет.",
+        "operationId": "download_help_request_attachment_api_v1_teacher_help_requests__request_id__attachment_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "description": "ID заявки",
+              "title": "Request Id"
+            },
+            "description": "ID заявки"
+          },
+          {
+            "name": "teacher_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "description": "ID преподавателя/методиста",
+              "title": "Teacher Id"
+            },
+            "description": "ID преподавателя/методиста"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "403": {
+            "description": "Нет доступа к заявке"
+          },
+          "404": {
+            "description": "Заявка не найдена либо у неё нет вложения"
+          },
+          "410": {
+            "description": "Вложение было, но файла в хранилище больше нет"
           },
           "422": {
             "description": "Validation Error",
@@ -46638,6 +47079,21 @@
         ],
         "title": "Body_upload_attempt_attachment_api_v1_attempts__attempt_id__attachments_post"
       },
+      "Body_upload_help_request_attachment_api_v1_learning_help_requests_attachments_post": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "format": "binary",
+            "title": "File",
+            "description": "Файл для приложения к заявке"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_upload_help_request_attachment_api_v1_learning_help_requests_attachments_post"
+      },
       "Body_upload_material_file_api_v1_materials_upload_post": {
         "properties": {
           "file": {
@@ -52936,6 +53392,40 @@
         "type": "object",
         "title": "HTTPValidationError"
       },
+      "HelpRequestAttachmentRead": {
+        "properties": {
+          "attachment_id": {
+            "type": "string",
+            "title": "Attachment Id",
+            "description": "Серверный идентификатор файла"
+          },
+          "filename": {
+            "type": "string",
+            "title": "Filename",
+            "description": "Исходное имя файла"
+          },
+          "content_type": {
+            "type": "string",
+            "title": "Content Type",
+            "description": "MIME-тип файла"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Size Bytes",
+            "description": "Размер файла в байтах"
+          }
+        },
+        "type": "object",
+        "required": [
+          "attachment_id",
+          "filename",
+          "content_type",
+          "size_bytes"
+        ],
+        "title": "HelpRequestAttachmentRead",
+        "description": "Метаданные файла, загруженного к заявке помощи (до её создания)."
+      },
       "HelpRequestClaimItem": {
         "properties": {
           "request_id": {
@@ -52955,8 +53445,27 @@
             "title": "Student Id"
           },
           "task_id": {
-            "type": "integer",
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Task Id"
+          },
+          "material_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Material Id",
+            "description": "Материал заявки «Я не понял» (tsk-943)"
           },
           "course_id": {
             "anyOf": [
@@ -53003,7 +53512,6 @@
           "status",
           "request_type",
           "student_id",
-          "task_id",
           "created_at"
         ],
         "title": "HelpRequestClaimItem",
@@ -53337,7 +53845,14 @@
             "title": "Student Name"
           },
           "task_id": {
-            "type": "integer",
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Task Id"
           },
           "task_title": {
@@ -53350,6 +53865,29 @@
               }
             ],
             "title": "Task Title"
+          },
+          "material_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Material Id",
+            "description": "Материал заявки «Я не понял» (tsk-943)"
+          },
+          "material_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Material Title"
           },
           "course_id": {
             "anyOf": [
@@ -53502,6 +54040,63 @@
             "title": "Claimed By Me",
             "description": "Захват принадлежит запрашивающему преподавателю",
             "default": false
+          },
+          "attachment_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attachment Id",
+            "description": "Ключ файла в attachment_storage"
+          },
+          "attachment_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attachment Url",
+            "description": "Относительный URL скачивания; null — вложения нет"
+          },
+          "attachment_filename": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attachment Filename"
+          },
+          "attachment_content_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attachment Content Type"
+          },
+          "attachment_size_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attachment Size Bytes"
           },
           "task_full_title": {
             "anyOf": [
@@ -53605,7 +54200,6 @@
           "request_id",
           "status",
           "student_id",
-          "task_id",
           "created_at",
           "updated_at"
         ],
@@ -53666,7 +54260,14 @@
             "title": "Student Name"
           },
           "task_id": {
-            "type": "integer",
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Task Id"
           },
           "task_title": {
@@ -53679,6 +54280,29 @@
               }
             ],
             "title": "Task Title"
+          },
+          "material_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Material Id",
+            "description": "Материал заявки «Я не понял» (tsk-943)"
+          },
+          "material_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Material Title"
           },
           "course_id": {
             "anyOf": [
@@ -53831,6 +54455,63 @@
             "title": "Claimed By Me",
             "description": "Захват принадлежит запрашивающему преподавателю",
             "default": false
+          },
+          "attachment_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attachment Id",
+            "description": "Ключ файла в attachment_storage"
+          },
+          "attachment_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attachment Url",
+            "description": "Относительный URL скачивания; null — вложения нет"
+          },
+          "attachment_filename": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attachment Filename"
+          },
+          "attachment_content_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attachment Content Type"
+          },
+          "attachment_size_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attachment Size Bytes"
           }
         },
         "type": "object",
@@ -53838,7 +54519,6 @@
           "request_id",
           "status",
           "student_id",
-          "task_id",
           "created_at",
           "updated_at"
         ],
@@ -57116,6 +57796,100 @@
         ],
         "title": "MaterialReorderResponse",
         "description": "Ответ на изменение порядка материалов."
+      },
+      "MaterialRequestHelpRequest": {
+        "properties": {
+          "student_id": {
+            "type": "integer",
+            "title": "Student Id",
+            "description": "ID студента"
+          },
+          "message": {
+            "type": "string",
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Message",
+            "description": "Что именно непонятно — обязательное поле (tsk-261 A10)"
+          },
+          "attachment_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attachment Id",
+            "description": "Ключ файла из POST /learning/help-requests/attachments"
+          },
+          "attachment_filename": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 255
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attachment Filename"
+          },
+          "attachment_content_type": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 100
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attachment Content Type"
+          },
+          "attachment_size_bytes": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attachment Size Bytes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "student_id",
+          "message"
+        ],
+        "title": "MaterialRequestHelpRequest",
+        "description": "Тело запроса помощи по материалу («Я не понял»).\n\nВ отличие от `RequestHelpRequest` (задание), `message` обязателен на уровне\nсхемы: у материала нет своей лестницы подсказок, кнопка ведёт сразу в\nмодалку с текстом, и решённый вопрос tsk-261 (A10, пустая заявка запрещена)\nздесь проверяется и на входе API, а не только в клиенте."
+      },
+      "MaterialRequestHelpResponse": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "title": "Ok",
+            "default": true
+          },
+          "deduplicated": {
+            "type": "boolean",
+            "title": "Deduplicated",
+            "default": false
+          },
+          "request_id": {
+            "type": "integer",
+            "title": "Request Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "request_id"
+        ],
+        "title": "MaterialRequestHelpResponse"
       },
       "MaterialUpdate": {
         "properties": {
@@ -62369,6 +63143,54 @@
               }
             ],
             "title": "Message"
+          },
+          "attachment_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attachment Id",
+            "description": "Ключ файла из POST /learning/help-requests/attachments"
+          },
+          "attachment_filename": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 255
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attachment Filename"
+          },
+          "attachment_content_type": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 100
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attachment Content Type"
+          },
+          "attachment_size_bytes": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attachment Size Bytes"
           }
         },
         "type": "object",

@@ -175,6 +175,16 @@ class TaskStateResponse(BaseModel):
 class RequestHelpRequest(BaseModel):
     student_id: int = Field(..., description="ID студента")
     message: Optional[str] = Field(default=None, max_length=2000)
+    # tsk-943: вложение (скрин ошибки, файл, код) — необязательно, дополняет
+    # текст, а не заменяет его (тот же принцип, что и tsk-261 A10: пустая
+    # заявка без текста запрещена — вложение само по себе не заявка).
+    # Приходит из ответа POST /learning/help-requests/attachments.
+    attachment_id: Optional[str] = Field(
+        default=None, description="Ключ файла из POST /learning/help-requests/attachments"
+    )
+    attachment_filename: Optional[str] = Field(default=None, max_length=255)
+    attachment_content_type: Optional[str] = Field(default=None, max_length=100)
+    attachment_size_bytes: Optional[int] = Field(default=None, ge=0)
 
 
 class RequestHelpResponse(BaseModel):
@@ -182,6 +192,53 @@ class RequestHelpResponse(BaseModel):
     event_id: int
     deduplicated: bool = False
     request_id: Optional[int] = Field(None, description="ID заявки в help_requests (этап 3.8, опционально)")
+
+
+# ----- tsk-943: вложение к заявке помощи -----
+
+
+class HelpRequestAttachmentRead(BaseModel):
+    """Метаданные файла, загруженного к заявке помощи (до её создания)."""
+    attachment_id: str = Field(..., description="Серверный идентификатор файла")
+    filename: str = Field(..., description="Исходное имя файла")
+    content_type: str = Field(..., description="MIME-тип файла")
+    size_bytes: int = Field(..., ge=0, description="Размер файла в байтах")
+
+
+# ----- tsk-943: «Я не понял» по материалу -----
+
+
+class MaterialRequestHelpRequest(BaseModel):
+    """Тело запроса помощи по материалу («Я не понял»).
+
+    В отличие от `RequestHelpRequest` (задание), `message` обязателен на уровне
+    схемы: у материала нет своей лестницы подсказок, кнопка ведёт сразу в
+    модалку с текстом, и решённый вопрос tsk-261 (A10, пустая заявка запрещена)
+    здесь проверяется и на входе API, а не только в клиенте.
+    """
+    student_id: int = Field(..., description="ID студента")
+    message: str = Field(
+        ..., min_length=1, max_length=2000,
+        description="Что именно непонятно — обязательное поле (tsk-261 A10)",
+    )
+    attachment_id: Optional[str] = Field(
+        default=None, description="Ключ файла из POST /learning/help-requests/attachments"
+    )
+    attachment_filename: Optional[str] = Field(default=None, max_length=255)
+    attachment_content_type: Optional[str] = Field(default=None, max_length=100)
+    attachment_size_bytes: Optional[int] = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def _message_not_blank(self) -> "MaterialRequestHelpRequest":
+        if not self.message.strip():
+            raise ValueError("Опишите, что именно непонятно")
+        return self
+
+
+class MaterialRequestHelpResponse(BaseModel):
+    ok: bool = True
+    deduplicated: bool = False
+    request_id: int
 
 
 # ----- Лестница помощи, сторона ученика (tsk-303) -----

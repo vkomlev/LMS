@@ -6,7 +6,10 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Path, Body, status
+from uuid import uuid4
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Path, Body, File, UploadFile, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy import select, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -36,6 +39,9 @@ from app.schemas.learning_api import (
     RateReviewResponse,
     HintEventRequest,
     HintEventResponse,
+    HelpRequestAttachmentRead,
+    MaterialRequestHelpRequest,
+    MaterialRequestHelpResponse,
 )
 from app.schemas.learning_engine import NextItemResult
 from app.services.learning_engine_service import LearningEngineService
@@ -50,11 +56,14 @@ from app.services.learning_events_service import (
 from app.services.help_requests_service import (
     get_or_create_help_request,
     get_or_create_blocked_limit_help_request,
+    get_or_create_material_help_request,
     get_student_help_request,
     reopen_help_request,
     request_individual_review,
     rate_individual_review,
+    get_help_request_attachment,
 )
+from app.services import attachment_storage
 from app.services import payment_access_service
 # tsk-673: тариф «Выпускник» закрывает работу в курсе (сдачу), оставляя чтение.
 from app.services import graduation_service
@@ -735,6 +744,10 @@ async def request_help(
         message=body.message,
         course_id=task.course_id,
         deduplicated=deduplicated,
+        attachment_id=body.attachment_id,
+        attachment_filename=body.attachment_filename,
+        attachment_content_type=body.attachment_content_type,
+        attachment_size_bytes=body.attachment_size_bytes,
     )
     await db.commit()
     logger.info(
@@ -744,6 +757,174 @@ async def request_help(
     return RequestHelpResponse(
         ok=True, event_id=event_id, deduplicated=deduplicated, request_id=request_id
     )
+
+
+# ----- tsk-943: вложение к заявке помощи -----
+
+
+@router.post(
+    "/help-requests/attachments",
+    response_model=HelpRequestAttachmentRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="Загрузить вложение к запросу помощи (скрин ошибки, файл, код)",
+)
+async def upload_help_request_attachment(
+    file: UploadFile = File(..., description="Файл для приложения к заявке"),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> HelpRequestAttachmentRead:
+    """
+    Загружает файл ДО создания заявки: `request-help`/`materials/.../request-help`
+    принимают вернувшиеся отсюда метаданные и пишут их в ту же строку `help_requests`,
+    что и текст. Переиспользует общий `attachment_storage` (tsk-593), пространство
+    `HELP_REQUESTS` — тот же механизм, что у вложений ответа (tsk-227), отдельное
+    пространство ключей.
+
+    Идентификатор строится от `current_user.id`, а не от ещё не существующего
+    `request_id` (в отличие от `/attempts/{attempt_id}/attachments`, где
+    `attempt_id` уже есть на момент загрузки).
+    """
+    original_name = attachment_storage.safe_name(file.filename)
+    attachment_id = f"{current_user.id}_{uuid4().hex}_{original_name}"
+    try:
+        total, content_type = await attachment_storage.store_upload(
+            attachment_storage.HELP_REQUESTS, attachment_id, file
+        )
+    except DomainError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail)
+    logger.info(
+        "POST /help-requests/attachments: user_id=%s filename=%s size=%s",
+        current_user.id, original_name, total,
+    )
+    return HelpRequestAttachmentRead(
+        attachment_id=attachment_id,
+        filename=original_name,
+        content_type=content_type,
+        size_bytes=total,
+    )
+
+
+@router.get(
+    "/help-requests/{request_id}/attachment",
+    summary="Скачать вложение своей заявки помощи (ученик)",
+    responses={
+        403: {"description": "Не автор заявки"},
+        404: {"description": "Заявка не найдена либо у неё нет вложения"},
+        410: {"description": "Вложение было, но файла в хранилище больше нет"},
+    },
+)
+async def download_own_help_request_attachment(
+    request_id: int = Path(..., description="ID заявки помощи"),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_bare_db),
+):
+    """Скачивание вложения СВОЕЙ заявки — сторона ученика.
+
+    Симметричный эндпоинт для преподавателя — `GET /teacher/help-requests/
+    {request_id}/attachment` (та же ACL-функция `can_access_help_request`,
+    у ученика она не нужна: он либо автор, либо нет).
+    """
+    meta = await get_help_request_attachment(db, request_id)
+    if meta is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Заявка не найдена или без вложения")
+    if not current_user.is_service and current_user.id != meta["student_id"]:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
+    return await _stream_help_request_attachment(meta)
+
+
+async def _stream_help_request_attachment(meta: dict) -> StreamingResponse:
+    """Общее тело скачивания для обоих ACL-веток (ученик/преподаватель, tsk-943)."""
+    try:
+        opened = await attachment_storage.open_stream(
+            attachment_storage.HELP_REQUESTS, meta["attachment_id"]
+        )
+    except DomainError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail)
+    if opened is None:
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail="Файл вложения утрачен на сервере и восстановлению не подлежит.",
+        )
+    stream, media_type = opened
+    display_name = meta["attachment_filename"] or meta["attachment_id"]
+    return StreamingResponse(
+        stream,
+        media_type=meta["attachment_content_type"] or media_type,
+        headers={"Content-Disposition": attachment_storage.content_disposition(display_name)},
+    )
+
+
+# ----- tsk-943: «Я не понял» по материалу -----
+
+
+@router.post(
+    "/materials/{material_id}/request-help",
+    response_model=MaterialRequestHelpResponse,
+    responses=_PAYMENT_403,
+    summary="«Я не понял»: запрос помощи по материалу (не заданию)",
+)
+async def material_request_help(
+    material_id: int = Path(..., description="ID материала"),
+    body: MaterialRequestHelpRequest = Body(...),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_bare_db),
+) -> MaterialRequestHelpResponse:
+    """
+    Сестра `request_help` (задание), но без лестницы подсказок: материал не
+    имеет собственного `HintPanel`, кнопка ведёт сразу в модалку с текстом.
+    Тот же гейт тарифа (tsk-301, эскалация преподавателю не во всех тарифах)
+    и та же проверка оплаты (tsk-010/tsk-617) — ресурс, который тратится
+    (время преподавателя), один и тот же для задания и материала.
+    """
+    if not current_user.is_service and current_user.id != body.student_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
+
+    await payment_access_service.assert_content_allowed(db, body.student_id)
+
+    escalation_gate = await entitlements_service.check(
+        db, student_id=body.student_id, capability="teacher_escalation"
+    )
+    if entitlements_service.should_block(
+        escalation_gate,
+        capability="teacher_escalation",
+        student_id=body.student_id,
+    ):
+        raise DomainError(
+            detail=(
+                escalation_gate.upgrade_hint
+                or "Разбор с преподавателем не входит в ваш тариф."
+            ),
+            status_code=403,
+            payload={
+                "code": "subscription_denied",
+                "outcome": escalation_gate.outcome,
+                "upgrade_hint": escalation_gate.upgrade_hint,
+            },
+        )
+
+    material = await materials_service.get_by_id(db, material_id)
+    if material is None or not material.is_active:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Материал не найден")
+    user = await users_service.get_by_id(db, body.student_id)
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Студент не найден")
+
+    request_id, created = await get_or_create_material_help_request(
+        db,
+        student_id=body.student_id,
+        material_id=material_id,
+        course_id=material.course_id,
+        message=body.message,
+        attachment_id=body.attachment_id,
+        attachment_filename=body.attachment_filename,
+        attachment_content_type=body.attachment_content_type,
+        attachment_size_bytes=body.attachment_size_bytes,
+    )
+    await db.commit()
+    logger.info(
+        "material request-help: student_id=%s material_id=%s deduplicated=%s request_id=%s",
+        body.student_id, material_id, not created, request_id,
+    )
+    return MaterialRequestHelpResponse(ok=True, deduplicated=not created, request_id=request_id)
 
 
 # ----- tsk-303: лестница помощи, сторона ученика -----
