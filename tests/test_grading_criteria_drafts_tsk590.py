@@ -271,6 +271,72 @@ async def test_draft_does_not_overwrite_approved(db):
     assert saved["grading_criteria"]["status"] == "approved"
 
 
+# ── (ж) пометка ручной правки при подтверждении (tsk-951) ────────────────────
+
+
+async def _provenance(db, task_id: int) -> dict | None:
+    return await db.scalar(text("SELECT content_provenance FROM tasks WHERE id = :t"), {"t": task_id})
+
+
+async def test_approve_marks_task_as_manually_edited(db):
+    """Подтверждение выводит критерии из-под переиздания курса из источника.
+
+    `bulk_upsert` не трогает `solution_rules` только при
+    `content_provenance.source` из `HUMAN_EDIT_SOURCES`. Кабинет получает пометку
+    через `PATCH /tasks/{id}`, а этот путь (эндпоинты `.../grading-criteria`,
+    пакет, скрипт) её не ставил — и переиздание из ContentBackbone (tsk-946)
+    заменяло вычитанные критерии черновиком из исходника.
+    """
+    course_id = await _make_course(db)
+    task_id = await _make_task(db, course_id)
+    assert await _provenance(db, task_id) is None
+
+    result = await grading_criteria_service.apply(
+        db, CriteriaUpdate(task_id=task_id, must=list(_MUST), approve=True), reviewer_id=77
+    )
+    assert (result.ok, result.state) == (True, "approved")
+
+    prov = await _provenance(db, task_id)
+    assert prov is not None
+    assert prov["source"] == "manual_web"
+    assert prov["edited_by"] == 77
+    assert prov["edited_at"]
+    # Пара целиком, как в PATCH: порознь поля разъедутся при переиздании.
+    assert sorted(prov["fields"]) == ["solution_rules", "task_content"]
+
+    # Та же форма, что защищает импорт: сверяем через сам предикат, а не по памяти.
+    from app.models.tasks import Tasks
+    from app.services.tasks_service import _manually_edited_task_fields
+
+    task = await db.get(Tasks, task_id)
+    await db.refresh(task)
+    assert _manually_edited_task_fields(task) == frozenset({"solution_rules", "task_content"})
+
+
+async def test_draft_write_leaves_no_manual_edit_mark(db):
+    """Черновик — что от человека без подтверждения, что от модели — пометки не ставит.
+
+    Иначе заготовка замораживала бы условие задания навсегда, а вычитка ещё
+    не состоялась.
+    """
+    course_id = await _make_course(db)
+    task_id = await _make_task(db, course_id)
+
+    result = await grading_criteria_service.apply(
+        db, CriteriaUpdate(task_id=task_id, must=list(_MUST)), reviewer_id=None
+    )
+    assert (result.ok, result.state) == (True, "draft")
+    assert await _provenance(db, task_id) is None
+
+    outcome = await grading_criteria_service.store_draft(
+        db,
+        task_id=task_id,
+        criteria=GradingCriteria.model_validate(_criteria(origin="ai_draft")),
+    )
+    assert (outcome.ok, outcome.state) == (True, "draft")
+    assert await _provenance(db, task_id) is None
+
+
 async def test_unreadable_rules_answered_not_crashed(db):
     """Правка мимо API (прецедент tsk-396) — отказ с внятным текстом, не 500."""
     course_id = await _make_course(db)

@@ -12,6 +12,14 @@
 `approve=True` вместе с идентификатором человека. Модель подтвердить свою же
 заготовку не может: генератор (`grading_criteria_draft`) статуса не ставит
 вовсе, он всегда пишет `draft`.
+
+**Что здесь про переиздание курса из источника (tsk-951).** Подтверждение
+через `apply(approve=True)` ставит на задание `content_provenance` с
+`source=manual_web` — той же формы, что `PATCH /tasks/{id}`. Без пометки
+`bulk_upsert` при переиздании курса из ContentBackbone (tsk-946 шлёт
+`grading_criteria` со `status=draft`) перезаписал бы вычитанные критерии
+черновиком. Черновик модели (`store_draft`) пометку НЕ ставит: это не
+редакторская правка, и замораживать из-за него условие задания нельзя.
 """
 from __future__ import annotations
 
@@ -137,14 +145,31 @@ async def apply(
 
     rules.grading_criteria = criteria
     task.solution_rules = rules.model_dump()
+    if update.approve:
+        # Подтверждение — редакторская правка человека, и её надо вывести
+        # из-под переиздания курса из источника: `bulk_upsert` не трогает
+        # `solution_rules` только при `content_provenance.source` из
+        # `HUMAN_EDIT_SOURCES` (tsk-433/tsk-760). Кабинет ходит через
+        # `PATCH /tasks/{id}` и пометку получает там; этот путь (эндпоинты
+        # `.../grading-criteria`, пакет, скрипт) её не ставил — и переиздание
+        # из ContentBackbone (tsk-946) заменяло подтверждённые критерии
+        # черновиком из исходника. Пара полей целиком — см. docstring
+        # `_manually_edited_task_fields` (tsk-951).
+        task.content_provenance = {
+            "source": "manual_web",
+            "edited_at": now,
+            "edited_by": reviewer_id,
+            "fields": ["solution_rules", "task_content"],
+        }
     await db.flush()
     if commit:
         await db.commit()
     logger.info(
-        "tsk-590: критерии задания %s записаны, состояние=%s, происхождение=%s",
+        "tsk-590: критерии задания %s записаны, состояние=%s, происхождение=%s%s",
         update.task_id,
         criteria.status,
         criteria.origin,
+        ", пометка ручной правки поставлена (tsk-951)" if update.approve else "",
     )
     return CriteriaWriteResult(task_id=update.task_id, ok=True, state=rules.criteria_state())
 
@@ -161,6 +186,10 @@ async def store_draft(
     Отказ вместо перезаписи — намеренно: подтверждённые критерии стоили
     методисту вычитки, и молча заменить их свежей заготовкой значит потерять
     эту работу.
+
+    `content_provenance` здесь не ставится (в отличие от `apply(approve=True)`):
+    заготовка модели — не правка человека, и выводить из-за неё задание
+    из-под переиздания курса нельзя (tsk-951).
 
     :param db: асинхронная сессия.
     :param task_id: задание.
