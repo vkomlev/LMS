@@ -345,6 +345,7 @@ async def test_code_review_gate_stands_before_the_queue() -> None:
     Поведенческим тестом такой порядок не поймать: в обоих случаях ответ
     ученику одинаков.
     """
+    import re
     from pathlib import Path
 
     source = (
@@ -352,7 +353,17 @@ async def test_code_review_gate_stands_before_the_queue() -> None:
     ).read_text(encoding="utf-8")
 
     gate_at = source.index("capability=\"code_review\"")
-    queue_at = source.index("pick_code_for_review,")
+    # Якорь — сам вызов в потоке, а не имя функции: первое вхождение
+    # `pick_code_for_review,` приходится на блок импортов в шапке модуля,
+    # и сторож сравнивал гейт с импортом, а не с постановкой в очередь.
+    queue_calls = list(
+        re.finditer(r"asyncio\.to_thread\(\s*pick_code_for_review,", source)
+    )
+    assert len(queue_calls) == 1, (
+        f"ожидался ровно один вызов pick_code_for_review в потоке, "
+        f"найдено {len(queue_calls)}"
+    )
+    queue_at = queue_calls[0].start()
     assert gate_at < queue_at, (
         "гейт подписки оказался ниже постановки в очередь — работа успеет "
         "попасть к фоновому тику"
