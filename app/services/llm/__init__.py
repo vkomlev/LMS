@@ -12,6 +12,7 @@
 from app.services.llm.client import complete, stream
 from app.services.llm.contracts import (
     Budget,
+    JUDGE_MAX_TOKENS,
     LLMChunk,
     LLMConfigError,
     LLMCooldown,
@@ -32,6 +33,7 @@ __all__ = [
     "complete",
     "stream",
     "Budget",
+    "JUDGE_MAX_TOKENS",
     "LLMMessage",
     "LLMResult",
     "LLMChunk",

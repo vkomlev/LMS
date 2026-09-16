@@ -38,6 +38,7 @@ from app.services.attempt_attachments import is_valid_attachment_id, parse_attac
 from app.utils.exceptions import DomainError
 from app.services.llm import (
     Budget,
+    JUDGE_MAX_TOKENS,
     LLMError,
     LLMMessage,
     complete,
@@ -643,7 +644,7 @@ async def review_student_code(
             # seed фиксирован: при повторной калибровке рубрики расхождение
             # вердиктов должно означать правку рубрики, а не дрожание модели.
             seed=42,
-            max_tokens=700,
+            max_tokens=JUDGE_MAX_TOKENS,
             purpose="code_review",
             student_id=student_id,
             budget=Budget.BATCH,

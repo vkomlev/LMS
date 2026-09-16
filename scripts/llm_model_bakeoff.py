@@ -182,6 +182,7 @@ def probe(model: str, system_prompt: str, base: str, key: str) -> dict:
 # не навязывает — меряет ФАКТ и сравнивает с ним, поэтому его собственный таймаут
 # запроса (180 c) заведомо больше.
 JUDGE_BUDGET_SEC = 60.0  # значение по умолчанию, перечитывается из контракта
+JUDGE_MAX_TOKENS_LIVE = 1024  # значение по умолчанию, перечитывается из контракта (tsk-959)
 
 # Образец работы берётся ИЗ СЕРВИСА еженедельной проверки, а не пишется здесь
 # заново (tsk-678). Стенд и еженедельный проход обязаны мерить ОДНУ И ТУ ЖЕ
@@ -209,12 +210,33 @@ def _judge_prompt() -> tuple[str, list[str]]:
     from app.services.llm.contracts import Budget
     from app.services.llm_chain_check_cron_service import PROBE_WORKS
 
-    global JUDGE_BUDGET_SEC
+    from app.services.llm.contracts import JUDGE_MAX_TOKENS
+
+    global JUDGE_BUDGET_SEC, JUDGE_MAX_TOKENS_LIVE
     JUDGE_BUDGET_SEC = float(Budget.BATCH.attempt_timeout)
+    # Потолок ответа берём оттуда же, откуда бой (tsk-959): стенд с 1024 при
+    # боевых 700 выпускал модель, которую бой резал по длине.
+    JUDGE_MAX_TOKENS_LIVE = int(JUDGE_MAX_TOKENS)
 
     return _SYSTEM_PROMPT, [
         _build_user_message(code, task_stem=stem) for stem, code in PROBE_WORKS
     ]
+
+
+def _empty_reason(choice: dict, usage: dict) -> str:
+    """Почему пришёл пустой `content` при HTTP 200 — стенду важно различать.
+
+    Думающая модель кладёт рассуждение в тот же `max_tokens`, что и ответ:
+    `finish_reason=length` при пустом тексте значит «потолок съело рассуждение»,
+    а не «модель промолчала» (tsk-959, `z-ai/glm-5.3`: 700 из 700 токенов ушли
+    в `reasoning_tokens`). Без этого различия вердикт «НЕСТАБИЛЕН» ничего не
+    говорит о том, что чинить — потолок или модель.
+    """
+    reasoning = int((usage.get("completion_tokens_details") or {}).get("reasoning_tokens") or 0)
+    if choice.get("finish_reason") == "length":
+        return (f"потолок {JUDGE_MAX_TOKENS_LIVE} съеден рассуждением "
+                f"(reasoning_tokens={reasoning}), текста нет")
+    return "пустой ответ без ошибки"
 
 
 def judge_probe(model: str, system_prompt: str, user_msg: str, base: str, key: str) -> dict:
@@ -230,7 +252,7 @@ def judge_probe(model: str, system_prompt: str, user_msg: str, base: str, key: s
         "model": model,
         "messages": [{"role": "system", "content": system_prompt},
                      {"role": "user", "content": user_msg}],
-        "temperature": 0.0, "max_tokens": 1024, "stream": False,
+        "temperature": 0.0, "max_tokens": JUDGE_MAX_TOKENS_LIVE, "stream": False,
         "response_format": {"type": "json_object"},
     }
     t0 = time.monotonic()
@@ -241,12 +263,20 @@ def judge_probe(model: str, system_prompt: str, user_msg: str, base: str, key: s
             res["error"] = f"upstream_in_200: {err}"
         else:
             choices = body.get("choices") or []
-            res["text"] = ((choices[0].get("message") or {}).get("content") or "") if choices else ""
+            first = choices[0] if choices else {}
+            res["text"] = ((first.get("message") or {}).get("content") or "")
             usage = body.get("usage") or {}
             res["tokens_in"] = int(usage.get("prompt_tokens") or 0)
             res["tokens_out"] = int(usage.get("completion_tokens") or 0)
             if not res["text"]:
-                res["error"] = "пустой ответ без ошибки"
+                res["error"] = _empty_reason(first, usage)
+            elif "bad request from ai provider" in res["text"].lower():
+                # Заглушка провайдера текстом при HTTP 200 (tsk-959). Бой её
+                # отсеивает в клиенте (`_check_content_stub`) — стенд ходит к
+                # провайдеру напрямую и обязан назвать её своими словами, а не
+                # «JSONDecodeError на символе 1».
+                res["error"] = f"заглушка провайдера текстом ответа: {res['text'][:120]!r}"
+                res["text"] = ""
     except urllib.error.HTTPError as e:
         res["error"] = f"HTTP {e.code}: {e.read().decode('utf-8','ignore')[:160]}"
     except Exception as e:  # noqa: BLE001
@@ -290,7 +320,10 @@ def judge_verdict(a: dict) -> tuple[str, str]:
     if a["bad_format"]:
         return "ФОРМАТ", f"ответ не разобрался нашим разборщиком в {a['bad_format']} из {a['runs']}"
     if a["ok_runs"] < a["runs"]:
-        return "НЕСТАБИЛЕН", f"успешных прогонов {a['ok_runs']} из {a['runs']}"
+        # Причины — в строку: без них «1 из 3» не отличает таймаут маршрута
+        # от съеденного рассуждением потолка (tsk-959).
+        reasons = "; ".join(dict.fromkeys(e[:90] for e in a["errors"]))
+        return "НЕСТАБИЛЕН", f"успешных прогонов {a['ok_runs']} из {a['runs']}: {reasons}"
     if a["slowest"] and a["slowest"] > JUDGE_BUDGET_SEC:
         return "МЕДЛЕННО", f"худший прогон {a['slowest']:.1f} c > бюджета попытки {JUDGE_BUDGET_SEC:.0f} c"
     return "ГОДЕН", f"медиана {a['total']:.1f} c, худший {a['slowest']:.1f} c"

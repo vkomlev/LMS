@@ -40,6 +40,67 @@ logger = logging.getLogger(__name__)
 # remaing quota: $0.00045" — опечатка в "remaing" его собственная.
 _QUOTA_MARKER = "quota"
 
+# Заглушка провайдера ТЕКСТОМ ОТВЕТА при HTTP 200 и без поля `error` (tsk-959):
+# "[req_35e09394] [glm-5.3] **Bad request from AI provider** - Your request was
+# rejected by the AI provider …" — и биллинг по минимуму 1000 токенов. Поймано
+# живьём 15–16.09 на `z-ai/glm-5.3`, полосами по часам, при любых параметрах
+# запроса (`glm-5.3-flash` в ту же минуту отвечала). Для судьи это было «ok» в
+# учёте и `unparsable_verdict` на разборе — работа ждала следующего тика; для
+# наставника — этот текст ушёл бы ученику в чат как реплика.
+_STUB_MARKER = "bad request from ai provider"
+# Заглушка начинается с "[req_" — по этому префиксу поток придерживает первые
+# куски до решения; обычная реплика с "[" не начинается.
+_STUB_PREFIX = "[req_"
+_STUB_SNIFF_CHARS = 160
+
+
+def _check_content_stub(text: str) -> None:
+    """Поднять `LLMUpstreamError`, если провайдер вернул заглушку об ошибке текстом."""
+    if _STUB_MARKER in text[:_STUB_SNIFF_CHARS * 2].lower():
+        raise LLMUpstreamError(
+            f"провайдер вернул заглушку об ошибке текстом ответа: {text[:200]!r}"
+        )
+
+
+class _StubSniffer:
+    """Придержать начало потока, пока не ясно, реплика это или заглушка.
+
+    Куски, начинающиеся с `[req_`, копятся до `_STUB_SNIFF_CHARS`: нашли маркер —
+    исключение, не нашли — отдаём накопленное. Остальные потоки проходят без
+    задержки: первый же кусок не с `[req_` снимает подозрение навсегда.
+    """
+
+    def __init__(self) -> None:
+        self._held = ""
+        self._decided = False
+
+    def feed(self, delta: str) -> str:
+        if self._decided:
+            return delta
+        self._held += delta
+        probe = self._held.lstrip()
+        if not probe:
+            return ""
+        if not _STUB_PREFIX.startswith(probe[: len(_STUB_PREFIX)]):
+            # Начало не похоже на заглушку — больше не придерживаем.
+            return self._release()
+        if len(probe) < _STUB_SNIFF_CHARS:
+            return ""
+        _check_content_stub(probe)
+        return self._release()
+
+    def finish(self) -> str:
+        """Поток кончился раньше, чем набралось на решение — проверить и отдать."""
+        if self._decided:
+            return ""
+        _check_content_stub(self._held)
+        return self._release()
+
+    def _release(self) -> str:
+        self._decided = True
+        held, self._held = self._held, ""
+        return held
+
 
 def _raise_for_status(status: int, body: str) -> None:
     """HTTP-статус → класс ошибки по таблице §5."""
@@ -265,6 +326,7 @@ async def complete(
                     if not choices:
                         raise LLMMalformed(f"в ответе нет choices: {body[:200]}")
                     text_out = (choices[0].get("message") or {}).get("content") or ""
+                    _check_content_stub(text_out)
                     usage_block = payload.get("usage") or {}
                     duration_ms = int((time.monotonic() - started) * 1000)
 
@@ -402,6 +464,7 @@ async def stream(
             got_any = False
             text_len = 0
             tokens_in = tokens_out = 0
+            sniffer = _StubSniffer()
             remaining = deadline - time.monotonic()
             # Наблюдаемость перебора (tsk-671). Без этих двух строк «ученик ждёт»
             # выглядит одинаково при молчащей модели, при зависшем запросе и при
@@ -486,10 +549,20 @@ async def stream(
                                     continue
                                 if first_at is None:
                                     first_at = time.monotonic()
+                                # Заглушка провайдера текстом (tsk-959) — отсев до
+                                # того, как кусок уйдёт ученику.
+                                delta = sniffer.feed(delta)
+                                if not delta:
+                                    continue
                                 got_any = True
                                 text_len += len(delta)
                                 yield LLMChunk(delta=delta, model=candidate)
 
+                tail = sniffer.finish()
+                if tail:
+                    got_any = True
+                    text_len += len(tail)
+                    yield LLMChunk(delta=tail, model=candidate)
 
                 duration_ms = int((time.monotonic() - started) * 1000)
                 await _usage_ok(

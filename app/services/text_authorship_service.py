@@ -48,6 +48,7 @@ from typing import Any, Dict, List, Optional
 
 from app.services.llm import (
     Budget,
+    JUDGE_MAX_TOKENS,
     LLMError,
     LLMMessage,
     complete,
@@ -341,7 +342,7 @@ async def review_student_text(
             # вердиктов при повторной калибровке должно означать правку
             # рубрики, а не дрожание модели.
             seed=42,
-            max_tokens=500,
+            max_tokens=JUDGE_MAX_TOKENS,
             purpose="code_review",
             student_id=student_id,
             budget=Budget.BATCH,

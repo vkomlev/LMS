@@ -55,6 +55,7 @@ from typing import Any, Dict, List, Optional
 from app.schemas.solution_rules import SolutionRules
 from app.services.llm import (
     Budget,
+    JUDGE_MAX_TOKENS,
     LLMError,
     LLMMessage,
     complete,
@@ -484,7 +485,7 @@ async def review_against_rubric(
             # разборов при повторном прогоне должно означать правку рубрики или
             # промпта, а не дрожание модели.
             seed=42,
-            max_tokens=900,
+            max_tokens=JUDGE_MAX_TOKENS,
             purpose=purpose,
             student_id=student_id,
             budget=Budget.BATCH,
