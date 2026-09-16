@@ -2205,3 +2205,184 @@ async def test_without_program_falls_back_to_grade_norm(db, monkeypatch):
     )
     assert plan.program_kind is None
     assert plan.target_per_week == 20  # норма 11 класса
+
+
+# ============ Потеря решённого в стыке переиздания (tsk-968) ============
+
+
+@pytest.mark.asyncio
+async def test_orphaned_completion_counts_toward_current_homework(db):
+    """Решённое ПОСЛЕ отмены старой выдачи не теряется, даже если новая выдача
+    (уже более узкая — переиздание пересобрало состав заново) его не
+    унаследовала. Сценарий Крук Анастасии (tsk-968): #149 отменено в момент
+    переиздания, три её задания решены позже — не вошли ни в узкую замену,
+    ни в следующую широкую (обе уже видели их решёнными и корректно не
+    предложили снова), и счёт «X из N» их не видел вовсе.
+    """
+    student_id, course_id = await _student_with_program(db, materials=0, tasks=5)
+    old = await homework_service.issue(
+        db, student_id=student_id, due_at=datetime.now(UTC) + timedelta(days=7),
+        source="teacher", volume_override=5,
+    )
+    await db.commit()
+    # Пункт из старого (широкого) набора, за пределами узкой замены ниже.
+    orphan_task_id = old["items"][3]["item_id"]
+
+    new = await homework_service.issue(
+        db, student_id=student_id, due_at=datetime.now(UTC) + timedelta(days=7),
+        source="teacher", volume_override=1,
+    )
+    await db.commit()
+    assert new["total"] == 1
+    assert all(i["item_id"] != orphan_task_id for i in new["items"])
+
+    # Решено, пока действует уже отменённый старый набор больше не виден, а
+    # узкий новый его никогда не содержал.
+    await _submit(
+        db, student_id=student_id, task_id=orphan_task_id, course_id=course_id,
+        is_correct=True, at=datetime.now(UTC),
+    )
+
+    updated = await homework_service.get_current(db, student_id=student_id)
+    assert updated["total"] == 2, "решённое сверх узкого набора должно досчитаться"
+    assert updated["done"] == 1
+    assert any(
+        i["item_id"] == orphan_task_id and i["done"] is True
+        for i in updated["items"]
+    ), "осиротевшее решение должно появиться в списке выполненным"
+
+
+@pytest.mark.asyncio
+async def test_orphaned_completion_does_not_duplicate_once_recovered(db):
+    """Если следующее переиздание САМО подхватило задание — второй раз считать
+    его в «осиротевших» не нужно: оно уже честно в текущем составе."""
+    student_id, course_id = await _student_with_program(db, materials=0, tasks=2)
+    first = await homework_service.issue(
+        db, student_id=student_id, due_at=datetime.now(UTC) + timedelta(days=7),
+        source="teacher", volume_override=2,
+    )
+    await db.commit()
+    second_task_id = first["items"][1]["item_id"]
+
+    # Переиздание набирает состав заново — оба пункта решить ещё не успели,
+    # второй набор снова содержит оба.
+    second = await homework_service.issue(
+        db, student_id=student_id, due_at=datetime.now(UTC) + timedelta(days=7),
+        source="teacher", volume_override=2,
+    )
+    await db.commit()
+    assert any(i["item_id"] == second_task_id for i in second["items"])
+
+    await _submit(
+        db, student_id=student_id, task_id=second_task_id, course_id=course_id,
+        is_correct=True, at=datetime.now(UTC),
+    )
+
+    updated = await homework_service.get_current(db, student_id=student_id)
+    assert updated["total"] == 2, "дубля из осиротевших быть не должно"
+    assert updated["done"] == 1
+
+
+@pytest.mark.asyncio
+async def test_summary_counts_orphaned_completion_too(db):
+    """Сводка преподавателю перед занятием тоже видит осиротевшее решение —
+    не только личный экран ученика."""
+    student_id, course_id = await _student_with_program(db, materials=0, tasks=5)
+    lesson_at = datetime.now(UTC) - timedelta(hours=1)
+
+    old = await homework_service.issue(
+        db, student_id=student_id, due_at=datetime.now(UTC) + timedelta(days=7),
+        source="teacher", volume_override=5, now=lesson_at - timedelta(days=1),
+    )
+    await db.commit()
+    orphan_task_id = old["items"][3]["item_id"]
+
+    await homework_service.issue(
+        db, student_id=student_id, due_at=datetime.now(UTC) + timedelta(days=7),
+        source="teacher", volume_override=1, now=lesson_at - timedelta(minutes=30),
+    )
+    await db.commit()
+
+    await _submit(
+        db, student_id=student_id, task_id=orphan_task_id, course_id=course_id,
+        is_correct=True, at=datetime.now(UTC),
+    )
+
+    status = await homework_service.status_for_students(db, student_ids=[student_id])
+    assert status[student_id]["assigned_total"] == 2
+    assert status[student_id]["assigned_done"] == 1
+
+
+@pytest.mark.asyncio
+async def test_orphaned_material_counts_too(db):
+    """Осиротеть может и материал (теория), не только задание — у Нещеретова
+    (tsk-968) в реальных данных осиротело сразу 9 материалов."""
+    student_id, course_id = await _student_with_program(db, materials=5, tasks=0)
+    old = await homework_service.issue(
+        db, student_id=student_id, due_at=datetime.now(UTC) + timedelta(days=7),
+        source="teacher", volume_override=5,
+    )
+    await db.commit()
+    orphan_material_id = old["items"][3]["item_id"]
+
+    await homework_service.issue(
+        db, student_id=student_id, due_at=datetime.now(UTC) + timedelta(days=7),
+        source="teacher", volume_override=1,
+    )
+    await db.commit()
+
+    await _complete_material(
+        db, student_id=student_id, material_id=orphan_material_id, at=datetime.now(UTC),
+    )
+
+    updated = await homework_service.get_current(db, student_id=student_id)
+    assert any(
+        i["kind"] == "material" and i["item_id"] == orphan_material_id and i["done"]
+        for i in updated["items"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_orphan_is_not_recovered_by_an_intermediate_reissue(db):
+    """Задание, ПОДХВАЧЕННОЕ промежуточным набором, осиротевшим не считается —
+    даже если следующий, самый свежий набор его снова не унаследовал.
+
+    Проверяет порядок вычисления в `_ORPHANED_ITEMS_SQL`: фильтр «не
+    подхвачено ни одной более поздней выдачей» должен смотреть на КАЖДОЕ
+    отменённое появление задания отдельно (через отмену #2 оно подхвачено
+    набором #2 → не сирота относительно #1), а не через раннее отменённое
+    появление, где переподхват ещё не виден.
+    """
+    student_id, course_id = await _student_with_program(db, materials=0, tasks=6)
+    first = await homework_service.issue(
+        db, student_id=student_id, due_at=datetime.now(UTC) + timedelta(days=7),
+        source="teacher", volume_override=6,
+    )
+    await db.commit()
+    bouncing_task_id = first["items"][5]["item_id"]
+
+    # #2 узкий, но СОДЕРЖИТ то же задание (специально не решаем его здесь).
+    second = await homework_service.issue(
+        db, student_id=student_id, due_at=datetime.now(UTC) + timedelta(days=7),
+        source="teacher", volume_override=6,
+    )
+    await db.commit()
+    assert any(i["item_id"] == bouncing_task_id for i in second["items"])
+
+    # #3 узкий и задание уже не содержит.
+    await homework_service.issue(
+        db, student_id=student_id, due_at=datetime.now(UTC) + timedelta(days=7),
+        source="teacher", volume_override=1,
+    )
+    await db.commit()
+
+    # Решено уже после отмены #2 (и тем более #1).
+    await _submit(
+        db, student_id=student_id, task_id=bouncing_task_id, course_id=course_id,
+        is_correct=True, at=datetime.now(UTC),
+    )
+
+    updated = await homework_service.get_current(db, student_id=student_id)
+    matches = [i for i in updated["items"] if i["item_id"] == bouncing_task_id]
+    assert len(matches) == 1, "не должно быть дублей из-за нескольких отменённых появлений"
+    assert matches[0]["done"] is True

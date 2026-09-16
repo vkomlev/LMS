@@ -21,6 +21,15 @@
 - **Отменённые выдачи остаются.** `cancelled_at` вместо удаления: преподаватель
   должен видеть, что задавал и почему передумал, а счётчики за прошлые недели
   не должны меняться задним числом.
+- **Решённое после отмены своей выдачи не теряется (tsk-968).** Каждое
+  переиздание пересобирает состав заново и корректно пропускает уже решённое
+  — иначе завело бы дубль. Но если к моменту решения задание уже не входило
+  ни в одну действующую выдачу (старая отменена раньше решения, новая его уже
+  не предложит), ему было некуда попасть. `get_current`/`status_for_students`
+  досчитывают такие «осиротевшие» решения поверх состава текущей выдачи
+  (`_load_orphaned_items`/`_ORPHANED_COUNTS_SQL`) — работа не хранится нигде
+  отдельно, это то же самое «считаем у источника», только не ограниченное
+  списком одной выдачи.
 
 Одна действующая выдача на ученика: новая гасит предыдущую (`cancelled_at`).
 Иначе «текущее ДЗ» перестаёт быть определённым — а именно этот вопрос задаёт и
@@ -766,6 +775,128 @@ SELECT hi.id, hi.kind, hi.task_id, hi.material_id, hi.position,
 """
 
 
+#: tsk-968: задания/материалы прошлых (уже ОТМЕНЁННЫХ) выдач того же ученика,
+#: решённые ПОСЛЕ отмены своей выдачи и с тех пор не встретившиеся ни в одной
+#: более поздней выдаче (включая текущую). Каждое переиздание пересобирает
+#: состав заново из дерева прогресса и корректно ПРОПУСКАЕТ уже решённое —
+#: иначе завело бы дубль (см. `_next_items`/`_DONE_STATUSES`), — но если к
+#: моменту решения задание уже не входило ни в одну ДЕЙСТВУЮЩУЮ выдачу
+#: (старая отменена раньше, чем решено, а новая уже не предложит решённое),
+#: ему было некуда попасть: билет в счёт «X из N» терялся навсегда. Реальный
+#: случай (Крук Анастасия, 4503): #149 отменено 15.09 14:02 в момент, когда
+#: подошёл срок и по занятию переиздалось ДЗ; три её задания решены позже в
+#: тот же день и на следующий, но не вошли ни в #255 (2 пункта), ни в #282
+#: (27 пунктов) — оба раза `_next_items` увидел их уже решёнными и корректно
+#: не предложил снова. Работа настоящая (запись в `task_results` есть), но
+#: `get_current`/`status_for_students` смотрели только на состав ОДНОЙ,
+#: текущей выдачи — эта выборка достаёт то, что осталось за её пределами.
+_ORPHANED_ITEMS_SQL = """
+WITH cancelled_items AS (
+    SELECT hi.kind, hi.task_id, hi.material_id,
+           hi.homework_id AS old_homework_id, ha.cancelled_at
+      FROM homework_item hi
+      JOIN homework_assignment ha ON ha.id = hi.homework_id
+     WHERE ha.student_id = :sid AND ha.cancelled_at IS NOT NULL
+),
+done_after_cancel AS (
+    SELECT ci.*,
+           CASE ci.kind
+                WHEN 'task' THEN EXISTS (
+                    SELECT 1 FROM task_results tr
+                      JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
+                     WHERE tr.user_id = :sid AND tr.task_id = ci.task_id
+                       AND tr.is_correct = true AND tr.submitted_at > ci.cancelled_at
+                )
+                ELSE EXISTS (
+                    SELECT 1 FROM student_material_progress smp
+                     WHERE smp.student_id = :sid AND smp.material_id = ci.material_id
+                       AND smp.status IN ('completed', 'skipped')
+                       AND coalesce(smp.completed_at, smp.skipped_at) > ci.cancelled_at
+                )
+           END AS done_after
+      FROM cancelled_items ci
+),
+-- Одно и то же задание могло осиротеть в нескольких отменённых наборах
+-- подряд — берём один раз.
+orphaned AS (
+    SELECT DISTINCT ON (kind, coalesce(task_id, material_id))
+           kind, task_id, material_id
+      FROM done_after_cancel d
+     WHERE done_after
+       AND NOT EXISTS (
+            SELECT 1 FROM homework_item hi2
+              JOIN homework_assignment ha2 ON ha2.id = hi2.homework_id
+             WHERE ha2.student_id = :sid
+               AND ha2.issued_at >= d.cancelled_at
+               AND ha2.id <> d.old_homework_id
+               AND ( (d.kind = 'task' AND hi2.kind = 'task' AND hi2.task_id = d.task_id)
+                  OR (d.kind = 'material' AND hi2.kind = 'material' AND hi2.material_id = d.material_id) )
+       )
+     ORDER BY kind, coalesce(task_id, material_id), cancelled_at
+)
+SELECT o.kind, o.task_id, o.material_id,
+       t.course_id AS task_course_id,
+       m.title AS material_title,
+       m.course_id AS material_course_id,
+       tc.course_uid AS task_course_uid,
+       mc.course_uid AS material_course_uid,
+       t.task_content->>'title' AS task_title,
+       t.task_content->>'stem'  AS task_stem,
+       t.external_uid           AS task_external_uid
+  FROM orphaned o
+  LEFT JOIN tasks t ON t.id = o.task_id
+  LEFT JOIN materials m ON m.id = o.material_id
+  LEFT JOIN courses tc ON tc.id = t.course_id
+  LEFT JOIN courses mc ON mc.id = m.course_id
+"""
+
+
+async def _load_orphaned_items(
+    db: AsyncSession, *, student_id: int, start_position: int
+) -> list[dict[str, Any]]:
+    """Потерянные в стыке переиздания решения (tsk-968) — см. `_ORPHANED_ITEMS_SQL`.
+
+    Всегда `done=True`: попадание в эту выборку и означает «решено, но нигде
+    больше не числится». Позиции продолжают список действующей выдачи —
+    пункт остаётся видимым и кликабельным, просто идёт последним.
+    """
+    from app.utils.task_title import humanize_task_title
+
+    rows = (
+        await db.execute(text(_ORPHANED_ITEMS_SQL), {"sid": student_id})
+    ).mappings().fetchall()
+    items: list[dict[str, Any]] = []
+    for position, row in enumerate(rows, start=start_position):
+        if row["kind"] == "task":
+            title = humanize_task_title(
+                int(row["task_id"]),
+                row["task_title"],
+                row["task_stem"],
+                row["task_external_uid"],
+            )
+            course_id = row["task_course_id"]
+            course_uid = row["task_course_uid"]
+        else:
+            title = row["material_title"]
+            course_id = row["material_course_id"]
+            course_uid = row["material_course_uid"]
+        items.append(
+            {
+                "kind": row["kind"],
+                "item_id": int(row["task_id"] or row["material_id"]),
+                "course_id": int(course_id) if course_id is not None else None,
+                "title": title,
+                "done": True,
+                "position": position,
+                "course_uid": course_uid,
+                "external_uid": (
+                    row["task_external_uid"] if row["kind"] == "task" else None
+                ),
+            }
+        )
+    return items
+
+
 async def _load_items(
     db: AsyncSession, *, homework_id: int, student_id: int
 ) -> list[dict[str, Any]]:
@@ -836,6 +967,12 @@ async def get_current(
         return None
 
     items = await _load_items(db, homework_id=int(row["id"]), student_id=student_id)
+    # tsk-968: добавить решённое, потерянное в стыке предыдущих переизданий —
+    # см. `_load_orphaned_items`. Идёт последним, не переставляя основной
+    # список.
+    items = items + await _load_orphaned_items(
+        db, student_id=student_id, start_position=len(items)
+    )
     done = sum(1 for i in items if i["done"])
     raw_details = row["volume_details"]
     planned_minutes = (
@@ -906,6 +1043,57 @@ SELECT * FROM counted
 """
 
 
+#: tsk-968: то же самое, что `_ORPHANED_ITEMS_SQL`, но пачкой на группу и
+#: только числом — сводке занятия нужны счётчики, а не состав (см.
+#: комментарий у `_SUMMARY_SQL`). Симметрична срезу `as_of`: решение и отмена
+#: старой выдачи должны были случиться ДО момента, на который считается
+#: сводка, иначе в прошлом занятии появился бы пункт из будущего.
+_ORPHANED_COUNTS_SQL = """
+WITH cancelled_items AS (
+    SELECT hi.kind, hi.task_id, hi.material_id,
+           hi.homework_id AS old_homework_id, ha.student_id, ha.cancelled_at
+      FROM homework_item hi
+      JOIN homework_assignment ha ON ha.id = hi.homework_id
+     WHERE ha.student_id = ANY(:student_ids) AND ha.cancelled_at IS NOT NULL
+       AND ha.cancelled_at <= :as_of
+),
+done_after_cancel AS (
+    SELECT ci.*,
+           CASE ci.kind
+                WHEN 'task' THEN EXISTS (
+                    SELECT 1 FROM task_results tr
+                      JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
+                     WHERE tr.user_id = ci.student_id AND tr.task_id = ci.task_id
+                       AND tr.is_correct = true
+                       AND tr.submitted_at > ci.cancelled_at AND tr.submitted_at <= :as_of
+                )
+                ELSE EXISTS (
+                    SELECT 1 FROM student_material_progress smp
+                     WHERE smp.student_id = ci.student_id AND smp.material_id = ci.material_id
+                       AND smp.status IN ('completed', 'skipped')
+                       AND coalesce(smp.completed_at, smp.skipped_at) > ci.cancelled_at
+                       AND coalesce(smp.completed_at, smp.skipped_at) <= :as_of
+                )
+           END AS done_after
+      FROM cancelled_items ci
+)
+SELECT student_id,
+       count(DISTINCT kind || ':' || coalesce(task_id, material_id)) AS orphaned_count
+  FROM done_after_cancel d
+ WHERE done_after
+   AND NOT EXISTS (
+        SELECT 1 FROM homework_item hi2
+          JOIN homework_assignment ha2 ON ha2.id = hi2.homework_id
+         WHERE ha2.student_id = d.student_id
+           AND ha2.issued_at >= d.cancelled_at AND ha2.issued_at <= :as_of
+           AND ha2.id <> d.old_homework_id
+           AND ( (d.kind = 'task' AND hi2.kind = 'task' AND hi2.task_id = d.task_id)
+              OR (d.kind = 'material' AND hi2.kind = 'material' AND hi2.material_id = d.material_id) )
+   )
+ GROUP BY student_id
+"""
+
+
 async def status_for_students(
     db: AsyncSession,
     *,
@@ -932,16 +1120,31 @@ async def status_for_students(
     if not student_ids:
         return {}
     moment = now or datetime.now(timezone.utc)
+    as_of_moment = as_of or moment
     rows = (
         await db.execute(
             text(_SUMMARY_SQL),
-            {"student_ids": student_ids, "as_of": as_of or moment},
+            {"student_ids": student_ids, "as_of": as_of_moment},
         )
     ).mappings().fetchall()
+    # tsk-968: решённое, потерянное в стыке переиздания — см.
+    # `_ORPHANED_COUNTS_SQL`. Только у тех, у кого уже есть строка в `rows`:
+    # без действующей на `as_of` выдачи ученик и раньше не участвовал в
+    # сводке, это не меняем.
+    orphaned_counts = (
+        await db.execute(
+            text(_ORPHANED_COUNTS_SQL),
+            {"student_ids": student_ids, "as_of": as_of_moment},
+        )
+    ).mappings().fetchall()
+    orphaned_by_student = {
+        int(r["student_id"]): int(r["orphaned_count"]) for r in orphaned_counts
+    }
     result: dict[int, dict[str, Any]] = {}
     for row in rows:
-        total = int(row["total"] or 0)
-        done = int(row["done"] or 0)
+        extra = orphaned_by_student.get(int(row["student_id"]), 0)
+        total = int(row["total"] or 0) + extra
+        done = int(row["done"] or 0) + extra
         result[int(row["student_id"])] = {
             "homework_id": int(row["id"]),
             "issued_at": row["issued_at"],
