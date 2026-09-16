@@ -985,9 +985,15 @@ async def get_student_dashboard(
     homework_peer_ratios = await homework_service.completion_ratio_for_students(
         db, student_ids=global_peer_ids, period_from=period_from, period_to=period_to,
     )
-    own_homework_ratio = (await homework_service.completion_ratio_for_students(
+    # tsk-971: числа за период — той же выборкой, что и доля: «сделано M из
+    # N» и «X%» на одном экране обязаны сходиться.
+    own_homework_period = (await homework_service.completion_for_students(
         db, student_ids=[student_id], period_from=period_from, period_to=period_to,
     )).get(student_id)
+    own_homework_ratio = (
+        own_homework_period["done"] / own_homework_period["total"]
+        if own_homework_period else None
+    )
     homework_level = _tercile_level(
         own_homework_ratio, list(homework_peer_ratios.values()),
         higher_is_better=True, cohort_size=len(global_peer_ids), min_cohort=min_cohort,
@@ -1151,6 +1157,9 @@ async def get_student_dashboard(
                 round(own_homework_ratio, 2) if own_homework_ratio is not None else None
             ),
             "level": homework_level,
+            "period_assignments": (own_homework_period or {}).get("assignments"),
+            "period_total": (own_homework_period or {}).get("total"),
+            "period_done": (own_homework_period or {}).get("done"),
         },
         "program": program_block,
         # tsk-032: серия активных недель между занятиями. Считается тем же

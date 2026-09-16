@@ -66758,6 +66758,39 @@
               "insufficient_data"
             ],
             "title": "Level"
+          },
+          "period_assignments": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Period Assignments"
+          },
+          "period_total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Period Total"
+          },
+          "period_done": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Period Done"
           }
         },
         "type": "object",

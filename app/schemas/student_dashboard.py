@@ -120,6 +120,11 @@ class StudentDashboardHomeworkRead(BaseModel):
     #: Та же шкала терцилей по когорте, что у посещаемости и активности
     #: (tsk-504) — своя шкала стала бы третьей на одном экране.
     level: CohortLevel
+    #: tsk-971: за период — сколько раз задавали, разных пунктов выдано (без
+    #: дублей переизданий) и из них закрыто. `None` — за период не задавали.
+    period_assignments: Optional[int] = None
+    period_total: Optional[int] = None
+    period_done: Optional[int] = None
 
 
 class StudentDashboardProgramRead(BaseModel):

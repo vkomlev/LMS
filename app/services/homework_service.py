@@ -1160,31 +1160,83 @@ async def status_for_students(
 #: Берутся выдачи, СОЗДАННЫЕ в периоде, включая отменённые: отменённая выдача
 #: всё равно была работой, которую человеку давали, и вычёркивать её задним
 #: числом значило бы менять прошлые показатели.
-_RATIO_SQL = """
+#: Выдано и сделано ЗА ПЕРИОД, по каждому ученику (tsk-741, tsk-971).
+#:
+#: Пункты считаются БЕЗ ДУБЛЕЙ: переиздание (tsk-968 — после каждого занятия)
+#: кладёт нерешённое в новый набор заново, и по выдачам один и тот же пункт
+#: попадал в «выдано» дважды-трижды. У Крук за неделю три выдачи с 27, 2 и 27
+#: пунктами при 30 разных — «выдано 56» родителю было бы враньём.
+#:
+#: «Сделано» — у источника (верная сдача / отметка материала), как везде в
+#: домашней работе. Пункт, решённый после отмены своей выдачи (tsk-968),
+#: здесь считается сам собой: он всё равно был выдан в периоде.
+_PERIOD_SQL = """
 WITH scoped AS (
     SELECT ha.id, ha.student_id
       FROM homework_assignment ha
      WHERE ha.student_id = ANY(:student_ids)
        AND ha.issued_at >= :period_from AND ha.issued_at <= :period_to
+),
+items AS (
+    SELECT DISTINCT s.student_id, hi.kind, hi.task_id, hi.material_id
+      FROM scoped s
+      JOIN homework_item hi ON hi.homework_id = s.id
 )
-SELECT s.student_id,
-       count(hi.id) AS total,
+SELECT i.student_id,
+       (SELECT count(*) FROM scoped x WHERE x.student_id = i.student_id) AS assignments,
+       count(*) AS total,
        count(*) FILTER (
-           WHERE (hi.kind = 'task' AND EXISTS (
+           WHERE (i.kind = 'task' AND EXISTS (
                     SELECT 1 FROM task_results tr
                       JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
-                     WHERE tr.user_id = s.student_id AND tr.task_id = hi.task_id
+                     WHERE tr.user_id = i.student_id AND tr.task_id = i.task_id
                        AND tr.is_correct = true))
-              OR (hi.kind = 'material' AND EXISTS (
+              OR (i.kind = 'material' AND EXISTS (
                     SELECT 1 FROM student_material_progress smp
-                     WHERE smp.student_id = s.student_id
-                       AND smp.material_id = hi.material_id
+                     WHERE smp.student_id = i.student_id
+                       AND smp.material_id = i.material_id
                        AND smp.status IN ('completed', 'skipped')))
        ) AS done
-  FROM scoped s
-  JOIN homework_item hi ON hi.homework_id = s.id
- GROUP BY s.student_id
+  FROM items i
+ GROUP BY i.student_id
 """
+
+
+async def completion_for_students(
+    db: AsyncSession,
+    *,
+    student_ids: list[int],
+    period_from: datetime,
+    period_to: datetime,
+) -> dict[int, dict[str, int]]:
+    """Выдано / сделано за период без дублей, по каждому ученику (tsk-971).
+
+    Ключи: ``assignments`` (сколько раз задавали), ``total`` (разных пунктов
+    выдано), ``done`` (из них закрыто). Ученик, которому за период ничего не
+    выдавали, в ответе отсутствует — у него нет чисел, и подставлять нули
+    нельзя: это превратило бы «ему не задавали» в «он не сделал».
+    """
+    if not student_ids:
+        return {}
+    rows = (
+        await db.execute(
+            text(_PERIOD_SQL),
+            {
+                "student_ids": student_ids,
+                "period_from": period_from,
+                "period_to": period_to,
+            },
+        )
+    ).mappings().fetchall()
+    return {
+        int(row["student_id"]): {
+            "assignments": int(row["assignments"] or 0),
+            "total": int(row["total"] or 0),
+            "done": int(row["done"] or 0),
+        }
+        for row in rows
+        if int(row["total"] or 0) > 0
+    }
 
 
 async def completion_ratio_for_students(
@@ -1199,26 +1251,14 @@ async def completion_ratio_for_students(
     Ученик, которому за период ничего не выдавали, в ответе отсутствует — у
     него нет доли, и подставлять ему ноль нельзя: это превратило бы «ему не
     задавали» в «он не сделал» и утянуло бы его вниз в сравнении с группой.
+
+    tsk-971: та же выборка, что и числа для дашборда (`completion_for_students`),
+    не своя — иначе доля и «сделано M из N» на одном экране разошлись бы.
     """
-    if not student_ids:
-        return {}
-    rows = (
-        await db.execute(
-            text(_RATIO_SQL),
-            {
-                "student_ids": student_ids,
-                "period_from": period_from,
-                "period_to": period_to,
-            },
-        )
-    ).mappings().fetchall()
-    result: dict[int, float] = {}
-    for row in rows:
-        total = int(row["total"] or 0)
-        if total == 0:
-            continue
-        result[int(row["student_id"])] = int(row["done"] or 0) / total
-    return result
+    counts = await completion_for_students(
+        db, student_ids=student_ids, period_from=period_from, period_to=period_to,
+    )
+    return {sid: c["done"] / c["total"] for sid, c in counts.items()}
 
 
 async def cancel(

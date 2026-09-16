@@ -2386,3 +2386,45 @@ async def test_orphan_is_not_recovered_by_an_intermediate_reissue(db):
     matches = [i for i in updated["items"] if i["item_id"] == bouncing_task_id]
     assert len(matches) == 1, "не должно быть дублей из-за нескольких отменённых появлений"
     assert matches[0]["done"] is True
+
+
+@pytest.mark.asyncio
+async def test_period_completion_counts_reissued_items_once(db):
+    """Выдано за период — без дублей переизданий (tsk-971).
+
+    Переиздание после занятия кладёт нерешённое в новый набор заново
+    (tsk-968): у Крук за неделю три выдачи — 27, 2 и 27 пунктов при 30
+    разных. Родителю «выдано 56» было бы враньём.
+    """
+    student_id, course_id = await _student_with_program(db, materials=0, tasks=6)
+    now = datetime.now(UTC)
+    period_from, period_to = now - timedelta(days=1), now + timedelta(days=7)
+
+    first = await homework_service.issue(
+        db, student_id=student_id, due_at=now + timedelta(days=2),
+        source="teacher", volume_override=4, now=now,
+    )
+    await db.commit()
+    # Решил один пункт — и получил переиздание: три нерешённых лягут в новый
+    # набор повторно, плюс ещё два новых.
+    await _submit(
+        db, student_id=student_id, task_id=first["items"][0]["item_id"],
+        course_id=course_id, is_correct=True, at=now + timedelta(minutes=5),
+    )
+    second = await homework_service.issue(
+        db, student_id=student_id, due_at=now + timedelta(days=4),
+        source="teacher", volume_override=5, now=now + timedelta(minutes=10),
+    )
+    await db.commit()
+    assert len(second["items"]) == 5
+
+    counts = (await homework_service.completion_for_students(
+        db, student_ids=[student_id], period_from=period_from, period_to=period_to,
+    ))[student_id]
+    assert counts["assignments"] == 2
+    assert counts["total"] == 6, "три пункта, выданные дважды, посчитаны дважды"
+    assert counts["done"] == 1
+    ratio = (await homework_service.completion_ratio_for_students(
+        db, student_ids=[student_id], period_from=period_from, period_to=period_to,
+    ))[student_id]
+    assert ratio == pytest.approx(1 / 6)
