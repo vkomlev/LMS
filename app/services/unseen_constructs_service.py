@@ -66,6 +66,7 @@
 from __future__ import annotations
 
 import ast
+import html
 import json
 import logging
 import re
@@ -338,6 +339,89 @@ def codes_in_material(content_json: Optional[str], *, wanted: Optional[Set[str]]
     return hits
 
 
+#: tsk-965. Тройной блок ```[язык]\nкод``` — как в материалах, целиком.
+_FENCED_CODE_RE = re.compile(r"```[ \t]*\w*\r?\n?(.*?)```", re.DOTALL)
+#: Инлайн-код в одинарных кавычках. Не пересекает строку: перенос внутри
+#: обычно значит, что открывающая кавычка на самом деле не парная (опечатка
+#: автора задания), и распарсить такой обрывок как код было бы обманом.
+_INLINE_CODE_RE = re.compile(r"`([^`\n]+)`")
+#: HTML-вариант (боевой случай: задания с `<pre><code class="language-python">…`).
+#: `<pre>` разбирается первым и целиком — вместе со вложенным `<code>`, если
+#: он есть: закрывающий тег ищем СВОЙ, а не любой из двух, иначе `<pre>…
+#: </code>` (мимо настоящего `</pre>`) обрезал бы фрагмент на чужом теге.
+_PRE_BLOCK_RE = re.compile(r"<pre\b[^>]*>(.*?)</pre>", re.DOTALL | re.IGNORECASE)
+#: Отдельный `<code>…</code>` вне `<pre>` (id=5622: пояснение к плейсхолдеру).
+_CODE_SPAN_RE = re.compile(r"<code\b[^>]*>(.*?)</code>", re.DOTALL | re.IGNORECASE)
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _extract_code_fragments(stem: str) -> List[str]:
+    """
+    Кодовые фрагменты внутри условия задания: то, что автор явно пометил как
+    код — тройными/одинарными обратными кавычками (markdown) или тегами
+    `<pre>`/`<code>` (HTML, тот же формат, что у материалов курса).
+
+    Само по себе не гарантирует валидный Python — рядом стоящий
+    `detect_in_code` отсеет прозу, случайно попавшую в кавычки (см. его
+    докстринг). Здесь только разметка: что автор задания счёл нужным
+    выделить как код.
+    """
+    fragments: List[str] = []
+
+    def _take_fenced(match: "re.Match[str]") -> str:
+        fragments.append(match.group(1))
+        return " "
+
+    # Тройные блоки убираются из текста первыми: иначе одинарные кавычки
+    # внутри такого блока (edge case, но встречается) дали бы дубли.
+    without_fenced = _FENCED_CODE_RE.sub(_take_fenced, stem)
+
+    def _take_html(match: "re.Match[str]") -> str:
+        fragments.append(_HTML_TAG_RE.sub("", html.unescape(match.group(1))))
+        return " "
+
+    without_pre = _PRE_BLOCK_RE.sub(_take_html, without_fenced)
+    without_html = _CODE_SPAN_RE.sub(_take_html, without_pre)
+
+    fragments.extend(_INLINE_CODE_RE.findall(without_html))
+    return fragments
+
+
+def codes_in_stem(stem: Optional[str]) -> Set[str]:
+    """
+    tsk-965. Какие конструкции каталога ученик мог увидеть прямо в условии
+    ЭТОГО задания — не в материалах курса, а в самом тексте задачи.
+
+    Живой случай (id-271, «Объединение трёх списков в один»): условие даёт
+    `list1 = [1, 2, 3]` готовым текстом, ученик копирует синтаксис оттуда и
+    пишет `print(list1+list2+list3)` — а признак называл литерал списка
+    непройденной конструкцией, хотя ученик его не выучивал, а прочитал
+    строчкой выше. Разбор задним числом по прод-БД (16.09): 215 из 268 (80%)
+    всех пометок за всё время — именно `list_literal`, и не менее 51%
+    уникальных заданий с этой пометкой сами дают список в условии.
+
+    Разбор — AST, тот же принцип и тот же инструмент (`detect_in_code`), что
+    и у кода ученика: точно, без догадок. Текстовым поиском (как у
+    `codes_in_material`) здесь нельзя — образцы `material_patterns` рассчитаны
+    на прозу («как создать список»), а не на сырой синтаксис `[1, 2, 3]`, и
+    даже совпади они внутри условия — риск поймать описание задачи, а не
+    код, неприемлем (решение оператора 16.09).
+
+    Механизм общий для всех 16 конструкций каталога, не только для
+    `list_literal`: автор задания одинаково может дать готовый пример
+    `lambda`, f-строки или декоратора — живые случаи в каталоге заданий
+    (id=6184 — телеграм-бот с `@bot.message_handler` и `lambda` в примере).
+
+    :param stem: `tasks.task_content.stem` — текст условия задания.
+    """
+    if not stem:
+        return set()
+    hits: Set[str] = set()
+    for fragment in _extract_code_fragments(stem):
+        hits.update(code for code, _ in detect_in_code(fragment))
+    return hits
+
+
 #: `as_of` нужен пересчёту истории: у работы 2026-08-05 сверка обязана идти с
 #: тем, что ученик прошёл К ТОМУ ДНЮ, а не с сегодняшним состоянием. Иначе
 #: пересчёт молча снял бы пометку с работ, где ученик просто дошёл до нужной
@@ -458,6 +542,7 @@ async def build_report(
     student_id: Optional[int],
     course_id: Optional[int],
     code: str,
+    stem: Optional[str] = None,
     as_of: Optional[datetime] = None,
     cache: Optional[Dict[Any, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
@@ -476,13 +561,16 @@ async def build_report(
     :param student_id: Автор работы.
     :param course_id: Курс задания, по которому сдана работа.
     :param code: Исходный код ученика, тот же, что уходит модели.
+    :param stem: tsk-965. Текст условия ЭТОГО задания (`task_content.stem`).
+        Конструкция, которую автор задания сам показал в условии, не считается
+        непройденной для этого задания — см. `codes_in_stem`.
     :param as_of: Момент, на который считать пройденное (пересчёт истории).
     :param cache: Общий словарь на время прохода пачки — см. `covered_codes`.
     """
     try:
         return await _build_report(
             db, student_id=student_id, course_id=course_id, code=code,
-            as_of=as_of, cache=cache,
+            stem=stem, as_of=as_of, cache=cache,
         )
     except Exception:  # noqa: BLE001 — намеренно широкий: см. докстринг
         logger.exception("tsk-864: признак непройденных конструкций не посчитан")
@@ -495,6 +583,7 @@ async def _build_report(
     student_id: Optional[int],
     course_id: Optional[int],
     code: str,
+    stem: Optional[str] = None,
     as_of: Optional[datetime] = None,
     cache: Optional[Dict[Any, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
@@ -514,10 +603,14 @@ async def _build_report(
         # означала бы только то, что человек не нажимал кнопку.
         return None
 
+    # tsk-965: то, что автор ЭТОГО задания сам показал в условии, — не повод
+    # для пометки, независимо от материалов курса и личного прогресса.
+    stem_seen = codes_in_stem(stem)
+
     items = [
         {"code": code_name, "label": _BY_CODE[code_name].label, "evidence": snippet}
         for code_name, snippet in detected
-        if code_name not in seen
+        if code_name not in seen and code_name not in stem_seen
     ][:_MAX_ITEMS]
 
     return {"items": items, "materials_seen": materials_seen}

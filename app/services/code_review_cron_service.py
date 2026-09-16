@@ -248,7 +248,7 @@ async def code_review_cron_tick(
         # без открытой транзакции (см. довод выше).
         unseen = await _unseen_constructs(
             factory, student_id=student_id, course_id=course_id, code=code,
-            cache=unseen_cache,
+            stem=stem, cache=unseen_cache,
         )
 
         verdict = await review_student_code(
@@ -339,6 +339,7 @@ async def _unseen_constructs(
     student_id: Optional[int],
     course_id: Optional[int],
     code: str,
+    stem: Optional[str],
     cache: Dict[Any, Any],
 ) -> Optional[Dict[str, Any]]:
     """
@@ -350,7 +351,8 @@ async def _unseen_constructs(
     """
     async with factory() as db:
         return await unseen_constructs_service.build_report(
-            db, student_id=student_id, course_id=course_id, code=code, cache=cache
+            db, student_id=student_id, course_id=course_id, code=code,
+            stem=stem, cache=cache,
         )
 
 
