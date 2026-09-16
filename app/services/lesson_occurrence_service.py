@@ -52,6 +52,27 @@ _slot_teacher_repo = LessonSlotTeacherRepository()
 # Статусы, при которых участие уже структурно закрыто для reschedule/ownership-операций.
 _LOCKED_STATUSES = frozenset({"no_show", "completed", "rescheduled"})
 
+# tsk-964: мёртвые статусы прошлого раза на ТОМ ЖЕ occurrence — ученик когда-то
+# ушёл с этого времени (перенёс, отказался, не пришёл), а теперь снова садится
+# именно сюда (join/reschedule/ad-hoc). "completed" сюда не входит намеренно:
+# занятие уже состоялось, реактивировать явку в прошлом нельзя.
+_REACTIVATABLE_STATUSES = frozenset({"rescheduled", "declined", "no_show"})
+
+
+def _reactivate_dead_participant(participant: LessonOccurrenceParticipant) -> None:
+    """Вернуть в строй старую строку участия того же ученика на тот же occurrence.
+
+    tsk-964: без этого повторный выбор уже использованного времени молча
+    возвращал мёртвую строку (`rescheduled`/`declined`/`no_show`) как есть —
+    ученик садился на occurrence, но оставался помечен «перенесён», не
+    «записан». Двойной перенос туда-обратно давал цикл `rescheduled<->
+    rescheduled`, в котором ни одна из двух строк не была активной.
+    """
+    if participant.status in _REACTIVATABLE_STATUSES:
+        participant.status = "scheduled"
+        participant.rescheduled_to_occurrence_id = None
+        participant.updated_at = datetime.now(timezone.utc)
+
 # На сколько дней вперёд подбираются варианты переноса. Совпадает с дефолтом
 # горизонта генератора занятий (LESSON_OCCURRENCE_HORIZON_DAYS): дальше него
 # занятий ещё нет, и присоединяться было бы не к чему.
@@ -449,6 +470,8 @@ async def _seat_student_at(
             participant = await _participant_repo.create(
                 db, occurrence_id=existing.id, student_id=student_id, status="scheduled",
             )
+        else:
+            _reactivate_dead_participant(participant)
         await db.flush()
         return existing, participant
 
@@ -588,8 +611,11 @@ async def add_participant_to_occurrence(
     teacher_id: int,
 ) -> LessonOccurrenceParticipant:
     """Добавить ученика к УЖЕ существующему occurrence (например, подключить
-    опоздавшего/новенького к уже идущей группе). Идемпотентно: уже
-    участвующий ученик возвращает текущую строку."""
+    опоздавшего/новенького к уже идущей группе). Идемпотентно: уже активно
+    участвующий ученик возвращает текущую строку. Если у ученика на этом
+    occurrence лежит старая мёртвая строка (`rescheduled`/`declined`/
+    `no_show` — например, он уже когда-то уходил с этого времени) — строка
+    реактивируется, а не возвращается как есть (tsk-964)."""
     occurrence = await get_occurrence_for_teacher(
         db, occurrence_id=occurrence_id, teacher_id=teacher_id
     )
@@ -599,6 +625,9 @@ async def add_participant_to_occurrence(
         db, occurrence_id=occurrence_id, student_id=student_id
     )
     if existing is not None:
+        _reactivate_dead_participant(existing)
+        await db.commit()
+        await db.refresh(existing)
         return existing
 
     await alumni_enrollment_guard.assert_not_alumni(
@@ -669,8 +698,10 @@ async def join_occurrence_as_student(
 ) -> tuple[LessonOccurrence, LessonOccurrenceParticipant]:
     """Ученик сам присоединяется к УЖЕ существующему occurrence (обычно —
     выбранному из `list_bookable_occurrences_for_student`), а не создаёт
-    отдельный ad-hoc. Идемпотентно: уже участвующий ученик получает свою
-    текущую строку без ошибки.
+    отдельный ad-hoc. Идемпотентно: уже активно участвующий ученик получает
+    свою текущую строку без ошибки. Старая мёртвая строка этого ученика на
+    этом же occurrence (`rescheduled`/`declined`/`no_show`) реактивируется,
+    а не возвращается как есть (tsk-964).
 
     :raises DomainError: 404 — occurrence не найден; 409 — уже прошёл, или
         пересекается с другим активным занятием этого ученика.
@@ -683,6 +714,9 @@ async def join_occurrence_as_student(
         db, occurrence_id=occurrence_id, student_id=student_id
     )
     if existing is not None:
+        _reactivate_dead_participant(existing)
+        await db.commit()
+        await db.refresh(existing)
         return occurrence, existing
 
     await alumni_enrollment_guard.assert_not_alumni(
