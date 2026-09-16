@@ -4,12 +4,19 @@
 occurrence, tsk-435).
 
 Модель и границы — docs/specs/2026-07-26-plan-kalendar-lms.md § «Фаза 3» +
-tsk-435 (rework на группы). Переиспользует `ensure_user_has_role` и
-`is_within_operating_hours` из `lesson_calendar_service`.
+tsk-435 (rework на группы). Переиспользует `ensure_user_has_role` из
+`lesson_calendar_service`.
 
 tsk-587: время для переноса и записи берётся из активных слотов расписания
 (`lesson_slot`), а не из часов работы школы, нарезанных по полчаса; выдача
 вариантов и приём проверяют одно и то же.
+
+tsk-967: `is_within_operating_hours` (`lesson_calendar_service`) больше не
+проверяется для переноса/записи по слоту — решающий факт только активный
+`lesson_slot`, отдельная таблица часов работы может с ним разойтись (как
+разошлась для четверга — молча вырезала весь день из выдачи). Осталась
+законным барьером только для ИСТИННОГО ad-hoc в `create_ad_hoc_occurrence`
+(время не совпадает ни с одним активным слотом).
 """
 from __future__ import annotations
 
@@ -355,12 +362,18 @@ async def _list_slot_candidates(
     horizon_days: int | None = None,
 ) -> list[datetime]:
     """Ближайшие времена активных слотов этих преподавателей, свободные у
-    ученика и попадающие в часы работы школы. Отсортированы по возрастанию.
+    ученика. Отсортированы по возрастанию.
 
     Времена считает `iter_occurrence_datetimes` — та же функция, что и у
     генератора занятий. Поэтому выбранный кандидат гарантированно совпадает
     с временем уже созданного занятия слота, и ученик попадает в него, а не
     в параллельное.
+
+    tsk-967: часы работы школы (`operating_hours`) здесь больше не
+    проверяются. Решающий факт — активный `lesson_slot`, а не отдельная
+    таблица часов работы: она может (и уже смогла — четверг) разойтись с
+    фактическим расписанием и молча вырезать из выдачи целый день, хотя
+    занятия по нему реально идут.
     """
     # tsk-721: не задали горизонт явно — берём его из настроек школы прямо
     # здесь, при подборе вариантов.
@@ -375,11 +388,6 @@ async def _list_slot_candidates(
     candidates: list[datetime] = []
     for moment in sorted(moments):
         if moment <= now_utc:
-            continue
-        within_hours = await lesson_calendar_service.is_within_operating_hours(
-            db, scheduled_at=moment, duration_minutes=duration_minutes,
-        )
-        if within_hours is False:
             continue
         overlap = await _participant_repo.has_student_overlap(
             db,
@@ -543,8 +551,9 @@ async def create_ad_hoc_occurrence(
     преподавателя).
 
     :raises DomainError: 404/422 — участник не найден/без нужной роли;
-        422 — вне часов работы школы (если `operating_hours` настроены) либо
-        время не совпадает ни с одним слотом расписания;
+        422 — время не совпадает ни с одним слотом расписания (если он
+        обязателен) либо (для истинного ad-hoc без совпадения со слотом)
+        вне часов работы школы, если `operating_hours` настроены;
         409 — пересечение по времени с другим активным участием ученика.
     """
     await lesson_calendar_service.ensure_user_has_role(db, student_id, "student")
@@ -553,25 +562,30 @@ async def create_ad_hoc_occurrence(
         db, student_id, action="запись на занятие (ad-hoc)"
     )
 
-    within_hours = await lesson_calendar_service.is_within_operating_hours(
-        db, scheduled_at=scheduled_at, duration_minutes=duration_minutes
-    )
-    if within_hours is False:
-        raise DomainError(
-            "Время вне часов работы школы (operating_hours)", status_code=422
-        )
-
     slot = await _find_slot_at(
         db,
         teacher_ids=[teacher_id],
         scheduled_at=scheduled_at,
         duration_minutes=duration_minutes,
     )
-    if slot is None and require_scheduled_slot:
-        raise DomainError(
-            "В это время занятий по расписанию нет — выберите время из списка",
-            status_code=422,
+    if slot is None:
+        # tsk-967: часы работы — барьер только для ИСТИННОГО ad-hoc, время
+        # которого не совпадает ни с одним активным слотом. Когда слот
+        # найден, время уже подтверждено реальным расписанием, и часы
+        # работы (отдельная таблица, способная разойтись с фактом — как
+        # разошлась для четверга) больше не проверяются вовсе.
+        within_hours = await lesson_calendar_service.is_within_operating_hours(
+            db, scheduled_at=scheduled_at, duration_minutes=duration_minutes
         )
+        if within_hours is False:
+            raise DomainError(
+                "Время вне часов работы школы (operating_hours)", status_code=422
+            )
+        if require_scheduled_slot:
+            raise DomainError(
+                "В это время занятий по расписанию нет — выберите время из списка",
+                status_code=422,
+            )
 
     overlap = await _participant_repo.has_student_overlap(
         db,
@@ -782,10 +796,12 @@ async def list_available_slots(
     limit: int = 10,
     horizon_days: int | None = None,
 ) -> list[datetime]:
-    """Кандидаты для переноса — времена РЕАЛЬНЫХ слотов расписания тех же
-    преподавателей, что ведут это занятие: в рамках `operating_hours`, без
-    коллизий у ЭТОГО ученика (преподаватель по design может вести несколько
-    occurrence одновременно — групповое расписание).
+    """Кандидаты для переноса — времена РЕАЛЬНЫХ активных слотов расписания
+    тех же преподавателей, что ведут это занятие, без коллизий у ЭТОГО
+    ученика (преподаватель по design может вести несколько occurrence
+    одновременно — групповое расписание). tsk-967: `operating_hours` здесь
+    больше не рамка — решающий факт только активный слот (см.
+    `_list_slot_candidates`).
 
     Почему только свои преподаватели, а не любой слот школы: перенос
     сохраняет преподавателя. Предложи мы слот чужого преподавателя — ученик
@@ -845,14 +861,12 @@ async def reschedule_occurrence(
             "Новое время совпадает с текущим — переносить некуда", status_code=409,
         )
 
-    within_hours = await lesson_calendar_service.is_within_operating_hours(
-        db, scheduled_at=new_scheduled_at, duration_minutes=occurrence.duration_minutes
-    )
-    if within_hours is False:
-        raise DomainError(
-            "Новое время вне часов работы школы (operating_hours)", status_code=422
-        )
-
+    # tsk-967: часы работы школы (`operating_hours`) здесь больше не
+    # проверяются отдельно — ниже обязателен активный `lesson_slot`
+    # (`slot is None` → 422), и этого достаточно как единственного условия.
+    # Отдельная таблица часов работы может разойтись с реальным расписанием
+    # (как разошлась для четверга) и ложно заблокировать перенос на время,
+    # где занятия по факту идут.
     teacher_ids = await _leading_teacher_ids(db, occurrence)
     slot = await _find_slot_at(
         db,

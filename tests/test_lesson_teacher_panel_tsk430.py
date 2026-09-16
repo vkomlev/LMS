@@ -742,7 +742,12 @@ async def test_reschedule_does_not_affect_other_group_participants(db, client):
 
 
 @pytest.mark.asyncio
-async def test_reschedule_422_outside_operating_hours(db, client):
+async def test_reschedule_422_without_active_slot_even_inside_operating_hours(db, client):
+    """Часы работы школы одни (09:00-21:00, слота нет вовсе) — перенос всё
+    равно отклоняется, но теперь по единственной причине: нет активного
+    слота на это время. Раньше (до tsk-967) 422 наступал уже на проверке
+    часов работы, до проверки слота — тест исторически проходил по обеим
+    причинам сразу и не различал их."""
     student_id = await _create_user(db, role="student", prefix="tsk430-stud")
     teacher_id = await _create_user(db, role="teacher", prefix="tsk430-teach")
     token, _, _ = await create_session(db, user_id=student_id)
@@ -756,7 +761,7 @@ async def test_reschedule_422_outside_operating_hours(db, client):
         duration_minutes=60,
     )
 
-    # 23:00 MSK — вне часов работы 09:00-21:00
+    # 23:00 MSK — вне часов работы 09:00-21:00, и слота на это время тоже нет.
     new_local = datetime.combine(target_day, time(23, 0), tzinfo=MSK)
     resp = await client.post(
         f"/api/v1/lesson-occurrences/{old_id}/reschedule",
@@ -764,6 +769,37 @@ async def test_reschedule_422_outside_operating_hours(db, client):
         headers={"Authorization": f"Bearer {token}"},
     )
     assert resp.status_code == 422, resp.text
+
+
+@pytest.mark.asyncio
+async def test_reschedule_accepted_outside_operating_hours_when_slot_is_active(db, client):
+    """tsk-967 (Кожемякин), «с расходящимися часами»: `operating_hours`
+    настроены (09:00-21:00), но активный слот стоит В 23:00 — ВНЕ этого
+    окна. Перенос всё равно принимается: решающий факт — активный слот,
+    часы работы школы больше не барьер."""
+    student_id = await _create_user(db, role="student", prefix="tsk430-stud")
+    teacher_id = await _create_user(db, role="teacher", prefix="tsk430-teach")
+    token, _, _ = await create_session(db, user_id=student_id)
+
+    target_day = _next_day_with_operating_hours_seeded()
+    await _set_operating_hours_for_weekday_of(db, target_day, start=time(9, 0), end=time(21, 0))
+
+    new_local = datetime.combine(target_day, time(23, 0), tzinfo=MSK)
+    slot_id = await _create_slot_at(db, teacher_id=teacher_id, moment_local=new_local)
+
+    old_id = await _create_occurrence_with_participant(
+        db, student_id=student_id, teacher_id=teacher_id,
+        scheduled_at=datetime.now(dt_timezone.utc) + timedelta(hours=1),
+        duration_minutes=60,
+    )
+
+    resp = await client.post(
+        f"/api/v1/lesson-occurrences/{old_id}/reschedule",
+        json={"new_scheduled_at": new_local.astimezone(dt_timezone.utc).isoformat()},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["slot_id"] == slot_id
 
 
 @pytest.mark.asyncio

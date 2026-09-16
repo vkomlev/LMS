@@ -188,11 +188,12 @@ async def test_candidates_contain_only_real_slot_times(db, client):
 
 
 @pytest.mark.asyncio
-async def test_candidate_outside_operating_hours_is_dropped(db, client):
-    """Часы работы остаются внешней рамкой: слот 12:00-13:00 попадает в
-    перерыв среды и в список не выходит. Это осознанное следствие решения
-    оператора (слоты + рамка), а не побочный эффект — если 12:00 нужно
-    предлагать, чинить надо данные `operating_hours`, а не код."""
+async def test_candidate_inside_operating_hours_gap_is_still_offered(db, client):
+    """tsk-967 (Кожемякин): решение оператора tsk-587 «часы работы — внешняя
+    рамка» отменено явным указанием «Перенос ВСЕГДА должен быть по
+    фактически занятым слотам!». Слот 12:00-13:00 попадает в обеденный
+    перерыв среды по `operating_hours`, но раз он активен — предлагается.
+    Решающий факт теперь только один: активный `lesson_slot`."""
     teacher_id = await _create_user(db, role="teacher", prefix="tsk587-teach")
     student_id = await _create_user(db, role="student", prefix="tsk587-stud")
     token, _, _ = await create_session(db, user_id=student_id)
@@ -216,7 +217,124 @@ async def test_candidate_outside_operating_hours_is_dropped(db, client):
     }
     assert time(10, 0) in offered_times
     assert time(18, 0) in offered_times
-    assert time(12, 0) not in offered_times
+    assert time(12, 0) in offered_times
+
+
+# ============ tsk-967: activated day missing from operating_hours ============
+
+
+THURSDAY = 3
+
+
+async def _seed_thursday_slot_without_operating_hours(db, *, teacher_id: int) -> int:
+    """Воспроизводит живой дефект: `operating_hours` заполнены для среды, но
+    НЕ для четверга (ровно состояние прод-БД на 16.09 до добора строки) —
+    при этом у преподавателя есть активный четверговый слот. Возвращает
+    id слота."""
+    db.add(
+        OperatingHours(
+            weekday=WEDNESDAY, start_time=time(10, 0), end_time=time(19, 0),
+            timezone="Europe/Moscow",
+        )
+    )
+    slot = LessonSlot(
+        teacher_id=teacher_id,
+        weekday=THURSDAY,
+        start_time=time(12, 0),
+        duration_minutes=60,
+        timezone="Europe/Moscow",
+        is_active=True,
+    )
+    db.add(slot)
+    await db.flush()
+    db.add(LessonSlotTeacher(slot_id=slot.id, teacher_id=teacher_id, is_active=True))
+    await db.commit()
+    return slot.id
+
+
+@pytest.mark.asyncio
+async def test_candidate_on_day_missing_from_operating_hours_is_offered(db, client):
+    """Регресс Кожемякина: `operating_hours` не пуст (есть строки на другие
+    дни), но для четверга строки нет вовсе — раньше это молча вырезало
+    ВЕСЬ день из выдачи (`is_within_operating_hours` возвращал `False` после
+    цикла). Активный слот теперь предлагается независимо от того, есть ли
+    строка для его дня недели."""
+    teacher_id = await _create_user(db, role="teacher", prefix="tsk967-teach")
+    student_id = await _create_user(db, role="student", prefix="tsk967-stud")
+    token, _, _ = await create_session(db, user_id=student_id)
+    await _seed_thursday_slot_without_operating_hours(db, teacher_id=teacher_id)
+
+    occurrence_id = await _create_occurrence(
+        db,
+        teacher_id=teacher_id,
+        scheduled_at=datetime.now(dt_timezone.utc) + timedelta(hours=1),
+        student_ids=(student_id,),
+    )
+
+    resp = await client.get(
+        "/api/v1/lesson-occurrences/available-slots",
+        params={"occurrence_id": occurrence_id, "limit": 30},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200, resp.text
+    offered = [
+        datetime.fromisoformat(item["scheduled_at"]).astimezone(MSK)
+        for item in resp.json()
+    ]
+    assert any(
+        moment.weekday() == THURSDAY and moment.time() == time(12, 0)
+        for moment in offered
+    ), "четверговый слот должен быть в выдаче несмотря на пустую operating_hours"
+
+
+@pytest.mark.asyncio
+async def test_reschedule_on_day_missing_from_operating_hours_is_accepted(db, client):
+    """Тот же регресс на приёме переноса: без фикса приём бы отклонил
+    четверговое время 422-й «вне часов работы школы», даже если бы ученик
+    как-то узнал его напрямую."""
+    teacher_id = await _create_user(db, role="teacher", prefix="tsk967-teach")
+    student_id = await _create_user(db, role="student", prefix="tsk967-stud")
+    token, _, _ = await create_session(db, user_id=student_id)
+    slot_id = await _seed_thursday_slot_without_operating_hours(db, teacher_id=teacher_id)
+
+    target = _msk(_next_date_of_weekday(THURSDAY), time(12, 0))
+    old_id = await _create_occurrence(
+        db,
+        teacher_id=teacher_id,
+        scheduled_at=datetime.now(dt_timezone.utc) + timedelta(hours=1),
+        student_ids=(student_id,),
+    )
+
+    resp = await client.post(
+        f"/api/v1/lesson-occurrences/{old_id}/reschedule",
+        json={"new_scheduled_at": target.isoformat()},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["slot_id"] == slot_id
+
+
+@pytest.mark.asyncio
+async def test_ad_hoc_on_day_missing_from_operating_hours_is_accepted(db, client):
+    """Тот же регресс на записи (ad-hoc): время совпадает с активным слотом
+    четверга — приём не должен блокировать его пустой `operating_hours`."""
+    teacher_id = await _create_user(db, role="teacher", prefix="tsk967-teach")
+    student_id = await _create_user(db, role="student", prefix="tsk967-stud")
+    token, _, _ = await create_session(db, user_id=student_id)
+    slot_id = await _seed_thursday_slot_without_operating_hours(db, teacher_id=teacher_id)
+
+    target = _msk(_next_date_of_weekday(THURSDAY), time(12, 0))
+    resp = await client.post(
+        "/api/v1/lesson-occurrences/ad-hoc",
+        json={
+            "teacher_id": teacher_id,
+            "scheduled_at": target.isoformat(),
+            "duration_minutes": 60,
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["slot_id"] == slot_id
 
 
 @pytest.mark.asyncio
