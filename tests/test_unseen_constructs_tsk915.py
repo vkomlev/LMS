@@ -20,8 +20,13 @@ tsk-915: каталог непройденных конструкций не з�
   14.09, живой случай Киселёвой) на личную отметку материала ИЗ ТОГО ЖЕ
   курса, где сдано задание: иначе обычное прохождение курса по порядку тихо
   гасит пометку у всех;
-- для остальных конструкций каталога (`course_covers=True` по умолчанию)
-  правило tsk-864 не изменилось.
+- для остальных конструкций каталога (`no_credit_courses=frozenset()` по
+  умолчанию) правило tsk-864 не изменилось.
+
+tsk-975: исключение из льготы адресовано теперь конкретному курсу 108, а не
+любому курсу задания (`Construct.no_credit_courses`) — тесты ниже, живущие
+на живом случае «Строки»/108, явно переводят курс `_seed` на настоящий id 108
+(`_retarget_to_course_108`), иначе исключение не сработает вовсе.
 """
 from __future__ import annotations
 
@@ -119,6 +124,60 @@ def test_material_with_incidental_list_syntax_does_not_count_as_teaching_it() ->
 
 # ---------- Через фоновый тик: льгота "текущая тема" не действует ----------
 
+async def _retarget_to_course_108(db, result_id: int) -> None:
+    """
+    tsk-975: исключение из льготы (`no_credit_courses`) теперь адресовано
+    КОНКРЕТНОМУ курсу 108 «Строки», а не любому курсу задания подряд - `_seed`
+    создаёт курс со случайным id, поэтому живой случай tsk-916/938 нужно явно
+    перевести на настоящий id 108, иначе исключение просто не сработает.
+
+    Курс 108 в тестовой БД - НЕ фикстура, а настоящий прод-курс «Строки» со
+    своими материалами (dev-копия боевой базы): `ON CONFLICT DO NOTHING` его
+    не трогает, наш синтетический материал просто добавляется рядом.
+    """
+    task_id, old_course_id = (await db.execute(sqltext(
+        "SELECT t.id, t.course_id FROM task_results tr "
+        "JOIN tasks t ON t.id = tr.task_id WHERE tr.id = :r"
+    ), {"r": result_id})).one()
+    await db.execute(sqltext(
+        "INSERT INTO courses (id, title, access_level) "
+        "VALUES (108, 'Работа со строками в Python', 'auto_check') "
+        "ON CONFLICT (id) DO NOTHING"
+    ))
+    await db.execute(sqltext(
+        "UPDATE materials SET course_id = 108 WHERE course_id = :old"
+    ), {"old": old_course_id})
+    await db.execute(sqltext(
+        "UPDATE tasks SET course_id = 108 WHERE id = :t"
+    ), {"t": task_id})
+    await db.commit()
+
+
+async def _cleanup_retargeted(db, result_id: int, past_course_id: int, user_id: int) -> None:
+    """
+    Как `_cleanup`, но НЕ удаляет курс 108 целиком - в тестовой БД это
+    настоящий прод-курс «Строки» с боевыми материалами (dev-копия), а не
+    фикстура теста; каскад удаления курса задел бы чужие данные. Подчищаем
+    только то, что создал сам тест. Внешняя транзакция всё равно откатывается
+    целиком (см. докстринг `db_conn` в conftest) - это уборка для порядка
+    внутри теста, а не последняя линия защиты.
+    """
+    task_id = (await db.execute(sqltext(
+        "SELECT task_id FROM task_results WHERE id = :r"
+    ), {"r": result_id})).scalar_one()
+    await db.execute(sqltext(
+        "DELETE FROM student_material_progress WHERE student_id = :u"
+    ), {"u": user_id})
+    await db.execute(sqltext("DELETE FROM task_results WHERE id = :r"), {"r": result_id})
+    await db.execute(sqltext("DELETE FROM tasks WHERE id = :t"), {"t": task_id})
+    await db.execute(sqltext(
+        "DELETE FROM materials WHERE course_id = 108 AND title = 'материал темы'"
+    ))
+    await db.execute(sqltext("DELETE FROM courses WHERE id = :p"), {"p": past_course_id})
+    await db.execute(sqltext("DELETE FROM users WHERE id = :u"), {"u": user_id})
+    await db.commit()
+
+
 async def test_current_course_does_not_silence_split_join(
     db, db_session_factory, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -139,6 +198,7 @@ async def test_current_course_does_not_silence_split_join(
         course_materials=[_STRINGS_MATERIAL_MENTIONS_SPLIT_JOIN],
         completed_materials=[],
     )
+    await _retarget_to_course_108(db, result_id)
     # У ученика нет ни одного отмеченного материала вообще - обычно это значит
     # "сверить не с чем" (materials_seen == 0), поэтому дополнительно отмечаем
     # нейтральный материал без конструкций каталога, чтобы сверка состоялась.
@@ -166,7 +226,7 @@ async def test_current_course_does_not_silence_split_join(
         assert unseen is not None, "сверять было с чем - нейтральный материал отмечен"
         assert "split_join" in [i["code"] for i in unseen["items"]]
     finally:
-        await _cleanup(db, result_id, past, user_id)
+        await _cleanup_retargeted(db, result_id, past, user_id)
 
 
 async def test_own_course_material_marked_personally_does_not_silence_split_join(
@@ -189,15 +249,20 @@ async def test_own_course_material_marked_personally_does_not_silence_split_join
         course_materials=[_STRINGS_MATERIAL_MENTIONS_SPLIT_JOIN],
         completed_materials=[],
     )
+    await _retarget_to_course_108(db, result_id)
     # Материал ТЕКУЩЕГО курса (тот самый, что уже лежит там от `_seed`),
     # отмеченный ЛИЧНО - как ученица реально отмечает уроки по ходу курса,
     # а не «бесплатный проход» от факта пребывания в теме.
+    # tsk-975: курс 108 в тестовой БД — настоящий прод-курс «Строки» с 18
+    # своими материалами (retarget его не подменяет, только добавляет наш).
+    # Фильтр по заголовку `_seed` ('материал темы') берёт именно НАШ
+    # синтетический материал, а не реальный «Строковые методы» и соседей.
     material_id = (await db.execute(sqltext(
         """
         SELECT m.id FROM task_results tr
         JOIN tasks t ON t.id = tr.task_id
         JOIN materials m ON m.course_id = t.course_id
-        WHERE tr.id = :r
+        WHERE tr.id = :r AND m.title = 'материал темы'
         """
     ), {"r": result_id})).scalar_one()
     await db.execute(sqltext(
@@ -216,7 +281,7 @@ async def test_own_course_material_marked_personally_does_not_silence_split_join
         assert unseen is not None
         assert "split_join" in [i["code"] for i in unseen["items"]]
     finally:
-        await _cleanup(db, result_id, past, user_id)
+        await _cleanup_retargeted(db, result_id, past, user_id)
 
 
 async def test_students_own_progress_still_silences_split_join(
