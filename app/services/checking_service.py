@@ -1717,6 +1717,44 @@ class CheckingService:
             pieces.append(_PUNCT_RE.sub(" ", piece))
         return " ".join(" ".join(pieces).split())
 
+    _BRACKETS_COMMA_RE = re.compile(r"[\[\],]")
+
+    @staticmethod
+    def _strip_brackets_commas(value: str) -> str:
+        """
+        Шаг `strip_brackets_commas`: `[`, `]`, `,` становятся ПРОБЕЛОМ (tsk-977).
+
+        Узкий шаг для заданий, где ученик пишет программу и естественно
+        получает вывод `print(list)` в виде `[0, 1, 0, ...]` вместо требуемых
+        условием «чисел через пробел» (`0 1 0 ...`) — эталон при этом сам НЕ
+        содержит `[`, `]`, `,` (tsk-974/id-10367). Задание подключает шаг явно
+        через `normalization`; ни на одно задание по умолчанию не влияет.
+
+        Специально НЕ переиспользует `_strip_punctuation`: та логика (пунктуация
+        между двумя цифрами склеивается, а не становится пробелом — нужно для
+        десятичных разделителей вроде `2,5`) заодно съедает одиночный минус
+        перед числом без соседних цифр (`_PUNCT_RE` матчит любую пунктуацию,
+        включая `-`), а `-1` — как раз значимая часть эталона в задачах этого
+        класса (доска, координаты). Здесь список символов — явный и короткий,
+        минус и любая другая пунктуация не затрагиваются.
+
+        **Подключать только заданиям с целочисленным эталоном** (боевой прогон
+        tsk-977, 988 реальных сдач): на заданиях, где эталон — дробное число
+        с точкой (`62.11`) при включённом `strip_punctuation`, шаг рвёт то,
+        что тот склеивает как десятичный разделитель — 5 боевых регрессий
+        (было верно `62,11`, стало бы неверно). На заданиях, где эталон сам
+        содержит `[`/`]` («Создайте список...»), шаг даёт ложный зачёт
+        (боевой пример: эталон `[4, 8]`, ответ `4,8`). См.
+        `ShortAnswerRules.normalization` за полным описанием обеих ловушек.
+
+        Args:
+            value: Текст после trim/lower.
+
+        Returns:
+            Текст без `[`, `]`, `,`, с пробелами на их месте, пробелы схлопнуты.
+        """
+        return " ".join(CheckingService._BRACKETS_COMMA_RE.sub(" ", value).split())
+
     @staticmethod
     def _normalize_text(value: str, steps: List[str]) -> str:
         """
@@ -1724,15 +1762,24 @@ class CheckingService:
 
         Поддерживаемые шаги (применяются в фиксированном порядке независимо
         от порядка в steps):
-        - 'trim'              → обрезка пробелов по краям;
-        - 'lower'             → приведение к нижнему регистру;
-        - 'strip_punctuation' → знаки препинания становятся ПРОБЕЛОМ, кроме знаков
-                                внутри числа и внутри слова (см. `_strip_punctuation`);
-        - 'collapse_spaces'   → схлопывание подряд идущих пробелов в один.
+        - 'trim'                  → обрезка пробелов по краям;
+        - 'lower'                 → приведение к нижнему регистру;
+        - 'strip_brackets_commas' → `[`, `]`, `,` становятся ПРОБЕЛОМ, минус и
+                                    прочая пунктуация не трогаются (tsk-977,
+                                    см. `_strip_brackets_commas`);
+        - 'strip_punctuation'     → знаки препинания становятся ПРОБЕЛОМ, кроме
+                                    знаков внутри числа и внутри слова (см.
+                                    `_strip_punctuation`);
+        - 'collapse_spaces'       → схлопывание подряд идущих пробелов в один.
 
-        Порядок: trim → lower → strip_punctuation → collapse_spaces.
-        strip_punctuation применяется ДО collapse_spaces, чтобы пробелы,
-        оставшиеся на месте пунктуации, были схлопнуты.
+        Порядок: trim → lower → strip_brackets_commas → strip_punctuation →
+        collapse_spaces. strip_brackets_commas — ДО strip_punctuation, чтобы к
+        моменту его работы скобок/запятых уже не было и не пересекался с
+        логикой «между цифрами» в `_strip_punctuation` (та бережёт `2,5` как
+        одно число ценой того, что одиночный минус перед числом без соседних
+        цифр становится пробелом — tsk-977). strip_punctuation — ДО
+        collapse_spaces, чтобы пробелы, оставшиеся на месте пунктуации, были
+        схлопнуты.
 
         Шаг 'code_ast' здесь не обрабатывается (это не построчное преобразование,
         а способ сравнения) — он живёт в _matches_short_answer.
@@ -1749,6 +1796,8 @@ class CheckingService:
             result = result.strip()
         if "lower" in steps:
             result = result.lower()
+        if "strip_brackets_commas" in steps:
+            result = CheckingService._strip_brackets_commas(result)
         if "strip_punctuation" in steps:
             result = CheckingService._strip_punctuation(result)
         if "collapse_spaces" in steps:

@@ -137,3 +137,66 @@ def test_order_strip_before_collapse():
     """
     steps = ["strip_punctuation", "collapse_spaces"]
     assert _normalize("a, b", steps) == "a b"
+
+
+# ---------- strip_brackets_commas (tsk-977) ----------
+
+def test_strip_brackets_commas_only():
+    steps = ["strip_brackets_commas"]
+    assert _normalize("[0, 1, 0]", steps) == "0 1 0"
+
+
+def test_strip_brackets_commas_keeps_minus():
+    """Минус — значимая часть эталона (координаты, отметки на доске), не трогается."""
+    steps = ["strip_brackets_commas"]
+    assert _normalize("[1, 1, 1, 1, -1, 1, 1, 1]", steps) == "1 1 1 1 -1 1 1 1"
+
+
+def test_strip_brackets_commas_multiline_python_list_matches_reference():
+    """Основной use-case tsk-974/id-10367: print(list) построчно против эталона."""
+    steps = ["trim", "lower", "strip_brackets_commas", "collapse_spaces"]
+    student = (
+        "[0, 1, 0, 0, 1, 0, 0, 1]\n[0, 0, 1, 0, 1, 0, 1, 0]\n"
+        "[1, 1, 1, 1, -1, 1, 1, 1]"
+    )
+    reference = (
+        "0 1 0 0 1 0 0 1\n0 0 1 0 1 0 1 0\n1 1 1 1 -1 1 1 1\n"
+    )
+    assert _normalize(student, steps) == _normalize(reference, steps)
+
+
+def test_strip_brackets_commas_not_applied_without_token():
+    """Backward compat: без явного шага скобки/запятые не трогаются."""
+    steps = ["trim", "lower", "collapse_spaces"]
+    assert _normalize("[0, 1]", steps) == "[0, 1]"
+
+
+def test_strip_brackets_commas_combined_with_strip_punctuation():
+    """Оба шага вместе не ломаются: скобки/запятые снимает первый шаг,
+    strip_punctuation после него работает над уже очищенным текстом."""
+    steps = ["strip_brackets_commas", "strip_punctuation", "collapse_spaces"]
+    assert _normalize("[a, b]!", steps) == "a b"
+
+
+def test_strip_brackets_commas_only_punctuation_returns_empty():
+    steps = ["strip_brackets_commas"]
+    assert _normalize("[,]", steps) == ""
+
+
+def test_strip_brackets_commas_breaks_decimal_comma_with_strip_punctuation():
+    """Задокументированная ловушка (tsk-977, боевой прогон нашёл 5 регрессий):
+
+    На дробных эталонах с точкой (`62.11`) при включённом strip_punctuation
+    запятая — русский десятичный разделитель, и strip_punctuation нарочно
+    склеивает её с цифрами («62,11» → «6211», как и «62.11» → «6211»).
+    strip_brackets_commas, поставленный ДО strip_punctuation, успевает
+    превратить запятую в пробел раньше — число рвётся на два токена, и
+    ответ, который раньше засчитывался, перестаёт совпадать с эталоном.
+    Отсюда правило: не подключать этот шаг заданиям с дробным эталоном
+    (`ShortAnswerRules.normalization`, docstring `_strip_brackets_commas`).
+    """
+    steps = ["trim", "lower", "strip_brackets_commas", "strip_punctuation", "collapse_spaces"]
+    student = "62,11"
+    reference = "62.11"
+    # Без strip_brackets_commas эти строки совпали бы (обе → "6211").
+    assert _normalize(student, steps) != _normalize(reference, steps)
