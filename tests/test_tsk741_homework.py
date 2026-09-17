@@ -2485,3 +2485,24 @@ async def test_short_window_gets_theory_only(db):
     assert long["volume_details"]["free_evening_share"] == 1.0
     assert long["volume_details"]["theory_only"] is False
     assert any(i["kind"] == "task" for i in long["items"])
+
+
+@pytest.mark.asyncio
+async def test_window_days_round_to_nearest(db):
+    """Окно «5 дней 23 часа» — это шесть дней, а не пять (tsk-984).
+
+    Выдача идёт через час после начала занятия (отметка явки), срок — начало
+    следующего. На проде 17.09 Тихомирова получила долю 0.8 вместо 1.0.
+    """
+    student_id, course_id = await _student_with_program(db, materials=0, tasks=6)
+    teacher_id, _ = await _new_user(db, role="teacher", name="teach")
+    for weekday in (2, 3):
+        await _slot(db, teacher_id=teacher_id, student_id=student_id, weekday=weekday, hour=16)
+    now = datetime.now(UTC)
+    hw = await homework_service.issue(
+        db, student_id=student_id, source="auto",
+        due_at=now + timedelta(days=6) - timedelta(minutes=61), now=now,
+    )
+    await db.commit()
+    assert hw["volume_details"]["window_days"] == 6
+    assert hw["volume_details"]["free_evening_share"] == 1.0
