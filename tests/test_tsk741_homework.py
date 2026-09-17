@@ -441,10 +441,13 @@ async def test_volume_for_window_scales_by_days(db):
         program_deadline=None, program_tasks_remaining=None,
         target_unreachable=False,
     )
-    assert homework_volume_service.volume_for_window(plan, days=7) == 14
-    assert homework_volume_service.volume_for_window(plan, days=3) == 6
-    # До занятия остался день — «ноль» не выдаём, выдача без состава бессмысленна.
-    assert homework_volume_service.volume_for_window(plan, days=0) == 2
+    # tsk-984: окно задаётся долей недели по свободным вечерам, а не днями.
+    assert homework_volume_service.volume_for_window(plan, share=1.0) == 14
+    assert homework_volume_service.volume_for_window(plan, share=3 / 7) == 6
+    # Окно без свободных вечеров — ноль: заданий не даём, только теорию.
+    assert homework_volume_service.volume_for_window(plan, share=0.0) == 0
+    # Малая, но ненулевая доля — хотя бы один элемент.
+    assert homework_volume_service.volume_for_window(plan, share=0.01) == 1
 
 
 # ============================== Выдача ==============================
@@ -2428,3 +2431,57 @@ async def test_period_completion_counts_reissued_items_once(db):
         db, student_ids=[student_id], period_from=period_from, period_to=period_to,
     ))[student_id]
     assert ratio == pytest.approx(1 / 6)
+
+
+# ============ tsk-984: ДЗ по свободным вечерам ============
+
+
+def test_free_evening_share_sums_to_one_over_the_week():
+    """Сумма долей всех окон недели — единица: объём не меняется, меняется раскладка."""
+    from app.services.attendance_service import free_evening_share
+
+    # Вторник–среда: окно вт→ср — 1 день, ср→вт — 6 дней.
+    short = free_evening_share(window_days=1, lesson_days_per_week=2)
+    long = free_evening_share(window_days=6, lesson_days_per_week=2)
+    assert short == 0.0 and long == 1.0
+    # Одно занятие в неделю — как раньше, вся норма на окно.
+    assert free_evening_share(window_days=7, lesson_days_per_week=1) == 1.0
+    # Понедельник-среда-пятница: 2 + 2 + 3 дня → 1/4 + 1/4 + 2/4.
+    parts = [free_evening_share(window_days=d, lesson_days_per_week=3) for d in (2, 2, 3)]
+    assert parts == [0.25, 0.25, 0.5]
+
+
+@pytest.mark.asyncio
+async def test_short_window_gets_theory_only(db):
+    """Следующее занятие завтра — только теория впереди, без заданий (tsk-984).
+
+    Замечание оператора 17.09: «расписание вторник–среда, а ДЗ выдаётся
+    равномерно — не успевают за один вечер». Вечер после занятия — не
+    рабочий; вся норма недели ложится на длинное окно.
+    """
+    student_id, course_id = await _student_with_program(db, materials=3, tasks=5)
+    teacher_id, _ = await _new_user(db, role="teacher", name="teach")
+    for weekday in (1, 2):
+        await _slot(db, teacher_id=teacher_id, student_id=student_id, weekday=weekday, hour=18)
+    now = datetime.now(UTC)
+
+    short = await homework_service.issue(
+        db, student_id=student_id, due_at=now + timedelta(days=1), source="auto", now=now,
+    )
+    await db.commit()
+    kinds = {i["kind"] for i in short["items"]}
+    assert kinds == {"material"}, "на окно без свободных вечеров ушли задания"
+    assert len(short["items"]) <= homework_service._SHORT_WINDOW_THEORY_MAX_ITEMS
+    assert short["volume_details"]["theory_only"] is True
+    assert short["volume_details"]["free_evening_share"] == 0.0
+
+    # Длинное окно — вся норма недели.
+    # Среда → вторник: шесть дней, пять свободных вечеров из пяти в неделе.
+    long = await homework_service.issue(
+        db, student_id=student_id, due_at=now + timedelta(days=7), source="auto",
+        now=now + timedelta(days=1),
+    )
+    await db.commit()
+    assert long["volume_details"]["free_evening_share"] == 1.0
+    assert long["volume_details"]["theory_only"] is False
+    assert any(i["kind"] == "task" for i in long["items"])

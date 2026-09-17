@@ -362,3 +362,45 @@ def occurrence_paid(outcomes_: list[OccurrenceOutcome], occurrence_id: int) -> O
         if o.occurrence_id == occurrence_id:
             return o.paid if o.missed else None
     return None
+
+
+# --- Свободные вечера (tsk-984) ---------------------------------------------
+#
+# Домашняя работа делает человек ВЕЧЕРАМИ, и вечер после занятия — не рабочий:
+# ученик только что отзанимался час. Расписание «вторник–среда» даёт окно
+# вт→ср из одного такого вечера, и норма недели ÷ 7 требовала в него 1/7
+# недели (замечание оператора 17.09: «не успевают сделать ДЗ за один вечер»).
+# Поэтому норма делится не на дни, а на свободные вечера: вечера окна без
+# вечера самого занятия, против вечеров недели без занятий.
+
+_LESSON_WEEKDAYS_SQL = """
+SELECT count(DISTINCT ls.weekday)
+  FROM lesson_slot_student lss
+  JOIN lesson_slot ls ON ls.id = lss.slot_id
+ WHERE lss.student_id = :sid AND lss.is_active AND ls.is_active
+"""
+
+
+async def lesson_days_per_week(db: AsyncSession, *, student_id: int) -> int:
+    """Сколько дней в неделю у ученика есть занятие (по активным слотам).
+
+    Два часа подряд в субботу — один день: вечер теряется один. Слотов нет
+    (разовые занятия) — считаем один день: другого ориентира нет.
+    """
+    n = (await db.execute(text(_LESSON_WEEKDAYS_SQL), {"sid": student_id})).scalar()
+    return max(int(n or 0), 1)
+
+
+def free_evening_share(*, window_days: int, lesson_days_per_week: int) -> float:
+    """Доля недельной нормы, которая ложится на окно в `window_days` дней.
+
+    Свободных вечеров в окне — `window_days − 1` (вечер занятия не в счёт);
+    свободных вечеров в неделе — `7 − дней с занятиями`. Сумма долей по всем
+    окнам недели равна единице: общий объём не меняется, меняется раскладка.
+    Вт–ср: окно вт→ср — 0 из 5 (только теория), ср→вт — 5 из 5 (вся норма).
+    Одно занятие в неделю — 6 из 6, как и раньше.
+    """
+    free_in_week = max(7 - max(lesson_days_per_week, 1), 1)
+    free_in_window = max(window_days - 1, 0)
+    return min(free_in_window / free_in_week, 1.0)
+

@@ -46,6 +46,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services import (
+    attendance_service,
     course_activity_service,
     homework_volume_service,
     program_scope_service,
@@ -79,6 +80,12 @@ _THEORY_AHEAD_LOOKAHEAD = 20
 #: материала, девять из десяти тем укладываются в семь, но есть и курс на 29,
 #: и вот он превратил бы домашнюю работу в марафон.
 _THEORY_AHEAD_MAX_ITEMS = 6
+
+#: tsk-984: окно без свободных вечеров (следующее занятие завтра) — заданий не
+#: даём, только теорию впереди, и не больше стольких материалов. Вечер после
+#: занятия — не рабочий; шесть материалов «сверх бюджета» превращали его в
+#: 46 минут при бюджете 29 (Леканова, 15.09).
+_SHORT_WINDOW_THEORY_MAX_ITEMS = 3
 
 
 #: Корни ученика вне программы — сначала тот, где он работал последним (tsk-913).
@@ -167,8 +174,13 @@ async def _next_items(
     limit: int,
     minutes_budget: Optional[int] = None,
     effort_table: Optional[EffortTable] = None,
+    theory_only: bool = False,
 ) -> list[dict[str, Any]]:
     """Следующие незавершённые элементы программы ученика — до бюджета.
+
+    tsk-984: `theory_only` — окно без свободных вечеров: берутся только
+    ведущие материалы (до `limit`), задания не выдаются, надбавка теории
+    следующей темы не применяется.
 
     Идёт по корневым курсам в порядке `user_courses.order_number` и внутри
     каждого — по учебному порядку дерева (`manual_progress_service.
@@ -273,6 +285,18 @@ async def _next_items(
                     "topic_id": int(item["course_id"]),
                 }
             )
+
+    if theory_only:
+        # Только материалы, и только до первого невыполненного задания: за
+        # ним начинается работа, а не чтение.
+        theory: list[dict[str, Any]] = []
+        for item in pending:
+            if item["kind"] != "material":
+                break
+            theory.append(item)
+            if len(theory) >= limit:
+                break
+        return _strip_topics(theory)
 
     picked = pending[:limit]
     if minutes_budget is not None and effort_table is not None and picked:
@@ -445,7 +469,15 @@ async def issue(
 
     plan = await homework_volume_service.compute(db, student_id=student_id, now=moment)
     days = max((due_at - moment).days, 1)
-    minutes_budget = homework_volume_service.minutes_for_window(plan, days=days)
+    # tsk-984: доля недели — по свободным вечерам, а не по дням. Вечер после
+    # занятия не рабочий: у «вторник–среда» окно вт→ср — ноль вечеров, и вся
+    # норма ложится на ср→вт. Сумма долей за неделю по-прежнему единица.
+    lesson_days = await attendance_service.lesson_days_per_week(db, student_id=student_id)
+    share = attendance_service.free_evening_share(
+        window_days=days, lesson_days_per_week=lesson_days,
+    )
+    theory_only = volume_override is None and share <= 0
+    minutes_budget = homework_volume_service.minutes_for_window(plan, share=share)
 
     # tsk-867: ведёт БЮДЖЕТ ВРЕМЕНИ, штуки остаются ограждением. Ограждением
     # служит штучный ПОТОЛОК, а не штучная норма: норма посчитана из того же
@@ -456,16 +488,17 @@ async def issue(
     # «задай двенадцать», и получить в ответ четыре — не то, о чём он просил.
     if volume_override is not None:
         volume, minutes_budget = int(volume_override), None
+    elif theory_only:
+        volume = _SHORT_WINDOW_THEORY_MAX_ITEMS
     elif minutes_budget is not None:
         volume = max(
             int(round(
-                homework_volume_service.ceiling_for(plan.fact_per_week)
-                * max(days, 1) / 7.0
+                homework_volume_service.ceiling_for(plan.fact_per_week) * share
             )),
             1,
         )
     else:
-        volume = homework_volume_service.volume_for_window(plan, days=days)
+        volume = homework_volume_service.volume_for_window(plan, share=share)
     if volume <= 0:
         raise ValueError(
             "Программа пройдена: ученик идёт с опережением, и задавать больше "
@@ -473,16 +506,23 @@ async def issue(
         )
 
     effort_table = (
-        await load_effort_table(db) if minutes_budget is not None else None
+        await load_effort_table(db)
+        if minutes_budget is not None and not theory_only else None
     )
     items = await _next_items(
         db,
         student_id=student_id,
         limit=volume,
-        minutes_budget=minutes_budget,
+        minutes_budget=None if theory_only else minutes_budget,
         effort_table=effort_table,
+        theory_only=theory_only,
     )
     if not items:
+        if theory_only:
+            raise ValueError(
+                "До следующего занятия нет свободного вечера, а теории впереди "
+                "нет — домашняя работа не задана; следующая ляжет на длинное окно."
+            )
         raise ValueError(
             "Программа пройдена: ученик идёт с опережением, и задавать больше "
             "нечего. Добавьте ему курс — тогда домашняя работа появится снова."
@@ -499,6 +539,11 @@ async def issue(
     details = plan.as_details()
     details["requested_volume"] = volume
     details["window_days"] = days
+    # tsk-984: из чего сложилась доля окна — чтобы «почему сегодня только
+    # теория» и «почему в среду вся неделя» читались по снимку.
+    details["lesson_days_per_week"] = lesson_days
+    details["free_evening_share"] = round(share, 2)
+    details["theory_only"] = theory_only
     if volume_override is not None:
         details["volume_override"] = int(volume_override)
     # tsk-867: снимок бюджета и фактического веса состава. Пересчитывать вес

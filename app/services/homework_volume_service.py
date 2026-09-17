@@ -1613,30 +1613,33 @@ async def compute(
     )
 
 
-def volume_for_window(plan: VolumePlan, *, days: int) -> int:
-    """Сколько элементов задать на промежуток в `days` дней.
+def volume_for_window(plan: VolumePlan, *, share: float) -> int:
+    """Сколько элементов задать на окно с долей `share` от недельной нормы.
 
     Выдача привязана не к неделе, а к следующему занятию: между занятиями
     может быть и три дня, и десять (у ученика с одним занятием в неделю и у
     ученика с двумя разный промежуток). Неделя — только единица нормы.
+    tsk-984: доля считается по свободным вечерам
+    (`attendance_service.free_evening_share`), а не по дням.
 
-    Пол в один элемент: если до занятия остался день, задать «ноль» нельзя —
-    выдача без состава бессмысленна.
+    Ноль при нулевой доле — окно без свободных вечеров: заданий не даём,
+    только теорию (это решает `homework_service.issue`).
     """
-    if plan.volume_per_week <= 0:
+    if plan.volume_per_week <= 0 or share <= 0:
         return 0
-    scaled = plan.volume_per_week * max(days, 1) / 7.0
-    return max(int(round(scaled)), 1)
+    return max(int(round(plan.volume_per_week * share)), 1)
 
 
-def minutes_for_window(plan: VolumePlan, *, days: int) -> Optional[int]:
-    """Бюджет времени на промежуток в `days` дней, в минутах.
+def minutes_for_window(plan: VolumePlan, *, share: float) -> Optional[int]:
+    """Бюджет времени на окно с долей `share` от недельной нормы, в минутах.
 
     `None` — вес не измерен: бюджета времени нет, и набирать состав придётся
-    по штукам (`volume_for_window`). Пола в одну минуту здесь нет намеренно:
-    пол выдачи — это «хотя бы один элемент», и он живёт там, где собирается
-    состав, а не в переводе недельной нормы в промежуток.
+    по штукам (`volume_for_window`). Ноль — окно без свободных вечеров
+    (tsk-984). Пола в одну минуту здесь нет намеренно: пол выдачи — это
+    «хотя бы один элемент», и он живёт там, где собирается состав.
     """
     if plan.minutes_per_week is None or plan.minutes_per_week <= 0:
         return None
-    return max(int(round(plan.minutes_per_week * max(days, 1) / 7.0)), 1)
+    if share <= 0:
+        return 0
+    return max(int(round(plan.minutes_per_week * share)), 1)
