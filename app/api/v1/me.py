@@ -46,6 +46,7 @@ from app.schemas.me import (
     BrowserTimezoneRequest,
     BrowserTimezoneResponse,
     CourseProgress,
+    CourseProgressDetailRead,
     CourseWithProgressRead,
     HistoryItem,
     IdentityRead,
@@ -79,6 +80,7 @@ from app.services import (
     roles_service,
     schedule_preference_service,
     school_grade_service,
+    student_dashboard_service,
     student_presence_service,
     task_history_service,
 )
@@ -558,6 +560,54 @@ async def get_course_syllabus_states(
     )
     response.headers["Cache-Control"] = "no-store"
     return SyllabusStatesResponse(**payload)
+
+
+# ── GET /me/courses/{course_id}/progress-detail (tsk-991) ───────────────────
+
+@router.get(
+    "/courses/{course_id}/progress-detail",
+    response_model=CourseProgressDetailRead,
+    summary="Мой прогресс по курсу: сколько осталось, прогноз, точка затыка (tsk-991)",
+    responses={
+        200: {"description": "Ученический срез позиции в курсе"},
+        401: {"description": "Не аутентифицирован"},
+        403: {"description": "Курс не в дереве этого пользователя"},
+        404: {"description": "В курсе нет ни одного элемента"},
+    },
+)
+async def get_course_progress_detail(
+    course_id: int = Path(..., description="ID корневого course (любой узел дерева)"),
+    current_user: CurrentUser = Depends(require_authenticated),
+    db: AsyncSession = Depends(get_async_db),
+) -> CourseProgressDetailRead:
+    """Ученический срез уже посчитанного дашборда персонала/родителя (П2
+    педагогического аудита LMS, 2026-09-17,
+    `docs/qa/lms-pedagogy-audit-2026-09-17.md`): «сколько осталось», прогноз
+    окончания, «ты сейчас здесь → следующий шаг», мягкий сигнал темпа.
+
+    Раньше это считал только `student_dashboard_service`, но гейт
+    `GET /students/{student_id}/dashboard` пускал к нему лишь персонал и
+    родителя со связкой — сам ученик своих же темпа и прогноза получить не
+    мог. Здесь тот же расчёт (`get_course_progress_detail`, никакого
+    пересчёта), но БЕЗ `pace_level` (терциль относительно когорты, tsk-504)
+    и без чисел других учеников курса — когорты у большинства курсов меньше
+    порога `student_dashboard_cohort_min_size`, и сравнение в такой группе
+    демотивирует и по сути раскрывает соседей по группе.
+
+    Гейт — «свой профиль», как у `GET /me/courses/{course_id}/syllabus-states`:
+    `assert_course_access` (service-key/admin/methodist/teacher — bypass;
+    student — только дерево `user_courses` + `course_parents`). 401 (без
+    входа) и 403 (сервисный токен) даёт `require_authenticated`.
+    """
+    await assert_course_access(db, current_user=current_user, course_id=course_id)
+    detail = await student_dashboard_service.get_course_progress_detail(
+        db, student_id=current_user.id, course_id=course_id,
+    )
+    if detail is None:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, detail="В курсе нет ни одного элемента",
+        )
+    return CourseProgressDetailRead(**detail)
 
 
 # ── GET /me/last-position ───────────────────────────────────────────────────

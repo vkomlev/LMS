@@ -26165,6 +26165,116 @@
         }
       }
     },
+    "/api/v1/me/courses/{course_id}/progress-detail": {
+      "get": {
+        "tags": [
+          "me"
+        ],
+        "summary": "Мой прогресс по курсу: сколько осталось, прогноз, точка затыка (tsk-991)",
+        "description": "Ученический срез уже посчитанного дашборда персонала/родителя (П2\nпедагогического аудита LMS, 2026-09-17,\n`docs/qa/lms-pedagogy-audit-2026-09-17.md`): «сколько осталось», прогноз\nокончания, «ты сейчас здесь → следующий шаг», мягкий сигнал темпа.\n\nРаньше это считал только `student_dashboard_service`, но гейт\n`GET /students/{student_id}/dashboard` пускал к нему лишь персонал и\nродителя со связкой — сам ученик своих же темпа и прогноза получить не\nмог. Здесь тот же расчёт (`get_course_progress_detail`, никакого\nпересчёта), но БЕЗ `pace_level` (терциль относительно когорты, tsk-504)\nи без чисел других учеников курса — когорты у большинства курсов меньше\nпорога `student_dashboard_cohort_min_size`, и сравнение в такой группе\nдемотивирует и по сути раскрывает соседей по группе.\n\nГейт — «свой профиль», как у `GET /me/courses/{course_id}/syllabus-states`:\n`assert_course_access` (service-key/admin/methodist/teacher — bypass;\nstudent — только дерево `user_courses` + `course_parents`). 401 (без\nвхода) и 403 (сервисный токен) даёт `require_authenticated`.",
+        "operationId": "get_course_progress_detail_api_v1_me_courses__course_id__progress_detail_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "course_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "description": "ID корневого course (любой узел дерева)",
+              "title": "Course Id"
+            },
+            "description": "ID корневого course (любой узел дерева)"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Ученический срез позиции в курсе",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CourseProgressDetailRead"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Не аутентифицирован"
+          },
+          "403": {
+            "description": "Курс не в дереве этого пользователя"
+          },
+          "404": {
+            "description": "В курсе нет ни одного элемента"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/me/last-position": {
       "get": {
         "tags": [
@@ -49191,6 +49301,124 @@
           "percent"
         ],
         "title": "CourseProgress"
+      },
+      "CourseProgressDetailRead": {
+        "properties": {
+          "course_id": {
+            "type": "integer",
+            "title": "Course Id"
+          },
+          "percent_complete": {
+            "type": "integer",
+            "title": "Percent Complete"
+          },
+          "is_completed": {
+            "type": "boolean",
+            "title": "Is Completed"
+          },
+          "remaining_count": {
+            "type": "integer",
+            "title": "Remaining Count",
+            "description": "Сколько заданий и материалов курса ещё не закрыто"
+          },
+          "remaining_minutes": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remaining Minutes",
+            "description": "Остаток в минутах работы по измеренному весу элементов (task_effort_service, tsk-851); null — вес мерить нечем (пустая телеметрия), тогда ориентир — только remaining_count"
+          },
+          "forecast_completion_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Forecast Completion Date",
+            "description": "Прогноз окончания курса при нынешнем темпе; null — темпа нет, предсказывать не по чему"
+          },
+          "current_section_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Section Title"
+          },
+          "current_item_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Item Title",
+            "description": "«Ты сейчас здесь → следующий шаг»"
+          },
+          "behind_count": {
+            "type": "integer",
+            "title": "Behind Count",
+            "description": "Незакрытых элементов позади фронта — перепрыгнутые, точка затыка",
+            "default": 0
+          },
+          "behind_section_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Behind Section Title"
+          },
+          "behind_item_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Behind Item Title",
+            "description": "Название элемента, на котором ученик застрял"
+          },
+          "pace_status": {
+            "type": "string",
+            "enum": [
+              "on_track",
+              "behind",
+              "completed"
+            ],
+            "title": "Pace Status",
+            "description": "Мягкий сигнал темпа БЕЗ сравнения с когортой: completed — курс пройден целиком; behind — есть незакрытые элементы позади фронта (см. behind_count/behind_item_title); on_track — иначе"
+          }
+        },
+        "type": "object",
+        "required": [
+          "course_id",
+          "percent_complete",
+          "is_completed",
+          "remaining_count",
+          "pace_status"
+        ],
+        "title": "CourseProgressDetailRead",
+        "description": "Ученический срез уже посчитанного дашборда персонала/родителя (П2\nпедагогического аудита LMS 2026-09-17, `student_dashboard_service`).\n\nСознательно БЕЗ `pace_level` (терциль относительно когорты активных\nучеников курса) и без чисел/состава других учеников — когорты у\nбольшинства курсов < 5 человек (tsk-504): сравнение в такой группе легко\nдемотивирует и по сути деанонимизирует одноклассников. Вместо терциля —\n`pace_status`, посчитанный только по собственной позиции ученика."
       },
       "CourseRead": {
         "properties": {

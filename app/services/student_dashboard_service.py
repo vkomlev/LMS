@@ -80,7 +80,7 @@ tsk-460, reviews/2026-07-29-tsk460-solution-rules-leak.md): контракт Н�
 """
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional
 
 from sqlalchemy import text
@@ -908,6 +908,167 @@ async def _course_forecast_weeks(
     return remaining_seconds / pace_seconds_per_week
 
 
+async def _program_root_ids(
+    db: AsyncSession, *, student_id: int, now: datetime,
+) -> tuple[Optional[dict[str, Any]], set[int]]:
+    """Блок программы подготовки (`_program_progress`) + id корневых курсов,
+    входящих в неё (tsk-921).
+
+    Общий подсчёт для дашборда персонала/родителя и ученического среза
+    progress-detail (tsk-991): курс программы обязан показывать ОДИН прогноз
+    любому зрителю — расхождение было бы третьим случаем той же ошибки,
+    что и с нормой ДЗ (см. docstring `get_student_dashboard`)."""
+    program_block = await _program_progress(db, student_id=student_id, now=now)
+    root_ids: set[int] = set()
+    if program_block is not None:
+        from app.services import homework_volume_service
+
+        grade = (
+            await db.execute(
+                text("SELECT school_grade FROM users WHERE id = :uid"),
+                {"uid": student_id},
+            )
+        ).scalar()
+        program = await homework_volume_service.program_for_student(
+            db, student_id=student_id, grade=grade, today=now.date(),
+        )
+        root_ids = {int(c) for c in (program or {}).get("root_ids", [])}
+    return program_block, root_ids
+
+
+async def _remaining_effort_minutes(
+    db: AsyncSession, *, countable: list[dict[str, Any]], table: "EffortTable",
+) -> Optional[float]:
+    """Остаток курса в минутах работы (tsk-991, П2 педагогического аудита).
+
+    Тот же источник веса, что у прогноза окончания (`_course_forecast_weeks`):
+    задание — измеренная медиана (`task_effort_service`), материал —
+    измеренное значение либо прокси (`EffortTable.material_effort_seconds`).
+    `None` — вес мерить нечем (пустая телеметрия); тогда ориентир для ученика
+    остаётся штучный (`remaining_count`), а не выдуманное число минут.
+    """
+    if table.overall is None:
+        return None
+
+    from app.services.task_effort_service import effort_for_tasks
+
+    task_ids = [i["item_id"] for i in countable if i["item_type"] == "task"]
+    weights = await effort_for_tasks(db, task_ids=task_ids, table=table)
+
+    def _seconds(item: dict[str, Any]) -> float:
+        if item["item_type"] == "material":
+            return table.material_effort_seconds()
+        return float(weights.get(item["item_id"]) or table.overall or 0.0)
+
+    remaining_seconds = sum(
+        _seconds(i) for i in countable if i["status"] not in DONE_STATUSES
+    )
+    return round(remaining_seconds / 60, 1)
+
+
+async def get_course_progress_detail(
+    db: AsyncSession,
+    *,
+    student_id: int,
+    course_id: int,
+    now: Optional[datetime] = None,
+) -> Optional[dict[str, Any]]:
+    """Student-safe срез позиции в курсе (tsk-991, П2 педагогического аудита
+    2026-09-17): «сколько осталось», прогноз окончания, «ты сейчас здесь →
+    следующий шаг», мягкий сигнал темпа.
+
+    Переиспользует ТОТ ЖЕ расчёт, что дашборд персонала/родителя
+    (`course_position`, `_load_course_pace_and_forecast`, `task_effort_service`,
+    `_program_root_ids`) — меняется только набор отдаваемых полей, не алгоритм.
+
+    Сознательно НЕ считает и не отдаёт `pace_level` (терциль относительно
+    когорты активных учеников курса, tsk-504): у большинства курсов когорта
+    меньше порога `student_dashboard_cohort_min_size`, и сравнение в такой
+    группе демотивирует и по сути раскрывает соседей по группе. Вызывающий
+    (гейт `assert_course_access`, «свой профиль», как у остальных `/me/*`)
+    обязан проверить доступ ДО вызова — эта функция ACL не проверяет.
+
+    :returns: `None` — в курсе нет ни одного элемента (пустой узел без
+        материалов и заданий); тогда показывать прогресс нечего.
+    """
+    now = now or datetime.now(timezone.utc)
+    settings = Settings()
+
+    data = await manual_progress_service.get_student_progress(
+        db, student_id=student_id, course_id=course_id,
+    )
+    # tsk-918/tsk-692: прощённое содержимое — не в счёт, как в кабинете
+    # ученика и в сводке преподавателя.
+    graced = await compute_graced_items(db, student_id, course_id)
+    items = [
+        i
+        for i in data["items"]
+        if not (
+            (i["item_type"] == "task" and int(i["item_id"]) in graced.tasks)
+            or (
+                i["item_type"] == "material"
+                and int(i["item_id"]) in graced.materials
+            )
+        )
+    ]
+    countable = [i for i in items if i["item_type"] != "course"]
+    if not countable:
+        return None
+
+    anchor = await course_position.anchor_for(db, student_id=student_id, items=items)
+    pos = course_position.position(items, course_id=course_id, anchor=anchor)
+
+    from app.services.task_effort_service import load_effort_table
+
+    effort_table = await load_effort_table(db)
+    forecast_date, is_completed = await _load_course_pace_and_forecast(
+        db,
+        student_id=student_id,
+        course_id=course_id,
+        items=items,
+        now=now,
+        pace_weeks=settings.student_forecast_pace_weeks,
+        effort_table=effort_table,
+    )
+
+    # tsk-921: курс программы подготовки показывает ОДИН прогноз — из блока
+    # программы, по минутам, а не свой штучный (см. `_program_root_ids`).
+    program_block, program_root_ids = await _program_root_ids(
+        db, student_id=student_id, now=now,
+    )
+    if (
+        program_block is not None
+        and course_id in program_root_ids
+        and not is_completed
+    ):
+        forecast_date = program_block["forecast_date"]
+
+    done_count = sum(1 for i in countable if i["status"] in DONE_STATUSES)
+    remaining_count = len(countable) - done_count
+    remaining_minutes = await _remaining_effort_minutes(
+        db, countable=countable, table=effort_table,
+    )
+
+    return {
+        "course_id": course_id,
+        "percent_complete": pos.percent_complete,
+        "is_completed": is_completed,
+        "remaining_count": remaining_count,
+        "remaining_minutes": remaining_minutes,
+        "forecast_completion_date": forecast_date,
+        "current_section_title": pos.current_section_title,
+        "current_item_title": pos.current_item_title,
+        "behind_count": pos.behind_count,
+        "behind_section_title": pos.behind_section_title,
+        "behind_item_title": pos.behind_item_title,
+        "pace_status": (
+            "completed"
+            if is_completed
+            else "behind" if pos.behind_count > 0 else "on_track"
+        ),
+    }
+
+
 async def get_student_dashboard(
     db: AsyncSession,
     *,
@@ -1012,28 +1173,13 @@ async def get_student_dashboard(
     # смотрящий ВПЕРЁД: остальные отвечают «что было за период». Считается тем
     # же сервисом, что и норма домашней работы, — иначе у преподавателя и у
     # родителя появились бы два разных ответа на один вопрос.
-    program_block = await _program_progress(db, student_id=student_id, now=now)
-    # tsk-921: у курсов программы прогноз ОДИН — из блока программы, по
-    # минутам. Свой штучный прогноз карточки курса (по темпу за последние
-    # недели) давал вторую дату на той же странице: у Нуженко «программа
-    # будет пройдена к 12 ноября» и тут же «прогноз окончания 04.02.27» про
-    # тот же ЕГЭ. Решение оператора 12.09: оставить по минутам.
-    program_root_ids: set[int] = set()
-    if program_block is not None:
-        from app.services import homework_volume_service
-
-        program = await homework_volume_service.program_for_student(
-            db,
-            student_id=student_id,
-            grade=(
-                await db.execute(
-                    text("SELECT school_grade FROM users WHERE id = :uid"),
-                    {"uid": student_id},
-                )
-            ).scalar(),
-            today=now.date(),
-        )
-        program_root_ids = {int(c) for c in (program or {}).get("root_ids", [])}
+    # tsk-921/tsk-991: подсчёт корневых курсов программы вынесен в
+    # `_program_root_ids` — тот же вопрос «какой прогноз один» встаёт и у
+    # ученического среза progress-detail, второй копией эту логику заводить
+    # нельзя (см. docstring функции).
+    program_block, program_root_ids = await _program_root_ids(
+        db, student_id=student_id, now=now,
+    )
     # tsk-921: служебные курсы (tsk-877) — как в сводке преподавателя (tsk-893):
     # клиент показывает их одной строкой, без «сейчас» и прогноза.
     service_course_ids: set[int] = {
@@ -1171,4 +1317,4 @@ async def get_student_dashboard(
     }
 
 
-__all__ = ["get_student_dashboard"]
+__all__ = ["get_course_progress_detail", "get_student_dashboard"]

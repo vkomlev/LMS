@@ -295,6 +295,61 @@ class CourseWithProgressRead(BaseModel):
     is_completed: bool
 
 
+# ── tsk-991: /me/courses/{id}/progress-detail ────────────────────────────────
+
+class CourseProgressDetailRead(BaseModel):
+    """Ученический срез уже посчитанного дашборда персонала/родителя (П2
+    педагогического аудита LMS 2026-09-17, `student_dashboard_service`).
+
+    Сознательно БЕЗ `pace_level` (терциль относительно когорты активных
+    учеников курса) и без чисел/состава других учеников — когорты у
+    большинства курсов < 5 человек (tsk-504): сравнение в такой группе легко
+    демотивирует и по сути деанонимизирует одноклассников. Вместо терциля —
+    `pace_status`, посчитанный только по собственной позиции ученика.
+    """
+
+    course_id: int
+    percent_complete: int
+    is_completed: bool
+    remaining_count: int = Field(
+        description="Сколько заданий и материалов курса ещё не закрыто"
+    )
+    remaining_minutes: float | None = Field(
+        default=None,
+        description=(
+            "Остаток в минутах работы по измеренному весу элементов "
+            "(task_effort_service, tsk-851); null — вес мерить нечем "
+            "(пустая телеметрия), тогда ориентир — только remaining_count"
+        ),
+    )
+    forecast_completion_date: date | None = Field(
+        default=None,
+        description=(
+            "Прогноз окончания курса при нынешнем темпе; null — темпа нет, "
+            "предсказывать не по чему"
+        ),
+    )
+    current_section_title: str | None = None
+    current_item_title: str | None = Field(
+        default=None, description="«Ты сейчас здесь → следующий шаг»"
+    )
+    behind_count: int = Field(
+        default=0,
+        description="Незакрытых элементов позади фронта — перепрыгнутые, точка затыка",
+    )
+    behind_section_title: str | None = None
+    behind_item_title: str | None = Field(
+        default=None, description="Название элемента, на котором ученик застрял"
+    )
+    pace_status: Literal["on_track", "behind", "completed"] = Field(
+        description=(
+            "Мягкий сигнал темпа БЕЗ сравнения с когортой: completed — курс "
+            "пройден целиком; behind — есть незакрытые элементы позади фронта "
+            "(см. behind_count/behind_item_title); on_track — иначе"
+        )
+    )
+
+
 # ── Phase Y-3: /me/last-position ─────────────────────────────────────────────
 
 class LastPositionRead(BaseModel):
