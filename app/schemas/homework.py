@@ -28,6 +28,14 @@ class HomeworkItemRead(BaseModel):
         )
     )
     position: int = Field(description="Порядок в выдаче — учебный")
+    tier: Literal["required", "extra"] = Field(
+        default="required",
+        description=(
+            "tsk-1006: required — обязательное; extra — желательное, «чтобы "
+            "нагнать норму»: у отстающего разница между «нужно к сроку» и "
+            "«задаём». В «X из N» не входит, на просрочку не влияет"
+        ),
+    )
     course_uid: Optional[str] = Field(
         default=None,
         description=(
@@ -80,8 +88,12 @@ class HomeworkRead(BaseModel):
     )
     note: Optional[str] = None
     items: list[HomeworkItemRead] = Field(default_factory=list)
-    total: int
+    total: int = Field(description="Обязательных пунктов (tier=required)")
     done: int
+    extra_total: int = Field(
+        default=0, description="tsk-1006: желательных пунктов «чтобы нагнать норму»"
+    )
+    extra_done: int = Field(default=0, description="tsk-1006: из них закрыто")
     is_overdue: bool = Field(
         description="Срок прошёл, а сделано не всё. Ничего не блокирует — "
         "решение оператора 01.09: невыполненное ДЗ это показатель, а не долг"

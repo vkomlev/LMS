@@ -100,6 +100,10 @@ class HomeworkItem(Base):
     position: Mapped[int] = mapped_column(
         Integer, nullable=False, comment="Порядок в выдаче — учебный",
     )
+    tier: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default="required",
+        comment="tsk-1006: required — обязательное, extra — желательное, чтобы нагнать норму",
+    )
 
     homework: Mapped["HomeworkAssignment"] = relationship(
         "HomeworkAssignment", back_populates="items",

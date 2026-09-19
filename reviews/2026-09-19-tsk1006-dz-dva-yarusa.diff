@@ -1,0 +1,368 @@
+diff --git a/app/models/homework.py b/app/models/homework.py
+index 93fb59e..cf0cef8 100644
+--- a/app/models/homework.py
++++ b/app/models/homework.py
+@@ -100,6 +100,10 @@ class HomeworkItem(Base):
+     position: Mapped[int] = mapped_column(
+         Integer, nullable=False, comment="Порядок в выдаче — учебный",
+     )
++    tier: Mapped[str] = mapped_column(
++        String(16), nullable=False, server_default="required",
++        comment="tsk-1006: required — обязательное, extra — желательное, чтобы нагнать норму",
++    )
+ 
+     homework: Mapped["HomeworkAssignment"] = relationship(
+         "HomeworkAssignment", back_populates="items",
+diff --git a/app/schemas/homework.py b/app/schemas/homework.py
+index 49af169..b5de501 100644
+--- a/app/schemas/homework.py
++++ b/app/schemas/homework.py
+@@ -28,6 +28,14 @@ class HomeworkItemRead(BaseModel):
+         )
+     )
+     position: int = Field(description="Порядок в выдаче — учебный")
++    tier: Literal["required", "extra"] = Field(
++        default="required",
++        description=(
++            "tsk-1006: required — обязательное; extra — желательное, «чтобы "
++            "нагнать норму»: у отстающего разница между «нужно к сроку» и "
++            "«задаём». В «X из N» не входит, на просрочку не влияет"
++        ),
++    )
+     course_uid: Optional[str] = Field(
+         default=None,
+         description=(
+@@ -80,8 +88,12 @@ class HomeworkRead(BaseModel):
+     )
+     note: Optional[str] = None
+     items: list[HomeworkItemRead] = Field(default_factory=list)
+-    total: int
++    total: int = Field(description="Обязательных пунктов (tier=required)")
+     done: int
++    extra_total: int = Field(
++        default=0, description="tsk-1006: желательных пунктов «чтобы нагнать норму»"
++    )
++    extra_done: int = Field(default=0, description="tsk-1006: из них закрыто")
+     is_overdue: bool = Field(
+         description="Срок прошёл, а сделано не всё. Ничего не блокирует — "
+         "решение оператора 01.09: невыполненное ДЗ это показатель, а не долг"
+diff --git a/app/schemas/lesson_calendar.py b/app/schemas/lesson_calendar.py
+index 97b4767..fe14efb 100644
+--- a/app/schemas/lesson_calendar.py
++++ b/app/schemas/lesson_calendar.py
+@@ -446,6 +446,14 @@ class TeacherSummaryHomework(BaseModel):
+             "оператора 01.09 — невыполненное ДЗ это показатель, а не долг"
+         ),
+     )
++    assigned_extra_total: Optional[int] = Field(
++        default=None,
++        description=(
++            "tsk-1006: желательных пунктов «чтобы нагнать норму» в действующей "
++            "выдаче; None — ДЗ не выдавали, 0 — ученик не отстаёт"
++        ),
++    )
++    assigned_extra_done: Optional[int] = Field(default=None, description="tsk-1006: из них закрыто")
+ 
+ 
+ class TeacherSummaryAttention(BaseModel):
+diff --git a/app/schemas/student_dashboard.py b/app/schemas/student_dashboard.py
+index 0011704..06c9a77 100644
+--- a/app/schemas/student_dashboard.py
++++ b/app/schemas/student_dashboard.py
+@@ -110,6 +110,9 @@ class StudentDashboardHomeworkRead(BaseModel):
+     assigned_total: Optional[int] = None
+     #: Из них выполнено. Считается у источника (верная сдача / отметка материала).
+     assigned_done: Optional[int] = None
++    #: tsk-1006: желательных пунктов «чтобы нагнать норму» и из них закрыто.
++    assigned_extra_total: Optional[int] = None
++    assigned_extra_done: Optional[int] = None
+     #: Срок действующей выдачи.
+     due_at: Optional[datetime] = None
+     #: Срок прошёл, а сделано не всё. Ничего не блокирует (решение оператора
+diff --git a/app/services/homework_service.py b/app/services/homework_service.py
+index d4f0cff..da2125d 100644
+--- a/app/services/homework_service.py
++++ b/app/services/homework_service.py
+@@ -87,6 +87,10 @@ _THEORY_AHEAD_MAX_ITEMS = 6
+ #: 46 минут при бюджете 29 (Леканова, 15.09).
+ _SHORT_WINDOW_THEORY_MAX_ITEMS = 3
+ 
++#: tsk-1006: с какого недобора до нормы (в минутах на окно) добавляем
++#: желательный ярус. Меньше — это один пункт на две минуты, шум.
++_EXTRA_TIER_MIN_MINUTES = 10
++
+ 
+ #: Корни ученика вне программы — сначала тот, где он работал последним (tsk-913).
+ #: Без активности вовсе — в порядке записи, как раньше: другого ориентира нет.
+@@ -175,9 +179,15 @@ async def _next_items(
+     minutes_budget: Optional[int] = None,
+     effort_table: Optional[EffortTable] = None,
+     theory_only: bool = False,
++    exclude: Optional[set[tuple[str, int]]] = None,
++    theory_ahead: bool = True,
+ ) -> list[dict[str, Any]]:
+     """Следующие незавершённые элементы программы ученика — до бюджета.
+ 
++    tsk-1006: `exclude` — пункты, уже взятые в другой ярус той же выдачи;
++    `theory_ahead=False` — без надбавки теории следующей темы (желательный
++    ярус идёт следом за обязательным, и теорию тот уже взял).
++
+     tsk-984: `theory_only` — окно без свободных вечеров: берутся только
+     ведущие материалы (до `limit`), задания не выдаются, надбавка теории
+     следующей темы не применяется.
+@@ -266,6 +276,8 @@ async def _next_items(
+             if int(item["course_id"]) in inactive_courses:
+                 continue
+             item_id = int(item["item_id"])
++            if exclude and (item["item_type"], item_id) in exclude:
++                continue
+             if item["item_type"] == "task" and item_id in graced.tasks:
+                 continue
+             if item["item_type"] == "material" and item_id in graced.materials:
+@@ -310,6 +322,8 @@ async def _next_items(
+             ),
+             table=effort_table,
+         )
++    if not theory_ahead:
++        return _strip_topics(picked)
+     return _strip_topics(_with_theory_ahead(picked, pending))
+ 
+ 
+@@ -532,6 +546,38 @@ async def issue(
+             "нечего. Добавьте ему курс — тогда домашняя работа появится снова."
+         )
+ 
++    # tsk-1006: желательный ярус — «чтобы нагнать норму». Обязательный объём
++    # ограничен шагом роста от темпа ученика, а «нужно к сроку» у отстающего
++    # выше; разница на это окно и есть желательное. Тем же порядком, следом
++    # за обязательным, без надбавок. Только при автоматическом расчёте: явное
++    # число преподавателя — его решение целиком; на окне «только теория» и
++    # без измеренного веса яруса нет.
++    extra_items: list[dict[str, Any]] = []
++    extra_budget: Optional[int] = None
++    if (
++        volume_override is None
++        and not theory_only
++        and minutes_budget is not None
++        and effort_table is not None
++        and plan.target_minutes_per_week is not None
++        and plan.minutes_per_week is not None
++        and plan.target_minutes_per_week > plan.minutes_per_week
++    ):
++        gap_per_week = plan.target_minutes_per_week - plan.minutes_per_week
++        extra_budget = int(round(gap_per_week * share))
++        if extra_budget >= _EXTRA_TIER_MIN_MINUTES:
++            extra_items = await _next_items(
++                db,
++                student_id=student_id,
++                limit=max(volume, 1),
++                minutes_budget=extra_budget,
++                effort_table=effort_table,
++                exclude={(i["kind"], int(i["item_id"])) for i in items},
++                theory_ahead=False,
++            )
++        else:
++            extra_budget = None
++
+     await db.execute(
+         text(
+             "UPDATE homework_assignment SET cancelled_at = :now "
+@@ -558,6 +604,14 @@ async def issue(
+         details["planned_minutes"] = await _items_minutes(
+             db, items=items, table=effort_table
+         )
++    # tsk-1006: снимок желательного яруса — бюджет и вес; ноль пунктов при
++    # ненулевом бюджете значит «нагонять уже нечем» (программа кончилась).
++    details["extra_minutes_budget"] = extra_budget
++    details["extra_volume"] = len(extra_items)
++    if extra_items and effort_table is not None:
++        details["extra_planned_minutes"] = await _items_minutes(
++            db, items=extra_items, table=effort_table
++        )
+ 
+     homework_id = (
+         await db.execute(
+@@ -587,11 +641,13 @@ async def issue(
+         )
+     ).scalar_one()
+ 
+-    for position, item in enumerate(items):
++    tiered = [(i, "required") for i in items] + [(i, "extra") for i in extra_items]
++    for position, (item, tier) in enumerate(tiered):
+         await db.execute(
+             text(
+-                "INSERT INTO homework_item (homework_id, kind, task_id, material_id, position) "
+-                "VALUES (:hid, :kind, :task_id, :material_id, :pos)"
++                "INSERT INTO homework_item "
++                "  (homework_id, kind, task_id, material_id, position, tier) "
++                "VALUES (:hid, :kind, :task_id, :material_id, :pos, :tier)"
+             ),
+             {
+                 "hid": homework_id,
+@@ -599,12 +655,14 @@ async def issue(
+                 "task_id": item["item_id"] if item["kind"] == "task" else None,
+                 "material_id": item["item_id"] if item["kind"] == "material" else None,
+                 "pos": position,
++                "tier": tier,
+             },
+         )
+ 
+     logger.info(
+-        "tsk-741: выдано ДЗ id=%s ученику %s — %s элементов, срок %s, источник %s",
+-        homework_id, student_id, len(items), due_at, source,
++        "tsk-741: выдано ДЗ id=%s ученику %s — %s элементов (+%s желательных), "
++        "срок %s, источник %s",
++        homework_id, student_id, len(items), len(extra_items), due_at, source,
+     )
+     result = await get_current(db, student_id=student_id)
+     assert result is not None  # только что вставили
+@@ -786,7 +844,7 @@ async def auto_issue_after_lesson(
+ #: Состав действующей выдачи с отметкой выполнения, посчитанной у источника.
+ #: Один запрос: экран ученика и сводка преподавателя зовут его часто.
+ _ITEMS_SQL = """
+-SELECT hi.id, hi.kind, hi.task_id, hi.material_id, hi.position,
++SELECT hi.id, hi.kind, hi.task_id, hi.material_id, hi.position, hi.tier,
+        CASE hi.kind
+             WHEN 'task' THEN EXISTS (
+                 SELECT 1 FROM task_results tr
+@@ -841,7 +899,7 @@ SELECT hi.id, hi.kind, hi.task_id, hi.material_id, hi.position,
+ #: текущей выдачи — эта выборка достаёт то, что осталось за её пределами.
+ _ORPHANED_ITEMS_SQL = """
+ WITH cancelled_items AS (
+-    SELECT hi.kind, hi.task_id, hi.material_id,
++    SELECT hi.kind, hi.task_id, hi.material_id, hi.tier,
+            hi.homework_id AS old_homework_id, ha.cancelled_at
+       FROM homework_item hi
+       JOIN homework_assignment ha ON ha.id = hi.homework_id
+@@ -869,7 +927,7 @@ done_after_cancel AS (
+ -- подряд — берём один раз.
+ orphaned AS (
+     SELECT DISTINCT ON (kind, coalesce(task_id, material_id))
+-           kind, task_id, material_id
++           kind, task_id, material_id, tier
+       FROM done_after_cancel d
+      WHERE done_after
+        AND NOT EXISTS (
+@@ -883,7 +941,7 @@ orphaned AS (
+        )
+      ORDER BY kind, coalesce(task_id, material_id), cancelled_at
+ )
+-SELECT o.kind, o.task_id, o.material_id,
++SELECT o.kind, o.task_id, o.material_id, o.tier,
+        t.course_id AS task_course_id,
+        m.title AS material_title,
+        m.course_id AS material_course_id,
+@@ -937,6 +995,7 @@ async def _load_orphaned_items(
+                 "title": title,
+                 "done": True,
+                 "position": position,
++                "tier": row["tier"],
+                 "course_uid": course_uid,
+                 "external_uid": (
+                     row["task_external_uid"] if row["kind"] == "task" else None
+@@ -978,6 +1037,7 @@ async def _load_items(
+                 "title": title,
+                 "done": bool(row["done"]),
+                 "position": int(row["position"]),
++                "tier": row["tier"],
+                 # tsk-838: чтобы пункт списка открывался нажатием. Оба поля
+                 # необязательны: узел мог остаться без `course_uid`, и тогда
+                 # пункт просто не станет ссылкой — но и не исчезнет.
+@@ -999,7 +1059,11 @@ def _to_homework_dict(
+     `done`/`planned_minutes`/`is_overdue` неизбежно разъехался бы между
+     «текущей» выдачей и её же записью в истории.
+     """
+-    done = sum(1 for i in items if i["done"])
++    # tsk-1006: «X из N» — обязательное; желательное — отдельно и на
++    # просрочку не влияет.
++    required = [i for i in items if i.get("tier", "required") != "extra"]
++    extra = [i for i in items if i.get("tier") == "extra"]
++    done = sum(1 for i in required if i["done"])
+     raw_details = row["volume_details"]
+     planned_minutes = (
+         raw_details.get("planned_minutes") if isinstance(raw_details, dict) else None
+@@ -1020,9 +1084,11 @@ def _to_homework_dict(
+         "volume_details": row["volume_details"],
+         "note": row["note"],
+         "items": items,
+-        "total": len(items),
++        "total": len(required),
+         "done": done,
+-        "is_overdue": bool(row["due_at"] <= moment and done < len(items)),
++        "extra_total": len(extra),
++        "extra_done": sum(1 for i in extra if i["done"]),
++        "is_overdue": bool(row["due_at"] <= moment and done < len(required)),
+     }
+ 
+ 
+@@ -1123,9 +1189,24 @@ WITH current AS (
+ ),
+ counted AS (
+     SELECT c.student_id, c.id, c.due_at, c.issued_at,
+-           count(hi.id) AS total,
++           count(hi.id) FILTER (WHERE hi.tier <> 'extra') AS total,
++           count(hi.id) FILTER (WHERE hi.tier = 'extra') AS extra_total,
++           count(*) FILTER (
++               WHERE hi.tier = 'extra' AND (
++                     (hi.kind = 'task' AND EXISTS (
++                        SELECT 1 FROM task_results tr
++                          JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
++                         WHERE tr.user_id = c.student_id AND tr.task_id = hi.task_id
++                           AND tr.is_correct = true))
++                  OR (hi.kind = 'material' AND EXISTS (
++                        SELECT 1 FROM student_material_progress smp
++                         WHERE smp.student_id = c.student_id
++                           AND smp.material_id = hi.material_id
++                           AND smp.status IN ('completed', 'skipped'))))
++           ) AS extra_done,
+            count(*) FILTER (
+-               WHERE (hi.kind = 'task' AND EXISTS (
++               WHERE hi.tier <> 'extra' AND (
++                     (hi.kind = 'task' AND EXISTS (
+                         SELECT 1 FROM task_results tr
+                           JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
+                          WHERE tr.user_id = c.student_id AND tr.task_id = hi.task_id
+@@ -1134,7 +1215,7 @@ counted AS (
+                         SELECT 1 FROM student_material_progress smp
+                          WHERE smp.student_id = c.student_id
+                            AND smp.material_id = hi.material_id
+-                           AND smp.status IN ('completed', 'skipped')))
++                           AND smp.status IN ('completed', 'skipped'))))
+            ) AS done
+       FROM current c
+       LEFT JOIN homework_item hi ON hi.homework_id = c.id
+@@ -1151,7 +1232,7 @@ SELECT * FROM counted
+ #: сводка, иначе в прошлом занятии появился бы пункт из будущего.
+ _ORPHANED_COUNTS_SQL = """
+ WITH cancelled_items AS (
+-    SELECT hi.kind, hi.task_id, hi.material_id,
++    SELECT hi.kind, hi.task_id, hi.material_id, hi.tier,
+            hi.homework_id AS old_homework_id, ha.student_id, ha.cancelled_at
+       FROM homework_item hi
+       JOIN homework_assignment ha ON ha.id = hi.homework_id
+@@ -1181,7 +1262,7 @@ done_after_cancel AS (
+ SELECT student_id,
+        count(DISTINCT kind || ':' || coalesce(task_id, material_id)) AS orphaned_count
+   FROM done_after_cancel d
+- WHERE done_after
++ WHERE done_after AND d.tier <> 'extra'
+    AND NOT EXISTS (
+         SELECT 1 FROM homework_item hi2
+           JOIN homework_assignment ha2 ON ha2.id = hi2.homework_id
+@@ -1252,6 +1333,8 @@ async def status_for_students(
+             "due_at": row["due_at"],
+             "assigned_total": total,
+             "assigned_done": done,
++            "assigned_extra_total": int(row["extra_total"] or 0),
++            "assigned_extra_done": int(row["extra_done"] or 0),
+             "is_overdue": bool(row["due_at"] <= moment and done < total),
+         }
+     return result
+@@ -1282,6 +1365,7 @@ items AS (
+     SELECT DISTINCT s.student_id, hi.kind, hi.task_id, hi.material_id
+       FROM scoped s
+       JOIN homework_item hi ON hi.homework_id = s.id
++     WHERE hi.tier <> 'extra'
+ )
+ SELECT i.student_id,
+        (SELECT count(*) FROM scoped x WHERE x.student_id = i.student_id) AS assignments,

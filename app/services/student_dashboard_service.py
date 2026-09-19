@@ -1297,6 +1297,8 @@ async def get_student_dashboard(
         "homework": {
             "assigned_total": (homework_status or {}).get("assigned_total"),
             "assigned_done": (homework_status or {}).get("assigned_done"),
+            "assigned_extra_total": (homework_status or {}).get("assigned_extra_total"),
+            "assigned_extra_done": (homework_status or {}).get("assigned_extra_done"),
             "due_at": (homework_status or {}).get("due_at"),
             "is_overdue": (homework_status or {}).get("is_overdue"),
             "completion_ratio": (

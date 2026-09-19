@@ -301,6 +301,8 @@ async def test_summary_basic_shape_and_ad_hoc_flag(db, client):
         # этом экране дороже всего.
         "assigned_total": None, "assigned_done": None,
         "assigned_due_at": None, "assigned_is_overdue": None,
+        # tsk-1006: желательный ярус — тоже «не задавали».
+        "assigned_extra_total": None, "assigned_extra_done": None,
     }
 
 

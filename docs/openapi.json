@@ -55728,11 +55728,24 @@
           },
           "total": {
             "type": "integer",
-            "title": "Total"
+            "title": "Total",
+            "description": "Обязательных пунктов (tier=required)"
           },
           "done": {
             "type": "integer",
             "title": "Done"
+          },
+          "extra_total": {
+            "type": "integer",
+            "title": "Extra Total",
+            "description": "tsk-1006: желательных пунктов «чтобы нагнать норму»",
+            "default": 0
+          },
+          "extra_done": {
+            "type": "integer",
+            "title": "Extra Done",
+            "description": "tsk-1006: из них закрыто",
+            "default": 0
           },
           "is_overdue": {
             "type": "boolean",
@@ -55886,6 +55899,16 @@
             "title": "Position",
             "description": "Порядок в выдаче — учебный"
           },
+          "tier": {
+            "type": "string",
+            "enum": [
+              "required",
+              "extra"
+            ],
+            "title": "Tier",
+            "description": "tsk-1006: required — обязательное; extra — желательное, «чтобы нагнать норму»: у отстающего разница между «нужно к сроку» и «задаём». В «X из N» не входит, на просрочку не влияет",
+            "default": "required"
+          },
           "course_uid": {
             "anyOf": [
               {
@@ -56022,11 +56045,24 @@
           },
           "total": {
             "type": "integer",
-            "title": "Total"
+            "title": "Total",
+            "description": "Обязательных пунктов (tier=required)"
           },
           "done": {
             "type": "integer",
             "title": "Done"
+          },
+          "extra_total": {
+            "type": "integer",
+            "title": "Extra Total",
+            "description": "tsk-1006: желательных пунктов «чтобы нагнать норму»",
+            "default": 0
+          },
+          "extra_done": {
+            "type": "integer",
+            "title": "Extra Done",
+            "description": "tsk-1006: из них закрыто",
+            "default": 0
           },
           "is_overdue": {
             "type": "boolean",
@@ -67499,6 +67535,28 @@
             ],
             "title": "Assigned Done"
           },
+          "assigned_extra_total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assigned Extra Total"
+          },
+          "assigned_extra_done": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assigned Extra Done"
+          },
           "due_at": {
             "anyOf": [
               {
@@ -73719,6 +73777,30 @@
             ],
             "title": "Assigned Is Overdue",
             "description": "Срок прошёл, а сделано не всё. Ничего не блокирует: решение оператора 01.09 — невыполненное ДЗ это показатель, а не долг"
+          },
+          "assigned_extra_total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assigned Extra Total",
+            "description": "tsk-1006: желательных пунктов «чтобы нагнать норму» в действующей выдаче; None — ДЗ не выдавали, 0 — ученик не отстаёт"
+          },
+          "assigned_extra_done": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assigned Extra Done",
+            "description": "tsk-1006: из них закрыто"
           }
         },
         "type": "object",

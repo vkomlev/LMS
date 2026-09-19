@@ -776,3 +776,119 @@ async def test_measured_theory_weight_reaches_the_plan(db):
         material_seconds=176.0, material_samples=100,
     )
     assert _seconds_for_rows(rows, rich) > _seconds_for_rows(rows, cheap) * 3
+
+
+# ══════════ tsk-1006: два яруса — обязательное и желательное ══════════
+
+
+async def test_behind_student_gets_an_extra_tier_to_catch_up(db):
+    """Отстающий получает второй ярус — желательное «чтобы нагнать норму».
+
+    Оператор 19.09: «вижу, что ученик работает в полном объёме по ДЗ и при
+    этом отстаёт — таким я рекомендую ускориться. Должна быть штатная
+    процедура». Обязательное ограничено шагом роста от темпа (tsk-896/909),
+    «нужно к сроку» выше — разница выдаётся следом с пометкой `extra` и
+    считается отдельно: в «X из N» не входит, на просрочку не влияет.
+    """
+    from datetime import timedelta
+
+    from app.core import settings_store
+    from app.services import homework_service
+    from tests.test_tsk741_homework import _set_grade, _settings_with_program
+
+    donor = await _student(db, "donor-1006")
+    student = await _student(db, "behind-1006")
+    course, donor_course = await _course(db), await _course(db)
+    difficulty = await _difficulty(db)
+    task_type = _unique_type()
+    try:
+        probe = (await _tasks(
+            db, course_id=donor_course, task_type=task_type, count=1,
+            difficulty_id=difficulty,
+        ))[0]
+        await _calibrate(
+            db, donor_id=donor, task_id=probe, course_id=donor_course, seconds=180
+        )
+        # Большая программа и близкий срок → «нужно» много; факт нулевой →
+        # «задаём» упирается в половину нормы (tsk-909). Разница — желательное.
+        await _tasks(
+            db, course_id=course, task_type=task_type, count=400,
+            difficulty_id=difficulty,
+        )
+        await _enroll(db, student_id=student, course_id=course)
+        await _set_grade(db, student_id=student, grade=11)
+        settings = _settings_with_program(course)
+        original = settings_store.get_str
+        settings_store.get_str = settings  # type: ignore[assignment]
+        try:
+            plan = await homework_volume_service.compute(db, student_id=student)
+            assert plan.target_minutes_per_week is not None and plan.minutes_per_week is not None
+            assert plan.target_minutes_per_week > plan.minutes_per_week, (
+                "фикстура должна давать отстающего: нужно больше, чем задаём"
+            )
+            now = datetime.now(UTC)
+            hw = await homework_service.issue(
+                db, student_id=student, due_at=now + timedelta(days=7), source="auto", now=now,
+            )
+            await db.commit()
+        finally:
+            settings_store.get_str = original  # type: ignore[assignment]
+
+        tiers = [i["tier"] for i in hw["items"]]
+        assert "extra" in tiers, f"у отстающего нет желательного яруса: {hw['volume_details']}"
+        # Обязательное идёт первым, желательное — следом, без перемешивания.
+        first_extra = tiers.index("extra")
+        assert all(t == "required" for t in tiers[:first_extra])
+        assert all(t == "extra" for t in tiers[first_extra:])
+        assert hw["total"] == tiers.count("required")
+        assert hw["extra_total"] == tiers.count("extra")
+        assert hw["extra_done"] == 0
+        details = hw["volume_details"]
+        assert details["extra_volume"] == hw["extra_total"]
+        assert details["extra_minutes_budget"] >= homework_service._EXTRA_TIER_MIN_MINUTES
+        # Пункты не пересекаются между ярусами.
+        keys = [(i["kind"], i["item_id"]) for i in hw["items"]]
+        assert len(keys) == len(set(keys))
+        # Сводка преподавателя видит ярус отдельно.
+        status = (await homework_service.status_for_students(db, student_ids=[student]))[student]
+        assert status["assigned_total"] == hw["total"]
+        assert status["assigned_extra_total"] == hw["extra_total"]
+        assert status["assigned_extra_done"] == 0
+    finally:
+        await _cleanup(db, user_ids=[donor, student], course_ids=[course, donor_course])
+
+
+async def test_on_track_student_has_no_extra_tier(db):
+    """Кто успевает — желательного не получает: нагонять нечего."""
+    from datetime import timedelta
+
+    from app.services import homework_service
+
+    donor = await _student(db, "donor-1006b")
+    student = await _student(db, "ontrack-1006")
+    course, donor_course = await _course(db), await _course(db)
+    difficulty = await _difficulty(db)
+    task_type = _unique_type()
+    try:
+        probe = (await _tasks(
+            db, course_id=donor_course, task_type=task_type, count=1,
+            difficulty_id=difficulty,
+        ))[0]
+        await _calibrate(
+            db, donor_id=donor, task_id=probe, course_id=donor_course, seconds=60
+        )
+        # Маленький курс: «нужно» ниже «задаём» (пол) — не отстаёт.
+        await _tasks(
+            db, course_id=course, task_type=task_type, count=6,
+            difficulty_id=difficulty,
+        )
+        await _enroll(db, student_id=student, course_id=course)
+        now = datetime.now(UTC)
+        hw = await homework_service.issue(
+            db, student_id=student, due_at=now + timedelta(days=7), source="auto", now=now,
+        )
+        await db.commit()
+        assert hw["extra_total"] == 0
+        assert all(i["tier"] == "required" for i in hw["items"])
+    finally:
+        await _cleanup(db, user_ids=[donor, student], course_ids=[course, donor_course])

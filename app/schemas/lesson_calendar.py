@@ -446,6 +446,14 @@ class TeacherSummaryHomework(BaseModel):
             "оператора 01.09 — невыполненное ДЗ это показатель, а не долг"
         ),
     )
+    assigned_extra_total: Optional[int] = Field(
+        default=None,
+        description=(
+            "tsk-1006: желательных пунктов «чтобы нагнать норму» в действующей "
+            "выдаче; None — ДЗ не выдавали, 0 — ученик не отстаёт"
+        ),
+    )
+    assigned_extra_done: Optional[int] = Field(default=None, description="tsk-1006: из них закрыто")
 
 
 class TeacherSummaryAttention(BaseModel):

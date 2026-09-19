@@ -110,6 +110,9 @@ class StudentDashboardHomeworkRead(BaseModel):
     assigned_total: Optional[int] = None
     #: Из них выполнено. Считается у источника (верная сдача / отметка материала).
     assigned_done: Optional[int] = None
+    #: tsk-1006: желательных пунктов «чтобы нагнать норму» и из них закрыто.
+    assigned_extra_total: Optional[int] = None
+    assigned_extra_done: Optional[int] = None
     #: Срок действующей выдачи.
     due_at: Optional[datetime] = None
     #: Срок прошёл, а сделано не всё. Ничего не блокирует (решение оператора
