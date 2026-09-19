@@ -647,3 +647,19 @@ async def test_already_solved_tasks_survive_the_new_scope(db):
         )
     }
     assert {int(i) for i in solved} <= kept, "решённое выпало из программы"
+
+
+def test_threshold_does_not_lose_a_task_to_floating_point():
+    """tsk-1008: бюджет покрывает подкурс целиком — порог равен числу заданий.
+
+    `0.9 / (0.9 / 7)` в плавающей точке — это `6.999…`, и `int` без допуска
+    отдавал 6: одно задание выпадало из программы, а карточка писала
+    «программа сокращена под срок» при бюджете с запасом.
+    """
+    from app.services.program_scope_service import _tasks_for_minutes
+
+    assert _tasks_for_minutes(0.9, 0.9, 7) == 7
+    # Настоящая нехватка по-прежнему режет: на половину минут — половина заданий.
+    assert _tasks_for_minutes(0.45, 0.9, 7) == 3
+    assert _tasks_for_minutes(0.0, 0.9, 7) == 0
+

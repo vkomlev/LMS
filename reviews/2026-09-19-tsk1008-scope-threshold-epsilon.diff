@@ -1,0 +1,68 @@
+diff --git a/app/services/program_scope_service.py b/app/services/program_scope_service.py
+index 079124d..9d8e81b 100644
+--- a/app/services/program_scope_service.py
++++ b/app/services/program_scope_service.py
+@@ -251,6 +251,27 @@ def planned_minutes_for(fact_minutes_per_week: float) -> int:
+     return max(base, int(round(fact_minutes_per_week * GROWTH_FACTOR)))
+ 
+ 
++#: Допуск при переводе минут в задания (tsk-1008). Порог — целое число заданий,
++#: и «минуты делить на вес одного» округляется вниз; зазор в одну миллионную
++#: задания отделяет настоящее «не поместилось» от шума плавающей точки.
++_TASKS_EPSILON = 1e-6
++
++
++def _tasks_for_minutes(minutes: float, course_minutes: float, tasks_left: int) -> int:
++    """Сколько заданий подкурса помещается в `minutes` при его среднем весе.
++
++    Округление вниз: половина задания в программу не входит. Но без допуска
++    `int(m / (m / n))` в плавающей точке регулярно даёт `n - 1` вместо `n`
++    (tsk-1008: у Ундасыновой бюджет покрывал программу с запасом в четверть,
++    а карточка показывала «отработка 811 из 813, программа сокращена под срок»
++    — два подкурса потеряли по заданию на ровном месте). Ошибка не только
++    косметическая: порог уходит в движок выборки, и одно задание тренажёра
++    действительно выпадало из программы ученика.
++    """
++    per_task = course_minutes / tasks_left
++    return int(minutes / per_task + _TASKS_EPSILON)
++
++
+ def _share_minutes(
+     per_course_minutes: dict[int, float], allowed_minutes: float
+ ) -> dict[int, float]:
+@@ -608,9 +629,9 @@ async def compute_scope(
+             course_minutes = per_course_drill_minutes.get(cid, 0.0)
+             if tasks_left <= 0 or course_minutes <= 0:
+                 continue
+-            per_task = course_minutes / tasks_left
+             per_course_threshold[cid] = min(
+-                int(minutes / per_task), tasks_left
++                _tasks_for_minutes(minutes, course_minutes, tasks_left),
++                tasks_left,
+             )
+     else:
+         per_course_threshold = _split_budget(
+diff --git a/tests/test_tsk798_program_scope.py b/tests/test_tsk798_program_scope.py
+index 06a8046..f431d0b 100644
+--- a/tests/test_tsk798_program_scope.py
++++ b/tests/test_tsk798_program_scope.py
+@@ -647,3 +647,19 @@ async def test_already_solved_tasks_survive_the_new_scope(db):
+         )
+     }
+     assert {int(i) for i in solved} <= kept, "решённое выпало из программы"
++
++
++def test_threshold_does_not_lose_a_task_to_floating_point():
++    """tsk-1008: бюджет покрывает подкурс целиком — порог равен числу заданий.
++
++    `0.9 / (0.9 / 7)` в плавающей точке — это `6.999…`, и `int` без допуска
++    отдавал 6: одно задание выпадало из программы, а карточка писала
++    «программа сокращена под срок» при бюджете с запасом.
++    """
++    from app.services.program_scope_service import _tasks_for_minutes
++
++    assert _tasks_for_minutes(0.9, 0.9, 7) == 7
++    # Настоящая нехватка по-прежнему режет: на половину минут — половина заданий.
++    assert _tasks_for_minutes(0.45, 0.9, 7) == 3
++    assert _tasks_for_minutes(0.0, 0.9, 7) == 0
++
