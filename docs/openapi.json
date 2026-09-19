@@ -18372,6 +18372,125 @@
         }
       }
     },
+    "/api/v1/learning/help-requests/{request_id}/replies/{message_id}/attachment": {
+      "get": {
+        "tags": [
+          "learning"
+        ],
+        "summary": "Скачать вложение ОТВЕТА преподавателя на заявку помощи (ученик)",
+        "description": "tsk-1004: вложение ОТВЕТА преподавателя (скрин, файл) — зеркало\n`download_own_help_request_attachment` выше (там вложение самого ВОПРОСА,\nхранится в `help_requests`; здесь — ответа, хранится в `messages` через\n`help_request_replies`). Доступ — тот же принцип: только автор заявки.",
+        "operationId": "download_help_request_reply_attachment_api_v1_learning_help_requests__request_id__replies__message_id__attachment_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "description": "ID заявки помощи",
+              "title": "Request Id"
+            },
+            "description": "ID заявки помощи"
+          },
+          {
+            "name": "message_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "description": "ID сообщения-ответа",
+              "title": "Message Id"
+            },
+            "description": "ID сообщения-ответа"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "403": {
+            "description": "Не автор заявки"
+          },
+          "404": {
+            "description": "Ответ не найден либо у него нет вложения"
+          },
+          "410": {
+            "description": "Вложение было, но файла в хранилище больше нет"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/learning/materials/{material_id}/request-help": {
       "post": {
         "tags": [
@@ -19983,6 +20102,127 @@
           },
           "410": {
             "description": "Вложение было, но файла в хранилище больше нет"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/teacher/help-requests/{request_id}/replies/{message_id}/attachment": {
+      "get": {
+        "tags": [
+          "teacher_help_requests"
+        ],
+        "summary": "Скачать вложение ОТВЕТА преподавателя на заявку помощи",
+        "description": "tsk-1004: вложение ОТВЕТА преподавателя (скрин, файл) — зеркало\n`download_help_request_attachment` выше (там вложение самого ВОПРОСА,\nхранится в `help_requests`; здесь — ответа, хранится в `messages` через\n`help_request_replies`). Та же ACL (`can_access_help_request`).",
+        "operationId": "download_help_request_reply_attachment_api_v1_teacher_help_requests__request_id__replies__message_id__attachment_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "description": "ID заявки",
+              "title": "Request Id"
+            },
+            "description": "ID заявки"
+          },
+          {
+            "name": "message_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "description": "ID сообщения-ответа",
+              "title": "Message Id"
+            },
+            "description": "ID сообщения-ответа"
+          },
+          {
+            "name": "teacher_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "description": "ID преподавателя/методиста",
+              "title": "Teacher Id"
+            },
+            "description": "ID преподавателя/методиста"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
           },
           "422": {
             "description": "Validation Error",
@@ -54894,6 +55134,30 @@
             "type": "string",
             "format": "date-time",
             "title": "Created At"
+          },
+          "attachment_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attachment Id",
+            "description": "Ключ файла в attachment_storage"
+          },
+          "attachment_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attachment Url",
+            "description": "Относительный URL скачивания; null — вложения нет"
           }
         },
         "type": "object",
@@ -54951,6 +55215,18 @@
             ],
             "title": "Lock Token",
             "description": "Токен блокировки (этап 3.9); при невалидном/просроченном — 409"
+          },
+          "attachment_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attachment Id",
+            "description": "Ключ файла из POST /learning/help-requests/attachments"
           }
         },
         "type": "object",
@@ -67407,6 +67683,11 @@
       },
       "StudentHelpReplyItem": {
         "properties": {
+          "message_id": {
+            "type": "integer",
+            "title": "Message Id",
+            "description": "ID сообщения-ответа (для скачивания вложения, tsk-1004)"
+          },
           "body": {
             "type": "string",
             "title": "Body"
@@ -67415,10 +67696,23 @@
             "type": "string",
             "format": "date-time",
             "title": "Created At"
+          },
+          "attachment_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attachment Url",
+            "description": "Относительный URL вложения ответа; null — вложения нет (tsk-1004)"
           }
         },
         "type": "object",
         "required": [
+          "message_id",
           "body",
           "created_at"
         ],

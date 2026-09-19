@@ -258,8 +258,12 @@ class MaterialRequestHelpResponse(BaseModel):
 
 class StudentHelpReplyItem(BaseModel):
     """Ответ преподавателя в заявке — так, как его видит ученик."""
+    message_id: int = Field(..., description="ID сообщения-ответа (для скачивания вложения, tsk-1004)")
     body: str
     created_at: datetime
+    attachment_url: Optional[str] = Field(
+        None, description="Относительный URL вложения ответа; null — вложения нет (tsk-1004)"
+    )
 
 
 class StudentHelpRequestResponse(BaseModel):

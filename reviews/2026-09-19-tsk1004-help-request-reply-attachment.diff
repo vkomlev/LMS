@@ -1,0 +1,948 @@
+﻿diff --git a/app/api/v1/learning.py b/app/api/v1/learning.py
+index 956d6b5..1c23f48 100644
+--- a/app/api/v1/learning.py
++++ b/app/api/v1/learning.py
+@@ -62,6 +62,7 @@ from app.services.help_requests_service import (
+     request_individual_review,
+     rate_individual_review,
+     get_help_request_attachment,
++    get_help_request_reply_attachment,
+ )
+ from app.services import attachment_storage
+ from app.services import payment_access_service
+@@ -836,6 +837,34 @@ async def download_own_help_request_attachment(
+     return await _stream_help_request_attachment(meta)
+ 
+ 
++@router.get(
++    "/help-requests/{request_id}/replies/{message_id}/attachment",
++    summary="Скачать вложение ОТВЕТА преподавателя на заявку помощи (ученик)",
++    responses={
++        403: {"description": "Не автор заявки"},
++        404: {"description": "Ответ не найден либо у него нет вложения"},
++        410: {"description": "Вложение было, но файла в хранилище больше нет"},
++    },
++)
++async def download_help_request_reply_attachment(
++    request_id: int = Path(..., description="ID заявки помощи"),
++    message_id: int = Path(..., description="ID сообщения-ответа"),
++    current_user: CurrentUser = Depends(get_current_user),
++    db: AsyncSession = Depends(get_bare_db),
++):
++    """tsk-1004: вложение ОТВЕТА преподавателя (скрин, файл) — зеркало
++    `download_own_help_request_attachment` выше (там вложение самого ВОПРОСА,
++    хранится в `help_requests`; здесь — ответа, хранится в `messages` через
++    `help_request_replies`). Доступ — тот же принцип: только автор заявки.
++    """
++    meta = await get_help_request_reply_attachment(db, request_id, message_id)
++    if meta is None:
++        raise HTTPException(status.HTTP_404_NOT_FOUND, "Ответ не найден или без вложения")
++    if not current_user.is_service and current_user.id != meta["student_id"]:
++        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
++    return await _stream_help_request_attachment(meta)
++
++
+ async def _stream_help_request_attachment(meta: dict) -> StreamingResponse:
+     """Общее тело скачивания для обоих ACL-веток (ученик/преподаватель, tsk-943)."""
+     try:
+diff --git a/app/api/v1/teacher_help_requests.py b/app/api/v1/teacher_help_requests.py
+index 741402d..2c5e1dd 100644
+--- a/app/api/v1/teacher_help_requests.py
++++ b/app/api/v1/teacher_help_requests.py
+@@ -53,6 +53,7 @@ from app.services.help_requests_service import (
+     get_help_requests_pending_count,
+     get_reopen_kpi,
+     get_help_request_attachment,
++    get_help_request_reply_attachment,
+     MIN_REQUESTS_FOR_RATE,
+ )
+ from app.services import attachment_storage
+@@ -319,6 +320,50 @@ async def download_help_request_attachment(
+     )
+ 
+ 
++@router.get(
++    "/{request_id}/replies/{message_id}/attachment",
++    summary="Скачать вложение ОТВЕТА преподавателя на заявку помощи",
++)
++async def download_help_request_reply_attachment(
++    request_id: int = Path(..., description="ID заявки"),
++    message_id: int = Path(..., description="ID сообщения-ответа"),
++    teacher_id: int = Query(..., description="ID преподавателя/методиста"),
++    current_user: CurrentUser = Depends(get_current_user),
++    db: AsyncSession = Depends(get_bare_db),
++):
++    """tsk-1004: вложение ОТВЕТА преподавателя (скрин, файл) — зеркало
++    `download_help_request_attachment` выше (там вложение самого ВОПРОСА,
++    хранится в `help_requests`; здесь — ответа, хранится в `messages` через
++    `help_request_replies`). Та же ACL (`can_access_help_request`).
++    """
++    if not current_user.is_service and current_user.id != teacher_id:
++        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
++    meta = await get_help_request_reply_attachment(db, request_id, message_id)
++    if meta is None:
++        raise HTTPException(status.HTTP_404_NOT_FOUND, "Ответ не найден или без вложения")
++    if not await can_access_help_request(db, request_id, teacher_id):
++        raise HTTPException(status.HTTP_403_FORBIDDEN, "Нет доступа к заявке")
++
++    try:
++        opened = await attachment_storage.open_stream(
++            attachment_storage.HELP_REQUESTS, meta["attachment_id"]
++        )
++    except DomainError as exc:
++        raise HTTPException(status_code=exc.status_code, detail=exc.detail)
++    if opened is None:
++        raise HTTPException(
++            status_code=status.HTTP_410_GONE,
++            detail="Файл вложения утрачен на сервере и восстановлению не подлежит.",
++        )
++    stream, media_type = opened
++    display_name = meta["attachment_filename"] or meta["attachment_id"]
++    return StreamingResponse(
++        stream,
++        media_type=meta["attachment_content_type"] or media_type,
++        headers={"Content-Disposition": attachment_storage.content_disposition(display_name)},
++    )
++
++
+ @router.post(
+     "/{request_id}/close",
+     response_model=HelpRequestCloseResponse,
+@@ -560,6 +605,7 @@ async def help_request_reply(
+         close_after_reply=body.close_after_reply,
+         idempotency_key=body.idempotency_key,
+         lock_token=body.lock_token,
++        attachment_id=body.attachment_id,
+     )
+     if err == "not_found":
+         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Заявка не найдена")
+diff --git a/app/schemas/learning_api.py b/app/schemas/learning_api.py
+index 7cb49f2..cb78508 100644
+--- a/app/schemas/learning_api.py
++++ b/app/schemas/learning_api.py
+@@ -258,8 +258,12 @@ class MaterialRequestHelpResponse(BaseModel):
+ 
+ class StudentHelpReplyItem(BaseModel):
+     """Ответ преподавателя в заявке — так, как его видит ученик."""
++    message_id: int = Field(..., description="ID сообщения-ответа (для скачивания вложения, tsk-1004)")
+     body: str
+     created_at: datetime
++    attachment_url: Optional[str] = Field(
++        None, description="Относительный URL вложения ответа; null — вложения нет (tsk-1004)"
++    )
+ 
+ 
+ class StudentHelpRequestResponse(BaseModel):
+diff --git a/app/schemas/teacher_help_requests.py b/app/schemas/teacher_help_requests.py
+index 84dba8f..1c171c4 100644
+--- a/app/schemas/teacher_help_requests.py
++++ b/app/schemas/teacher_help_requests.py
+@@ -102,6 +102,13 @@ class HelpRequestReplyItem(BaseModel):
+     body: str
+     close_after_reply: bool = False
+     created_at: datetime
++    # tsk-1004: вложение ответа (скрин, файл) — зеркало вложения вопроса
++    # (`HelpRequestListItem.attachment_*`), хранится в `messages`, а не в
++    # `help_requests` (у ответа своя строка `messages` на каждый reply).
++    attachment_id: Optional[str] = Field(None, description="Ключ файла в attachment_storage")
++    attachment_url: Optional[str] = Field(
++        None, description="Относительный URL скачивания; null — вложения нет"
++    )
+ 
+ 
+ class HelpRequestDetailResponse(HelpRequestListItem):
+@@ -238,6 +245,13 @@ class HelpRequestReplyRequest(BaseModel):
+     close_after_reply: bool = Field(False, description="Закрыть заявку после отправки ответа")
+     idempotency_key: Optional[str] = Field(None, max_length=128, description="Ключ идемпотентности")
+     lock_token: Optional[str] = Field(None, description="Токен блокировки (этап 3.9); при невалидном/просроченном — 409")
++    # tsk-1004: вложение к ответу (скрин, файл) — необязательное, зеркало
++    # attachment_id у RequestHelpRequest (вопрос ученика). Приходит из ответа
++    # POST /learning/help-requests/attachments — тот же upload-эндпоинт и то же
++    # пространство attachment_storage.HELP_REQUESTS, ролевого гейта у него нет.
++    attachment_id: Optional[str] = Field(
++        None, description="Ключ файла из POST /learning/help-requests/attachments"
++    )
+ 
+ 
+ class HelpRequestReplyResponse(BaseModel):
+diff --git a/app/services/help_requests_service.py b/app/services/help_requests_service.py
+index 51b128a..73ff24d 100644
+--- a/app/services/help_requests_service.py
++++ b/app/services/help_requests_service.py
+@@ -581,6 +581,46 @@ async def get_help_request_attachment(
+     }
+ 
+ 
++async def get_help_request_reply_attachment(
++    db: AsyncSession,
++    request_id: int,
++    message_id: int,
++) -> Optional[dict[str, Any]]:
++    """Метаданные вложения ОТВЕТА преподавателя (tsk-1004) для скачивания.
++
++    Зеркало `get_help_request_attachment` выше (там — вложение самого
++    ВОПРОСА, колонки в `help_requests`). Вложение ОТВЕТА живёт в `messages`
++    (через `help_request_replies.message_id`) — у `messages` нет отдельных
++    колонок filename/content_type, поэтому они возвращаются пустыми: тот же
++    стриминг-код (`meta["attachment_filename"] or meta["attachment_id"]`)
++    просто откатится на сырой ключ как отображаемое имя.
++
++    ACL-проверка НЕ здесь — то же разделение, что и у вопроса: у скачивания
++    два разных вызывающих (ученик-автор заявки и преподаватель по
++    `can_access_help_request`), и правило доступа у каждого своё.
++    """
++    r = await db.execute(
++        text("""
++            SELECT hr.student_id, hrr.teacher_id, m.attachment_id
++            FROM help_request_replies hrr
++            JOIN help_requests hr ON hr.id = hrr.request_id
++            JOIN messages m ON m.id = hrr.message_id
++            WHERE hrr.request_id = :request_id AND hrr.message_id = :message_id
++        """),
++        {"request_id": request_id, "message_id": message_id},
++    )
++    row = r.fetchone()
++    if row is None or row[2] is None:
++        return None
++    return {
++        "student_id": row[0],
++        "teacher_id": row[1],
++        "attachment_id": row[2],
++        "attachment_filename": None,
++        "attachment_content_type": None,
++    }
++
++
+ def _order_by_sort(sort: str) -> str:
+     """ORDER BY для списка заявок. sort: priority | created_at | due_at | closed_at.
+ 
+@@ -826,10 +866,12 @@ async def get_help_request_detail(
+ 
+     r2 = await db.execute(
+         text("""
+-            SELECT id, teacher_id, message_id, body, close_after_reply, created_at
+-            FROM help_request_replies
+-            WHERE request_id = :request_id
+-            ORDER BY created_at ASC
++            SELECT hrr.id, hrr.teacher_id, hrr.message_id, hrr.body,
++                   hrr.close_after_reply, hrr.created_at, m.attachment_id
++            FROM help_request_replies hrr
++            JOIN messages m ON m.id = hrr.message_id
++            WHERE hrr.request_id = :request_id
++            ORDER BY hrr.created_at ASC
+         """),
+         {"request_id": request_id},
+     )
+@@ -841,6 +883,13 @@ async def get_help_request_detail(
+             "body": r[3],
+             "close_after_reply": r[4],
+             "created_at": r[5],
++            # tsk-1004: вложение ответа — URL под преподавательского читателя
++            # (у ученика свой путь, см. `get_student_help_request`).
++            "attachment_id": r[6],
++            "attachment_url": (
++                f"/api/v1/teacher/help-requests/{request_id}/replies/{r[2]}/attachment"
++                if r[6] else None
++            ),
+         }
+         for r in r2.fetchall()
+     ]
+@@ -1401,12 +1450,24 @@ async def get_student_help_request(
+     is_open = status_val == "open"
+ 
+     replies = [
+-        {"body": r[0], "created_at": r[1]}
++        {
++            "message_id": r[0],
++            "body": r[1],
++            "created_at": r[2],
++            # tsk-1004: вложение ответа преподавателя — URL под ученический
++            # download-эндпоинт (у преподавателя свой путь, см. `get_help_request_detail`).
++            "attachment_url": (
++                f"/api/v1/learning/help-requests/{request_id}/replies/{r[0]}/attachment"
++                if r[3] else None
++            ),
++        }
+         for r in (
+             await db.execute(
+                 text("""
+-                    SELECT body, created_at FROM help_request_replies
+-                    WHERE request_id = :request_id ORDER BY created_at ASC
++                    SELECT hrr.message_id, hrr.body, hrr.created_at, m.attachment_id
++                    FROM help_request_replies hrr
++                    JOIN messages m ON m.id = hrr.message_id
++                    WHERE hrr.request_id = :request_id ORDER BY hrr.created_at ASC
+                 """),
+                 {"request_id": request_id},
+             )
+@@ -1790,11 +1851,20 @@ async def reply_help_request(
+     close_after_reply: bool = False,
+     idempotency_key: Optional[str] = None,
+     lock_token: Optional[str] = None,
++    attachment_id: Optional[str] = None,
+ ) -> Tuple[Optional[dict[str, Any]], Optional[str]]:
+     """
+     Ответ на заявку: отправить сообщение студенту, записать reply, опционально закрыть.
+     Возвращает (response_dict, error). error: None | "not_found" | "forbidden" | "closed" | "lock_conflict".
+     response_dict: request_id, message_id, thread_id, request_status, deduplicated.
++
++    tsk-1004: `attachment_id` (ключ файла в `attachment_storage.HELP_REQUESTS`,
++    загруженного заранее через `POST /learning/help-requests/attachments`) —
++    необязательный, пишется в `messages.attachment_id` того же сообщения, что
++    несёт текст ответа. `attachment_url` НЕ хранится: у вопроса (`help_requests`)
++    и ответа (`messages`) разные читатели с разными download-эндпоинтами
++    (`/teacher/help-requests/...` и `/learning/help-requests/...`), поэтому URL
++    вычисляется на чтении под конкретную аудиторию, а не один раз на запись.
+     """
+     r = await db.execute(
+         text("""
+@@ -1856,6 +1926,12 @@ async def reply_help_request(
+         thread_id=thread_id,
+     )
+     await db.flush()
++    if attachment_id:
++        # tsk-1004: без отдельного commit — эндпоинт коммитит всю функцию одной
++        # транзакцией (`await db.commit()` в `help_request_reply`), как и
++        # остальные INSERT/UPDATE ниже.
++        msg.attachment_id = attachment_id
++        db.add(msg)
+     new_thread_id = msg.thread_id or msg.id
+     if thread_id is None:
+         await db.execute(
+diff --git a/docs/openapi.json b/docs/openapi.json
+index be04faa..b076aa9 100644
+--- a/docs/openapi.json
++++ b/docs/openapi.json
+@@ -18372,6 +18372,125 @@
+         }
+       }
+     },
++    "/api/v1/learning/help-requests/{request_id}/replies/{message_id}/attachment": {
++      "get": {
++        "tags": [
++          "learning"
++        ],
++        "summary": "Скачать вложение ОТВЕТА преподавателя на заявку помощи (ученик)",
++        "description": "tsk-1004: вложение ОТВЕТА преподавателя (скрин, файл) — зеркало\n`download_own_help_request_attachment` выше (там вложение самого ВОПРОСА,\nхранится в `help_requests`; здесь — ответа, хранится в `messages` через\n`help_request_replies`). Доступ — тот же принцип: только автор заявки.",
++        "operationId": "download_help_request_reply_attachment_api_v1_learning_help_requests__request_id__replies__message_id__attachment_get",
++        "security": [
++          {
++            "APIKeyHeader": []
++          },
++          {
++            "APIKeyQuery": []
++          }
++        ],
++        "parameters": [
++          {
++            "name": "request_id",
++            "in": "path",
++            "required": true,
++            "schema": {
++              "type": "integer",
++              "description": "ID заявки помощи",
++              "title": "Request Id"
++            },
++            "description": "ID заявки помощи"
++          },
++          {
++            "name": "message_id",
++            "in": "path",
++            "required": true,
++            "schema": {
++              "type": "integer",
++              "description": "ID сообщения-ответа",
++              "title": "Message Id"
++            },
++            "description": "ID сообщения-ответа"
++          },
++          {
++            "name": "token",
++            "in": "query",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Token"
++            }
++          },
++          {
++            "name": "authorization",
++            "in": "header",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Authorization"
++            }
++          },
++          {
++            "name": "session",
++            "in": "cookie",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Session"
++            }
++          }
++        ],
++        "responses": {
++          "200": {
++            "description": "Successful Response",
++            "content": {
++              "application/json": {
++                "schema": {}
++              }
++            }
++          },
++          "403": {
++            "description": "Не автор заявки"
++          },
++          "404": {
++            "description": "Ответ не найден либо у него нет вложения"
++          },
++          "410": {
++            "description": "Вложение было, но файла в хранилище больше нет"
++          },
++          "422": {
++            "description": "Validation Error",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/HTTPValidationError"
++                }
++              }
++            }
++          }
++        }
++      }
++    },
+     "/api/v1/learning/materials/{material_id}/request-help": {
+       "post": {
+         "tags": [
+@@ -19997,6 +20116,127 @@
+         }
+       }
+     },
++    "/api/v1/teacher/help-requests/{request_id}/replies/{message_id}/attachment": {
++      "get": {
++        "tags": [
++          "teacher_help_requests"
++        ],
++        "summary": "Скачать вложение ОТВЕТА преподавателя на заявку помощи",
++        "description": "tsk-1004: вложение ОТВЕТА преподавателя (скрин, файл) — зеркало\n`download_help_request_attachment` выше (там вложение самого ВОПРОСА,\nхранится в `help_requests`; здесь — ответа, хранится в `messages` через\n`help_request_replies`). Та же ACL (`can_access_help_request`).",
++        "operationId": "download_help_request_reply_attachment_api_v1_teacher_help_requests__request_id__replies__message_id__attachment_get",
++        "security": [
++          {
++            "APIKeyHeader": []
++          },
++          {
++            "APIKeyQuery": []
++          }
++        ],
++        "parameters": [
++          {
++            "name": "request_id",
++            "in": "path",
++            "required": true,
++            "schema": {
++              "type": "integer",
++              "description": "ID заявки",
++              "title": "Request Id"
++            },
++            "description": "ID заявки"
++          },
++          {
++            "name": "message_id",
++            "in": "path",
++            "required": true,
++            "schema": {
++              "type": "integer",
++              "description": "ID сообщения-ответа",
++              "title": "Message Id"
++            },
++            "description": "ID сообщения-ответа"
++          },
++          {
++            "name": "teacher_id",
++            "in": "query",
++            "required": true,
++            "schema": {
++              "type": "integer",
++              "description": "ID преподавателя/методиста",
++              "title": "Teacher Id"
++            },
++            "description": "ID преподавателя/методиста"
++          },
++          {
++            "name": "token",
++            "in": "query",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Token"
++            }
++          },
++          {
++            "name": "authorization",
++            "in": "header",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Authorization"
++            }
++          },
++          {
++            "name": "session",
++            "in": "cookie",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Session"
++            }
++          }
++        ],
++        "responses": {
++          "200": {
++            "description": "Successful Response",
++            "content": {
++              "application/json": {
++                "schema": {}
++              }
++            }
++          },
++          "422": {
++            "description": "Validation Error",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/HTTPValidationError"
++                }
++              }
++            }
++          }
++        }
++      }
++    },
+     "/api/v1/teacher/help-requests/{request_id}/close": {
+       "post": {
+         "tags": [
+@@ -54894,6 +55134,30 @@
+             "type": "string",
+             "format": "date-time",
+             "title": "Created At"
++          },
++          "attachment_id": {
++            "anyOf": [
++              {
++                "type": "string"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Attachment Id",
++            "description": "Ключ файла в attachment_storage"
++          },
++          "attachment_url": {
++            "anyOf": [
++              {
++                "type": "string"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Attachment Url",
++            "description": "Относительный URL скачивания; null — вложения нет"
+           }
+         },
+         "type": "object",
+@@ -54951,6 +55215,18 @@
+             ],
+             "title": "Lock Token",
+             "description": "Токен блокировки (этап 3.9); при невалидном/просроченном — 409"
++          },
++          "attachment_id": {
++            "anyOf": [
++              {
++                "type": "string"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Attachment Id",
++            "description": "Ключ файла из POST /learning/help-requests/attachments"
+           }
+         },
+         "type": "object",
+@@ -67407,6 +67683,11 @@
+       },
+       "StudentHelpReplyItem": {
+         "properties": {
++          "message_id": {
++            "type": "integer",
++            "title": "Message Id",
++            "description": "ID сообщения-ответа (для скачивания вложения, tsk-1004)"
++          },
+           "body": {
+             "type": "string",
+             "title": "Body"
+@@ -67415,10 +67696,23 @@
+             "type": "string",
+             "format": "date-time",
+             "title": "Created At"
++          },
++          "attachment_url": {
++            "anyOf": [
++              {
++                "type": "string"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Attachment Url",
++            "description": "Относительный URL вложения ответа; null — вложения нет (tsk-1004)"
+           }
+         },
+         "type": "object",
+         "required": [
++          "message_id",
+           "body",
+           "created_at"
+         ],
+diff --git a/tests/test_tsk1004_help_request_reply_attachment.py b/tests/test_tsk1004_help_request_reply_attachment.py
+new file mode 100644
+index 0000000..5d6f989
+--- /dev/null
++++ b/tests/test_tsk1004_help_request_reply_attachment.py
+@@ -0,0 +1,287 @@
++"""tsk-1004: вложение к ОТВЕТУ преподавателя на заявку помощи (зеркало tsk-943).
++
++У ЗАПРОСА (вопроса) ученика вложение уже было (tsk-943: `help_requests.attachment_*`).
++У ОТВЕТА преподавателя — не было вовсе, хотя инфраструктура (namespace
++`attachment_storage.HELP_REQUESTS`, поля `messages.attachment_url/attachment_id`)
++уже существовала. Проверяем:
++
++1. Преподаватель прикладывает файл к ответу тем же upload-эндпоинтом, что и
++   ученик (`POST /learning/help-requests/attachments` — без ролевого гейта) —
++   вложение попадает в `messages.attachment_id` сообщения-ответа.
++2. Ученик видит вложение в своей ленте ответа (`replies[].attachment_url`) и
++   может его скачать.
++3. Преподаватель видит вложение своего ответа в карточке заявки (`history`) и
++   тоже может его скачать.
++4. ACL скачивания: чужой ученик — 403, посторонний преподаватель — 403,
++   несуществующий message_id — 404.
++5. Ответ без вложения — `attachment_url` остаётся null (регресс).
++"""
++from __future__ import annotations
++
++import io
++import json
++import random
++
++import pytest
++from sqlalchemy import text
++
++from app.models.users import Users
++from app.services.auth import identity_link_service
++from app.services.auth.session_service import create_session
++
++pytestmark = pytest.mark.asyncio
++
++_TAG = "tsk1004"
++
++
++async def _user(db, name: str) -> tuple[int, str]:
++    """Пользователь с живой сессией (bearer-токен)."""
++    u = Users(
++        email=f"{_TAG}-{name}-{random.randint(10**8, 10**10)}@example.com",
++        password_hash=None,
++        full_name=f"{_TAG} {name}",
++        tg_id=None,
++    )
++    db.add(u)
++    await db.flush()
++    await identity_link_service.upsert_identity(db, u.id, "email", u.email)
++    token, _, _ = await create_session(db, user_id=u.id)
++    await db.commit()
++    return u.id, token
++
++
++def _bearer(token: str) -> dict[str, str]:
++    return {"Authorization": f"Bearer {token}"}
++
++
++async def _course(db) -> int:
++    res = await db.execute(
++        text("INSERT INTO courses (title, access_level) VALUES (:t, 'self_guided') RETURNING id"),
++        {"t": f"{_TAG}-course-{random.randint(10**8, 10**10)}"},
++    )
++    return res.scalar_one()
++
++
++async def _task(db, course_id: int) -> int:
++    difficulty_id = (await db.execute(text("SELECT id FROM difficulties ORDER BY id LIMIT 1"))).scalar()
++    res = await db.execute(
++        text(
++            "INSERT INTO tasks (external_uid, max_score, task_content, solution_rules, "
++            "course_id, difficulty_id, is_active) "
++            "VALUES (:e, 10, CAST(:c AS jsonb), CAST(:r AS jsonb), :cid, :d, true) RETURNING id"
++        ),
++        {
++            "e": f"{_TAG}-{random.randint(10**8, 10**10)}",
++            "c": json.dumps({"type": "SA", "stem": "x"}),
++            "r": json.dumps({"max_score": 10}),
++            "cid": course_id,
++            "d": difficulty_id,
++        },
++    )
++    return res.scalar_one()
++
++
++async def _link_teacher(db, student_id: int, teacher_id: int) -> None:
++    await db.execute(
++        text(
++            "INSERT INTO student_teacher_links (student_id, teacher_id, linked_at) "
++            "VALUES (:s, :t, now())"
++        ),
++        {"s": student_id, "t": teacher_id},
++    )
++    await db.commit()
++
++
++async def _upload(
++    client, token: str, *, filename: str = "reply-screenshot.png", content: bytes = b"teacher-png-bytes"
++) -> dict:
++    resp = await client.post(
++        "/api/v1/learning/help-requests/attachments",
++        headers=_bearer(token),
++        files={"file": (filename, io.BytesIO(content), "image/png")},
++    )
++    assert resp.status_code == 201, resp.text
++    return resp.json()
++
++
++async def _request_help(client, token: str, *, task_id: int, student_id: int) -> int:
++    resp = await client.post(
++        f"/api/v1/learning/tasks/{task_id}/request-help",
++        headers=_bearer(token),
++        json={"student_id": student_id, "message": "не понимаю"},
++    )
++    assert resp.status_code == 200, resp.text
++    return resp.json()["request_id"]
++
++
++async def _cleanup(db, *, user_ids=(), task_ids=(), request_ids=()) -> None:
++    for rid in request_ids:
++        await db.execute(text("DELETE FROM help_request_replies WHERE request_id=:r"), {"r": rid})
++        await db.execute(text("DELETE FROM help_requests WHERE id=:r"), {"r": rid})
++    for uid in user_ids:
++        await db.execute(
++            text("DELETE FROM messages WHERE sender_id=:u OR recipient_id=:u"), {"u": uid}
++        )
++        await db.execute(text("DELETE FROM notifications WHERE user_id=:u"), {"u": uid})
++        await db.execute(text("DELETE FROM user_session WHERE user_id=:u"), {"u": uid})
++        await db.execute(text("DELETE FROM identity_link WHERE user_id=:u"), {"u": uid})
++    for tid in task_ids:
++        await db.execute(text("DELETE FROM tasks WHERE id=:t"), {"t": tid})
++    await db.commit()
++
++
++async def test_reply_with_attachment_visible_to_student_and_teacher(db, client, monkeypatch) -> None:
++    from app.services import entitlements_service as ent
++    monkeypatch.setattr(ent.settings, "subscription_gate_mode", "off")
++
++    student_id, s_token = await _user(db, "stud")
++    teacher_id, t_token = await _user(db, "tch")
++    await _link_teacher(db, student_id, teacher_id)
++    course_id = await _course(db)
++    task_id = await _task(db, course_id)
++
++    request_id = await _request_help(client, s_token, task_id=task_id, student_id=student_id)
++
++    att = await _upload(client, t_token, filename="answer-screenshot.png", content=b"teacher-png-bytes")
++    reply = await client.post(
++        f"/api/v1/teacher/help-requests/{request_id}/reply",
++        headers=_bearer(t_token),
++        json={
++            "teacher_id": teacher_id,
++            "message": "Смотри мой скрин",
++            "close_after_reply": False,
++            "attachment_id": att["attachment_id"],
++        },
++    )
++    assert reply.status_code == 200, reply.text
++    message_id = reply.json()["message_id"]
++
++    row = (
++        await db.execute(text("SELECT attachment_id FROM messages WHERE id = :id"), {"id": message_id})
++    ).fetchone()
++    assert row.attachment_id == att["attachment_id"]
++
++    # Ученик видит вложение в своей ленте ответа.
++    state = await client.get(
++        f"/api/v1/learning/tasks/{task_id}/help-request?student_id={student_id}",
++        headers=_bearer(s_token),
++    )
++    assert state.status_code == 200, state.text
++    replies = state.json()["replies"]
++    assert len(replies) == 1
++    assert replies[0]["message_id"] == message_id
++    assert replies[0]["attachment_url"] == (
++        f"/api/v1/learning/help-requests/{request_id}/replies/{message_id}/attachment"
++    )
++
++    # Ученик скачивает вложение ответа.
++    download = await client.get(replies[0]["attachment_url"], headers=_bearer(s_token))
++    assert download.status_code == 200, download.text
++    assert download.content == b"teacher-png-bytes"
++
++    # Преподаватель видит и скачивает своё вложение в карточке заявки.
++    detail = await client.get(
++        f"/api/v1/teacher/help-requests/{request_id}?teacher_id={teacher_id}",
++        headers=_bearer(t_token),
++    )
++    assert detail.status_code == 200, detail.text
++    history = detail.json()["history"]
++    assert len(history) == 1
++    assert history[0]["attachment_url"] == (
++        f"/api/v1/teacher/help-requests/{request_id}/replies/{message_id}/attachment"
++    )
++    teacher_download = await client.get(
++        history[0]["attachment_url"] + f"?teacher_id={teacher_id}", headers=_bearer(t_token)
++    )
++    assert teacher_download.status_code == 200, teacher_download.text
++    assert teacher_download.content == b"teacher-png-bytes"
++
++    await _cleanup(
++        db, user_ids=[student_id, teacher_id], task_ids=[task_id], request_ids=[request_id]
++    )
++
++
++async def test_reply_without_attachment_leaves_url_null(db, client, monkeypatch) -> None:
++    from app.services import entitlements_service as ent
++    monkeypatch.setattr(ent.settings, "subscription_gate_mode", "off")
++
++    student_id, s_token = await _user(db, "stud")
++    teacher_id, t_token = await _user(db, "tch")
++    await _link_teacher(db, student_id, teacher_id)
++    course_id = await _course(db)
++    task_id = await _task(db, course_id)
++
++    request_id = await _request_help(client, s_token, task_id=task_id, student_id=student_id)
++
++    reply = await client.post(
++        f"/api/v1/teacher/help-requests/{request_id}/reply",
++        headers=_bearer(t_token),
++        json={"teacher_id": teacher_id, "message": "Без вложения", "close_after_reply": False},
++    )
++    assert reply.status_code == 200, reply.text
++
++    state = await client.get(
++        f"/api/v1/learning/tasks/{task_id}/help-request?student_id={student_id}",
++        headers=_bearer(s_token),
++    )
++    assert state.status_code == 200, state.text
++    replies = state.json()["replies"]
++    assert len(replies) == 1
++    assert replies[0]["attachment_url"] is None
++
++    await _cleanup(
++        db, user_ids=[student_id, teacher_id], task_ids=[task_id], request_ids=[request_id]
++    )
++
++
++async def test_reply_attachment_acl(db, client, monkeypatch) -> None:
++    from app.services import entitlements_service as ent
++    monkeypatch.setattr(ent.settings, "subscription_gate_mode", "off")
++
++    student_id, s_token = await _user(db, "stud")
++    other_student_id, other_token = await _user(db, "other-stud")
++    teacher_id, t_token = await _user(db, "tch")
++    stranger_teacher_id, stranger_token = await _user(db, "stranger-tch")
++    await _link_teacher(db, student_id, teacher_id)
++    course_id = await _course(db)
++    task_id = await _task(db, course_id)
++
++    request_id = await _request_help(client, s_token, task_id=task_id, student_id=student_id)
++    att = await _upload(client, t_token)
++    reply = await client.post(
++        f"/api/v1/teacher/help-requests/{request_id}/reply",
++        headers=_bearer(t_token),
++        json={
++            "teacher_id": teacher_id,
++            "message": "Вот скрин",
++            "attachment_id": att["attachment_id"],
++        },
++    )
++    assert reply.status_code == 200, reply.text
++    message_id = reply.json()["message_id"]
++    url_student = f"/api/v1/learning/help-requests/{request_id}/replies/{message_id}/attachment"
++    url_teacher = f"/api/v1/teacher/help-requests/{request_id}/replies/{message_id}/attachment"
++
++    # Чужой ученик — 403.
++    foreign = await client.get(url_student, headers=_bearer(other_token))
++    assert foreign.status_code == 403
++
++    # Посторонний преподаватель — 403.
++    stranger = await client.get(
++        f"{url_teacher}?teacher_id={stranger_teacher_id}", headers=_bearer(stranger_token)
++    )
++    assert stranger.status_code == 403
++
++    # Несуществующий message_id — 404.
++    missing = await client.get(
++        f"/api/v1/learning/help-requests/{request_id}/replies/999999999/attachment",
++        headers=_bearer(s_token),
++    )
++    assert missing.status_code == 404
++
++    await _cleanup(
++        db,
++        user_ids=[student_id, other_student_id, teacher_id, stranger_teacher_id],
++        task_ids=[task_id],
++        request_ids=[request_id],
++    )

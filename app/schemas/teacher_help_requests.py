@@ -102,6 +102,13 @@ class HelpRequestReplyItem(BaseModel):
     body: str
     close_after_reply: bool = False
     created_at: datetime
+    # tsk-1004: вложение ответа (скрин, файл) — зеркало вложения вопроса
+    # (`HelpRequestListItem.attachment_*`), хранится в `messages`, а не в
+    # `help_requests` (у ответа своя строка `messages` на каждый reply).
+    attachment_id: Optional[str] = Field(None, description="Ключ файла в attachment_storage")
+    attachment_url: Optional[str] = Field(
+        None, description="Относительный URL скачивания; null — вложения нет"
+    )
 
 
 class HelpRequestDetailResponse(HelpRequestListItem):
@@ -238,6 +245,13 @@ class HelpRequestReplyRequest(BaseModel):
     close_after_reply: bool = Field(False, description="Закрыть заявку после отправки ответа")
     idempotency_key: Optional[str] = Field(None, max_length=128, description="Ключ идемпотентности")
     lock_token: Optional[str] = Field(None, description="Токен блокировки (этап 3.9); при невалидном/просроченном — 409")
+    # tsk-1004: вложение к ответу (скрин, файл) — необязательное, зеркало
+    # attachment_id у RequestHelpRequest (вопрос ученика). Приходит из ответа
+    # POST /learning/help-requests/attachments — тот же upload-эндпоинт и то же
+    # пространство attachment_storage.HELP_REQUESTS, ролевого гейта у него нет.
+    attachment_id: Optional[str] = Field(
+        None, description="Ключ файла из POST /learning/help-requests/attachments"
+    )
 
 
 class HelpRequestReplyResponse(BaseModel):

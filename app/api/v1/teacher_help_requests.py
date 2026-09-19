@@ -53,6 +53,7 @@ from app.services.help_requests_service import (
     get_help_requests_pending_count,
     get_reopen_kpi,
     get_help_request_attachment,
+    get_help_request_reply_attachment,
     MIN_REQUESTS_FOR_RATE,
 )
 from app.services import attachment_storage
@@ -319,6 +320,50 @@ async def download_help_request_attachment(
     )
 
 
+@router.get(
+    "/{request_id}/replies/{message_id}/attachment",
+    summary="Скачать вложение ОТВЕТА преподавателя на заявку помощи",
+)
+async def download_help_request_reply_attachment(
+    request_id: int = Path(..., description="ID заявки"),
+    message_id: int = Path(..., description="ID сообщения-ответа"),
+    teacher_id: int = Query(..., description="ID преподавателя/методиста"),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_bare_db),
+):
+    """tsk-1004: вложение ОТВЕТА преподавателя (скрин, файл) — зеркало
+    `download_help_request_attachment` выше (там вложение самого ВОПРОСА,
+    хранится в `help_requests`; здесь — ответа, хранится в `messages` через
+    `help_request_replies`). Та же ACL (`can_access_help_request`).
+    """
+    if not current_user.is_service and current_user.id != teacher_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
+    meta = await get_help_request_reply_attachment(db, request_id, message_id)
+    if meta is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Ответ не найден или без вложения")
+    if not await can_access_help_request(db, request_id, teacher_id):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Нет доступа к заявке")
+
+    try:
+        opened = await attachment_storage.open_stream(
+            attachment_storage.HELP_REQUESTS, meta["attachment_id"]
+        )
+    except DomainError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail)
+    if opened is None:
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail="Файл вложения утрачен на сервере и восстановлению не подлежит.",
+        )
+    stream, media_type = opened
+    display_name = meta["attachment_filename"] or meta["attachment_id"]
+    return StreamingResponse(
+        stream,
+        media_type=meta["attachment_content_type"] or media_type,
+        headers={"Content-Disposition": attachment_storage.content_disposition(display_name)},
+    )
+
+
 @router.post(
     "/{request_id}/close",
     response_model=HelpRequestCloseResponse,
@@ -560,6 +605,7 @@ async def help_request_reply(
         close_after_reply=body.close_after_reply,
         idempotency_key=body.idempotency_key,
         lock_token=body.lock_token,
+        attachment_id=body.attachment_id,
     )
     if err == "not_found":
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Заявка не найдена")

@@ -581,6 +581,46 @@ async def get_help_request_attachment(
     }
 
 
+async def get_help_request_reply_attachment(
+    db: AsyncSession,
+    request_id: int,
+    message_id: int,
+) -> Optional[dict[str, Any]]:
+    """Метаданные вложения ОТВЕТА преподавателя (tsk-1004) для скачивания.
+
+    Зеркало `get_help_request_attachment` выше (там — вложение самого
+    ВОПРОСА, колонки в `help_requests`). Вложение ОТВЕТА живёт в `messages`
+    (через `help_request_replies.message_id`) — у `messages` нет отдельных
+    колонок filename/content_type, поэтому они возвращаются пустыми: тот же
+    стриминг-код (`meta["attachment_filename"] or meta["attachment_id"]`)
+    просто откатится на сырой ключ как отображаемое имя.
+
+    ACL-проверка НЕ здесь — то же разделение, что и у вопроса: у скачивания
+    два разных вызывающих (ученик-автор заявки и преподаватель по
+    `can_access_help_request`), и правило доступа у каждого своё.
+    """
+    r = await db.execute(
+        text("""
+            SELECT hr.student_id, hrr.teacher_id, m.attachment_id
+            FROM help_request_replies hrr
+            JOIN help_requests hr ON hr.id = hrr.request_id
+            JOIN messages m ON m.id = hrr.message_id
+            WHERE hrr.request_id = :request_id AND hrr.message_id = :message_id
+        """),
+        {"request_id": request_id, "message_id": message_id},
+    )
+    row = r.fetchone()
+    if row is None or row[2] is None:
+        return None
+    return {
+        "student_id": row[0],
+        "teacher_id": row[1],
+        "attachment_id": row[2],
+        "attachment_filename": None,
+        "attachment_content_type": None,
+    }
+
+
 def _order_by_sort(sort: str) -> str:
     """ORDER BY для списка заявок. sort: priority | created_at | due_at | closed_at.
 
@@ -826,10 +866,12 @@ async def get_help_request_detail(
 
     r2 = await db.execute(
         text("""
-            SELECT id, teacher_id, message_id, body, close_after_reply, created_at
-            FROM help_request_replies
-            WHERE request_id = :request_id
-            ORDER BY created_at ASC
+            SELECT hrr.id, hrr.teacher_id, hrr.message_id, hrr.body,
+                   hrr.close_after_reply, hrr.created_at, m.attachment_id
+            FROM help_request_replies hrr
+            JOIN messages m ON m.id = hrr.message_id
+            WHERE hrr.request_id = :request_id
+            ORDER BY hrr.created_at ASC
         """),
         {"request_id": request_id},
     )
@@ -841,6 +883,13 @@ async def get_help_request_detail(
             "body": r[3],
             "close_after_reply": r[4],
             "created_at": r[5],
+            # tsk-1004: вложение ответа — URL под преподавательского читателя
+            # (у ученика свой путь, см. `get_student_help_request`).
+            "attachment_id": r[6],
+            "attachment_url": (
+                f"/api/v1/teacher/help-requests/{request_id}/replies/{r[2]}/attachment"
+                if r[6] else None
+            ),
         }
         for r in r2.fetchall()
     ]
@@ -1401,12 +1450,24 @@ async def get_student_help_request(
     is_open = status_val == "open"
 
     replies = [
-        {"body": r[0], "created_at": r[1]}
+        {
+            "message_id": r[0],
+            "body": r[1],
+            "created_at": r[2],
+            # tsk-1004: вложение ответа преподавателя — URL под ученический
+            # download-эндпоинт (у преподавателя свой путь, см. `get_help_request_detail`).
+            "attachment_url": (
+                f"/api/v1/learning/help-requests/{request_id}/replies/{r[0]}/attachment"
+                if r[3] else None
+            ),
+        }
         for r in (
             await db.execute(
                 text("""
-                    SELECT body, created_at FROM help_request_replies
-                    WHERE request_id = :request_id ORDER BY created_at ASC
+                    SELECT hrr.message_id, hrr.body, hrr.created_at, m.attachment_id
+                    FROM help_request_replies hrr
+                    JOIN messages m ON m.id = hrr.message_id
+                    WHERE hrr.request_id = :request_id ORDER BY hrr.created_at ASC
                 """),
                 {"request_id": request_id},
             )
@@ -1790,11 +1851,20 @@ async def reply_help_request(
     close_after_reply: bool = False,
     idempotency_key: Optional[str] = None,
     lock_token: Optional[str] = None,
+    attachment_id: Optional[str] = None,
 ) -> Tuple[Optional[dict[str, Any]], Optional[str]]:
     """
     Ответ на заявку: отправить сообщение студенту, записать reply, опционально закрыть.
     Возвращает (response_dict, error). error: None | "not_found" | "forbidden" | "closed" | "lock_conflict".
     response_dict: request_id, message_id, thread_id, request_status, deduplicated.
+
+    tsk-1004: `attachment_id` (ключ файла в `attachment_storage.HELP_REQUESTS`,
+    загруженного заранее через `POST /learning/help-requests/attachments`) —
+    необязательный, пишется в `messages.attachment_id` того же сообщения, что
+    несёт текст ответа. `attachment_url` НЕ хранится: у вопроса (`help_requests`)
+    и ответа (`messages`) разные читатели с разными download-эндпоинтами
+    (`/teacher/help-requests/...` и `/learning/help-requests/...`), поэтому URL
+    вычисляется на чтении под конкретную аудиторию, а не один раз на запись.
     """
     r = await db.execute(
         text("""
@@ -1856,6 +1926,12 @@ async def reply_help_request(
         thread_id=thread_id,
     )
     await db.flush()
+    if attachment_id:
+        # tsk-1004: без отдельного commit — эндпоинт коммитит всю функцию одной
+        # транзакцией (`await db.commit()` в `help_request_reply`), как и
+        # остальные INSERT/UPDATE ниже.
+        msg.attachment_id = attachment_id
+        db.add(msg)
     new_thread_id = msg.thread_id or msg.id
     if thread_id is None:
         await db.execute(

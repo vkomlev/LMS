@@ -62,6 +62,7 @@ from app.services.help_requests_service import (
     request_individual_review,
     rate_individual_review,
     get_help_request_attachment,
+    get_help_request_reply_attachment,
 )
 from app.services import attachment_storage
 from app.services import payment_access_service
@@ -831,6 +832,34 @@ async def download_own_help_request_attachment(
     meta = await get_help_request_attachment(db, request_id)
     if meta is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Заявка не найдена или без вложения")
+    if not current_user.is_service and current_user.id != meta["student_id"]:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
+    return await _stream_help_request_attachment(meta)
+
+
+@router.get(
+    "/help-requests/{request_id}/replies/{message_id}/attachment",
+    summary="Скачать вложение ОТВЕТА преподавателя на заявку помощи (ученик)",
+    responses={
+        403: {"description": "Не автор заявки"},
+        404: {"description": "Ответ не найден либо у него нет вложения"},
+        410: {"description": "Вложение было, но файла в хранилище больше нет"},
+    },
+)
+async def download_help_request_reply_attachment(
+    request_id: int = Path(..., description="ID заявки помощи"),
+    message_id: int = Path(..., description="ID сообщения-ответа"),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_bare_db),
+):
+    """tsk-1004: вложение ОТВЕТА преподавателя (скрин, файл) — зеркало
+    `download_own_help_request_attachment` выше (там вложение самого ВОПРОСА,
+    хранится в `help_requests`; здесь — ответа, хранится в `messages` через
+    `help_request_replies`). Доступ — тот же принцип: только автор заявки.
+    """
+    meta = await get_help_request_reply_attachment(db, request_id, message_id)
+    if meta is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Ответ не найден или без вложения")
     if not current_user.is_service and current_user.id != meta["student_id"]:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
     return await _stream_help_request_attachment(meta)
