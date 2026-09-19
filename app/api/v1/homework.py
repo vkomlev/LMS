@@ -29,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_async_db, get_bare_db, require_authenticated, require_role
 from app.auth.current_user import CurrentUser
 from app.schemas.homework import (
+    HomeworkHistoryResponse,
     HomeworkIssueRequest,
     HomeworkRead,
     HomeworkVolumeRead,
@@ -141,6 +142,28 @@ async def get_homework_volume(
             program_dropped_courses=dropped,
         )
     return HomeworkVolumeRead(**details)
+
+
+@router.get(
+    _BASE + "/history",
+    response_model=HomeworkHistoryResponse,
+)
+async def get_student_homework_history(
+    student_id: int = Path(..., ge=1),
+    limit: int = 50,
+    db: AsyncSession = Depends(get_bare_db),
+    current_user: CurrentUser = Depends(_TEACHER_GATE),
+) -> HomeworkHistoryResponse:
+    """История выдач ДЗ ученику — все, включая отменённые, новые сверху (tsk-1005).
+
+    Для тюнинга движка выдачи: `volume_details` каждой записи объясняет, из
+    чего сложилась норма в момент ИМЕННО ТОЙ выдачи. В отличие от `GET
+    /teacher/students/{student_id}/homework` (одна действующая выдача) здесь
+    виден весь ряд решений формулы во времени, включая переиздания и отмены.
+    """
+    await manual_progress_service.ensure_can_edit_progress(db, current_user, student_id)
+    items = await homework_service.get_history(db, student_id=student_id, limit=limit)
+    return HomeworkHistoryResponse(items=items, total=len(items))
 
 
 @router.post(

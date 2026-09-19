@@ -990,6 +990,42 @@ async def _load_items(
     return items
 
 
+def _to_homework_dict(
+    row: Any, items: list[dict[str, Any]], *, moment: datetime
+) -> dict[str, Any]:
+    """Собрать словарь выдачи из строки `homework_assignment` и её состава.
+
+    Общий хвост `get_current`/`get_history` (tsk-1005): без него подсчёт
+    `done`/`planned_minutes`/`is_overdue` неизбежно разъехался бы между
+    «текущей» выдачей и её же записью в истории.
+    """
+    done = sum(1 for i in items if i["done"])
+    raw_details = row["volume_details"]
+    planned_minutes = (
+        raw_details.get("planned_minutes") if isinstance(raw_details, dict) else None
+    )
+    return {
+        "id": int(row["id"]),
+        "student_id": int(row["student_id"]),
+        "issued_at": row["issued_at"],
+        "due_at": row["due_at"],
+        "source": row["source"],
+        "issued_by": row["issued_by"],
+        "occurrence_id": row["occurrence_id"],
+        "planned_volume": int(row["planned_volume"]),
+        # tsk-867: во сколько минут работы оценён состав В МОМЕНТ ВЫДАЧИ.
+        # None — выдача сделана до перехода на бюджет времени либо вес тогда
+        # не был измерен; экран в этом случае обходится без оценки.
+        "planned_minutes": planned_minutes,
+        "volume_details": row["volume_details"],
+        "note": row["note"],
+        "items": items,
+        "total": len(items),
+        "done": done,
+        "is_overdue": bool(row["due_at"] <= moment and done < len(items)),
+    }
+
+
 async def get_current(
     db: AsyncSession, *, student_id: int, now: Optional[datetime] = None
 ) -> Optional[dict[str, Any]]:
@@ -1022,31 +1058,47 @@ async def get_current(
     items = items + await _load_orphaned_items(
         db, student_id=student_id, start_position=len(items)
     )
-    done = sum(1 for i in items if i["done"])
-    raw_details = row["volume_details"]
-    planned_minutes = (
-        raw_details.get("planned_minutes") if isinstance(raw_details, dict) else None
-    )
-    return {
-        "id": int(row["id"]),
-        "student_id": int(row["student_id"]),
-        "issued_at": row["issued_at"],
-        "due_at": row["due_at"],
-        "source": row["source"],
-        "issued_by": row["issued_by"],
-        "occurrence_id": row["occurrence_id"],
-        "planned_volume": int(row["planned_volume"]),
-        # tsk-867: во сколько минут работы оценён состав В МОМЕНТ ВЫДАЧИ.
-        # None — выдача сделана до перехода на бюджет времени либо вес тогда
-        # не был измерен; экран в этом случае обходится без оценки.
-        "planned_minutes": planned_minutes,
-        "volume_details": row["volume_details"],
-        "note": row["note"],
-        "items": items,
-        "total": len(items),
-        "done": done,
-        "is_overdue": bool(row["due_at"] <= moment and done < len(items)),
-    }
+    return _to_homework_dict(row, items, moment=moment)
+
+
+async def get_history(
+    db: AsyncSession, *, student_id: int, limit: int = 50, now: Optional[datetime] = None
+) -> list[dict[str, Any]]:
+    """История ВСЕХ выдач ученика (включая отменённые), новые сверху (tsk-1005).
+
+    В отличие от `get_current` (одна действующая выдача) — весь ряд
+    `homework_assignment`, а не срез «сейчас»: тюнинг движка выдачи смотрит на
+    историю решений формулы во времени (`volume_details` каждой выдачи), не
+    только на текущее состояние.
+
+    Осиротевшие решения (tsk-968, `_load_orphaned_items`) сюда НЕ подмешиваются:
+    это добавка для подсчёта ТЕКУЩЕГО прогресса поверх состава одной активной
+    выдачи, а у зафиксированной исторической записи состав ровно тот, что был
+    выдан — подмешивать в неё решения из других выдач значило бы переписывать
+    историю задним числом.
+    """
+    moment = now or datetime.now(timezone.utc)
+    rows = (
+        await db.execute(
+            text(
+                "SELECT id, student_id, issued_at, due_at, source, issued_by, "
+                "       occurrence_id, planned_volume, volume_details, note, cancelled_at "
+                "  FROM homework_assignment "
+                " WHERE student_id = :sid "
+                " ORDER BY issued_at DESC, id DESC "
+                " LIMIT :limit"
+            ),
+            {"sid": student_id, "limit": limit},
+        )
+    ).mappings().fetchall()
+
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        items = await _load_items(db, homework_id=int(row["id"]), student_id=student_id)
+        entry = _to_homework_dict(row, items, moment=moment)
+        entry["cancelled_at"] = row["cancelled_at"]
+        result.append(entry)
+    return result
 
 
 #: Свёртка «сколько задано / сколько сделано / просрочено» сразу на группу.

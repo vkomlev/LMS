@@ -88,6 +88,30 @@ class HomeworkRead(BaseModel):
     )
 
 
+class HomeworkHistoryItemRead(HomeworkRead):
+    """Одна выдача в истории ученика (tsk-1005) — `HomeworkRead` + отметка отмены.
+
+    В отличие от `HomeworkRead` из `get_current` (всегда действующая выдача,
+    `cancelled_at` там неявно `None`) — запись истории может быть отменённой
+    переизданием: `cancelled_at` показывает, когда именно.
+    """
+
+    cancelled_at: Optional[datetime] = Field(
+        default=None,
+        description=(
+            "Когда выдача отменена (переиздана новой); null — эта запись "
+            "действующая (последняя в списке с cancelled_at=null)"
+        ),
+    )
+
+
+class HomeworkHistoryResponse(BaseModel):
+    """История выдач ДЗ ученика, новые сверху (tsk-1005)."""
+
+    items: list[HomeworkHistoryItemRead] = Field(default_factory=list)
+    total: int = Field(description="Сколько выдач в ответе (после limit)")
+
+
 class HomeworkVolumeRead(BaseModel):
     """Норма домашней работы и всё, из чего она сложилась (без выдачи)."""
 

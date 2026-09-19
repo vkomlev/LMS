@@ -23518,6 +23518,116 @@
         }
       }
     },
+    "/api/v1/teacher/students/{student_id}/homework/history": {
+      "get": {
+        "tags": [
+          "homework"
+        ],
+        "summary": "Get Student Homework History",
+        "description": "История выдач ДЗ ученику — все, включая отменённые, новые сверху (tsk-1005).\n\nДля тюнинга движка выдачи: `volume_details` каждой записи объясняет, из\nчего сложилась норма в момент ИМЕННО ТОЙ выдачи. В отличие от `GET\n/teacher/students/{student_id}/homework` (одна действующая выдача) здесь\nвиден весь ряд решений формулы во времени, включая переиздания и отмены.",
+        "operationId": "get_student_homework_history_api_v1_teacher_students__student_id__homework_history_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "student_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "title": "Student Id"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HomeworkHistoryResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/teacher/students/{student_id}/tasks/{task_id}/history": {
       "get": {
         "tags": [
@@ -55516,6 +55626,169 @@
         ],
         "title": "HistoryItem",
         "description": "Запись истории попыток ученика."
+      },
+      "HomeworkHistoryItemRead": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "student_id": {
+            "type": "integer",
+            "title": "Student Id"
+          },
+          "issued_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Issued At"
+          },
+          "due_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Due At",
+            "description": "Срок — обычно начало следующего занятия"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "teacher"
+            ],
+            "title": "Source"
+          },
+          "issued_by": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Issued By"
+          },
+          "occurrence_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Occurrence Id"
+          },
+          "planned_volume": {
+            "type": "integer",
+            "title": "Planned Volume",
+            "description": "Сколько элементов было задано — снимок, не пересчитывается. С tsk-867 это число ФАКТИЧЕСКИ выданных пунктов: состав набирается до бюджета времени, а штучный лимит остался ограждением и почти всегда срабатывает позже. Расчётный лимит — в `volume_details.requested_volume`"
+          },
+          "planned_minutes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planned Minutes",
+            "description": "Во сколько минут работы оценён состав в момент выдачи (tsk-867). Оценка, а не обещание: вес задания — медиана времени «открыл → ответил» без чтения теории и без повторных попыток, вес теории пока прокси. Поэтому на экране число подписано «≈». null — выдача сделана до перехода на бюджет времени либо вес не измерен"
+          },
+          "volume_details": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Volume Details",
+            "description": "Из чего сложилась норма: цель класса, факт, качество, недель до экзамена. Нужен, чтобы объяснить человеку конкретное число"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/HomeworkItemRead"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "done": {
+            "type": "integer",
+            "title": "Done"
+          },
+          "is_overdue": {
+            "type": "boolean",
+            "title": "Is Overdue",
+            "description": "Срок прошёл, а сделано не всё. Ничего не блокирует — решение оператора 01.09: невыполненное ДЗ это показатель, а не долг"
+          },
+          "cancelled_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cancelled At",
+            "description": "Когда выдача отменена (переиздана новой); null — эта запись действующая (последняя в списке с cancelled_at=null)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "student_id",
+          "issued_at",
+          "due_at",
+          "source",
+          "planned_volume",
+          "total",
+          "done",
+          "is_overdue"
+        ],
+        "title": "HomeworkHistoryItemRead",
+        "description": "Одна выдача в истории ученика (tsk-1005) — `HomeworkRead` + отметка отмены.\n\nВ отличие от `HomeworkRead` из `get_current` (всегда действующая выдача,\n`cancelled_at` там неявно `None`) — запись истории может быть отменённой\nпереизданием: `cancelled_at` показывает, когда именно."
+      },
+      "HomeworkHistoryResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/HomeworkHistoryItemRead"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "Сколько выдач в ответе (после limit)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "total"
+        ],
+        "title": "HomeworkHistoryResponse",
+        "description": "История выдач ДЗ ученика, новые сверху (tsk-1005)."
       },
       "HomeworkIssueRequest": {
         "properties": {
