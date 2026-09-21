@@ -51,7 +51,8 @@ class LessonAbsenceFollowup(Base):
         ),
         PrimaryKeyConstraint("id", name="lesson_absence_followup_pkey"),
         CheckConstraint(
-            "reason IS NULL OR reason IN ('illness', 'forgot', 'busy', 'no_answer', 'other')",
+            "reason IS NULL OR reason IN ('illness', 'forgot', 'busy', 'no_answer', "
+            "'other', 'makeup', 'reschedule')",
             name="ck_lesson_absence_followup_reason",
         ),
         {"comment": "tsk-743: отметка «про этот пропуск у ученика уже спросили»"},

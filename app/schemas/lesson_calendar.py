@@ -726,7 +726,10 @@ class AbsenceFollowupRequest(BaseModel):
     )
     reason: Optional[str] = Field(
         default=None,
-        description="illness | forgot | busy | no_answer | other; None — спросил, причину не записал",
+        description=(
+            "illness | forgot | busy | no_answer | other | makeup | reschedule; "
+            "None — спросил, причину не записал"
+        ),
     )
     note: Optional[str] = Field(default=None, description="Свободный текст, если кода мало")
 

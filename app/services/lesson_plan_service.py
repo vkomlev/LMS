@@ -73,9 +73,15 @@ _participant_repo = LessonOccurrenceParticipantRepository()
 #: Сколько панель живёт после конца занятия: итоги подводят не ровно в звонок.
 _AFTER_END_MINUTES = 30
 
-#: Окно поиска неразобранных пропусков. Спрашивать про пропуск полуторамесячной
-#: давности бессмысленно — человек не вспомнит, а строка будет висеть.
-_ABSENCE_LOOKBACK_DAYS = 30
+#: Окно поиска неразобранных пропусков. Пересмотрено 21.09 (tsk-1042) по итогам
+#: 2,5 недель наблюдения — оператор счёл, что двухнедельный пропуск и так уже
+#: неактуален для разговора «спросите, почему пропустил».
+_ABSENCE_LOOKBACK_DAYS = 14
+
+#: Таймзона на случай занятия без слота (разовое). Та же константа и то же
+#: правило, что в `break_service._FALLBACK_TZ`: перерыв задаётся датами школы,
+#: а занятие хранится моментом времени.
+_FALLBACK_TZ = "Europe/Moscow"
 
 #: Окно свежих успехов. Неделя — типичный промежуток между занятиями.
 _WINS_LOOKBACK_DAYS = 7
@@ -96,7 +102,12 @@ _MAX_WINS = 3
 _MANUAL_SOURCE = "manual_teacher"
 
 #: Причины пропуска в одно нажатие. Свободный текст — отдельным полем.
-ABSENCE_REASONS = ("illness", "forgot", "busy", "no_answer", "other")
+#: `makeup`/`reschedule` добавлены 21.09 (tsk-1042): пропуск бывает не только
+#: «не по делу» (болел/забыл/занят), но и уже решённым — отработает дома или
+#: перенесём урок; преподавателю нужно различать эти случаи в отметке.
+ABSENCE_REASONS = (
+    "illness", "forgot", "busy", "no_answer", "other", "makeup", "reschedule",
+)
 
 
 def _fmt_day(moment: datetime) -> str:
@@ -135,6 +146,14 @@ async def _load_unasked_absences(
     (``rescheduled``) и перерыв (``on_break``) — отдельные статусы, ученик в них
     как раз отметился. Отсеиваем то, про что разговор уже был
     (``lesson_absence_followup``), иначе строка висела бы вечно.
+
+    tsk-1042: перерыв не всегда успевает погасить статус ЗАДНИМ числом —
+    `break_service.sync_occurrences` намеренно не трогает уже случившийся
+    `no_show` («прошедшие отметки — зафиксированные факты, а не планы»).
+    Поэтому дата занятия дополнительно сверяется с `student_break` того же
+    ученика напрямую, тем же приёмом `_LOCAL_DAY`, что и в `break_service`:
+    статус `no_show` при этом НЕ переписывается (он нужен для биллинга/ДЗ/
+    отчётов) — фильтруется только эта конкретная выборка.
     """
     if not student_ids:
         return {}
@@ -144,17 +163,26 @@ async def _load_unasked_absences(
                 "SELECT p.student_id, lo.id AS occurrence_id, lo.scheduled_at "
                 "FROM lesson_occurrence_participant p "
                 "JOIN lesson_occurrence lo ON lo.id = p.occurrence_id "
+                "LEFT JOIN lesson_slot ls ON ls.id = lo.slot_id "
                 "LEFT JOIN lesson_absence_followup f "
                 "  ON f.student_id = p.student_id AND f.occurrence_id = lo.id "
                 "WHERE p.student_id = ANY(:ids) AND p.status = 'no_show' "
                 "  AND lo.scheduled_at < :before AND lo.scheduled_at >= :since "
                 "  AND f.id IS NULL "
+                "  AND NOT EXISTS ("
+                "        SELECT 1 FROM student_break b "
+                "         WHERE b.student_id = p.student_id "
+                "           AND (lo.scheduled_at AT TIME ZONE "
+                "                COALESCE(ls.timezone, :fallback_tz))::date "
+                "               BETWEEN b.starts_on AND b.ends_on"
+                "      ) "
                 "ORDER BY lo.scheduled_at DESC"
             ),
             {
                 "ids": student_ids,
                 "before": before,
                 "since": before - timedelta(days=_ABSENCE_LOOKBACK_DAYS),
+                "fallback_tz": _FALLBACK_TZ,
             },
         )
     ).mappings().fetchall()

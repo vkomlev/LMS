@@ -45314,7 +45314,7 @@
               }
             ],
             "title": "Reason",
-            "description": "illness | forgot | busy | no_answer | other; None — спросил, причину не записал"
+            "description": "illness | forgot | busy | no_answer | other | makeup | reschedule; None — спросил, причину не записал"
           },
           "note": {
             "anyOf": [

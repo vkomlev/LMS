@@ -220,6 +220,23 @@ async def _idle_episode(
     await db.commit()
 
 
+async def _student_break(
+    db, *, student_id: int, starts_on, ends_on, created_by: int | None = None,
+) -> int:
+    """Перерыв ученика (tsk-513) — датами, а не моментами времени."""
+    break_id = (
+        await db.execute(
+            text(
+                "INSERT INTO student_break (student_id, starts_on, ends_on, created_by) "
+                "VALUES (:s, :from, :to, :by) RETURNING id"
+            ),
+            {"s": student_id, "from": starts_on, "to": ends_on, "by": created_by},
+        )
+    ).scalar()
+    await db.commit()
+    return break_id
+
+
 def _step(payload: dict, key: str) -> dict | None:
     return next((s for s in payload["steps"] if s["key"] == key), None)
 
@@ -493,6 +510,149 @@ async def test_absence_followup_is_idempotent_and_validates_reason(db, client):
         json={"student_id": student_id, "occurrence_ids": [missed_id], "reason": "спал"},
     )
     assert bad.status_code == 422, bad.text
+
+
+@pytest.mark.asyncio
+async def test_break_hides_absence_without_touching_no_show_status(db, client):
+    """tsk-1042: пропуск внутри зарегистрированного перерыва не спрашивается.
+
+    `break_service.sync_occurrences` намеренно не гасит уже случившийся
+    `no_show` задним числом («прошедшие отметки — факты, а не планы») — если
+    перерыв завели ПОСЛЕ того, как участие стало `no_show`, статус так и
+    останется `no_show` навсегда. Список «спросите про пропуск» обязан
+    отфильтровать такую строку сам, не трогая сам статус (он нужен для
+    биллинга/ДЗ/отчётов — живой прод-случай tsk-1042: ученик 4516, статус у
+    всех 7 занятий августа остался `no_show`).
+    """
+    teacher_id, token = await _new_user(db, role="teacher", name="t")
+    student_id, _ = await _new_user(db, role="student", name="s")
+    now = datetime.now(UTC)
+
+    # Занятие в середине дня UTC — тот же календарный день и в Москве
+    # (UTC+3), граница `_LOCAL_DAY` в тесте не задевается.
+    missed_at = (now - timedelta(days=5)).replace(hour=10, minute=0, second=0, microsecond=0)
+    missed_id = await _occurrence(
+        db, teacher_id=teacher_id, scheduled_at=missed_at,
+        students={student_id: "no_show"},
+    )
+    await _student_break(
+        db, student_id=student_id,
+        starts_on=missed_at.date() - timedelta(days=1),
+        ends_on=missed_at.date() + timedelta(days=1),
+    )
+    occ_id = await _occurrence(
+        db, teacher_id=teacher_id, scheduled_at=now + timedelta(minutes=5),
+        students={student_id: "confirmed"},
+    )
+
+    payload = (
+        await _get_plan(client, occ_id=occ_id, teacher_id=teacher_id, token=token)
+    ).json()
+    assert _step(payload, "absences") is None, payload
+
+    status = (
+        await db.execute(
+            text(
+                "SELECT status FROM lesson_occurrence_participant "
+                "WHERE occurrence_id = :o AND student_id = :s"
+            ),
+            {"o": missed_id, "s": student_id},
+        )
+    ).scalar()
+    assert status == "no_show", "фильтр списка не должен переписывать сам факт явки"
+
+
+@pytest.mark.asyncio
+async def test_break_outside_range_still_shows_absence(db, client):
+    """Перерыв, не покрывающий дату занятия, ничего не прячет (контрольный
+    случай к предыдущему тесту — фильтр не глушит пропуски огулом)."""
+    teacher_id, token = await _new_user(db, role="teacher", name="t")
+    student_id, _ = await _new_user(db, role="student", name="s")
+    now = datetime.now(UTC)
+
+    missed_at = (now - timedelta(days=5)).replace(hour=10, minute=0, second=0, microsecond=0)
+    missed_id = await _occurrence(
+        db, teacher_id=teacher_id, scheduled_at=missed_at,
+        students={student_id: "no_show"},
+    )
+    # Перерыв закончился до занятия — не должен его прятать.
+    await _student_break(
+        db, student_id=student_id,
+        starts_on=missed_at.date() - timedelta(days=10),
+        ends_on=missed_at.date() - timedelta(days=6),
+    )
+    occ_id = await _occurrence(
+        db, teacher_id=teacher_id, scheduled_at=now + timedelta(minutes=5),
+        students={student_id: "confirmed"},
+    )
+
+    payload = (
+        await _get_plan(client, occ_id=occ_id, teacher_id=teacher_id, token=token)
+    ).json()
+    absences = _step(payload, "absences")
+    assert absences is not None, payload
+    assert absences["students"][0]["missed_occurrence_ids"] == [missed_id]
+
+
+@pytest.mark.asyncio
+async def test_absence_followup_accepts_makeup_and_reschedule_reasons(db, client):
+    """tsk-1042: две новые причины — «отработает дома», «перенос в будущем»."""
+    teacher_id, token = await _new_user(db, role="teacher", name="t")
+    student_a, _ = await _new_user(db, role="student", name="a")
+    student_b, _ = await _new_user(db, role="student", name="b")
+    now = datetime.now(UTC)
+    missed_a = await _occurrence(
+        db, teacher_id=teacher_id, scheduled_at=now - timedelta(days=2),
+        students={student_a: "no_show"},
+    )
+    missed_b = await _occurrence(
+        db, teacher_id=teacher_id, scheduled_at=now - timedelta(days=2),
+        students={student_b: "no_show"},
+    )
+    occ_id = await _occurrence(
+        db, teacher_id=teacher_id, scheduled_at=now + timedelta(minutes=5),
+        students={student_a: "confirmed", student_b: "confirmed"},
+    )
+    url = f"/api/v1/teacher/lesson-occurrences/{occ_id}/absence-followup"
+    headers = {"Authorization": f"Bearer {token}"}
+
+    makeup = await client.post(
+        url, params={"teacher_id": teacher_id}, headers=headers,
+        json={"student_id": student_a, "occurrence_ids": [missed_a], "reason": "makeup"},
+    )
+    reschedule = await client.post(
+        url, params={"teacher_id": teacher_id}, headers=headers,
+        json={"student_id": student_b, "occurrence_ids": [missed_b], "reason": "reschedule"},
+    )
+    assert makeup.status_code == 200, makeup.text
+    assert makeup.json()["marked"] == 1
+    assert reschedule.status_code == 200, reschedule.text
+    assert reschedule.json()["marked"] == 1
+
+
+@pytest.mark.asyncio
+async def test_absence_window_shrunk_to_14_days(db, client):
+    """tsk-1042: окно 30 → 14 дней — пропуск старше 14, но моложе 30, не
+    показывается (раньше показывался бы — регрессия на самой правке окна)."""
+    teacher_id, token = await _new_user(db, role="teacher", name="t")
+    student_id, _ = await _new_user(db, role="student", name="s")
+    now = datetime.now(UTC)
+
+    # 20 дней назад — было бы видно при старом окне 30 дней, не должно быть
+    # видно при новом окне 14.
+    await _occurrence(
+        db, teacher_id=teacher_id, scheduled_at=now - timedelta(days=20),
+        students={student_id: "no_show"},
+    )
+    occ_id = await _occurrence(
+        db, teacher_id=teacher_id, scheduled_at=now + timedelta(minutes=5),
+        students={student_id: "confirmed"},
+    )
+
+    payload = (
+        await _get_plan(client, occ_id=occ_id, teacher_id=teacher_id, token=token)
+    ).json()
+    assert _step(payload, "absences") is None, payload
 
 
 # ============================== Ход урока ==============================
