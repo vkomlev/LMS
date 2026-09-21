@@ -1,0 +1,112 @@
+diff --git a/app/services/lesson_occurrence_service.py b/app/services/lesson_occurrence_service.py
+index b5d19b5..2f2526a 100644
+--- a/app/services/lesson_occurrence_service.py
++++ b/app/services/lesson_occurrence_service.py
+@@ -273,7 +273,20 @@ async def record_teacher_attendance(
+     # отметку явки: она за своим переключателем (по умолчанию выключена),
+     # молчит на повторной отметке того же занятия и глушит свои ошибки — иначе
+     # преподаватель не смог бы отметить явку из-за домашней работы.
+-    if new_status == "confirmed":
++    #
++    # tsk-1029: выдавать только когда занятие УЖЕ ЗАКОНЧИЛОСЬ. Преподаватель
++    # отмечает «Пришёл» за пару минут до урока — и в ту же секунду текущее ДЗ
++    # (срок — начало этого самого урока) гасилось новым, к следующему занятию:
++    # ученица сделала 17 из 17, а сводка урока показывала «0 из 34» (Киселева,
++    # 21.09; у неё так все четыре выдачи подряд). Отметка до конца занятия —
++    # это явка, а не повод для домашней работы; её выдаст обработчик по
++    # окончании урока (`_issue_homework_after_lessons`), как и при явке,
++    # отмеченной самим учеником. Отметка задним числом, когда урок давно
++    # прошёл, выдаёт сразу — обработчик так далеко назад не смотрит.
++    lesson_ended_at = occurrence.scheduled_at + timedelta(
++        minutes=occurrence.duration_minutes
++    )
++    if new_status == "confirmed" and lesson_ended_at <= datetime.now(timezone.utc):
+         try:
+             await homework_service.auto_issue_after_lesson(
+                 db,
+diff --git a/tests/test_tsk741_homework.py b/tests/test_tsk741_homework.py
+index 2e27597..888f472 100644
+--- a/tests/test_tsk741_homework.py
++++ b/tests/test_tsk741_homework.py
+@@ -1480,6 +1480,81 @@ async def test_no_homework_while_the_lesson_is_still_running(
+     assert await homework_service.get_current(db, student_id=student_id) is None
+ 
+ 
++@pytest.mark.asyncio
++async def test_teacher_mark_before_the_lesson_keeps_current_homework(
++    db, monkeypatch
++):
++    """tsk-1029: «Пришёл» до начала урока не трогает домашнюю работу.
++
++    Преподаватель ставит явку за пару минут до занятия — раньше это гасило
++    ДЗ, выданное к ЭТОМУ уроку (сделанное целиком), и выдавало новое к
++    следующему: сводка урока показывала «0 из 34» при 17/17.
++    """
++    from app.core import settings_store
++    from app.services import lesson_occurrence_service
++
++    # Материалы нужны: окно в две минуты — это «только теория» (tsk-984).
++    student_id, _ = await _student_with_program(db, materials=2, tasks=10)
++    teacher_id, _ = await _new_user(db, role="teacher", name="teach")
++    occurrence_id = await _create_occurrence(
++        db, student_id=student_id, teacher_id=teacher_id,
++        scheduled_at=datetime.now(UTC) + timedelta(minutes=2),
++    )
++    await db.execute(
++        text(
++            "UPDATE lesson_occurrence_participant SET status = 'scheduled' "
++            " WHERE occurrence_id = :oid"
++        ),
++        {"oid": occurrence_id},
++    )
++    await db.commit()
++    current = await homework_service.issue(
++        db, student_id=student_id,
++        due_at=datetime.now(UTC) + timedelta(minutes=2), source="auto",
++    )
++    monkeypatch.setattr(settings_store, "get_bool", lambda key: True)
++
++    participant = await lesson_occurrence_service.record_teacher_attendance(
++        db, occurrence_id=occurrence_id, teacher_id=teacher_id,
++        student_id=student_id, action="manual_present",
++    )
++    assert participant.status == "confirmed"
++    after = await homework_service.get_current(db, student_id=student_id)
++    assert after is not None and after["id"] == current["id"]
++
++
++@pytest.mark.asyncio
++async def test_teacher_mark_after_the_lesson_still_issues_homework(
++    db, monkeypatch
++):
++    """tsk-1029: явка задним числом по прошедшему уроку выдаёт ДЗ сразу."""
++    from app.core import settings_store
++    from app.services import lesson_occurrence_service
++
++    student_id, _ = await _student_with_program(db, materials=0, tasks=10)
++    teacher_id, _ = await _new_user(db, role="teacher", name="teach")
++    occurrence_id = await _create_occurrence(
++        db, student_id=student_id, teacher_id=teacher_id,
++        scheduled_at=datetime.now(UTC) - timedelta(hours=3),
++    )
++    await db.execute(
++        text(
++            "UPDATE lesson_occurrence_participant SET status = 'no_show' "
++            " WHERE occurrence_id = :oid"
++        ),
++        {"oid": occurrence_id},
++    )
++    await db.commit()
++    monkeypatch.setattr(settings_store, "get_bool", lambda key: True)
++
++    await lesson_occurrence_service.record_teacher_attendance(
++        db, occurrence_id=occurrence_id, teacher_id=teacher_id,
++        student_id=student_id, action="manual_present",
++    )
++    homework = await homework_service.get_current(db, student_id=student_id)
++    assert homework is not None and homework["occurrence_id"] == occurrence_id
++
++
+ @pytest.mark.asyncio
+ async def test_no_homework_for_the_one_who_did_not_come(
+     db, db_session_factory, monkeypatch
