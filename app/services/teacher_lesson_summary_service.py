@@ -649,6 +649,7 @@ def _assigned_fields(status: Optional[dict[str, Any]]) -> dict[str, Any]:
             "assigned_is_overdue": None,
             "assigned_extra_total": None,
             "assigned_extra_done": None,
+            "assigned_on_lesson": None,
         }
     return {
         "assigned_total": status["assigned_total"],
@@ -657,6 +658,7 @@ def _assigned_fields(status: Optional[dict[str, Any]]) -> dict[str, Any]:
         "assigned_is_overdue": status["is_overdue"],
         "assigned_extra_total": status.get("assigned_extra_total", 0),
         "assigned_extra_done": status.get("assigned_extra_done", 0),
+        "assigned_on_lesson": status.get("assigned_on_lesson", 0),
     }
 
 

@@ -843,21 +843,101 @@ async def auto_issue_after_lesson(
 
 #: Состав действующей выдачи с отметкой выполнения, посчитанной у источника.
 #: Один запрос: экран ученика и сводка преподавателя зовут его часто.
+
+# ── tsk-1041: «сделано ДОМА» ─────────────────────────────────────────────
+#
+# Оператор 21.09: «невыполненное ДЗ, если оно делается на уроке, не должно
+# засчитываться в качестве ДЗ — это работа на уроке» (Ундасынова: задание из
+# субботней выдачи решено в 12:24 на том же субботнем уроке и стояло «1 из 10
+# сделано»). Пункт остаётся в списке и в «всего», но в «сделано» не входит и
+# помечается «на уроке». Урок — окно занятия ученика по расписанию, тот же
+# признак, которым считается доля «на занятиях сделано N% работы»
+# (`homework_volume_service._LESSON_WORK_SQL`); перенесённое участие не в
+# счёт — тот урок живёт под другим occurrence.
+#
+# Ниже — строители SQL-условий, а не готовые куски: один и тот же предикат
+# нужен в пяти выборках с разными псевдонимами ученика и разными границами
+# времени, и копии уже разъезжались (см. [[feedback_shared_predicate_must_be_called_not_copied]]).
+
+
+def _in_lesson_sql(ts: str, sid: str) -> str:
+    """`ts` попадает в окно какого-то занятия ученика `sid`."""
+    return (
+        "EXISTS (SELECT 1 FROM lesson_occurrence_participant lop "
+        "  JOIN lesson_occurrence lo ON lo.id = lop.occurrence_id "
+        f" WHERE lop.student_id = {sid} AND lop.status <> 'rescheduled' "
+        f"   AND {ts} >= lo.scheduled_at "
+        f"   AND {ts} <= lo.scheduled_at "
+        "       + CAST(COALESCE(lo.duration_minutes, 60) || ' minutes' AS interval))"
+    )
+
+
+def _task_done_sql(
+    sid: str, task_id: str, *, at_home: bool, after: str = "", until: str = ""
+) -> str:
+    """Есть верная сдача задания; `at_home=True` — хотя бы одна вне урока.
+
+    `after`/`until` — необязательные границы по `submitted_at` (SQL-выражения),
+    нужны осиротевшим решениям tsk-968 и срезу `as_of`.
+    """
+    bounds = ""
+    if after:
+        bounds += f" AND tr.submitted_at > {after}"
+    if until:
+        bounds += f" AND tr.submitted_at <= {until}"
+    home = f" AND NOT {_in_lesson_sql('tr.submitted_at', sid)}" if at_home else ""
+    return (
+        "EXISTS (SELECT 1 FROM task_results tr "
+        "  JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL "
+        f" WHERE tr.user_id = {sid} AND tr.task_id = {task_id} "
+        f"   AND tr.is_correct = true{bounds}{home})"
+    )
+
+
+def _material_done_sql(
+    sid: str, material_id: str, *, at_home: bool, after: str = "", until: str = ""
+) -> str:
+    """Материал пройден или пропущен; `at_home=True` — пройден не на уроке.
+
+    Пропуск (`skipped`) — решение преподавателя (tsk-919), он засчитывается
+    всегда. Пройденный без времени (старые записи) считаем домашним: доказать
+    обратное нечем.
+    """
+    at = "coalesce(smp.completed_at, smp.skipped_at)"
+    bounds = ""
+    if after:
+        bounds += f" AND {at} > {after}"
+    if until:
+        bounds += f" AND {at} <= {until}"
+    home = (
+        " AND (smp.status = 'skipped' OR smp.completed_at IS NULL "
+        f"      OR NOT {_in_lesson_sql('smp.completed_at', sid)})"
+        if at_home
+        else ""
+    )
+    return (
+        "EXISTS (SELECT 1 FROM student_material_progress smp "
+        f" WHERE smp.student_id = {sid} AND smp.material_id = {material_id} "
+        f"   AND smp.status IN ('completed', 'skipped'){bounds}{home})"
+    )
+
+
+def _item_done_sql(
+    sid: str, kind: str, task_id: str, material_id: str, *, at_home: bool,
+    after: str = "", until: str = "",
+) -> str:
+    """Пункт любого рода закрыт (дома или вообще) — общее условие для счётчиков."""
+    return (
+        f"(({kind} = 'task' AND {_task_done_sql(sid, task_id, at_home=at_home, after=after, until=until)}) "
+        f"OR ({kind} = 'material' AND {_material_done_sql(sid, material_id, at_home=at_home, after=after, until=until)}))"
+    )
+
+
 _ITEMS_SQL = """
 SELECT hi.id, hi.kind, hi.task_id, hi.material_id, hi.position, hi.tier,
-       CASE hi.kind
-            WHEN 'task' THEN EXISTS (
-                SELECT 1 FROM task_results tr
-                  JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
-                 WHERE tr.user_id = :sid AND tr.task_id = hi.task_id
-                   AND tr.is_correct = true
-            )
-            ELSE EXISTS (
-                SELECT 1 FROM student_material_progress smp
-                 WHERE smp.student_id = :sid AND smp.material_id = hi.material_id
-                   AND smp.status IN ('completed', 'skipped')
-            )
-       END AS done,
+       -- tsk-1041: «сделано» — только дома; решённое на уроке — отдельно.
+       {done_home} AS done,
+       ({done_any} AND NOT {done_home}) AS on_lesson,
        t.course_id AS task_course_id,
        m.title AS material_title,
        m.course_id AS material_course_id,
@@ -879,7 +959,13 @@ SELECT hi.id, hi.kind, hi.task_id, hi.material_id, hi.position, hi.tier,
   LEFT JOIN courses mc ON mc.id = m.course_id
  WHERE hi.homework_id = :hid
  ORDER BY hi.position
-"""
+""".replace(
+    "{done_home}",
+    _item_done_sql(":sid", "hi.kind", "hi.task_id", "hi.material_id", at_home=True),
+).replace(
+    "{done_any}",
+    _item_done_sql(":sid", "hi.kind", "hi.task_id", "hi.material_id", at_home=False),
+)
 
 
 #: tsk-968: задания/материалы прошлых (уже ОТМЕНЁННЫХ) выдач того же ученика,
@@ -906,21 +992,8 @@ WITH cancelled_items AS (
      WHERE ha.student_id = :sid AND ha.cancelled_at IS NOT NULL
 ),
 done_after_cancel AS (
-    SELECT ci.*,
-           CASE ci.kind
-                WHEN 'task' THEN EXISTS (
-                    SELECT 1 FROM task_results tr
-                      JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
-                     WHERE tr.user_id = :sid AND tr.task_id = ci.task_id
-                       AND tr.is_correct = true AND tr.submitted_at > ci.cancelled_at
-                )
-                ELSE EXISTS (
-                    SELECT 1 FROM student_material_progress smp
-                     WHERE smp.student_id = :sid AND smp.material_id = ci.material_id
-                       AND smp.status IN ('completed', 'skipped')
-                       AND coalesce(smp.completed_at, smp.skipped_at) > ci.cancelled_at
-                )
-           END AS done_after
+    -- tsk-1041: решённое на уроке — не домашняя работа, сюда не попадает.
+    SELECT ci.*, {done_after_home} AS done_after
       FROM cancelled_items ci
 ),
 -- Одно и то же задание могло осиротеть в нескольких отменённых наборах
@@ -955,7 +1028,13 @@ SELECT o.kind, o.task_id, o.material_id, o.tier,
   LEFT JOIN materials m ON m.id = o.material_id
   LEFT JOIN courses tc ON tc.id = t.course_id
   LEFT JOIN courses mc ON mc.id = m.course_id
-"""
+""".replace(
+    "{done_after_home}",
+    _item_done_sql(
+        ":sid", "ci.kind", "ci.task_id", "ci.material_id",
+        at_home=True, after="ci.cancelled_at",
+    ),
+)
 
 
 async def _load_orphaned_items(
@@ -994,6 +1073,7 @@ async def _load_orphaned_items(
                 "course_id": int(course_id) if course_id is not None else None,
                 "title": title,
                 "done": True,
+                "on_lesson": False,
                 "position": position,
                 "tier": row["tier"],
                 "course_uid": course_uid,
@@ -1036,6 +1116,7 @@ async def _load_items(
                 "course_id": int(course_id) if course_id is not None else None,
                 "title": title,
                 "done": bool(row["done"]),
+                "on_lesson": bool(row["on_lesson"]),
                 "position": int(row["position"]),
                 "tier": row["tier"],
                 # tsk-838: чтобы пункт списка открывался нажатием. Оба поля
@@ -1088,6 +1169,8 @@ def _to_homework_dict(
         "done": done,
         "extra_total": len(extra),
         "extra_done": sum(1 for i in extra if i["done"]),
+        # tsk-1041: решено на уроке — в списке есть, в «сделано» нет.
+        "on_lesson": sum(1 for i in required if i.get("on_lesson")),
         "is_overdue": bool(row["due_at"] <= moment and done < len(required)),
     }
 
@@ -1188,41 +1271,27 @@ WITH current AS (
      ORDER BY ha.student_id, ha.issued_at DESC, ha.id DESC
 ),
 counted AS (
+    -- tsk-1041: «сделано» — дома; решённое на уроке — отдельным числом.
     SELECT c.student_id, c.id, c.due_at, c.issued_at,
            count(hi.id) FILTER (WHERE hi.tier <> 'extra') AS total,
            count(hi.id) FILTER (WHERE hi.tier = 'extra') AS extra_total,
+           count(*) FILTER (WHERE hi.tier = 'extra' AND {done_home}) AS extra_done,
+           count(*) FILTER (WHERE hi.tier <> 'extra' AND {done_home}) AS done,
            count(*) FILTER (
-               WHERE hi.tier = 'extra' AND (
-                     (hi.kind = 'task' AND EXISTS (
-                        SELECT 1 FROM task_results tr
-                          JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
-                         WHERE tr.user_id = c.student_id AND tr.task_id = hi.task_id
-                           AND tr.is_correct = true))
-                  OR (hi.kind = 'material' AND EXISTS (
-                        SELECT 1 FROM student_material_progress smp
-                         WHERE smp.student_id = c.student_id
-                           AND smp.material_id = hi.material_id
-                           AND smp.status IN ('completed', 'skipped'))))
-           ) AS extra_done,
-           count(*) FILTER (
-               WHERE hi.tier <> 'extra' AND (
-                     (hi.kind = 'task' AND EXISTS (
-                        SELECT 1 FROM task_results tr
-                          JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
-                         WHERE tr.user_id = c.student_id AND tr.task_id = hi.task_id
-                           AND tr.is_correct = true))
-                  OR (hi.kind = 'material' AND EXISTS (
-                        SELECT 1 FROM student_material_progress smp
-                         WHERE smp.student_id = c.student_id
-                           AND smp.material_id = hi.material_id
-                           AND smp.status IN ('completed', 'skipped'))))
-           ) AS done
+               WHERE hi.tier <> 'extra' AND {done_any} AND NOT {done_home}
+           ) AS on_lesson
       FROM current c
       LEFT JOIN homework_item hi ON hi.homework_id = c.id
      GROUP BY c.student_id, c.id, c.due_at, c.issued_at
 )
 SELECT * FROM counted
-"""
+""".replace(
+    "{done_home}",
+    _item_done_sql("c.student_id", "hi.kind", "hi.task_id", "hi.material_id", at_home=True),
+).replace(
+    "{done_any}",
+    _item_done_sql("c.student_id", "hi.kind", "hi.task_id", "hi.material_id", at_home=False),
+)
 
 
 #: tsk-968: то же самое, что `_ORPHANED_ITEMS_SQL`, но пачкой на группу и
@@ -1240,23 +1309,8 @@ WITH cancelled_items AS (
        AND ha.cancelled_at <= :as_of
 ),
 done_after_cancel AS (
-    SELECT ci.*,
-           CASE ci.kind
-                WHEN 'task' THEN EXISTS (
-                    SELECT 1 FROM task_results tr
-                      JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
-                     WHERE tr.user_id = ci.student_id AND tr.task_id = ci.task_id
-                       AND tr.is_correct = true
-                       AND tr.submitted_at > ci.cancelled_at AND tr.submitted_at <= :as_of
-                )
-                ELSE EXISTS (
-                    SELECT 1 FROM student_material_progress smp
-                     WHERE smp.student_id = ci.student_id AND smp.material_id = ci.material_id
-                       AND smp.status IN ('completed', 'skipped')
-                       AND coalesce(smp.completed_at, smp.skipped_at) > ci.cancelled_at
-                       AND coalesce(smp.completed_at, smp.skipped_at) <= :as_of
-                )
-           END AS done_after
+    -- tsk-1041: только решённое дома.
+    SELECT ci.*, {done_after_home} AS done_after
       FROM cancelled_items ci
 )
 SELECT student_id,
@@ -1273,7 +1327,13 @@ SELECT student_id,
               OR (d.kind = 'material' AND hi2.kind = 'material' AND hi2.material_id = d.material_id) )
    )
  GROUP BY student_id
-"""
+""".replace(
+    "{done_after_home}",
+    _item_done_sql(
+        "ci.student_id", "ci.kind", "ci.task_id", "ci.material_id",
+        at_home=True, after="ci.cancelled_at", until=":as_of",
+    ),
+)
 
 
 async def status_for_students(
@@ -1335,6 +1395,8 @@ async def status_for_students(
             "assigned_done": done,
             "assigned_extra_total": int(row["extra_total"] or 0),
             "assigned_extra_done": int(row["extra_done"] or 0),
+            # tsk-1041: решено на уроке — не домашняя работа.
+            "assigned_on_lesson": int(row["on_lesson"] or 0),
             "is_overdue": bool(row["due_at"] <= moment and done < total),
         }
     return result
@@ -1370,21 +1432,18 @@ items AS (
 SELECT i.student_id,
        (SELECT count(*) FROM scoped x WHERE x.student_id = i.student_id) AS assignments,
        count(*) AS total,
-       count(*) FILTER (
-           WHERE (i.kind = 'task' AND EXISTS (
-                    SELECT 1 FROM task_results tr
-                      JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
-                     WHERE tr.user_id = i.student_id AND tr.task_id = i.task_id
-                       AND tr.is_correct = true))
-              OR (i.kind = 'material' AND EXISTS (
-                    SELECT 1 FROM student_material_progress smp
-                     WHERE smp.student_id = i.student_id
-                       AND smp.material_id = i.material_id
-                       AND smp.status IN ('completed', 'skipped')))
-       ) AS done
+       -- tsk-1041: «сделано» — дома; решённое на уроке — отдельно.
+       count(*) FILTER (WHERE {done_home}) AS done,
+       count(*) FILTER (WHERE {done_any} AND NOT {done_home}) AS on_lesson
   FROM items i
  GROUP BY i.student_id
-"""
+""".replace(
+    "{done_home}",
+    _item_done_sql("i.student_id", "i.kind", "i.task_id", "i.material_id", at_home=True),
+).replace(
+    "{done_any}",
+    _item_done_sql("i.student_id", "i.kind", "i.task_id", "i.material_id", at_home=False),
+)
 
 
 async def completion_for_students(
@@ -1418,6 +1477,7 @@ async def completion_for_students(
             "assignments": int(row["assignments"] or 0),
             "total": int(row["total"] or 0),
             "done": int(row["done"] or 0),
+            "on_lesson": int(row["on_lesson"] or 0),
         }
         for row in rows
         if int(row["total"] or 0) > 0

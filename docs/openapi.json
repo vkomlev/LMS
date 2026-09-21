@@ -55862,6 +55862,12 @@
             "description": "tsk-1006: из них закрыто",
             "default": 0
           },
+          "on_lesson": {
+            "type": "integer",
+            "title": "On Lesson",
+            "description": "tsk-1041: обязательных пунктов, решённых только на уроке — в `done` не входят",
+            "default": 0
+          },
           "is_overdue": {
             "type": "boolean",
             "title": "Is Overdue",
@@ -56013,6 +56019,12 @@
             "type": "integer",
             "title": "Position",
             "description": "Порядок в выдаче — учебный"
+          },
+          "on_lesson": {
+            "type": "boolean",
+            "title": "On Lesson",
+            "description": "tsk-1041: решено, но только на уроке (в окно занятия по расписанию) — это работа на уроке, а не домашняя; `done` при этом false, пункт остаётся в списке",
+            "default": false
           },
           "tier": {
             "type": "string",
@@ -56177,6 +56189,12 @@
             "type": "integer",
             "title": "Extra Done",
             "description": "tsk-1006: из них закрыто",
+            "default": 0
+          },
+          "on_lesson": {
+            "type": "integer",
+            "title": "On Lesson",
+            "description": "tsk-1041: обязательных пунктов, решённых только на уроке — в `done` не входят",
             "default": 0
           },
           "is_overdue": {
@@ -67689,6 +67707,17 @@
             ],
             "title": "Assigned Extra Done"
           },
+          "assigned_on_lesson": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assigned On Lesson"
+          },
           "due_at": {
             "anyOf": [
               {
@@ -67765,6 +67794,17 @@
               }
             ],
             "title": "Period Done"
+          },
+          "period_on_lesson": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Period On Lesson"
           }
         },
         "type": "object",
@@ -73935,6 +73975,18 @@
             ],
             "title": "Assigned Extra Done",
             "description": "tsk-1006: из них закрыто"
+          },
+          "assigned_on_lesson": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assigned On Lesson",
+            "description": "tsk-1041: обязательных пунктов, решённых только на уроке — в `assigned_done` не входят; None — ДЗ не выдавали"
           }
         },
         "type": "object",

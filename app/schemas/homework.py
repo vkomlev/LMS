@@ -28,6 +28,14 @@ class HomeworkItemRead(BaseModel):
         )
     )
     position: int = Field(description="Порядок в выдаче — учебный")
+    on_lesson: bool = Field(
+        default=False,
+        description=(
+            "tsk-1041: решено, но только на уроке (в окно занятия по "
+            "расписанию) — это работа на уроке, а не домашняя; `done` при этом "
+            "false, пункт остаётся в списке"
+        ),
+    )
     tier: Literal["required", "extra"] = Field(
         default="required",
         description=(
@@ -94,6 +102,10 @@ class HomeworkRead(BaseModel):
         default=0, description="tsk-1006: желательных пунктов «чтобы нагнать норму»"
     )
     extra_done: int = Field(default=0, description="tsk-1006: из них закрыто")
+    on_lesson: int = Field(
+        default=0,
+        description="tsk-1041: обязательных пунктов, решённых только на уроке — в `done` не входят",
+    )
     is_overdue: bool = Field(
         description="Срок прошёл, а сделано не всё. Ничего не блокирует — "
         "решение оператора 01.09: невыполненное ДЗ это показатель, а не долг"

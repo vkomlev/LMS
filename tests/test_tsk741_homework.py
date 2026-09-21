@@ -2581,3 +2581,91 @@ async def test_window_days_round_to_nearest(db):
     await db.commit()
     assert hw["volume_details"]["window_days"] == 6
     assert hw["volume_details"]["free_evening_share"] == 1.0
+
+
+# ============ tsk-1041: решённое на уроке — не домашняя работа ============
+
+
+@pytest.mark.asyncio
+async def test_task_solved_during_the_lesson_is_not_homework(db):
+    """Пункт ДЗ, решённый в окно своего занятия, в «сделано» не входит.
+
+    Решение оператора 21.09 (Ундасынова: задание субботней выдачи решено в
+    12:24 на том же субботнем уроке и стояло «1 из 10 сделано»). Пункт
+    остаётся в списке и в «всего», помечен `on_lesson`; решённое дома
+    считается как прежде. Один и тот же предикат — в составе выдачи, в
+    сводке группы и в счёте за период у родителя.
+    """
+    student_id, course_id = await _student_with_program(db, materials=0, tasks=6)
+    teacher_id, _ = await _new_user(db, role="teacher", name="teach")
+    now = datetime.now(UTC)
+    lesson_at = now - timedelta(hours=2)
+    await _create_occurrence(
+        db, student_id=student_id, teacher_id=teacher_id, scheduled_at=lesson_at,
+    )
+    homework = await homework_service.issue(
+        db, student_id=student_id, due_at=now + timedelta(days=3),
+        source="teacher", volume_override=4, now=lesson_at - timedelta(days=1),
+    )
+    await db.commit()
+    on_lesson_task = homework["items"][0]["item_id"]
+    at_home_task = homework["items"][1]["item_id"]
+    # Первое — в середине урока, второе — через час после его конца.
+    await _submit(
+        db, student_id=student_id, task_id=on_lesson_task, course_id=course_id,
+        is_correct=True, at=lesson_at + timedelta(minutes=20),
+    )
+    await _submit(
+        db, student_id=student_id, task_id=at_home_task, course_id=course_id,
+        is_correct=True, at=lesson_at + timedelta(hours=2),
+    )
+
+    current = await homework_service.get_current(db, student_id=student_id)
+    assert current["total"] == 4
+    assert current["done"] == 1
+    assert current["on_lesson"] == 1
+    by_id = {i["item_id"]: i for i in current["items"]}
+    assert by_id[on_lesson_task]["done"] is False
+    assert by_id[on_lesson_task]["on_lesson"] is True
+    assert by_id[at_home_task]["done"] is True
+    assert by_id[at_home_task]["on_lesson"] is False
+
+    status = (await homework_service.status_for_students(
+        db, student_ids=[student_id], now=now,
+    ))[student_id]
+    assert (status["assigned_done"], status["assigned_on_lesson"]) == (1, 1)
+
+    period = (await homework_service.completion_for_students(
+        db, student_ids=[student_id],
+        period_from=now - timedelta(days=2), period_to=now + timedelta(days=1),
+    ))[student_id]
+    assert (period["done"], period["on_lesson"]) == (1, 1)
+
+
+@pytest.mark.asyncio
+async def test_task_solved_at_home_after_lesson_attempt_counts(db):
+    """Не решил на уроке, дорешал дома — домашняя работа сделана."""
+    student_id, course_id = await _student_with_program(db, materials=0, tasks=6)
+    teacher_id, _ = await _new_user(db, role="teacher", name="teach")
+    now = datetime.now(UTC)
+    lesson_at = now - timedelta(hours=3)
+    await _create_occurrence(
+        db, student_id=student_id, teacher_id=teacher_id, scheduled_at=lesson_at,
+    )
+    homework = await homework_service.issue(
+        db, student_id=student_id, due_at=now + timedelta(days=3),
+        source="teacher", volume_override=2, now=lesson_at - timedelta(days=1),
+    )
+    await db.commit()
+    task_id = homework["items"][0]["item_id"]
+    await _submit(
+        db, student_id=student_id, task_id=task_id, course_id=course_id,
+        is_correct=False, at=lesson_at + timedelta(minutes=30),
+    )
+    await _submit(
+        db, student_id=student_id, task_id=task_id, course_id=course_id,
+        is_correct=True, at=lesson_at + timedelta(hours=2, minutes=30),
+    )
+    current = await homework_service.get_current(db, student_id=student_id)
+    assert (current["done"], current["on_lesson"]) == (1, 0)
+

@@ -454,6 +454,13 @@ class TeacherSummaryHomework(BaseModel):
         ),
     )
     assigned_extra_done: Optional[int] = Field(default=None, description="tsk-1006: из них закрыто")
+    assigned_on_lesson: Optional[int] = Field(
+        default=None,
+        description=(
+            "tsk-1041: обязательных пунктов, решённых только на уроке — в "
+            "`assigned_done` не входят; None — ДЗ не выдавали"
+        ),
+    )
 
 
 class TeacherSummaryAttention(BaseModel):

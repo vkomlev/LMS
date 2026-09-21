@@ -1,0 +1,647 @@
+diff --git a/app/schemas/homework.py b/app/schemas/homework.py
+index b5de501..6ff2af7 100644
+--- a/app/schemas/homework.py
++++ b/app/schemas/homework.py
+@@ -28,6 +28,14 @@ class HomeworkItemRead(BaseModel):
+         )
+     )
+     position: int = Field(description="Порядок в выдаче — учебный")
++    on_lesson: bool = Field(
++        default=False,
++        description=(
++            "tsk-1041: решено, но только на уроке (в окно занятия по "
++            "расписанию) — это работа на уроке, а не домашняя; `done` при этом "
++            "false, пункт остаётся в списке"
++        ),
++    )
+     tier: Literal["required", "extra"] = Field(
+         default="required",
+         description=(
+@@ -94,6 +102,10 @@ class HomeworkRead(BaseModel):
+         default=0, description="tsk-1006: желательных пунктов «чтобы нагнать норму»"
+     )
+     extra_done: int = Field(default=0, description="tsk-1006: из них закрыто")
++    on_lesson: int = Field(
++        default=0,
++        description="tsk-1041: обязательных пунктов, решённых только на уроке — в `done` не входят",
++    )
+     is_overdue: bool = Field(
+         description="Срок прошёл, а сделано не всё. Ничего не блокирует — "
+         "решение оператора 01.09: невыполненное ДЗ это показатель, а не долг"
+diff --git a/app/schemas/lesson_calendar.py b/app/schemas/lesson_calendar.py
+index fe14efb..3cf4ef4 100644
+--- a/app/schemas/lesson_calendar.py
++++ b/app/schemas/lesson_calendar.py
+@@ -454,6 +454,13 @@ class TeacherSummaryHomework(BaseModel):
+         ),
+     )
+     assigned_extra_done: Optional[int] = Field(default=None, description="tsk-1006: из них закрыто")
++    assigned_on_lesson: Optional[int] = Field(
++        default=None,
++        description=(
++            "tsk-1041: обязательных пунктов, решённых только на уроке — в "
++            "`assigned_done` не входят; None — ДЗ не выдавали"
++        ),
++    )
+ 
+ 
+ class TeacherSummaryAttention(BaseModel):
+diff --git a/app/schemas/student_dashboard.py b/app/schemas/student_dashboard.py
+index 06c9a77..67c083c 100644
+--- a/app/schemas/student_dashboard.py
++++ b/app/schemas/student_dashboard.py
+@@ -113,6 +113,9 @@ class StudentDashboardHomeworkRead(BaseModel):
+     #: tsk-1006: желательных пунктов «чтобы нагнать норму» и из них закрыто.
+     assigned_extra_total: Optional[int] = None
+     assigned_extra_done: Optional[int] = None
++    #: tsk-1041: решено только на уроке — не домашняя работа, в `assigned_done`
++    #: не входит.
++    assigned_on_lesson: Optional[int] = None
+     #: Срок действующей выдачи.
+     due_at: Optional[datetime] = None
+     #: Срок прошёл, а сделано не всё. Ничего не блокирует (решение оператора
+@@ -128,6 +131,8 @@ class StudentDashboardHomeworkRead(BaseModel):
+     period_assignments: Optional[int] = None
+     period_total: Optional[int] = None
+     period_done: Optional[int] = None
++    #: tsk-1041: из выданного за период решено только на уроке.
++    period_on_lesson: Optional[int] = None
+ 
+ 
+ class StudentDashboardProgramRead(BaseModel):
+diff --git a/app/services/homework_service.py b/app/services/homework_service.py
+index da2125d..b938aa5 100644
+--- a/app/services/homework_service.py
++++ b/app/services/homework_service.py
+@@ -843,21 +843,101 @@ async def auto_issue_after_lesson(
+ 
+ #: Состав действующей выдачи с отметкой выполнения, посчитанной у источника.
+ #: Один запрос: экран ученика и сводка преподавателя зовут его часто.
++
++# ── tsk-1041: «сделано ДОМА» ─────────────────────────────────────────────
++#
++# Оператор 21.09: «невыполненное ДЗ, если оно делается на уроке, не должно
++# засчитываться в качестве ДЗ — это работа на уроке» (Ундасынова: задание из
++# субботней выдачи решено в 12:24 на том же субботнем уроке и стояло «1 из 10
++# сделано»). Пункт остаётся в списке и в «всего», но в «сделано» не входит и
++# помечается «на уроке». Урок — окно занятия ученика по расписанию, тот же
++# признак, которым считается доля «на занятиях сделано N% работы»
++# (`homework_volume_service._LESSON_WORK_SQL`); перенесённое участие не в
++# счёт — тот урок живёт под другим occurrence.
++#
++# Ниже — строители SQL-условий, а не готовые куски: один и тот же предикат
++# нужен в пяти выборках с разными псевдонимами ученика и разными границами
++# времени, и копии уже разъезжались (см. [[feedback_shared_predicate_must_be_called_not_copied]]).
++
++
++def _in_lesson_sql(ts: str, sid: str) -> str:
++    """`ts` попадает в окно какого-то занятия ученика `sid`."""
++    return (
++        "EXISTS (SELECT 1 FROM lesson_occurrence_participant lop "
++        "  JOIN lesson_occurrence lo ON lo.id = lop.occurrence_id "
++        f" WHERE lop.student_id = {sid} AND lop.status <> 'rescheduled' "
++        f"   AND {ts} >= lo.scheduled_at "
++        f"   AND {ts} <= lo.scheduled_at "
++        "       + CAST(COALESCE(lo.duration_minutes, 60) || ' minutes' AS interval))"
++    )
++
++
++def _task_done_sql(
++    sid: str, task_id: str, *, at_home: bool, after: str = "", until: str = ""
++) -> str:
++    """Есть верная сдача задания; `at_home=True` — хотя бы одна вне урока.
++
++    `after`/`until` — необязательные границы по `submitted_at` (SQL-выражения),
++    нужны осиротевшим решениям tsk-968 и срезу `as_of`.
++    """
++    bounds = ""
++    if after:
++        bounds += f" AND tr.submitted_at > {after}"
++    if until:
++        bounds += f" AND tr.submitted_at <= {until}"
++    home = f" AND NOT {_in_lesson_sql('tr.submitted_at', sid)}" if at_home else ""
++    return (
++        "EXISTS (SELECT 1 FROM task_results tr "
++        "  JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL "
++        f" WHERE tr.user_id = {sid} AND tr.task_id = {task_id} "
++        f"   AND tr.is_correct = true{bounds}{home})"
++    )
++
++
++def _material_done_sql(
++    sid: str, material_id: str, *, at_home: bool, after: str = "", until: str = ""
++) -> str:
++    """Материал пройден или пропущен; `at_home=True` — пройден не на уроке.
++
++    Пропуск (`skipped`) — решение преподавателя (tsk-919), он засчитывается
++    всегда. Пройденный без времени (старые записи) считаем домашним: доказать
++    обратное нечем.
++    """
++    at = "coalesce(smp.completed_at, smp.skipped_at)"
++    bounds = ""
++    if after:
++        bounds += f" AND {at} > {after}"
++    if until:
++        bounds += f" AND {at} <= {until}"
++    home = (
++        " AND (smp.status = 'skipped' OR smp.completed_at IS NULL "
++        f"      OR NOT {_in_lesson_sql('smp.completed_at', sid)})"
++        if at_home
++        else ""
++    )
++    return (
++        "EXISTS (SELECT 1 FROM student_material_progress smp "
++        f" WHERE smp.student_id = {sid} AND smp.material_id = {material_id} "
++        f"   AND smp.status IN ('completed', 'skipped'){bounds}{home})"
++    )
++
++
++def _item_done_sql(
++    sid: str, kind: str, task_id: str, material_id: str, *, at_home: bool,
++    after: str = "", until: str = "",
++) -> str:
++    """Пункт любого рода закрыт (дома или вообще) — общее условие для счётчиков."""
++    return (
++        f"(({kind} = 'task' AND {_task_done_sql(sid, task_id, at_home=at_home, after=after, until=until)}) "
++        f"OR ({kind} = 'material' AND {_material_done_sql(sid, material_id, at_home=at_home, after=after, until=until)}))"
++    )
++
++
+ _ITEMS_SQL = """
+ SELECT hi.id, hi.kind, hi.task_id, hi.material_id, hi.position, hi.tier,
+-       CASE hi.kind
+-            WHEN 'task' THEN EXISTS (
+-                SELECT 1 FROM task_results tr
+-                  JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
+-                 WHERE tr.user_id = :sid AND tr.task_id = hi.task_id
+-                   AND tr.is_correct = true
+-            )
+-            ELSE EXISTS (
+-                SELECT 1 FROM student_material_progress smp
+-                 WHERE smp.student_id = :sid AND smp.material_id = hi.material_id
+-                   AND smp.status IN ('completed', 'skipped')
+-            )
+-       END AS done,
++       -- tsk-1041: «сделано» — только дома; решённое на уроке — отдельно.
++       {done_home} AS done,
++       ({done_any} AND NOT {done_home}) AS on_lesson,
+        t.course_id AS task_course_id,
+        m.title AS material_title,
+        m.course_id AS material_course_id,
+@@ -879,7 +959,13 @@ SELECT hi.id, hi.kind, hi.task_id, hi.material_id, hi.position, hi.tier,
+   LEFT JOIN courses mc ON mc.id = m.course_id
+  WHERE hi.homework_id = :hid
+  ORDER BY hi.position
+-"""
++""".replace(
++    "{done_home}",
++    _item_done_sql(":sid", "hi.kind", "hi.task_id", "hi.material_id", at_home=True),
++).replace(
++    "{done_any}",
++    _item_done_sql(":sid", "hi.kind", "hi.task_id", "hi.material_id", at_home=False),
++)
+ 
+ 
+ #: tsk-968: задания/материалы прошлых (уже ОТМЕНЁННЫХ) выдач того же ученика,
+@@ -906,21 +992,8 @@ WITH cancelled_items AS (
+      WHERE ha.student_id = :sid AND ha.cancelled_at IS NOT NULL
+ ),
+ done_after_cancel AS (
+-    SELECT ci.*,
+-           CASE ci.kind
+-                WHEN 'task' THEN EXISTS (
+-                    SELECT 1 FROM task_results tr
+-                      JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
+-                     WHERE tr.user_id = :sid AND tr.task_id = ci.task_id
+-                       AND tr.is_correct = true AND tr.submitted_at > ci.cancelled_at
+-                )
+-                ELSE EXISTS (
+-                    SELECT 1 FROM student_material_progress smp
+-                     WHERE smp.student_id = :sid AND smp.material_id = ci.material_id
+-                       AND smp.status IN ('completed', 'skipped')
+-                       AND coalesce(smp.completed_at, smp.skipped_at) > ci.cancelled_at
+-                )
+-           END AS done_after
++    -- tsk-1041: решённое на уроке — не домашняя работа, сюда не попадает.
++    SELECT ci.*, {done_after_home} AS done_after
+       FROM cancelled_items ci
+ ),
+ -- Одно и то же задание могло осиротеть в нескольких отменённых наборах
+@@ -955,7 +1028,13 @@ SELECT o.kind, o.task_id, o.material_id, o.tier,
+   LEFT JOIN materials m ON m.id = o.material_id
+   LEFT JOIN courses tc ON tc.id = t.course_id
+   LEFT JOIN courses mc ON mc.id = m.course_id
+-"""
++""".replace(
++    "{done_after_home}",
++    _item_done_sql(
++        ":sid", "ci.kind", "ci.task_id", "ci.material_id",
++        at_home=True, after="ci.cancelled_at",
++    ),
++)
+ 
+ 
+ async def _load_orphaned_items(
+@@ -994,6 +1073,7 @@ async def _load_orphaned_items(
+                 "course_id": int(course_id) if course_id is not None else None,
+                 "title": title,
+                 "done": True,
++                "on_lesson": False,
+                 "position": position,
+                 "tier": row["tier"],
+                 "course_uid": course_uid,
+@@ -1036,6 +1116,7 @@ async def _load_items(
+                 "course_id": int(course_id) if course_id is not None else None,
+                 "title": title,
+                 "done": bool(row["done"]),
++                "on_lesson": bool(row["on_lesson"]),
+                 "position": int(row["position"]),
+                 "tier": row["tier"],
+                 # tsk-838: чтобы пункт списка открывался нажатием. Оба поля
+@@ -1088,6 +1169,8 @@ def _to_homework_dict(
+         "done": done,
+         "extra_total": len(extra),
+         "extra_done": sum(1 for i in extra if i["done"]),
++        # tsk-1041: решено на уроке — в списке есть, в «сделано» нет.
++        "on_lesson": sum(1 for i in required if i.get("on_lesson")),
+         "is_overdue": bool(row["due_at"] <= moment and done < len(required)),
+     }
+ 
+@@ -1188,41 +1271,27 @@ WITH current AS (
+      ORDER BY ha.student_id, ha.issued_at DESC, ha.id DESC
+ ),
+ counted AS (
++    -- tsk-1041: «сделано» — дома; решённое на уроке — отдельным числом.
+     SELECT c.student_id, c.id, c.due_at, c.issued_at,
+            count(hi.id) FILTER (WHERE hi.tier <> 'extra') AS total,
+            count(hi.id) FILTER (WHERE hi.tier = 'extra') AS extra_total,
++           count(*) FILTER (WHERE hi.tier = 'extra' AND {done_home}) AS extra_done,
++           count(*) FILTER (WHERE hi.tier <> 'extra' AND {done_home}) AS done,
+            count(*) FILTER (
+-               WHERE hi.tier = 'extra' AND (
+-                     (hi.kind = 'task' AND EXISTS (
+-                        SELECT 1 FROM task_results tr
+-                          JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
+-                         WHERE tr.user_id = c.student_id AND tr.task_id = hi.task_id
+-                           AND tr.is_correct = true))
+-                  OR (hi.kind = 'material' AND EXISTS (
+-                        SELECT 1 FROM student_material_progress smp
+-                         WHERE smp.student_id = c.student_id
+-                           AND smp.material_id = hi.material_id
+-                           AND smp.status IN ('completed', 'skipped'))))
+-           ) AS extra_done,
+-           count(*) FILTER (
+-               WHERE hi.tier <> 'extra' AND (
+-                     (hi.kind = 'task' AND EXISTS (
+-                        SELECT 1 FROM task_results tr
+-                          JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
+-                         WHERE tr.user_id = c.student_id AND tr.task_id = hi.task_id
+-                           AND tr.is_correct = true))
+-                  OR (hi.kind = 'material' AND EXISTS (
+-                        SELECT 1 FROM student_material_progress smp
+-                         WHERE smp.student_id = c.student_id
+-                           AND smp.material_id = hi.material_id
+-                           AND smp.status IN ('completed', 'skipped'))))
+-           ) AS done
++               WHERE hi.tier <> 'extra' AND {done_any} AND NOT {done_home}
++           ) AS on_lesson
+       FROM current c
+       LEFT JOIN homework_item hi ON hi.homework_id = c.id
+      GROUP BY c.student_id, c.id, c.due_at, c.issued_at
+ )
+ SELECT * FROM counted
+-"""
++""".replace(
++    "{done_home}",
++    _item_done_sql("c.student_id", "hi.kind", "hi.task_id", "hi.material_id", at_home=True),
++).replace(
++    "{done_any}",
++    _item_done_sql("c.student_id", "hi.kind", "hi.task_id", "hi.material_id", at_home=False),
++)
+ 
+ 
+ #: tsk-968: то же самое, что `_ORPHANED_ITEMS_SQL`, но пачкой на группу и
+@@ -1240,23 +1309,8 @@ WITH cancelled_items AS (
+        AND ha.cancelled_at <= :as_of
+ ),
+ done_after_cancel AS (
+-    SELECT ci.*,
+-           CASE ci.kind
+-                WHEN 'task' THEN EXISTS (
+-                    SELECT 1 FROM task_results tr
+-                      JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
+-                     WHERE tr.user_id = ci.student_id AND tr.task_id = ci.task_id
+-                       AND tr.is_correct = true
+-                       AND tr.submitted_at > ci.cancelled_at AND tr.submitted_at <= :as_of
+-                )
+-                ELSE EXISTS (
+-                    SELECT 1 FROM student_material_progress smp
+-                     WHERE smp.student_id = ci.student_id AND smp.material_id = ci.material_id
+-                       AND smp.status IN ('completed', 'skipped')
+-                       AND coalesce(smp.completed_at, smp.skipped_at) > ci.cancelled_at
+-                       AND coalesce(smp.completed_at, smp.skipped_at) <= :as_of
+-                )
+-           END AS done_after
++    -- tsk-1041: только решённое дома.
++    SELECT ci.*, {done_after_home} AS done_after
+       FROM cancelled_items ci
+ )
+ SELECT student_id,
+@@ -1273,7 +1327,13 @@ SELECT student_id,
+               OR (d.kind = 'material' AND hi2.kind = 'material' AND hi2.material_id = d.material_id) )
+    )
+  GROUP BY student_id
+-"""
++""".replace(
++    "{done_after_home}",
++    _item_done_sql(
++        "ci.student_id", "ci.kind", "ci.task_id", "ci.material_id",
++        at_home=True, after="ci.cancelled_at", until=":as_of",
++    ),
++)
+ 
+ 
+ async def status_for_students(
+@@ -1335,6 +1395,8 @@ async def status_for_students(
+             "assigned_done": done,
+             "assigned_extra_total": int(row["extra_total"] or 0),
+             "assigned_extra_done": int(row["extra_done"] or 0),
++            # tsk-1041: решено на уроке — не домашняя работа.
++            "assigned_on_lesson": int(row["on_lesson"] or 0),
+             "is_overdue": bool(row["due_at"] <= moment and done < total),
+         }
+     return result
+@@ -1370,21 +1432,18 @@ items AS (
+ SELECT i.student_id,
+        (SELECT count(*) FROM scoped x WHERE x.student_id = i.student_id) AS assignments,
+        count(*) AS total,
+-       count(*) FILTER (
+-           WHERE (i.kind = 'task' AND EXISTS (
+-                    SELECT 1 FROM task_results tr
+-                      JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
+-                     WHERE tr.user_id = i.student_id AND tr.task_id = i.task_id
+-                       AND tr.is_correct = true))
+-              OR (i.kind = 'material' AND EXISTS (
+-                    SELECT 1 FROM student_material_progress smp
+-                     WHERE smp.student_id = i.student_id
+-                       AND smp.material_id = i.material_id
+-                       AND smp.status IN ('completed', 'skipped')))
+-       ) AS done
++       -- tsk-1041: «сделано» — дома; решённое на уроке — отдельно.
++       count(*) FILTER (WHERE {done_home}) AS done,
++       count(*) FILTER (WHERE {done_any} AND NOT {done_home}) AS on_lesson
+   FROM items i
+  GROUP BY i.student_id
+-"""
++""".replace(
++    "{done_home}",
++    _item_done_sql("i.student_id", "i.kind", "i.task_id", "i.material_id", at_home=True),
++).replace(
++    "{done_any}",
++    _item_done_sql("i.student_id", "i.kind", "i.task_id", "i.material_id", at_home=False),
++)
+ 
+ 
+ async def completion_for_students(
+@@ -1418,6 +1477,7 @@ async def completion_for_students(
+             "assignments": int(row["assignments"] or 0),
+             "total": int(row["total"] or 0),
+             "done": int(row["done"] or 0),
++            "on_lesson": int(row["on_lesson"] or 0),
+         }
+         for row in rows
+         if int(row["total"] or 0) > 0
+diff --git a/app/services/student_dashboard_service.py b/app/services/student_dashboard_service.py
+index c73bee1..c89475e 100644
+--- a/app/services/student_dashboard_service.py
++++ b/app/services/student_dashboard_service.py
+@@ -1299,6 +1299,7 @@ async def get_student_dashboard(
+             "assigned_done": (homework_status or {}).get("assigned_done"),
+             "assigned_extra_total": (homework_status or {}).get("assigned_extra_total"),
+             "assigned_extra_done": (homework_status or {}).get("assigned_extra_done"),
++            "assigned_on_lesson": (homework_status or {}).get("assigned_on_lesson"),
+             "due_at": (homework_status or {}).get("due_at"),
+             "is_overdue": (homework_status or {}).get("is_overdue"),
+             "completion_ratio": (
+@@ -1308,6 +1309,7 @@ async def get_student_dashboard(
+             "period_assignments": (own_homework_period or {}).get("assignments"),
+             "period_total": (own_homework_period or {}).get("total"),
+             "period_done": (own_homework_period or {}).get("done"),
++            "period_on_lesson": (own_homework_period or {}).get("on_lesson"),
+         },
+         "program": program_block,
+         # tsk-032: серия активных недель между занятиями. Считается тем же
+diff --git a/app/services/teacher_lesson_summary_service.py b/app/services/teacher_lesson_summary_service.py
+index 4b7bc02..0bd62d9 100644
+--- a/app/services/teacher_lesson_summary_service.py
++++ b/app/services/teacher_lesson_summary_service.py
+@@ -649,6 +649,7 @@ def _assigned_fields(status: Optional[dict[str, Any]]) -> dict[str, Any]:
+             "assigned_is_overdue": None,
+             "assigned_extra_total": None,
+             "assigned_extra_done": None,
++            "assigned_on_lesson": None,
+         }
+     return {
+         "assigned_total": status["assigned_total"],
+@@ -657,6 +658,7 @@ def _assigned_fields(status: Optional[dict[str, Any]]) -> dict[str, Any]:
+         "assigned_is_overdue": status["is_overdue"],
+         "assigned_extra_total": status.get("assigned_extra_total", 0),
+         "assigned_extra_done": status.get("assigned_extra_done", 0),
++        "assigned_on_lesson": status.get("assigned_on_lesson", 0),
+     }
+ 
+ 
+diff --git a/docs/openapi.json b/docs/openapi.json
+index 15ee82b..4548ea8 100644
+--- a/docs/openapi.json
++++ b/docs/openapi.json
+@@ -55862,6 +55862,12 @@
+             "description": "tsk-1006: из них закрыто",
+             "default": 0
+           },
++          "on_lesson": {
++            "type": "integer",
++            "title": "On Lesson",
++            "description": "tsk-1041: обязательных пунктов, решённых только на уроке — в `done` не входят",
++            "default": 0
++          },
+           "is_overdue": {
+             "type": "boolean",
+             "title": "Is Overdue",
+@@ -56014,6 +56020,12 @@
+             "title": "Position",
+             "description": "Порядок в выдаче — учебный"
+           },
++          "on_lesson": {
++            "type": "boolean",
++            "title": "On Lesson",
++            "description": "tsk-1041: решено, но только на уроке (в окно занятия по расписанию) — это работа на уроке, а не домашняя; `done` при этом false, пункт остаётся в списке",
++            "default": false
++          },
+           "tier": {
+             "type": "string",
+             "enum": [
+@@ -56179,6 +56191,12 @@
+             "description": "tsk-1006: из них закрыто",
+             "default": 0
+           },
++          "on_lesson": {
++            "type": "integer",
++            "title": "On Lesson",
++            "description": "tsk-1041: обязательных пунктов, решённых только на уроке — в `done` не входят",
++            "default": 0
++          },
+           "is_overdue": {
+             "type": "boolean",
+             "title": "Is Overdue",
+@@ -67689,6 +67707,17 @@
+             ],
+             "title": "Assigned Extra Done"
+           },
++          "assigned_on_lesson": {
++            "anyOf": [
++              {
++                "type": "integer"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Assigned On Lesson"
++          },
+           "due_at": {
+             "anyOf": [
+               {
+@@ -67765,6 +67794,17 @@
+               }
+             ],
+             "title": "Period Done"
++          },
++          "period_on_lesson": {
++            "anyOf": [
++              {
++                "type": "integer"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Period On Lesson"
+           }
+         },
+         "type": "object",
+@@ -73935,6 +73975,18 @@
+             ],
+             "title": "Assigned Extra Done",
+             "description": "tsk-1006: из них закрыто"
++          },
++          "assigned_on_lesson": {
++            "anyOf": [
++              {
++                "type": "integer"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Assigned On Lesson",
++            "description": "tsk-1041: обязательных пунктов, решённых только на уроке — в `assigned_done` не входят; None — ДЗ не выдавали"
+           }
+         },
+         "type": "object",
+diff --git a/tests/test_tsk741_homework.py b/tests/test_tsk741_homework.py
+index 888f472..ecd8776 100644
+--- a/tests/test_tsk741_homework.py
++++ b/tests/test_tsk741_homework.py
+@@ -2581,3 +2581,91 @@ async def test_window_days_round_to_nearest(db):
+     await db.commit()
+     assert hw["volume_details"]["window_days"] == 6
+     assert hw["volume_details"]["free_evening_share"] == 1.0
++
++
++# ============ tsk-1041: решённое на уроке — не домашняя работа ============
++
++
++@pytest.mark.asyncio
++async def test_task_solved_during_the_lesson_is_not_homework(db):
++    """Пункт ДЗ, решённый в окно своего занятия, в «сделано» не входит.
++
++    Решение оператора 21.09 (Ундасынова: задание субботней выдачи решено в
++    12:24 на том же субботнем уроке и стояло «1 из 10 сделано»). Пункт
++    остаётся в списке и в «всего», помечен `on_lesson`; решённое дома
++    считается как прежде. Один и тот же предикат — в составе выдачи, в
++    сводке группы и в счёте за период у родителя.
++    """
++    student_id, course_id = await _student_with_program(db, materials=0, tasks=6)
++    teacher_id, _ = await _new_user(db, role="teacher", name="teach")
++    now = datetime.now(UTC)
++    lesson_at = now - timedelta(hours=2)
++    await _create_occurrence(
++        db, student_id=student_id, teacher_id=teacher_id, scheduled_at=lesson_at,
++    )
++    homework = await homework_service.issue(
++        db, student_id=student_id, due_at=now + timedelta(days=3),
++        source="teacher", volume_override=4, now=lesson_at - timedelta(days=1),
++    )
++    await db.commit()
++    on_lesson_task = homework["items"][0]["item_id"]
++    at_home_task = homework["items"][1]["item_id"]
++    # Первое — в середине урока, второе — через час после его конца.
++    await _submit(
++        db, student_id=student_id, task_id=on_lesson_task, course_id=course_id,
++        is_correct=True, at=lesson_at + timedelta(minutes=20),
++    )
++    await _submit(
++        db, student_id=student_id, task_id=at_home_task, course_id=course_id,
++        is_correct=True, at=lesson_at + timedelta(hours=2),
++    )
++
++    current = await homework_service.get_current(db, student_id=student_id)
++    assert current["total"] == 4
++    assert current["done"] == 1
++    assert current["on_lesson"] == 1
++    by_id = {i["item_id"]: i for i in current["items"]}
++    assert by_id[on_lesson_task]["done"] is False
++    assert by_id[on_lesson_task]["on_lesson"] is True
++    assert by_id[at_home_task]["done"] is True
++    assert by_id[at_home_task]["on_lesson"] is False
++
++    status = (await homework_service.status_for_students(
++        db, student_ids=[student_id], now=now,
++    ))[student_id]
++    assert (status["assigned_done"], status["assigned_on_lesson"]) == (1, 1)
++
++    period = (await homework_service.completion_for_students(
++        db, student_ids=[student_id],
++        period_from=now - timedelta(days=2), period_to=now + timedelta(days=1),
++    ))[student_id]
++    assert (period["done"], period["on_lesson"]) == (1, 1)
++
++
++@pytest.mark.asyncio
++async def test_task_solved_at_home_after_lesson_attempt_counts(db):
++    """Не решил на уроке, дорешал дома — домашняя работа сделана."""
++    student_id, course_id = await _student_with_program(db, materials=0, tasks=6)
++    teacher_id, _ = await _new_user(db, role="teacher", name="teach")
++    now = datetime.now(UTC)
++    lesson_at = now - timedelta(hours=3)
++    await _create_occurrence(
++        db, student_id=student_id, teacher_id=teacher_id, scheduled_at=lesson_at,
++    )
++    homework = await homework_service.issue(
++        db, student_id=student_id, due_at=now + timedelta(days=3),
++        source="teacher", volume_override=2, now=lesson_at - timedelta(days=1),
++    )
++    await db.commit()
++    task_id = homework["items"][0]["item_id"]
++    await _submit(
++        db, student_id=student_id, task_id=task_id, course_id=course_id,
++        is_correct=False, at=lesson_at + timedelta(minutes=30),
++    )
++    await _submit(
++        db, student_id=student_id, task_id=task_id, course_id=course_id,
++        is_correct=True, at=lesson_at + timedelta(hours=2, minutes=30),
++    )
++    current = await homework_service.get_current(db, student_id=student_id)
++    assert (current["done"], current["on_lesson"]) == (1, 0)
++

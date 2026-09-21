@@ -113,6 +113,9 @@ class StudentDashboardHomeworkRead(BaseModel):
     #: tsk-1006: желательных пунктов «чтобы нагнать норму» и из них закрыто.
     assigned_extra_total: Optional[int] = None
     assigned_extra_done: Optional[int] = None
+    #: tsk-1041: решено только на уроке — не домашняя работа, в `assigned_done`
+    #: не входит.
+    assigned_on_lesson: Optional[int] = None
     #: Срок действующей выдачи.
     due_at: Optional[datetime] = None
     #: Срок прошёл, а сделано не всё. Ничего не блокирует (решение оператора
@@ -128,6 +131,8 @@ class StudentDashboardHomeworkRead(BaseModel):
     period_assignments: Optional[int] = None
     period_total: Optional[int] = None
     period_done: Optional[int] = None
+    #: tsk-1041: из выданного за период решено только на уроке.
+    period_on_lesson: Optional[int] = None
 
 
 class StudentDashboardProgramRead(BaseModel):
