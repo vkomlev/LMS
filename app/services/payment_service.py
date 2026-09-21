@@ -298,8 +298,9 @@ async def due_soon_notice(
 
 async def _totals_by_charge(
     db: AsyncSession, *, period: Optional[date] = None, student_id: Optional[int] = None
-) -> dict[tuple[int, int, date], tuple[int, int]]:
-    """Подтверждено и ждёт решения — по каждому начислению разом.
+) -> dict[tuple[int, int, date], tuple[int, int, bool]]:
+    """Подтверждено, ждёт решения и есть ли среди подтверждённого ручной платёж
+    — по каждому начислению разом.
 
     Одним запросом на весь список: иначе экран начислений дал бы запрос на
     строку и разъехался бы по времени между строками.
@@ -308,6 +309,10 @@ async def _totals_by_charge(
     гасить долг за обучение. Фильтр по `purpose` стоит явно, а не полагается на
     то, что NULL-месяц не сойдётся с ключом группировки, — иначе связь была бы
     случайной и первая же строка с частично заполненным месяцем всё сломала бы.
+
+    tsk-1040: признак «есть ручная оплата» смотрит только на `confirmed` —
+    сброшенная (`reversed`) отметка тем самым перестаёт подсвечиваться, ровно
+    как перестаёт быть деньгами в `paid`/`pending` выше.
     """
     rows = (
         await db.execute(
@@ -315,7 +320,8 @@ async def _totals_by_charge(
                 """
                 SELECT student_id, group_id, period,
                        COALESCE(sum(amount_minor) FILTER (WHERE status = 'confirmed'), 0) AS paid,
-                       COALESCE(sum(amount_minor) FILTER (WHERE status = 'pending'), 0) AS pending
+                       COALESCE(sum(amount_minor) FILTER (WHERE status = 'pending'), 0) AS pending,
+                       bool_or(method = 'manual' AND status = 'confirmed') AS has_manual
                   FROM student_payment
                  -- CAST на параметре: у необязательного фильтра asyncpg иначе
                  -- не может вывести тип NULL и роняет запрос целиком.
@@ -329,7 +335,8 @@ async def _totals_by_charge(
         )
     ).all()
     return {
-        (r.student_id, r.group_id, r.period): (int(r.paid), int(r.pending)) for r in rows
+        (r.student_id, r.group_id, r.period): (int(r.paid), int(r.pending), bool(r.has_manual))
+        for r in rows
     }
 
 
@@ -345,7 +352,7 @@ async def attach_payment_state(
     today = date.today()
     for row in charges:
         key = (row["student_id"], row["group_id"], row["period"])
-        paid, pending = totals.get(key, (0, 0))
+        paid, pending, has_manual = totals.get(key, (0, 0, False))
         state = payment_state(
             total_minor=row["total_minor"],
             paid_minor=paid,
@@ -358,6 +365,7 @@ async def attach_payment_state(
         row["due_minor"] = state.due_minor
         row["overpaid_minor"] = state.overpaid_minor
         row["is_overdue"] = state.is_overdue
+        row["has_manual_payment"] = has_manual
     return charges
 
 
@@ -429,7 +437,7 @@ async def list_student_charges(db: AsyncSession, *, student_id: int) -> list[dic
             manual_minor=r.manual_minor,
             adjustments_minor=int(r.adjustments_minor),
         )
-        paid, pending = totals.get((student_id, r.group_id, r.period), (0, 0))
+        paid, pending, _has_manual = totals.get((student_id, r.group_id, r.period), (0, 0, False))
         state = payment_state(
             total_minor=total,
             paid_minor=paid,

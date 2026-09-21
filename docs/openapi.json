@@ -48291,6 +48291,11 @@
             "type": "boolean",
             "title": "Is Overdue",
             "default": false
+          },
+          "has_manual_payment": {
+            "type": "boolean",
+            "title": "Has Manual Payment",
+            "default": false
           }
         },
         "type": "object",

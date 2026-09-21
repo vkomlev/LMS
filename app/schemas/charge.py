@@ -83,6 +83,10 @@ class ChargeRead(BaseModel):
     overpaid_minor: int = 0
     #: Срок вышел, а деньги так и не пришли — повод напомнить.
     is_overdue: bool = False
+    #: Среди подтверждённых платежей месяца есть отмеченный руками (tsk-1040):
+    #: маркетолог поставил деньги сам, не через чек/шлюз — на такое стоит
+    #: смотреть внимательнее (сумма, ученик не перепутаны).
+    has_manual_payment: bool = False
 
 
 class ManualAmountRequest(BaseModel):
