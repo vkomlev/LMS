@@ -59,12 +59,15 @@ __all__ = [
     "list_payments",
     "confirm_payment",
     "reject_payment",
+    "reverse_manual_payment",
     "get_receipt",
     "export_confirmed",
     "student_ids_for_parent",
 ]
 
-PaymentStatus = Literal["pending", "confirmed", "rejected"]
+#: `reversed` — маркетолог сбросил свою же ручную отметку (tsk-1022), не
+#: путать с `rejected` («чек не прошёл проверку»).
+PaymentStatus = Literal["pending", "confirmed", "rejected", "reversed"]
 
 #: За что заплатили. Список закрыт и продублирован в CHECK таблицы: новая
 #: разовая продажа добавляется сюда И миграцией — чтобы описка не создала класс
@@ -969,6 +972,42 @@ async def reject_payment(
         reviewed_by=reviewed_by,
         note=note,
     )
+
+
+async def reverse_manual_payment(
+    db: AsyncSession, *, payment_id: int, reviewed_by: int, note: str
+) -> Optional[dict]:
+    """Сбросить ошибочную ручную отметку оплаты (tsk-1022).
+
+    Не `_decide`: та переводит `pending → confirmed/rejected`, а ручная отметка
+    рождается уже `confirmed` — её решение принято в момент отметки. Условие
+    `status = 'confirmed' AND method = 'manual'` стоит в самом UPDATE — тем же
+    приёмом, что и у `_decide` (гонка двух маркетологов не разъедется), и не
+    даёт кнопке физически тронуть платёж со шлюза или уже решённый чек.
+
+    Статус — `reversed`, не `rejected`: тот занят другим смыслом («чек не
+    прошёл проверку»), см. миграцию `tsk1022_manual_payment_reversed`.
+    """
+    row = (
+        await db.execute(
+            text(
+                "UPDATE student_payment "
+                "   SET status = 'reversed', reviewed_by = :by, reviewed_at = now(), "
+                "       review_note = :note, updated_at = now() "
+                " WHERE id = :id AND status = 'confirmed' AND method = 'manual' "
+                "RETURNING id, student_id, group_id, period, amount_minor, status"
+            ),
+            {"id": payment_id, "by": reviewed_by, "note": note},
+        )
+    ).first()
+    if row is None:
+        await db.rollback()
+        return None
+    await db.commit()
+    logger.info(
+        "tsk-1022: ручной платёж %s сброшен (решил %s)", payment_id, reviewed_by
+    )
+    return dict(row._mapping)
 
 
 async def get_receipt(db: AsyncSession, *, payment_id: int) -> Optional[dict]:

@@ -38811,7 +38811,8 @@
                   "enum": [
                     "pending",
                     "confirmed",
-                    "rejected"
+                    "rejected",
+                    "reversed"
                   ],
                   "type": "string"
                 },
@@ -39143,6 +39144,115 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/PaymentDecisionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/marketer/payments/{payment_id}/reverse": {
+      "post": {
+        "tags": [
+          "marketer_payments"
+        ],
+        "summary": "Сбросить ручную отметку оплаты",
+        "description": "Только для платежей, отмеченных руками (метод manual) и ещё не тронутых после этого: платёж со шлюза или уже сброшенный/отклонённый эта кнопка не берёт. Причина обязательна.",
+        "operationId": "reverse_api_v1_marketer_payments__payment_id__reverse_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "payment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Payment Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaymentReverseRequest"
               }
             }
           }
@@ -61439,7 +61549,8 @@
             "enum": [
               "pending",
               "confirmed",
-              "rejected"
+              "rejected",
+              "reversed"
             ],
             "title": "Status"
           },
@@ -61577,6 +61688,22 @@
         ],
         "title": "PaymentRead",
         "description": "Платёж глазами кабинета маркетолога.\n\nМесяц и тарифная группа пусты у разовой покупки: пакет обращений к\nнаставнику не относится ни к какому месяцу (tsk-615)."
+      },
+      "PaymentReverseRequest": {
+        "properties": {
+          "note": {
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 3,
+            "title": "Note"
+          }
+        },
+        "type": "object",
+        "required": [
+          "note"
+        ],
+        "title": "PaymentReverseRequest",
+        "description": "Сброс ручной отметки оплаты (tsk-1022).\n\nПричина обязательна: платёж без чека и так держался только на примечании\nпри отметке, а сброс без объяснения оставил бы вторую дыру в том же месте."
       },
       "PaymentStartRequest": {
         "properties": {
@@ -68287,7 +68414,8 @@
             "enum": [
               "pending",
               "confirmed",
-              "rejected"
+              "rejected",
+              "reversed"
             ],
             "title": "Status"
           },
@@ -68451,7 +68579,8 @@
             "enum": [
               "pending",
               "confirmed",
-              "rejected"
+              "rejected",
+              "reversed"
             ],
             "title": "Status"
           },

@@ -12,7 +12,9 @@ from typing import Literal, Optional
 from pydantic import BaseModel, Field
 
 PaymentMethod = Literal["manual", "gateway"]
-PaymentStatus = Literal["pending", "confirmed", "rejected"]
+#: `reversed` — маркетолог сам сбросил свою же ручную отметку (tsk-1022);
+#: не путать с `rejected` — тем чек не прошёл проверку.
+PaymentStatus = Literal["pending", "confirmed", "rejected", "reversed"]
 #: За что платили (tsk-615). `monthly` — месяц обучения, всё остальное —
 #: разовая покупка, у которой месяца нет.
 PaymentPurpose = Literal["monthly", "ai_package"]
@@ -144,6 +146,16 @@ class PaymentDecisionRequest(BaseModel):
     """Решение маркетолога по платежу."""
 
     note: Optional[str] = Field(default=None, max_length=500)
+
+
+class PaymentReverseRequest(BaseModel):
+    """Сброс ручной отметки оплаты (tsk-1022).
+
+    Причина обязательна: платёж без чека и так держался только на примечании
+    при отметке, а сброс без объяснения оставил бы вторую дыру в том же месте.
+    """
+
+    note: str = Field(..., min_length=3, max_length=500)
 
 
 class PaymentExportRow(BaseModel):

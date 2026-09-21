@@ -19,6 +19,7 @@ from app.schemas.payment import (
     PaymentExportRow,
     PaymentPurpose,
     PaymentRead,
+    PaymentReverseRequest,
     PaymentStatus,
     ReconcileReason,
     ReconcileResult,
@@ -127,6 +128,33 @@ async def reject(
     if decided is None:
         raise HTTPException(
             status.HTTP_404_NOT_FOUND, "Платёж не найден или решение по нему уже принято"
+        )
+    return await _reload(db, payment_id)
+
+
+@router.post(
+    "/payments/{payment_id}/reverse",
+    response_model=PaymentRead,
+    summary="Сбросить ручную отметку оплаты",
+    description=(
+        "Только для платежей, отмеченных руками (метод manual) и ещё не "
+        "тронутых после этого: платёж со шлюза или уже сброшенный/отклонённый "
+        "эта кнопка не берёт. Причина обязательна."
+    ),
+)
+async def reverse(
+    payment_id: int,
+    body: PaymentReverseRequest,
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(_payments_gate),
+) -> PaymentRead:
+    decided = await payment_service.reverse_manual_payment(
+        db, payment_id=payment_id, reviewed_by=current_user.id, note=body.note
+    )
+    if decided is None:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            "Платёж не найден, не ручной или уже не подтверждён",
         )
     return await _reload(db, payment_id)
 
