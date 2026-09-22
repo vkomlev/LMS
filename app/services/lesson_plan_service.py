@@ -154,6 +154,14 @@ async def _load_unasked_absences(
     ученика напрямую, тем же приёмом `_LOCAL_DAY`, что и в `break_service`:
     статус `no_show` при этом НЕ переписывается (он нужен для биллинга/ДЗ/
     отчётов) — фильтруется только эта конкретная выборка.
+
+    tsk-1057: ученик мог не отказаться от одного часа, пропустить его, но в
+    тот же календарный день прийти к ТОМУ ЖЕ преподавателю на другое занятие
+    (отдельный слот в расписании, а не «отработка» через явную запись) —
+    преподаватель его уже видел живьём, спрашивать не о чем. Решение
+    оператора (22.09, живой кейс — Денис Ильин): гасить автоматически, но
+    узко — тот же преподаватель И тот же день; другой преподаватель или
+    другой день пропуск не закрывают (риск ложного погашения важнее охвата).
     """
     if not student_ids:
         return {}
@@ -175,6 +183,19 @@ async def _load_unasked_absences(
                 "           AND (lo.scheduled_at AT TIME ZONE "
                 "                COALESCE(ls.timezone, :fallback_tz))::date "
                 "               BETWEEN b.starts_on AND b.ends_on"
+                "      ) "
+                "  AND NOT EXISTS ("
+                "        SELECT 1 FROM lesson_occurrence_participant p2 "
+                "        JOIN lesson_occurrence lo2 ON lo2.id = p2.occurrence_id "
+                "        LEFT JOIN lesson_slot ls2 ON ls2.id = lo2.slot_id "
+                "         WHERE p2.student_id = p.student_id "
+                "           AND p2.occurrence_id <> lo.id "
+                "           AND p2.status IN ('confirmed', 'completed') "
+                "           AND lo2.teacher_id = lo.teacher_id "
+                "           AND (lo2.scheduled_at AT TIME ZONE "
+                "                COALESCE(ls2.timezone, :fallback_tz))::date "
+                "               = (lo.scheduled_at AT TIME ZONE "
+                "                  COALESCE(ls.timezone, :fallback_tz))::date"
                 "      ) "
                 "ORDER BY lo.scheduled_at DESC"
             ),

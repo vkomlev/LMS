@@ -655,6 +655,126 @@ async def test_absence_window_shrunk_to_14_days(db, client):
     assert _step(payload, "absences") is None, payload
 
 
+@pytest.mark.asyncio
+async def test_same_day_attendance_with_same_teacher_hides_absence(db, client):
+    """tsk-1057: пропустил один час, но в тот же день пришёл к ТОМУ ЖЕ
+    преподавателю на другое занятие — живой кейс (Ильин Денис, 22.09):
+    преподаватель его уже видел, спрашивать не о чем."""
+    teacher_id, token = await _new_user(db, role="teacher", name="t")
+    student_id, _ = await _new_user(db, role="student", name="s")
+    now = datetime.now(UTC)
+    day = now.replace(hour=9, minute=0, second=0, microsecond=0) - timedelta(days=2)
+
+    await _occurrence(
+        db, teacher_id=teacher_id, scheduled_at=day,
+        students={student_id: "no_show"},
+    )
+    # Другое занятие ТОГО ЖЕ дня, ТОГО ЖЕ преподавателя — пришёл.
+    await _occurrence(
+        db, teacher_id=teacher_id, scheduled_at=day + timedelta(hours=4),
+        students={student_id: "confirmed"},
+    )
+    occ_id = await _occurrence(
+        db, teacher_id=teacher_id, scheduled_at=now + timedelta(minutes=5),
+        students={student_id: "confirmed"},
+    )
+
+    payload = (
+        await _get_plan(client, occ_id=occ_id, teacher_id=teacher_id, token=token)
+    ).json()
+    assert _step(payload, "absences") is None, payload
+
+
+@pytest.mark.asyncio
+async def test_same_day_attendance_before_the_miss_also_hides_it(db, client):
+    """tsk-1057: порядок занятий внутри дня не важен — гасит и если пришёл
+    РАНЬШЕ, чем пропустил (реальный порядок у Дениса Ильина: 13:00 confirmed
+    создано до 09:00 no_show случился)."""
+    teacher_id, token = await _new_user(db, role="teacher", name="t")
+    student_id, _ = await _new_user(db, role="student", name="s")
+    now = datetime.now(UTC)
+    day = now.replace(hour=9, minute=0, second=0, microsecond=0) - timedelta(days=2)
+
+    await _occurrence(
+        db, teacher_id=teacher_id, scheduled_at=day,
+        students={student_id: "confirmed"},
+    )
+    await _occurrence(
+        db, teacher_id=teacher_id, scheduled_at=day + timedelta(hours=4),
+        students={student_id: "no_show"},
+    )
+    occ_id = await _occurrence(
+        db, teacher_id=teacher_id, scheduled_at=now + timedelta(minutes=5),
+        students={student_id: "confirmed"},
+    )
+
+    payload = (
+        await _get_plan(client, occ_id=occ_id, teacher_id=teacher_id, token=token)
+    ).json()
+    assert _step(payload, "absences") is None, payload
+
+
+@pytest.mark.asyncio
+async def test_same_day_attendance_with_different_teacher_still_shows(db, client):
+    """tsk-1057, контрольный случай: пришёл в тот же день, но к ДРУГОМУ
+    преподавателю — правило оператора его не гасит (осознанно узко)."""
+    teacher_id, token = await _new_user(db, role="teacher", name="t")
+    other_teacher_id, _ = await _new_user(db, role="teacher", name="other")
+    student_id, _ = await _new_user(db, role="student", name="s")
+    now = datetime.now(UTC)
+    day = now.replace(hour=9, minute=0, second=0, microsecond=0) - timedelta(days=2)
+
+    missed_id = await _occurrence(
+        db, teacher_id=teacher_id, scheduled_at=day,
+        students={student_id: "no_show"},
+    )
+    await _occurrence(
+        db, teacher_id=other_teacher_id, scheduled_at=day + timedelta(hours=4),
+        students={student_id: "confirmed"},
+    )
+    occ_id = await _occurrence(
+        db, teacher_id=teacher_id, scheduled_at=now + timedelta(minutes=5),
+        students={student_id: "confirmed"},
+    )
+
+    payload = (
+        await _get_plan(client, occ_id=occ_id, teacher_id=teacher_id, token=token)
+    ).json()
+    absences = _step(payload, "absences")
+    assert absences is not None, payload
+    assert absences["students"][0]["missed_occurrence_ids"] == [missed_id]
+
+
+@pytest.mark.asyncio
+async def test_next_day_attendance_with_same_teacher_still_shows(db, client):
+    """tsk-1057, контрольный случай: пришёл к тому же преподавателю, но НА
+    СЛЕДУЮЩИЙ день — граница по календарному дню, а не «когда-нибудь после»."""
+    teacher_id, token = await _new_user(db, role="teacher", name="t")
+    student_id, _ = await _new_user(db, role="student", name="s")
+    now = datetime.now(UTC)
+    day = now.replace(hour=9, minute=0, second=0, microsecond=0) - timedelta(days=2)
+
+    missed_id = await _occurrence(
+        db, teacher_id=teacher_id, scheduled_at=day,
+        students={student_id: "no_show"},
+    )
+    await _occurrence(
+        db, teacher_id=teacher_id, scheduled_at=day + timedelta(days=1),
+        students={student_id: "confirmed"},
+    )
+    occ_id = await _occurrence(
+        db, teacher_id=teacher_id, scheduled_at=now + timedelta(minutes=5),
+        students={student_id: "confirmed"},
+    )
+
+    payload = (
+        await _get_plan(client, occ_id=occ_id, teacher_id=teacher_id, token=token)
+    ).json()
+    absences = _step(payload, "absences")
+    assert absences is not None, payload
+    assert absences["students"][0]["missed_occurrence_ids"] == [missed_id]
+
+
 # ============================== Ход урока ==============================
 
 
