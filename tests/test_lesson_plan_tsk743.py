@@ -658,8 +658,8 @@ async def test_absence_window_shrunk_to_14_days(db, client):
 @pytest.mark.asyncio
 async def test_same_day_attendance_with_same_teacher_hides_absence(db, client):
     """tsk-1057: пропустил один час, но в тот же день пришёл к ТОМУ ЖЕ
-    преподавателю на другое занятие — живой кейс (Ильин Денис, 22.09):
-    преподаватель его уже видел, спрашивать не о чем."""
+    преподавателю на другое занятие (позже по времени) — живой кейс (Ильин
+    Денис, 22.09): преподаватель его уже видел, спрашивать не о чем."""
     teacher_id, token = await _new_user(db, role="teacher", name="t")
     student_id, _ = await _new_user(db, role="student", name="s")
     now = datetime.now(UTC)
@@ -686,10 +686,13 @@ async def test_same_day_attendance_with_same_teacher_hides_absence(db, client):
 
 
 @pytest.mark.asyncio
-async def test_same_day_attendance_before_the_miss_also_hides_it(db, client):
-    """tsk-1057: порядок занятий внутри дня не важен — гасит и если пришёл
-    РАНЬШЕ, чем пропустил (реальный порядок у Дениса Ильина: 13:00 confirmed
-    создано до 09:00 no_show случился)."""
+async def test_attendance_before_the_miss_does_not_hide_it(db, client):
+    """tsk-1086: направление важно — посещение ДО пропуска (даже в тот же
+    день, даже у того же преподавателя) НЕ гасит. Иначе у любого регулярно
+    ходящего ученика нашлось бы прошлое посещение, и свежий пропуск был бы
+    прощён раньше, чем ученик реально пришёл отрабатывать (подтверждено на
+    живом случае — Андрей Залетов, 23.09: посещения ДО его пропуска 22.09
+    были, но пропуск ими не гасился)."""
     teacher_id, token = await _new_user(db, role="teacher", name="t")
     student_id, _ = await _new_user(db, role="student", name="s")
     now = datetime.now(UTC)
@@ -699,7 +702,7 @@ async def test_same_day_attendance_before_the_miss_also_hides_it(db, client):
         db, teacher_id=teacher_id, scheduled_at=day,
         students={student_id: "confirmed"},
     )
-    await _occurrence(
+    missed_id = await _occurrence(
         db, teacher_id=teacher_id, scheduled_at=day + timedelta(hours=4),
         students={student_id: "no_show"},
     )
@@ -711,7 +714,9 @@ async def test_same_day_attendance_before_the_miss_also_hides_it(db, client):
     payload = (
         await _get_plan(client, occ_id=occ_id, teacher_id=teacher_id, token=token)
     ).json()
-    assert _step(payload, "absences") is None, payload
+    absences = _step(payload, "absences")
+    assert absences is not None, payload
+    assert absences["students"][0]["missed_occurrence_ids"] == [missed_id]
 
 
 @pytest.mark.asyncio
@@ -746,15 +751,18 @@ async def test_same_day_attendance_with_different_teacher_still_shows(db, client
 
 
 @pytest.mark.asyncio
-async def test_next_day_attendance_with_same_teacher_still_shows(db, client):
-    """tsk-1057, контрольный случай: пришёл к тому же преподавателю, но НА
-    СЛЕДУЮЩИЙ день — граница по календарному дню, а не «когда-нибудь после»."""
+async def test_later_attendance_with_same_teacher_hides_it_even_on_a_different_day(db, client):
+    """tsk-1086: ограничение «тот же день» из tsk-1057 снято — гасит и на
+    следующий день, и позже (в пределах окна 14 дней), лишь бы ПОСЛЕ
+    пропуска. Живой кейс — Андрей Залетов (23.09): пропустил 22.09, отработал
+    на следующий день у того же преподавателя; исходное правило tsk-1057
+    (только тот же день) этот случай не закрывало."""
     teacher_id, token = await _new_user(db, role="teacher", name="t")
     student_id, _ = await _new_user(db, role="student", name="s")
     now = datetime.now(UTC)
     day = now.replace(hour=9, minute=0, second=0, microsecond=0) - timedelta(days=2)
 
-    missed_id = await _occurrence(
+    await _occurrence(
         db, teacher_id=teacher_id, scheduled_at=day,
         students={student_id: "no_show"},
     )
@@ -770,9 +778,7 @@ async def test_next_day_attendance_with_same_teacher_still_shows(db, client):
     payload = (
         await _get_plan(client, occ_id=occ_id, teacher_id=teacher_id, token=token)
     ).json()
-    absences = _step(payload, "absences")
-    assert absences is not None, payload
-    assert absences["students"][0]["missed_occurrence_ids"] == [missed_id]
+    assert _step(payload, "absences") is None, payload
 
 
 # ============================== Ход урока ==============================
