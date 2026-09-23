@@ -41618,6 +41618,50 @@
         }
       }
     },
+    "/api/v1/public/courses/{course_id}/offer": {
+      "get": {
+        "tags": [
+          "public_course_offer"
+        ],
+        "summary": "Статус продажи и активные тарифы курса для лендинга сайта",
+        "description": "Отдать статус продажи курса и активные тарифы его тарифной группы.\n\nКурса нет — 404. Цена курсу не назначена — `sale_status=\"unset\"`, тарифов нет.",
+        "operationId": "get_course_offer_api_v1_public_courses__course_id__offer_get",
+        "parameters": [
+          {
+            "name": "course_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "title": "Course Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicCourseOffer"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/media/{sha_ext}": {
       "get": {
         "tags": [
@@ -63312,6 +63356,51 @@
         "title": "ProgressTreeResponse",
         "description": "Прогресс ученика по дереву курса + список доступных курсов для селектора."
       },
+      "PublicCourseOffer": {
+        "properties": {
+          "course_id": {
+            "type": "integer",
+            "title": "Course Id"
+          },
+          "sale_status": {
+            "type": "string",
+            "enum": [
+              "paid",
+              "free",
+              "not_for_sale",
+              "unset"
+            ],
+            "title": "Sale Status"
+          },
+          "group_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group Name"
+          },
+          "tariffs": {
+            "items": {
+              "$ref": "#/components/schemas/PublicTariff"
+            },
+            "type": "array",
+            "title": "Tariffs",
+            "default": []
+          }
+        },
+        "type": "object",
+        "required": [
+          "course_id",
+          "sale_status",
+          "group_name"
+        ],
+        "title": "PublicCourseOffer",
+        "description": "Цена курса для лендинга сайта (tsk-1070).\n\nТолько то, что и так написано на продающей странице: статус продажи, имя\nгруппы и активные тарифы. Заметки маркетолога, автор правки и данные\nучеников сюда не попадают — эндпоинт открыт без авторизации."
+      },
       "PublicParentDashboardRead": {
         "properties": {
           "student_id": {
@@ -63401,6 +63490,73 @@
         ],
         "title": "PublicParentDashboardRead",
         "description": "Дашборд, открытый по ссылке. Тот же состав, что у привилегированных\nзрителей (контракт tsk-494 — без `solution_rules` и текста заявок помощи),\nплюс имя ученика: родитель по ссылке не имеет профиля и иначе не увидел\nбы, чей это дашборд."
+      },
+      "PublicTariff": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "price_minor": {
+            "type": "integer",
+            "title": "Price Minor"
+          },
+          "currency": {
+            "type": "string",
+            "title": "Currency"
+          },
+          "period": {
+            "type": "string",
+            "title": "Period"
+          },
+          "match_kind": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "attendance_frequency",
+                  "segment"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Match Kind"
+          },
+          "match_value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Match Value"
+          },
+          "is_default": {
+            "type": "boolean",
+            "title": "Is Default"
+          },
+          "sort_order": {
+            "type": "integer",
+            "title": "Sort Order"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "price_minor",
+          "currency",
+          "period",
+          "match_kind",
+          "match_value",
+          "is_default",
+          "sort_order"
+        ],
+        "title": "PublicTariff",
+        "description": "Вариант тарифа для публичной витрины — без служебных полей (id, флаги активности)."
       },
       "QuizAnswerRequest": {
         "properties": {

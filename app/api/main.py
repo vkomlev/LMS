@@ -534,6 +534,11 @@ app.include_router(methodist_attention_summary_router, prefix=API_PREFIX)
 from app.api.v1.public_leads import router as public_leads_router
 app.include_router(public_leads_router, prefix=API_PREFIX)
 
+# tsk-1070: публичная цена курса для движка лендингов сайта (только чтение,
+# без авторизации — кабинет маркетолога сервисный ключ не пускает намеренно).
+from app.api.v1.public_course_offer import router as public_course_offer_router
+app.include_router(public_course_offer_router, prefix=API_PREFIX)
+
 # tsk-110 ADR-0040: CAS media endpoint (публичный, без auth)
 app.include_router(media_router, prefix=API_PREFIX)
 app.include_router(ai_tutor_router, prefix=API_PREFIX)  # tsk-572: ИИ-наставник

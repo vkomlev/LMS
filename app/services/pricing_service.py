@@ -21,6 +21,8 @@ from app.schemas.pricing import (
     CoursePricingRead,
     FrequencySource,
     PricingGroupRead,
+    PublicCourseOffer,
+    PublicTariff,
     StudentGroupPricing,
     StudentPricingRead,
     TariffRead,
@@ -56,6 +58,7 @@ __all__ = [
     "delete_tariff",
     "list_course_pricing",
     "is_root_course",
+    "get_public_course_offer",
     "set_course_pricing",
     "list_student_pricing",
     "active_subscription_groups",
@@ -374,6 +377,55 @@ async def list_course_pricing(db: AsyncSession) -> list[CoursePricingRead]:
         )
         for r in rows
     ]
+
+
+async def get_public_course_offer(
+    db: AsyncSession, course_id: int
+) -> Optional[PublicCourseOffer]:
+    """Цена курса для публичной витрины лендинга (tsk-1070).
+
+    `None` — курса нет. Строки `course_pricing` нет — статус `unset` без тарифов.
+    Отдаются только активные тарифы активной группы: выключенная группа для
+    витрины равна «тарифов нет» — продавать по ней нельзя.
+    """
+    row = (
+        await db.execute(
+            text(
+                """
+                SELECT c.id AS course_id, cp.sale_status, pg.id AS group_id, pg.name AS group_name
+                  FROM courses c
+                  LEFT JOIN course_pricing cp ON cp.course_id = c.id
+                  LEFT JOIN pricing_group pg ON pg.id = cp.group_id AND pg.is_active
+                 WHERE c.id = :id
+                """
+            ),
+            {"id": course_id},
+        )
+    ).first()
+    if row is None:
+        return None
+
+    tariffs: list[PublicTariff] = []
+    if row.group_id is not None:
+        tariffs = [
+            PublicTariff.model_validate(t)
+            for t in (
+                await db.execute(
+                    text(
+                        "SELECT name, price_minor, currency, period, match_kind, match_value, "
+                        "is_default, sort_order FROM pricing_tariff "
+                        "WHERE group_id = :g AND is_active ORDER BY sort_order, id"
+                    ),
+                    {"g": row.group_id},
+                )
+            ).all()
+        ]
+    return PublicCourseOffer(
+        course_id=row.course_id,
+        sale_status=row.sale_status or "unset",
+        group_name=row.group_name,
+        tariffs=tariffs,
+    )
 
 
 async def is_root_course(db: AsyncSession, course_id: int) -> bool:

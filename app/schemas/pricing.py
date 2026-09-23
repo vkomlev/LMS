@@ -189,3 +189,39 @@ class StudentPricingRead(BaseModel):
     #: `None`, если хотя бы одна группа не посчиталась — иначе сумма выглядела бы
     #: полной, не будучи таковой.
     total_price_minor: Optional[int]
+
+
+# ------------------------------------------------ публичная витрина цены (tsk-1070)
+
+#: Для витрины «строки нет» — отдельный явный статус `unset`, а не `null`:
+#: движок лендингов сравнивает строки, и пустое значение легко принять за «бесплатно».
+PublicSaleStatus = Literal["paid", "free", "not_for_sale", "unset"]
+
+
+class PublicTariff(BaseModel):
+    """Вариант тарифа для публичной витрины — без служебных полей (id, флаги активности)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    name: str
+    price_minor: int
+    currency: str
+    period: str
+    match_kind: Optional[MatchKind]
+    match_value: Optional[str]
+    is_default: bool
+    sort_order: int
+
+
+class PublicCourseOffer(BaseModel):
+    """Цена курса для лендинга сайта (tsk-1070).
+
+    Только то, что и так написано на продающей странице: статус продажи, имя
+    группы и активные тарифы. Заметки маркетолога, автор правки и данные
+    учеников сюда не попадают — эндпоинт открыт без авторизации.
+    """
+
+    course_id: int
+    sale_status: PublicSaleStatus
+    group_name: Optional[str]
+    tariffs: list[PublicTariff] = []
