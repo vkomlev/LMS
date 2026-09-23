@@ -433,6 +433,105 @@ def compute_phase(
     return "after", None
 
 
+def _occurrence_phase(
+    moment: datetime, *, scheduled_at: datetime, duration_minutes: int,
+) -> tuple[str, Optional[datetime], datetime, datetime]:
+    """(фаза, её конец, конец занятия, начало итогов) — границы из настроек.
+
+    Одна точка расчёта для плана занятия и для «кто сейчас на занятии»
+    (tsk-1090): подсветка в ленте обязана совпадать с тем, что видит панель.
+    """
+    ends_at = scheduled_at + timedelta(minutes=duration_minutes)
+    lead_minutes = settings_store.get_int("lesson_summary_after_start_minutes")
+    wrapup_minutes = settings_store.get_int("lesson_wrapup_before_end_minutes")
+    # Та же формула, что у кнопки «Подвести итоги» (tsk-741): нижняя граница
+    # держит короткое занятие от «итогов с первой минуты».
+    wrapup_from = max(
+        ends_at - timedelta(minutes=wrapup_minutes),
+        scheduled_at + timedelta(minutes=lead_minutes),
+    )
+    phase, phase_until = compute_phase(
+        moment,
+        scheduled_at=scheduled_at,
+        ends_at=ends_at,
+        wrapup_from=wrapup_from,
+        lead_minutes=lead_minutes,
+    )
+    return phase, phase_until, ends_at, wrapup_from
+
+
+#: Фазы, в которые ученик считается «на занятии» (tsk-1090). Итоги (`wrapup`)
+#: сюда не входят: к этому моменту урок фактически заканчивается.
+_ON_LESSON_PHASES = frozenset({"start", "during"})
+
+
+async def students_on_lesson_now(
+    db: AsyncSession, *, teacher_id: int, now: Optional[datetime] = None,
+) -> list[int]:
+    """Ученики, у которых СЕЙЧАС идёт занятие этого преподавателя (tsk-1090).
+
+    «Идёт» — фаза `start`/`during` плана занятия (tsk-743), а не часы
+    расписания. Владение занятием — как у `get_occurrence_for_teacher`:
+    строка со-ведения сильнее колонки `teacher_id`. Не считаются: отказ и
+    перенос (`declined`/`rescheduled`), отмеченный пропуск (`no_show`) и
+    ученик в перерыве (`student_break`, тем же сравнением дат школы, что у
+    списка пропусков).
+    """
+    moment = now or datetime.now(timezone.utc)
+    # Широкое окно по времени начала, точная фаза — в Python тем же расчётом.
+    rows = (
+        await db.execute(
+            text(
+                "SELECT lo.id, lo.scheduled_at, lo.duration_minutes "
+                "FROM lesson_occurrence lo "
+                "LEFT JOIN lesson_occurrence_teacher lot "
+                "  ON lot.occurrence_id = lo.id AND lot.teacher_id = :tid "
+                "WHERE lo.scheduled_at BETWEEN :from_ AND :to_ "
+                "  AND (lot.is_active IS TRUE "
+                "       OR (lot.id IS NULL AND lo.teacher_id = :tid))"
+            ),
+            {
+                "tid": teacher_id,
+                "from_": moment - timedelta(hours=12),
+                "to_": moment + timedelta(hours=2),
+            },
+        )
+    ).mappings().fetchall()
+    live_ids = [
+        int(r["id"])
+        for r in rows
+        if _occurrence_phase(
+            moment,
+            scheduled_at=r["scheduled_at"],
+            duration_minutes=int(r["duration_minutes"]),
+        )[0] in _ON_LESSON_PHASES
+    ]
+    if not live_ids:
+        return []
+    students = (
+        await db.execute(
+            text(
+                "SELECT DISTINCT p.student_id "
+                "FROM lesson_occurrence_participant p "
+                "JOIN lesson_occurrence lo ON lo.id = p.occurrence_id "
+                "LEFT JOIN lesson_slot ls ON ls.id = lo.slot_id "
+                "WHERE p.occurrence_id = ANY(:ids) "
+                "  AND p.status NOT IN ('declined', 'rescheduled', 'no_show') "
+                "  AND NOT EXISTS ("
+                "        SELECT 1 FROM student_break b "
+                "         WHERE b.student_id = p.student_id "
+                "           AND (lo.scheduled_at AT TIME ZONE "
+                "                COALESCE(ls.timezone, :fallback_tz))::date "
+                "               BETWEEN b.starts_on AND b.ends_on"
+                "      ) "
+                "ORDER BY p.student_id"
+            ),
+            {"ids": live_ids, "fallback_tz": _FALLBACK_TZ},
+        )
+    ).scalars().all()
+    return [int(s) for s in students]
+
+
 async def get_lesson_plan(
     db: AsyncSession,
     *,
@@ -456,23 +555,10 @@ async def get_lesson_plan(
         db, occurrence_id=occurrence_id, teacher_id=teacher_id,
     )
     moment = now or datetime.now(timezone.utc)
-    ends_at = occurrence.scheduled_at + timedelta(minutes=int(occurrence.duration_minutes))
-
-    lead_minutes = settings_store.get_int("lesson_summary_after_start_minutes")
-    wrapup_minutes = settings_store.get_int("lesson_wrapup_before_end_minutes")
-    # Та же формула, что у кнопки «Подвести итоги» (tsk-741): нижняя граница
-    # держит короткое занятие от «итогов с первой минуты».
-    wrapup_from = max(
-        ends_at - timedelta(minutes=wrapup_minutes),
-        occurrence.scheduled_at + timedelta(minutes=lead_minutes),
-    )
-
-    phase, phase_until = compute_phase(
+    phase, phase_until, ends_at, wrapup_from = _occurrence_phase(
         moment,
         scheduled_at=occurrence.scheduled_at,
-        ends_at=ends_at,
-        wrapup_from=wrapup_from,
-        lead_minutes=lead_minutes,
+        duration_minutes=int(occurrence.duration_minutes),
     )
 
     participants = await _participant_repo.list_for_occurrence(db, occurrence_id)

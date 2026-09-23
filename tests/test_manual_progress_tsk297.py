@@ -878,6 +878,8 @@ async def test_progress_tree_marks_manual_items(graph):
     assert granted_task["manual"] is True
     assert granted_task["granted_by"] == ids["teacher"]
     assert granted_task["granted_at"] is not None
+    # tsk-1090: ручной зачёт — не сдача ученика, время сдачи пустое.
+    assert granted_task["last_submitted_at"] is None
 
     plain_task = by_key[("task", ids["task_root_b"])]
     assert plain_task["status"] == "OPEN" and plain_task["manual"] is False

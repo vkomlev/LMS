@@ -45854,6 +45854,14 @@
             ],
             "title": "Next Before",
             "description": "Курсор для следующей страницы («показать ещё») — передать в `before`"
+          },
+          "on_lesson_student_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "On Lesson Student Ids",
+            "description": "tsk-1090: ученики, у которых сейчас идёт занятие этого преподавателя (фаза start/during плана занятия; без переносов, пропусков и перерывов)"
           }
         },
         "type": "object",
@@ -63244,6 +63252,19 @@
             ],
             "title": "Attempts Limit Effective",
             "description": "Задание: текущий эффективный лимит попыток"
+          },
+          "last_submitted_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Submitted At",
+            "description": "tsk-1090: задание — когда ученик сдал последнюю попытку; null — не сдавал или последняя запись это ручной зачёт"
           },
           "open_help_request_id": {
             "anyOf": [

@@ -58,3 +58,10 @@ class ActivityFeedResponse(BaseModel):
         default=None,
         description="Курсор для следующей страницы («показать ещё») — передать в `before`",
     )
+    on_lesson_student_ids: List[int] = Field(
+        default_factory=list,
+        description=(
+            "tsk-1090: ученики, у которых сейчас идёт занятие этого преподавателя "
+            "(фаза start/during плана занятия; без переносов, пропусков и перерывов)"
+        ),
+    )

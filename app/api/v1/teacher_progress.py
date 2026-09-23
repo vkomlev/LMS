@@ -148,6 +148,13 @@ class ProgressTreeItem(BaseModel):
     attempts_limit_effective: Optional[int] = Field(
         default=None, description="Задание: текущий эффективный лимит попыток"
     )
+    last_submitted_at: Optional[datetime] = Field(
+        default=None,
+        description=(
+            "tsk-1090: задание — когда ученик сдал последнюю попытку; null — "
+            "не сдавал или последняя запись это ручной зачёт"
+        ),
+    )
     open_help_request_id: Optional[int] = Field(
         default=None,
         description="ID открытой заявки help_requests по заданию (последняя по created_at); null — заявок нет",

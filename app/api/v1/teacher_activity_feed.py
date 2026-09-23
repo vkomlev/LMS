@@ -30,7 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_bare_db, require_role
 from app.auth.current_user import CurrentUser
 from app.schemas.activity_feed import ActivityFeedEvent, ActivityFeedResponse
-from app.services import teacher_activity_feed_service
+from app.services import lesson_plan_service, teacher_activity_feed_service
 
 logger = logging.getLogger("api.teacher_activity_feed")
 
@@ -60,4 +60,7 @@ async def get_teacher_activity_feed(
         events=[ActivityFeedEvent(**e) for e in events],
         has_more=has_more,
         next_before=next_before,
+        on_lesson_student_ids=await lesson_plan_service.students_on_lesson_now(
+            db, teacher_id=current_user.id,
+        ),
     )

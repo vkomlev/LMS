@@ -1374,6 +1374,10 @@ async def get_student_progress(
                 "granted_at": (last or {}).get("checked_at") if is_manual else None,
                 "attempts_used": state.attempts_used,
                 "attempts_limit_effective": state.attempts_limit_effective,
+                # tsk-1090: время сдачи последней попытки — по нему экран
+                # прогресса прокручивается к последнему выполненному. Ручной
+                # зачёт — не сдача ученика, поэтому у него пусто.
+                "last_submitted_at": None if is_manual else (last or {}).get("submitted_at"),
                 "open_help_request_id": hr["request_id"] if hr else None,
                 "open_help_request_type": hr["request_type"] if hr else None,
                 "pending_review": pending_review,
