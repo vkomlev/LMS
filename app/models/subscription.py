@@ -40,9 +40,10 @@ from app.db.base import Base
 #: Уровни доступа к материалам. `demo` — курс с лимитом заданий (tsk-423).
 CONTENT_LEVELS = ("full", "demo")
 
-#: Коды девяти планов сетки. Порядок — как в матрице контракта §2.
+#: Коды планов сетки. Порядок — как в матрице контракта §2 (+ adults_legacy, tsk-1088).
 PLAN_CODES = (
-    "test", "demo", "self", "ai", "base", "base_legacy", "adults", "flagship", "alumni",
+    "test", "demo", "self", "ai", "base", "base_legacy", "adults", "adults_legacy",
+    "flagship", "alumni",
 )
 
 

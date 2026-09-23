@@ -45,7 +45,9 @@ _MATRIX: dict[str, tuple[int | None, bool, bool, bool, str, str | None]] = {
     "ai":          (40,   True,  False, False, "full", "AI"),
     "base":        (100,  True,  True,  True,  "full", "Базовый 2026"),
     "base_legacy": (100,  True,  True,  True,  "full", "Базовый"),
-    "adults":      (100,  True,  True,  True,  "full", "Обучение взрослых"),
+    # tsk-1088: adults — статичная цена, старая сетка ушла за adults_legacy.
+    "adults":      (100,  True,  True,  True,  "full", "Обучение взрослых 2026"),
+    "adults_legacy": (100, True, True,  True,  "full", "Обучение взрослых"),
     "flagship":    (None, True,  True,  True,  "full", "ИИ-предприниматель"),
     "alumni":      (0,    False, False, False, "full", None),
 }
@@ -58,7 +60,7 @@ _GRID_EXPECTED: dict[str, dict[str, int]] = {
 }
 
 #: Группы с единственным вариантом без оси: имя → ₽.
-_FLAT_EXPECTED: dict[str, int] = {"Self": 1000, "AI": 1500}
+_FLAT_EXPECTED: dict[str, int] = {"Self": 1000, "AI": 1500, "Обучение взрослых 2026": 8000}
 
 
 @pytest_asyncio.fixture(scope="function")
