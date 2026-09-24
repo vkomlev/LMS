@@ -30,8 +30,12 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.current_user import CurrentUser
+from app.utils.exceptions import DomainError
 
 logger = logging.getLogger(__name__)
+
+#: Машинный признак отказа «ученик не зачислен в курс задания» (tsk-1108).
+NOT_ENROLLED_CODE = "not_enrolled"
 
 
 async def _user_has_extended_role(db: AsyncSession, user_id: int) -> bool:
@@ -134,9 +138,14 @@ async def assert_task_access(
             "(не в дереве user_courses)",
             current_user.id, task_course_id,
         )
-        raise HTTPException(
-            status.HTTP_403_FORBIDDEN,
-            "Доступ к задаче запрещён: вы не зачислены в этот курс",
+        # tsk-1108: машинный код отказа. По нему SPW открывает вошедшему без
+        # зачисления задание демо-темы гостевым потоком (с демо-лимитом), а не
+        # «Задача недоступна». Отличать по тексту нельзя — рядом тот же 403
+        # `payment_overdue`, и ученику с долгом демо вместо оплаты не показываем.
+        raise DomainError(
+            detail="Доступ к задаче запрещён: вы не зачислены в этот курс",
+            status_code=status.HTTP_403_FORBIDDEN,
+            payload={"code": NOT_ENROLLED_CODE},
         )
 
     from app.services import payment_access_service

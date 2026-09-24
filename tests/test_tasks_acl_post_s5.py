@@ -234,6 +234,11 @@ async def test_student_without_user_courses_denied(db, client):
             headers={"Authorization": f"Bearer {token}"},
         )
         assert resp.status_code == 403
+        # tsk-1108: машинный код — по нему SPW открывает демо-задание вошедшему
+        # без зачисления; текст отказа прежний (его читают клиенты).
+        body = resp.json()
+        assert body["payload"]["code"] == "not_enrolled", body
+        assert body["detail"] == "Доступ к задаче запрещён: вы не зачислены в этот курс"
     finally:
         await _cleanup(db, user_ids=[uid], task_ids=[tid])
 

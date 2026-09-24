@@ -214,7 +214,8 @@ async def get_task_by_external_uid(
     Статусы:
     - 200 — если задача найдена и доступ разрешён;
     - 401 — auth required;
-    - 403 — student не зачислен в курс задачи (или ancestor);
+    - 403 — student не зачислен в курс задачи (или ancestor); tsk-1108:
+      `payload.code = not_enrolled` (SPW по нему открывает демо-тему гостевым потоком);
     - 404 — задача не найдена либо выключена (для ученика).
     """
     task = await tasks_service.get_by_external_uid(db, external_uid=external_uid)
@@ -546,7 +547,7 @@ async def search_tasks(
     responses={
         200: {"description": "Задача найдена и доступна"},
         401: {"description": "Не аутентифицирован"},
-        403: {"description": "Student не зачислен в курс задачи"},
+        403: {"description": "Student не зачислен в курс задачи — `payload.code = not_enrolled` (tsk-1108)"},
         404: {"description": "Задача не существует либо выключена (для ученика)"},
     },
 )
