@@ -308,6 +308,8 @@ def test_backend_magnet_is_registered_and_points_at_existing_program():
     copy = svc.MAGNETS.get(seed.BACKEND_UID)
     assert copy is not None, "магнит завели, а тексты для него — нет"
     assert copy.recommendation_course_uid, "проверка готовности без программы бессмысленна"
+    # tsk-768: курс Backend собран — магнит больше не обходит его через чат-ботов.
+    assert copy.recommendation_course_uid == "lms:tsk768:backend"
     for line in (copy.contact_weak, copy.contact_strong, copy.perfect_note, copy.lead_note):
         assert "ЕГЭ" not in line and "экзамен" not in line, f"текст от диагностики ЕГЭ: {line}"
     # Плейсхолдеры должны подставляться, а не уехать в сообщение как есть.
