@@ -585,3 +585,13 @@ class MyEntitlements(BaseModel):
             "null — на этом тарифе пакет не продаётся"
         ),
     )
+
+
+class FreeEnrollmentResponse(BaseModel):
+    """Итог самозаписи на бесплатный курс (tsk-1109)."""
+
+    course_id: int = Field(..., description="Курс, на который записан ученик")
+    course_uid: Optional[str] = Field(None, description="Код курса для адреса в кабинете")
+    created: bool = Field(
+        ..., description="true — записан этим запросом; false — уже был записан раньше"
+    )

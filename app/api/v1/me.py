@@ -48,6 +48,7 @@ from app.schemas.me import (
     CourseProgress,
     CourseProgressDetailRead,
     CourseWithProgressRead,
+    FreeEnrollmentResponse,
     HistoryItem,
     IdentityRead,
     LastPositionRead,
@@ -72,6 +73,7 @@ from app.schemas.users import UserRead
 from app.services.parent_student_links_service import ParentStudentLinksService
 from app.services.student_teacher_links_service import StudentTeacherLinksService
 from app.services import (
+    free_enrollment_service,
     learning_time_service,
     lesson_calendar_service,
     me_service,
@@ -85,7 +87,7 @@ from app.services import (
     task_history_service,
 )
 from app.services.tasks_acl_service import assert_task_access
-from app.services.audit_service import log_event
+from app.services.audit_service import STUDENT_COURSE_SELF_ENROLLED, log_event
 from app.services.full_name_validator import validate_full_name
 from app.services.auth import (
     guest_attribution_service,
@@ -442,6 +444,69 @@ async def list_courses(
         )
         for it in items
     ]
+
+
+# ── POST /me/courses/{course_id}/enroll-free — самозапись (tsk-1109) ─────────
+
+#: Нажатие кнопки — редкое действие; 10 в минуту хватает с запасом на повторы,
+#: но не даёт перебором id записаться во все бесплатные курсы разом.
+_FREE_ENROLL_LIMIT = 10
+_FREE_ENROLL_WINDOW_SECONDS = 60
+
+
+@router.post(
+    "/courses/{course_id}/enroll-free",
+    response_model=FreeEnrollmentResponse,
+    summary="Записаться самому на бесплатный курс",
+    responses={
+        403: {"description": "Курс не бесплатный или это тема курса, а не курс целиком"},
+        404: {"description": "Курса нет"},
+        409: {"description": "Курс выключен, ученик — выпускник или курс приостановлен сотрудником"},
+        429: {"description": "Слишком частые запросы"},
+    },
+)
+async def enroll_free_course(
+    request: Request,
+    course_id: int = Path(..., ge=1),
+    current_user: CurrentUser = Depends(require_authenticated),
+    db: AsyncSession = Depends(get_async_db),
+) -> FreeEnrollmentResponse:
+    """Записать текущего ученика на корневой курс с `sale_status='free'`.
+
+    Идемпотентно: повторный вызов отвечает 200 с `created=false`. Запись в
+    журнал аудита — только когда связь действительно создана. Кого записывать,
+    берётся из сессии, а не из запроса, — чужого ученика так не записать.
+    """
+    redis = get_redis(_settings.redis_url)
+    if await is_rate_limited(
+        redis,
+        f"enroll_free:user:{current_user.id}",
+        max_requests=_FREE_ENROLL_LIMIT,
+        window_seconds=_FREE_ENROLL_WINDOW_SECONDS,
+    ):
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            "Слишком много попыток записи. Попробуйте через минуту.",
+        )
+
+    result = await free_enrollment_service.enroll_self_free(
+        db, user_id=current_user.id, course_id=course_id
+    )
+    if result.created:
+        await log_event(
+            db,
+            STUDENT_COURSE_SELF_ENROLLED,
+            user_id=current_user.id,
+            ip=request.client.host if request.client else "unknown",
+            user_agent=request.headers.get("user-agent"),
+            details={"course_id": result.course_id, "course_uid": result.course_uid},
+        )
+        await db.commit()
+    return FreeEnrollmentResponse(
+        course_id=result.course_id,
+        course_uid=result.course_uid,
+        created=result.created,
+    )
 
 
 # ── GET /me/teachers ─────────────────────────────────────────────────────────

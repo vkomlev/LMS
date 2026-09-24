@@ -26188,6 +26188,118 @@
         }
       }
     },
+    "/api/v1/me/courses/{course_id}/enroll-free": {
+      "post": {
+        "tags": [
+          "me"
+        ],
+        "summary": "Записаться самому на бесплатный курс",
+        "description": "Записать текущего ученика на корневой курс с `sale_status='free'`.\n\nИдемпотентно: повторный вызов отвечает 200 с `created=false`. Запись в\nжурнал аудита — только когда связь действительно создана. Кого записывать,\nберётся из сессии, а не из запроса, — чужого ученика так не записать.",
+        "operationId": "enroll_free_course_api_v1_me_courses__course_id__enroll_free_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "course_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "title": "Course Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FreeEnrollmentResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Курс не бесплатный или это тема курса, а не курс целиком"
+          },
+          "404": {
+            "description": "Курса нет"
+          },
+          "409": {
+            "description": "Курс выключен, ученик — выпускник или курс приостановлен сотрудником"
+          },
+          "429": {
+            "description": "Слишком частые запросы"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/me/teachers": {
       "get": {
         "tags": [
@@ -53264,6 +53376,39 @@
         "type": "object",
         "title": "FeedbackReportListResponse",
         "description": "Список обращений."
+      },
+      "FreeEnrollmentResponse": {
+        "properties": {
+          "course_id": {
+            "type": "integer",
+            "title": "Course Id",
+            "description": "Курс, на который записан ученик"
+          },
+          "course_uid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Course Uid",
+            "description": "Код курса для адреса в кабинете"
+          },
+          "created": {
+            "type": "boolean",
+            "title": "Created",
+            "description": "true — записан этим запросом; false — уже был записан раньше"
+          }
+        },
+        "type": "object",
+        "required": [
+          "course_id",
+          "created"
+        ],
+        "title": "FreeEnrollmentResponse",
+        "description": "Итог самозаписи на бесплатный курс (tsk-1109)."
       },
       "FreeSlotRead": {
         "properties": {
