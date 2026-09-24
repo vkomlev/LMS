@@ -309,6 +309,10 @@ async def test_claim_by_id_conflict_when_held_by_other_teacher(db, client):
             headers={"Authorization": f"Bearer {token}"},
         )
         assert resp.status_code == 409, resp.text
+        # tsk-1098: коллега видит, кто держит работу и до скольки (МСК).
+        detail = resp.json()["detail"]
+        assert detail.startswith("Работу уже проверяет "), detail
+        assert "освободится не позже" in detail and "(МСК)" in detail, detail
     finally:
         await _cleanup(db, user_ids=[methodist_id, other_id, student_id],
                        task_ids=[task_id], rids=[rid])

@@ -16,6 +16,7 @@ import logging
 import secrets
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional, Tuple
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -843,6 +844,37 @@ class ClaimForbiddenError(GradeError):
         super().__init__("forbidden", "Работа вне вашей зоны ответственности")
 
 
+_SCHOOL_TZ = ZoneInfo("Europe/Moscow")
+
+
+async def _review_holder_message(db: AsyncSession, result_id: int) -> str:
+    """Текст 409 «работу держит коллега»: кто и до скольки (tsk-1098, tsk-663).
+
+    Держателя читаем заново, а не из диагностического SELECT: между ним и
+    неудачным UPDATE работу мог перехватить другой человек. Время — в поясе
+    школы (МСК), как на экранах кабинета. Если прочитать не вышло (захват
+    как раз истёк) — прежняя безымянная фраза.
+    """
+    r = await db.execute(
+        text("""
+            SELECT u.full_name, tr.review_claim_expires_at
+            FROM task_results tr
+            LEFT JOIN users u ON u.id = tr.review_claimed_by
+            WHERE tr.id = :result_id AND tr.review_claimed_by IS NOT NULL
+        """),
+        {"result_id": result_id},
+    )
+    row = r.fetchone()
+    if row is None:
+        return "Работу уже проверяет другой преподаватель"
+    name, expires = row
+    who = (name or "").strip() or "другой преподаватель"
+    if expires is None:
+        return f"Работу уже проверяет {who}"
+    until = expires.astimezone(_SCHOOL_TZ).strftime("%H:%M")
+    return f"Работу уже проверяет {who} — освободится не позже {until} (МСК)"
+
+
 async def claim_review_by_id(
     db: AsyncSession,
     *,
@@ -926,7 +958,7 @@ async def claim_review_by_id(
             "claim_by_id conflict result_id=%s teacher_id=%s claimed_by=%s expires=%s",
             result_id, teacher_id, claimed_by, claim_expires_at,
         )
-        raise GradeConflictError("Работу уже проверяет другой преподаватель")
+        raise GradeConflictError(await _review_holder_message(db, result_id))
 
     (
         rid, task_id, user_id_val, score, submitted_at,
