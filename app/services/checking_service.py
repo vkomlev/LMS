@@ -6,6 +6,7 @@ import ast
 import logging
 import re
 import unicodedata
+from decimal import Decimal, InvalidOperation
 from collections import Counter
 from typing import List, Optional, Set, Dict
 
@@ -1582,6 +1583,10 @@ class CheckingService:
         Returns:
             True, если ответ засчитывается за этот эталон.
         """
+        if "strip_punctuation" in steps:
+            numeric_verdict = cls._compare_decimal_numbers(value, accepted)
+            if numeric_verdict is not None:
+                return numeric_verdict
         if "code_ast" in steps:
             canon_value = cls._canon_code(value)
             if canon_value is not None:
@@ -1626,6 +1631,41 @@ class CheckingService:
         return _CODE_OPERATOR_RE.sub(
             lambda m: _CODE_OPERATOR_PLACEHOLDERS[m.group(0)], value or ""
         )
+
+    #: Одно число целиком, возможно с дробной частью через точку или запятую.
+    _DECIMAL_NUMBER_RE = re.compile(r"-?\d+(?:[.,]\d+)?")
+
+    @classmethod
+    def _compare_decimal_numbers(cls, value: str, accepted: str) -> Optional[bool]:
+        """Сравнивает ответ и эталон как числа, если среди них есть дробное (tsk-1119).
+
+        `strip_punctuation` склеивает цифры вокруг знака внутри числа, поэтому «2.2»
+        и «22» после нормализации совпадали — ложный зачёт. Здесь, если ОБЕ стороны —
+        одно число, а хотя бы у одной есть дробная часть, вердикт выносится по
+        значению: «2.2» = «2,2» = «2.20», «5» = «5.0», но «22» ≠ «2.2».
+
+        Целые без дробной части с обеих сторон сюда не попадают: «0101» и «101» —
+        разные ответы (двоичная запись), их судит прежняя текстовая логика.
+
+        Returns:
+            True/False — окончательный вердикт; None — не числа, решает прежняя логика.
+        """
+        raw_value = unicodedata.normalize("NFKC", value or "").strip()
+        raw_accepted = unicodedata.normalize("NFKC", accepted or "").strip()
+        if not (
+            cls._DECIMAL_NUMBER_RE.fullmatch(raw_value)
+            and cls._DECIMAL_NUMBER_RE.fullmatch(raw_accepted)
+        ):
+            return None
+        if not any(sep in raw_value + raw_accepted for sep in ".,"):
+            return None
+        try:
+            return Decimal(raw_value.replace(",", ".")) == Decimal(
+                raw_accepted.replace(",", ".")
+            )
+        except InvalidOperation:
+            logger.warning("Не разобрано как число: %r / %r", raw_value, raw_accepted)
+            return None
 
     #: Одно целое число целиком (эталон, к которому применимо послабление ниже).
     _WHOLE_NUMBER_RE = re.compile(r"\d+")
