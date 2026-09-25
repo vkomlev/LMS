@@ -18,6 +18,8 @@
 """
 from __future__ import annotations
 
+from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -103,6 +105,10 @@ async def ingest_lead(
     ),
 )
 async def read_free_slots(
+    group_id: Optional[int] = Query(
+        default=None,
+        description="tsk-1124: группа расписания; пусто — группа по умолчанию (детская)",
+    ),
     db: AsyncSession = Depends(get_async_db),
     current_user: CurrentUser = Depends(_service_only),
 ) -> FreeSlotsRead:
@@ -116,7 +122,7 @@ async def read_free_slots(
     Ответ намеренно обезличен: время и наполненность словом, без имён
     преподавателей и числа учеников. С той стороны текст читает клиент.
     """
-    data = await schedule_booking_service.get_free_slots(db)
+    data = await schedule_booking_service.get_free_slots(db, group_id=group_id)
     return FreeSlotsRead(**data)
 
 

@@ -58,7 +58,7 @@ subscription, attendance, curator, graduation, breaks, merge.
 - Эффективные группы ученика = его явные группы, иначе `{группа is_default}`.
 
 ## Единый предикат
-Модуль `app/services/schedule_group_policy.py`:
+Реализовано в `app/services/schedule_group_service.py` (решение по ходу: предикаты на Python, без отдельного модуля и SQL-фрагмента):
 - `student_group_ids(session, student_id) -> set[int]` (явные либо по умолчанию);
 - `slot_group_filter(student_id_param)` — SQL-фрагмент
   `ls.group_id IN (<эффективные группы>)` для сырых запросов и выражение для ORM.

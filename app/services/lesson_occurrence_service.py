@@ -44,6 +44,7 @@ from app.services import (
     audit_service,
     homework_service,
     lesson_calendar_service,
+    schedule_group_service,
 )
 from app.services.lesson_occurrence_generator_service import iter_occurrence_datetimes
 from app.utils.exceptions import DomainError
@@ -323,7 +324,11 @@ async def _leading_teacher_ids(db: AsyncSession, occurrence: LessonOccurrence) -
 
 
 async def _active_slots_of(
-    db: AsyncSession, teacher_ids: list[int], *, duration_minutes: int
+    db: AsyncSession,
+    teacher_ids: list[int],
+    *,
+    duration_minutes: int,
+    group_ids: Optional[list[int]] = None,
 ) -> list[LessonSlot]:
     """Активные слоты этих преподавателей ТОЙ ЖЕ длительности.
 
@@ -331,10 +336,17 @@ async def _active_slots_of(
     время слота, генератор потом подтянет к этому слоту по (slot_id,
     scheduled_at) и выровняет длительность по слоту — то есть 90-минутное
     занятие в часовом слоте всё равно стало бы часовым, только молча.
+
+    ``group_ids`` (tsk-1124) — эффективные группы УЧЕНИКА: слоты чужих групп
+    отбрасываются. ``None`` — без фильтра (путь преподавателя/методиста).
     """
     by_id: dict[int, LessonSlot] = {}
     for teacher_id in teacher_ids:
         for slot in await _lesson_slot_repo.list_active(db, teacher_id=teacher_id):
+            if group_ids is not None and not schedule_group_service.slot_visible(
+                slot.group_id, group_ids
+            ):
+                continue
             if slot.duration_minutes == duration_minutes:
                 by_id[slot.id] = slot
     return list(by_id.values())
@@ -355,10 +367,18 @@ def _slot_starts_at(slot: LessonSlot, scheduled_at: datetime) -> bool:
 
 
 async def _find_slot_at(
-    db: AsyncSession, *, teacher_ids: list[int], scheduled_at: datetime, duration_minutes: int
+    db: AsyncSession,
+    *,
+    teacher_ids: list[int],
+    scheduled_at: datetime,
+    duration_minutes: int,
+    group_ids: Optional[list[int]] = None,
 ) -> Optional[LessonSlot]:
-    """Слот расписания, начинающийся ровно в это время, или ``None``."""
-    for slot in await _active_slots_of(db, teacher_ids, duration_minutes=duration_minutes):
+    """Слот расписания, начинающийся ровно в это время, или ``None``.
+    ``group_ids`` — см. `_active_slots_of`."""
+    for slot in await _active_slots_of(
+        db, teacher_ids, duration_minutes=duration_minutes, group_ids=group_ids,
+    ):
         if _slot_starts_at(slot, scheduled_at):
             return slot
     return None
@@ -373,6 +393,7 @@ async def _list_slot_candidates(
     exclude_occurrence_id: Optional[int] = None,
     limit: int = 10,
     horizon_days: int | None = None,
+    group_ids: Optional[list[int]] = None,
 ) -> list[datetime]:
     """Ближайшие времена активных слотов этих преподавателей, свободные у
     ученика. Отсортированы по возрастанию.
@@ -393,7 +414,9 @@ async def _list_slot_candidates(
     horizon = _reschedule_horizon_days() if horizon_days is None else horizon_days
     now_utc = datetime.now(timezone.utc)
     moments: set[datetime] = set()
-    for slot in await _active_slots_of(db, teacher_ids, duration_minutes=duration_minutes):
+    for slot in await _active_slots_of(
+        db, teacher_ids, duration_minutes=duration_minutes, group_ids=group_ids,
+    ):
         moments.update(
             iter_occurrence_datetimes(slot, horizon_days=horizon, now_utc=now_utc)
         )
@@ -575,11 +598,17 @@ async def create_ad_hoc_occurrence(
         db, student_id, action="запись на занятие (ad-hoc)"
     )
 
+    # tsk-1124: ученик (require_scheduled_slot) садится только в слот своей
+    # группы; преподаватель назначает отработку куда считает нужным.
     slot = await _find_slot_at(
         db,
         teacher_ids=[teacher_id],
         scheduled_at=scheduled_at,
         duration_minutes=duration_minutes,
+        group_ids=(
+            await schedule_group_service.effective_group_ids(db, student_id)
+            if require_scheduled_slot else None
+        ),
     )
     if slot is None:
         # tsk-967: часы работы — барьер только для ИСТИННОГО ad-hoc, время
@@ -710,7 +739,13 @@ async def list_bookable_occurrences_for_student(
     )
     already_occurrence_ids = {o.id for _p, o in already_pairs}
 
-    filtered = [o for o in candidates if o.id not in already_occurrence_ids][:limit]
+    # tsk-1124: занятия слотов чужих групп ученику не предлагаются.
+    group_ids = await schedule_group_service.effective_group_ids(db, student_id)
+    filtered = [
+        o for o in candidates
+        if o.id not in already_occurrence_ids
+        and await schedule_group_service.occurrence_visible(db, o.slot_id, group_ids)
+    ][:limit]
     if not filtered:
         return []
 
@@ -749,6 +784,13 @@ async def join_occurrence_as_student(
     await alumni_enrollment_guard.assert_not_alumni(
         db, student_id, action="присоединение к занятию (ученик)"
     )
+
+    if not await schedule_group_service.occurrence_visible(
+        db, occurrence.slot_id,
+        await schedule_group_service.effective_group_ids(db, student_id),
+    ):
+        # tsk-1124: занятие чужой группы — для ученика его нет.
+        raise DomainError(f"Занятие id={occurrence_id} не найдено", status_code=404)
 
     if occurrence.scheduled_at <= datetime.now(timezone.utc):
         raise DomainError("Занятие уже началось или прошло", status_code=409)
@@ -838,6 +880,7 @@ async def list_available_slots(
         exclude_occurrence_id=occurrence.id,
         limit=limit,
         horizon_days=horizon_days,
+        group_ids=await schedule_group_service.effective_group_ids(db, student_id),
     )
 
 
@@ -886,6 +929,8 @@ async def reschedule_occurrence(
         teacher_ids=teacher_ids,
         scheduled_at=new_scheduled_at,
         duration_minutes=occurrence.duration_minutes,
+        # tsk-1124: приём не мягче выдачи — только слоты групп ученика.
+        group_ids=await schedule_group_service.effective_group_ids(db, student_id),
     )
     if slot is None:
         raise DomainError(

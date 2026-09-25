@@ -80,6 +80,7 @@ from app.services import (
     payment_service,
     retention_service,
     roles_service,
+    schedule_group_service,
     schedule_preference_service,
     school_grade_service,
     student_dashboard_service,
@@ -544,6 +545,7 @@ async def list_my_teachers(
     if at is not None:
         covering = await lesson_calendar_service.list_teachers_for_time(
             db, scheduled_at=at, duration_minutes=duration_minutes,
+            group_ids=await schedule_group_service.effective_group_ids(db, current_user.id),
         )
         covering_ids = {t.id for t in covering}
         if covering_ids:

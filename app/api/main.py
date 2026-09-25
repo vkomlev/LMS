@@ -443,6 +443,8 @@ app.include_router(feedback_reports_router, prefix=API_PREFIX)
 # tsk-428 (Календарь LMS Фаза 1): admin-расписание (operating-hours, lesson-slots)
 from app.api.v1.lesson_calendar_admin import router as lesson_calendar_admin_router
 app.include_router(lesson_calendar_admin_router, prefix=API_PREFIX)
+from app.api.v1.schedule_groups import router as schedule_groups_router  # tsk-1124
+app.include_router(schedule_groups_router, prefix=API_PREFIX)
 
 # tsk-429 (Календарь LMS Фаза 2): явка ученика (attendance, /me/lesson-occurrences)
 from app.api.v1.lesson_occurrences import router as lesson_occurrences_router

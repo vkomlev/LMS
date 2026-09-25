@@ -49,7 +49,7 @@ from app.schemas.schedule_preference import (
     SchedulePreferenceHour,
 )
 from app.services import audit_service, inbox_service, lesson_calendar_service
-from app.services import schedule_preference_service
+from app.services import schedule_group_service, schedule_preference_service
 from app.services.schedule_plan_service import in_grid
 from app.utils.exceptions import DomainError
 
@@ -162,13 +162,17 @@ async def _load_slots(db: AsyncSession, student_id: int) -> list[dict[str, Any]]
                        COUNT(lss.id) FILTER (WHERE lss.is_active) AS student_count,
                        COUNT(lss.id) FILTER (
                            WHERE lss.is_active AND lss.student_id = :sid
-                       ) > 0 AS is_mine
+                       ) > 0 AS is_mine,
+                       ls.group_id,
+                       sg.audience
                   FROM lesson_slot ls
+                  JOIN schedule_group sg ON sg.id = ls.group_id
                   LEFT JOIN users t ON t.id = ls.teacher_id
                   LEFT JOIN lesson_slot_student lss ON lss.slot_id = ls.id
                  WHERE ls.is_active
                  GROUP BY ls.id, ls.teacher_id, t.full_name, ls.weekday,
-                          ls.start_time, ls.duration_minutes, ls.active_until
+                          ls.start_time, ls.duration_minutes, ls.active_until,
+                          ls.group_id, sg.audience
                  ORDER BY ls.weekday, ls.start_time, ls.id
                 """
             ),
@@ -187,9 +191,18 @@ async def _load_slots(db: AsyncSession, student_id: int) -> list[dict[str, Any]]
             "active_until": r[6],
             "student_count": int(r[7] or 0),
             "is_mine": bool(r[8]),
+            "group_id": int(r[9]),
+            "audience": r[10],
         }
         for r in rows
     ]
+
+
+def _grid_ok(weekday: int, start_time: time, audience: str) -> bool:
+    """Час допустим для записи. Сетка (Пн-Чт 12-19, Сб 9-14) — расписание
+    ДЕТСКИХ групп; у взрослых своё время (tsk-1124: пятница 12:00), и сетка
+    его бы спрятала. Для взрослой группы решает сам активный слот."""
+    return audience != "kids" or in_grid((weekday, start_time))
 
 
 def _match_for(
@@ -223,7 +236,9 @@ def _to_slot(row: dict[str, Any], match: str) -> BookableSlot:
     )
 
 
-async def get_free_slots(db: AsyncSession) -> dict[str, Any]:
+async def get_free_slots(
+    db: AsyncSession, group_id: Optional[int] = None
+) -> dict[str, Any]:
     """Свободные окна без привязки к ученику — для соседних систем (tsk-857).
 
     Отбор тот же, что на экране записи: живой слот, час из сетки, не больше
@@ -234,13 +249,24 @@ async def get_free_slots(db: AsyncSession) -> dict[str, Any]:
     Пороги намеренно берутся из тех же функций, что и запись. Слот, куда
     ученик записаться не может, предлагать на площадке тем более нельзя, и
     разъехаться эти два места не должны.
+
+    tsk-1124: человек с площадки ещё без групп — как ученик без группы, видит
+    группу по умолчанию; площадка взрослых передаёт свою группу явно.
     """
+    if group_id is not None:
+        # Неизвестная или выключенная группа — явная ошибка, а не пустой список.
+        await schedule_group_service.ensure_active_group(db, group_id)
+    group_ids = [group_id] if group_id is not None else [
+        await schedule_group_service.default_group_id(db)
+    ]
     today = _today_moscow()
     slots: list[dict[str, Any]] = []
     for row in await _load_slots(db, student_id=0):
+        if not schedule_group_service.slot_visible(row["group_id"], group_ids):
+            continue
         if not slot_is_alive(row["weekday"], row["active_until"], today):
             continue
-        if not in_grid((row["weekday"], row["start_time"])):
+        if not _grid_ok(row["weekday"], row["start_time"], row["audience"]):
             continue
         if not is_bookable_count(row["student_count"]):
             continue
@@ -278,6 +304,7 @@ async def get_bookable(db: AsyncSession, student_id: int) -> dict[str, Any]:
     }
 
     today = _today_moscow()
+    group_ids = await schedule_group_service.effective_group_ids(db, student_id)
     options: list[BookableSlot] = []
     mine: list[BookableSlot] = []
     for row in await _load_slots(db, student_id):
@@ -288,7 +315,10 @@ async def get_bookable(db: AsyncSession, student_id: int) -> dict[str, Any]:
             # сетку: человек должен видеть, куда он ходит сейчас.
             mine.append(_to_slot(row, match))
             continue
-        if not alive or not in_grid((row["weekday"], row["start_time"])):
+        if not schedule_group_service.slot_visible(row["group_id"], group_ids):
+            # tsk-1124: слоты чужих групп (взрослых — детям и наоборот) не видны.
+            continue
+        if not alive or not _grid_ok(row["weekday"], row["start_time"], row["audience"]):
             continue
         if not is_bookable_count(row["student_count"]):
             # В слоте больше восьми — не показываем вовсе (tsk-746, запрет оператора).
@@ -360,18 +390,26 @@ async def join_slot(
     row = (
         await db.execute(
             text(
-                "SELECT id, weekday, start_time, is_active, active_until "
-                "  FROM lesson_slot WHERE id = :id FOR UPDATE"
+                "SELECT ls.id, ls.weekday, ls.start_time, ls.is_active, ls.active_until, "
+                "       ls.group_id, sg.audience "
+                "  FROM lesson_slot ls JOIN schedule_group sg ON sg.id = ls.group_id "
+                " WHERE ls.id = :id FOR UPDATE OF ls"
             ),
             {"id": slot_id},
         )
     ).first()
     if row is None or not bool(row[3]):
         raise DomainError("Такого занятия нет или оно отменено", status_code=404)
+    # tsk-1124: слот чужой группы — для ученика его нет (тот же ответ, что на
+    # несуществующий: выдача его не показывала, и приём не мягче выдачи).
+    if not schedule_group_service.slot_visible(
+        int(row[5]), await schedule_group_service.effective_group_ids(db, student_id)
+    ):
+        raise DomainError("Такого занятия нет или оно отменено", status_code=404)
 
     weekday, start_time, active_until = int(row[1]), row[2], row[4]
     today = _today_moscow()
-    if not in_grid((weekday, start_time)) or not slot_is_alive(
+    if not _grid_ok(weekday, start_time, row[6]) or not slot_is_alive(
         weekday, active_until, today
     ):
         raise DomainError(

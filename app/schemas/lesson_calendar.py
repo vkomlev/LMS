@@ -70,6 +70,8 @@ class LessonSlotCreate(BaseModel):
         default_factory=list,
         description="Начальные участники слота (опционально, удобно для импорта)",
     )
+    #: tsk-1124: группа расписания; пусто — группа по умолчанию.
+    group_id: Optional[int] = Field(default=None, description="Группа расписания слота")
 
 
 class LessonSlotUpdate(BaseModel):
@@ -93,6 +95,9 @@ class LessonSlotUpdate(BaseModel):
     #: терялись прикреплённые ученики. Будущие занятия переезжают на нового,
     #: прошедшие остаются как история.
     teacher_id: Optional[int] = None
+    #: tsk-1124: сменить группу расписания слота. Уже прикреплённых учеников
+    #: не трогает — их группы методист правит отдельно.
+    group_id: Optional[int] = None
 
 
 class LessonSlotRead(BaseModel):
@@ -108,6 +113,8 @@ class LessonSlotRead(BaseModel):
     #: tsk-679: последний день действия слота включительно; `null` — бессрочно.
     #: Не то же, что `is_active=false`: слот ещё работает, но до этого дня.
     active_until: Optional[date] = None
+    #: tsk-1124: группа расписания (аудитория + предмет).
+    group_id: int
     created_by: Optional[int] = None
     created_at: datetime
     updated_at: datetime

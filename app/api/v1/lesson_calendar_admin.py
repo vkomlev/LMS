@@ -146,6 +146,7 @@ async def create_lesson_slot(
         created_by=current_user.id if not current_user.is_service else None,
         student_ids=body.student_ids,
         active_until=body.active_until,
+        group_id=body.group_id,
     )
     return await _to_slot_read(db, row)
 
@@ -153,10 +154,13 @@ async def create_lesson_slot(
 @router.get("/lesson-slots", response_model=list[LessonSlotRead])
 async def list_lesson_slots(
     teacher_id: Optional[int] = Query(default=None),
+    group_id: Optional[int] = Query(default=None, description="tsk-1124: фильтр по группе расписания"),
     db: AsyncSession = Depends(get_async_db),
     _current_user: CurrentUser = Depends(_ADMIN_GATE),
 ) -> list[LessonSlotRead]:
-    rows = await lesson_calendar_service.list_lesson_slots(db, teacher_id=teacher_id)
+    rows = await lesson_calendar_service.list_lesson_slots(
+        db, teacher_id=teacher_id, group_id=group_id,
+    )
     return [await _to_slot_read(db, r) for r in rows]
 
 
@@ -188,6 +192,7 @@ async def update_lesson_slot(
         teacher_id=body.teacher_id,
         active_until=body.active_until,
         clear_active_until=body.clear_active_until,
+        group_id=body.group_id,
     )
     return await _to_slot_read(db, row)
 

@@ -32,7 +32,7 @@ from app.repos.lesson_calendar_repository import (
     LessonSlotTeacherRepository,
     OperatingHoursRepository,
 )
-from app.services import alumni_enrollment_guard, roles_service
+from app.services import alumni_enrollment_guard, roles_service, schedule_group_service
 from app.utils.exceptions import DomainError
 
 logger = logging.getLogger(__name__)
@@ -162,10 +162,16 @@ async def create_lesson_slot(
     created_by: Optional[int],
     student_ids: Optional[list[int]] = None,
     active_until: Optional[date] = None,
+    group_id: Optional[int] = None,
 ) -> LessonSlot:
     """Создать групповой слот преподавателя, опционально сразу с участниками
-    (удобно для разового импорта расписания)."""
+    (удобно для разового импорта расписания).
+
+    ``group_id`` (tsk-1124) — группа расписания; не передана — группу по
+    умолчанию поставит триггер БД."""
     await ensure_user_has_role(db, teacher_id, "teacher")
+    if group_id is not None:
+        await schedule_group_service.ensure_active_group(db, group_id)
 
     overlap = await _lesson_slot_repo.has_overlap(
         db,
@@ -192,6 +198,7 @@ async def create_lesson_slot(
         duration_minutes=duration_minutes,
         timezone=timezone,
         created_by=created_by,
+        **({"group_id": group_id} if group_id is not None else {}),
     )
     # tsk-679: слот можно завести сразу с датой окончания — так вёрстка
     # осенней сетки может создать слоты «на семестр», не выключая их потом.
@@ -230,8 +237,14 @@ async def list_lesson_slots(
     db: AsyncSession,
     *,
     teacher_id: Optional[int] = None,
+    group_id: Optional[int] = None,
 ) -> list[LessonSlot]:
-    return await _lesson_slot_repo.list_active(db, teacher_id=teacher_id)
+    rows = await _lesson_slot_repo.list_active(db, teacher_id=teacher_id)
+    # tsk-1124: фильтр кабинета методиста. Это выбор методиста, а не правило
+    # видимости ученика (то — schedule_group_service.effective_group_ids).
+    if group_id is not None:
+        rows = [r for r in rows if r.group_id == group_id]
+    return rows
 
 
 async def get_lesson_slot(db: AsyncSession, slot_id: int) -> LessonSlot:
@@ -263,8 +276,13 @@ async def update_lesson_slot(
     teacher_id: Optional[int] = None,
     active_until: Optional[date] = None,
     clear_active_until: bool = False,
+    group_id: Optional[int] = None,
 ) -> LessonSlot:
     row = await get_lesson_slot(db, slot_id)
+    if group_id is not None and group_id != row.group_id:
+        # tsk-1124: смена группы слота. Прикреплённые ученики остаются —
+        # решать, переносить ли их, методисту.
+        await schedule_group_service.set_slot_group(db, row, group_id)
 
     new_weekday = weekday if weekday is not None else row.weekday
     new_start_time = start_time if start_time is not None else row.start_time
@@ -944,7 +962,11 @@ def _time_in_window(local_time: time, start_time: time, duration_minutes: int) -
 
 
 async def list_teachers_for_time(
-    db: AsyncSession, *, scheduled_at: datetime, duration_minutes: int = 60,
+    db: AsyncSession,
+    *,
+    scheduled_at: datetime,
+    duration_minutes: int = 60,
+    group_ids: Optional[list[int]] = None,
 ) -> list["Users"]:
     """Преподаватели, у которых уже есть закреплённый слот на это конкретное
     время (tsk-443, реальный кейс: Денис Ильин записывался на Пн 17:00,
@@ -971,6 +993,8 @@ async def list_teachers_for_time(
     matching_slots = [
         s for s in all_active_slots
         if s.weekday == weekday and _time_in_window(local_time, s.start_time, s.duration_minutes)
+        # tsk-1124: для ученика — только слоты его групп.
+        and (group_ids is None or schedule_group_service.slot_visible(s.group_id, group_ids))
     ]
     if not matching_slots:
         return []
