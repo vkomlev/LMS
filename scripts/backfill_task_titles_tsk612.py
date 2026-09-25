@@ -108,7 +108,10 @@ _SYSTEM_PROMPT = """\
   разные числа, разные переменные), иначе список снова станет нечитаемым;
 - не выдумывай того, чего нет в условии;
 - НЕ пиши в названии ОТВЕТ и результат решения («длиной 9 км», «равно 4»):
-  название видит ученик прямо над условием (tsk-1058).
+  название видит ученик прямо над условием (tsk-1058);
+- если задание просит назвать термин («как называется…», «впиши слово»), НЕ
+  пиши этот термин ни в какой форме: описывай, что нужно узнать («На что
+  записывают сведения», а не «Носитель информации») (tsk-1122).
 
 Ответ — строго JSON: {"titles": [{"id": <число>, "title": "<название>"}, ...]}
 Ровно по одному объекту на каждое присланное задание, id — из запроса."""
@@ -206,9 +209,36 @@ def _title_leaks_answer(title: str, answer: Optional[str]) -> bool:
     останется без названия до следующего прохода, это безопаснее слива.
     """
     ans = (answer or "").strip()
-    if not _NUMERIC_ANSWER_RE.match(ans):
+    if not ans:
         return False
+    if not _NUMERIC_ANSWER_RE.match(ans):
+        return _title_names_word_answer(title, ans)
     return bool(re.search(r"(?<![\d.,])" + re.escape(ans) + r"(?![\d])", title))
+
+
+#: Длина общей основы, по которой словоформы считаются одним словом
+#: («носитель» / «носителя», «алгоритм» / «алгоритма»).
+_WORD_STEM_LEN = 5
+
+
+def _title_names_word_answer(title: str, answer: str) -> bool:
+    """True, если в названии стоит словесный ответ или его словоформа (tsk-1122).
+
+    Короткий ответ (до 5 знаков: «DNS», «B2», «async») ищется целым токеном,
+    длинный — по общей основе у каждого слова ответа. Грубо намеренно: лишний
+    отсев оставит задание без названия до следующего прохода.
+    """
+    title_words = re.findall(r"[\w-]+", title.lower())
+    ans_words = re.findall(r"[\w-]+", answer.lower())
+    if not ans_words:
+        return False
+    for aw in ans_words:
+        if len(aw) < _WORD_STEM_LEN:
+            if aw not in title_words:
+                return False
+        elif not any(tw.startswith(aw[:_WORD_STEM_LEN]) for tw in title_words):
+            return False
+    return True
 
 
 def _valid_title(raw: Any, answer: Optional[str] = None) -> Optional[str]:

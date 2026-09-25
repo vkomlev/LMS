@@ -1,4 +1,4 @@
-"""tsk-1058: генератор названий не пропускает числовой ответ в название."""
+"""tsk-1058/1122: генератор названий не пропускает ответ (число или термин) в название."""
 import json
 
 from scripts.backfill_task_titles_tsk612 import _match_batch, _valid_title
@@ -13,8 +13,17 @@ def test_answer_inside_other_number_kept() -> None:
     assert _valid_title("Кратчайший путь по 19 дорогам", "9") == "Кратчайший путь по 19 дорогам"
 
 
-def test_text_answer_and_no_answer_kept() -> None:
-    assert _valid_title("Носитель информации", "носитель") == "Носитель информации"
+def test_word_answer_in_title_rejected() -> None:
+    # tsk-1122: реальные находки прода — термин-ответ или его словоформа
+    assert _valid_title("Носитель информации", "носитель") is None
+    assert _valid_title("Определение алгоритма", "алгоритм") is None
+    assert _valid_title("Ошибка на этапе DNS", "DNS") is None
+    assert _valid_title("Клиентская валидация перед отправкой", "клиентская валидация") is None
+
+
+def test_word_answer_absent_kept() -> None:
+    assert _valid_title("На что записывают сведения", "носитель") == "На что записывают сведения"
+    assert _valid_title("«Сервер не найден» без соединения", "DNS") == "«Сервер не найден» без соединения"
     assert _valid_title("Кратчайший путь от А до Е") == "Кратчайший путь от А до Е"
 
 
