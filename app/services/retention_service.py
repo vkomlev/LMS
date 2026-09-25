@@ -49,6 +49,7 @@ from typing import Any, Optional
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.lesson_window_sql import in_lesson_sql
 from app.services.teacher_lesson_summary_service import MANUAL_SOURCE
 
 logger = logging.getLogger("app.retention")
@@ -64,7 +65,7 @@ CONDITION_ITEMS_TOTAL = "between_lessons_items"
 #: (tsk-494/504), см. docstring модуля. `UNION` (не `UNION ALL`) даёт
 #: дедупликацию повторных верных сдач одного задания в один день — метрика
 #: дашборда тоже считает DISTINCT по элементу.
-_EVENTS_SQL = """
+_EVENTS_SQL = f"""
 SELECT tr.user_id AS student_id,
        (tr.submitted_at AT TIME ZONE 'Europe/Moscow')::date AS d,
        'task' AS kind,
@@ -74,13 +75,7 @@ JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
 WHERE tr.user_id = ANY(:student_ids)
   AND tr.is_correct = true
   AND tr.source_system IS DISTINCT FROM :manual_source
-  AND NOT EXISTS (
-      SELECT 1 FROM lesson_occurrence_participant lop
-      JOIN lesson_occurrence lo ON lo.id = lop.occurrence_id
-      WHERE lop.student_id = tr.user_id
-        AND tr.submitted_at BETWEEN lo.scheduled_at
-            AND lo.scheduled_at + make_interval(mins => lo.duration_minutes)
-  )
+  AND NOT {in_lesson_sql('tr.submitted_at', 'tr.user_id')}
 UNION
 SELECT smp.student_id,
        (smp.completed_at AT TIME ZONE 'Europe/Moscow')::date,
@@ -91,13 +86,7 @@ WHERE smp.student_id = ANY(:student_ids)
   AND smp.status = 'completed'
   AND smp.completed_at IS NOT NULL
   AND smp.source IS DISTINCT FROM :manual_source
-  AND NOT EXISTS (
-      SELECT 1 FROM lesson_occurrence_participant lop
-      JOIN lesson_occurrence lo ON lo.id = lop.occurrence_id
-      WHERE lop.student_id = smp.student_id
-        AND smp.completed_at BETWEEN lo.scheduled_at
-            AND lo.scheduled_at + make_interval(mins => lo.duration_minutes)
-  )
+  AND NOT {in_lesson_sql('smp.completed_at', 'smp.student_id')}
 """
 
 

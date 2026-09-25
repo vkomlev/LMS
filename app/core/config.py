@@ -638,8 +638,9 @@ class Settings:
         # учебное действие (сдача ответа/завершение материала) всё ещё
         # авто-подтверждает явку — без него ученик, пришедший на несколько
         # секунд/минут раньше scheduled_at, не попадает в auto_joined.
+        # tsk-1111: 15 → 5 — за 15 минут до звонка ученик ещё доделывает ДЗ.
         self.lesson_auto_confirm_early_grace_minutes: int = int(
-            os.getenv("LESSON_AUTO_CONFIRM_EARLY_GRACE_MINUTES", "15")
+            os.getenv("LESSON_AUTO_CONFIRM_EARLY_GRACE_MINUTES", "5")
         )
         # tsk-591: простой ученика во время занятия — сигнал преподавателю.
         self.lesson_idle_cron_enabled: bool = os.getenv(

@@ -1,0 +1,420 @@
+diff --git a/app/core/config.py b/app/core/config.py
+index ad44453..7c63f7f 100644
+--- a/app/core/config.py
++++ b/app/core/config.py
+@@ -638,8 +638,9 @@ class Settings:
+         # учебное действие (сдача ответа/завершение материала) всё ещё
+         # авто-подтверждает явку — без него ученик, пришедший на несколько
+         # секунд/минут раньше scheduled_at, не попадает в auto_joined.
++        # tsk-1111: 15 → 5 — за 15 минут до звонка ученик ещё доделывает ДЗ.
+         self.lesson_auto_confirm_early_grace_minutes: int = int(
+-            os.getenv("LESSON_AUTO_CONFIRM_EARLY_GRACE_MINUTES", "15")
++            os.getenv("LESSON_AUTO_CONFIRM_EARLY_GRACE_MINUTES", "5")
+         )
+         # tsk-591: простой ученика во время занятия — сигнал преподавателю.
+         self.lesson_idle_cron_enabled: bool = os.getenv(
+diff --git a/app/core/settings_registry.py b/app/core/settings_registry.py
+index 22f558d..b1b01a0 100644
+--- a/app/core/settings_registry.py
++++ b/app/core/settings_registry.py
+@@ -382,10 +382,11 @@ SETTINGS: Tuple[SettingDef, ...] = (
+         title="Насколько раньше начала засчитывать приход",
+         description=(
+             "Ученик сел за работу до звонка — явка всё равно отмечается, "
+-            "если он опередил начало не больше чем на этот срок."
++            "если он опередил начало не больше чем на этот срок. Только явка: "
++            "сданное до звонка всё равно считается домашней работой."
+         ),
+         kind="int",
+-        default=15,
++        default=5,
+         env_var="LESSON_AUTO_CONFIRM_EARLY_GRACE_MINUTES",
+         unit="минуты",
+         min_value=0,
+diff --git a/app/services/homework_service.py b/app/services/homework_service.py
+index b938aa5..39a0d34 100644
+--- a/app/services/homework_service.py
++++ b/app/services/homework_service.py
+@@ -52,6 +52,7 @@ from app.services import (
+     program_scope_service,
+ )
+ # tsk-867: вес элемента — состав набирается до бюджета времени, а не до штук.
++from app.services.lesson_window_sql import in_lesson_sql
+ from app.services.task_effort_service import (
+     MATERIAL_EFFORT_SECONDS_PROXY,
+     EffortTable,
+@@ -861,15 +862,8 @@ async def auto_issue_after_lesson(
+ 
+ 
+ def _in_lesson_sql(ts: str, sid: str) -> str:
+-    """`ts` попадает в окно какого-то занятия ученика `sid`."""
+-    return (
+-        "EXISTS (SELECT 1 FROM lesson_occurrence_participant lop "
+-        "  JOIN lesson_occurrence lo ON lo.id = lop.occurrence_id "
+-        f" WHERE lop.student_id = {sid} AND lop.status <> 'rescheduled' "
+-        f"   AND {ts} >= lo.scheduled_at "
+-        f"   AND {ts} <= lo.scheduled_at "
+-        "       + CAST(COALESCE(lo.duration_minutes, 60) || ' minutes' AS interval))"
+-    )
++    """`ts` попадает в окно занятия, на котором был ученик `sid` (tsk-1111)."""
++    return in_lesson_sql(ts, sid)
+ 
+ 
+ def _task_done_sql(
+diff --git a/app/services/homework_volume_service.py b/app/services/homework_volume_service.py
+index dc37c67..7490687 100644
+--- a/app/services/homework_volume_service.py
++++ b/app/services/homework_volume_service.py
+@@ -102,6 +102,7 @@ from app.services.task_effort_service import (
+ )
+ # tsk-741: «что вообще входит в программу» — одно правило на весь проект.
+ from app.services.content_grace_service import graced_for_roots
++from app.services.lesson_window_sql import in_lesson_sql
+ from app.services.manual_progress_service import REQUIREMENT_LEVELS
+ # tsk-741: «занятие пропущено» — тоже одно правило; перенос пропуском не считается.
+ from app.services import attendance_service
+@@ -1039,18 +1040,12 @@ SELECT least(
+ #: Зачем разделять (требование оператора 07.09): в сводке видно «делает N», но
+ #: без разбивки непонятно, работает человек сам или только под присмотром
+ #: преподавателя. Это разные выводы и разные действия.
++#:
++#: tsk-1111: окно урока — общий предикат `lesson_window_sql.in_lesson_sql`
++#: (тот же, что у пометки «решено на уроке» в ДЗ): прежняя копия считала и
++#: перенесённые занятия, и те, на которых ученика не было.
+ _LESSON_WORK_SQL = f"""
+-WITH RECURSIVE {SERVICE_COURSES_CTE},
+-lessons AS (
+-    SELECT lo.scheduled_at AS starts_at,
+-           lo.scheduled_at
+-             + CAST(COALESCE(lo.duration_minutes, 60) || ' minutes' AS interval)
+-             AS ends_at
+-      FROM lesson_occurrence_participant lop
+-      JOIN lesson_occurrence lo ON lo.id = lop.occurrence_id
+-     WHERE lop.student_id = :student_id
+-       AND lo.scheduled_at >= CAST(:since AS timestamptz) - interval '1 day'
+-)
++WITH RECURSIVE {SERVICE_COURSES_CTE}
+ SELECT count(DISTINCT tr.task_id) AS n
+   FROM task_results tr
+   JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
+@@ -1059,10 +1054,7 @@ SELECT count(DISTINCT tr.task_id) AS n
+    AND {real_student_results_filter('tr')}
+    AND {non_service_course_filter('t')}
+    AND tr.submitted_at >= :since
+-   AND EXISTS (
+-       SELECT 1 FROM lessons l
+-        WHERE tr.submitted_at BETWEEN l.starts_at AND l.ends_at
+-   )
++   AND {in_lesson_sql('tr.submitted_at', ':student_id')}
+ """
+ 
+ 
+@@ -1070,6 +1062,9 @@ SELECT count(DISTINCT tr.task_id) AS n
+ #: Сделанное в окнах СВОИХ посещённых часов, в разрезе рода элемента — вес
+ #: одного часа занятия для этого ученика (tsk-914). Тот же разрез, что у
+ #: `_FACT_WEIGHTS_SQL`: взвешивается той же таблицей.
++#: tsk-1111: своё окно, а не общий `in_lesson_sql`, сознательно — здесь нужны
++#: только уже прошедшие (`<= :now`) и подтверждённые часы: вес часа меряют по
++#: завершённым урокам, идущий урок с явкой `scheduled` его исказил бы.
+ _OWN_LESSON_WEIGHTS_SQL = f"""
+ WITH RECURSIVE {SERVICE_COURSES_CTE},
+ lessons AS (
+diff --git a/app/services/lesson_window_sql.py b/app/services/lesson_window_sql.py
+new file mode 100644
+index 0000000..6801a44
+--- /dev/null
++++ b/app/services/lesson_window_sql.py
+@@ -0,0 +1,44 @@
++"""Общий SQL-предикат «эта работа сделана на уроке» (tsk-1041, tsk-1111).
++
++Один строитель на все выборки: состав ДЗ ученика, сводки преподавателя и
++родителя, доля «на занятиях сделано N%». Копии уже разъезжались — одна не
++исключала перенесённые занятия, другая требовала подтверждённую явку
++(см. [[feedback_shared_predicate_must_be_called_not_copied]]).
++
++Правило:
++- окно урока — строго [scheduled_at, scheduled_at + duration]. Запаса ДО
++  начала нет: сданное до звонка — всегда домашняя работа, даже если та же
++  сдача отметила явку автоматически (`lesson_auto_confirm_early_grace_minutes`
++  относится только к явке);
++- урок в счёт, только если ученик на нём не отмечен отсутствующим:
++  `scheduled` (урок ещё идёт, явку не отметили), `confirmed` или `completed`. Решал в час
++  урока, на котором его не было (`no_show`, `declined`), или урок перенесён
++  (`rescheduled`) — это работа дома. Прошедший урок, по которому неявку так
++  и не отметили (остался `scheduled`), считается посещённым: доказать
++  обратное нечем.
++
++Окно закрытое с обеих сторон (`<=` конца). У `attendance_service`
++(«работал ли в этот конкретный час») оно полуоткрытое — это другой вопрос,
++про явку на одно занятие, а не про род работы.
++"""
++
++from __future__ import annotations
++
++#: Статусы участия, при которых время урока — время урока для этого ученика.
++LESSON_PRESENT_STATUSES_SQL = "('scheduled', 'confirmed', 'completed')"
++
++
++def in_lesson_sql(ts: str, sid: str) -> str:
++    """SQL-условие: момент `ts` попал в окно занятия, на котором был ученик `sid`.
++
++    `ts` и `sid` — SQL-выражения (колонка или bind-параметр), не значения.
++    """
++    return (
++        "EXISTS (SELECT 1 FROM lesson_occurrence_participant lop "
++        "  JOIN lesson_occurrence lo ON lo.id = lop.occurrence_id "
++        f" WHERE lop.student_id = {sid} "
++        f"   AND lop.status IN {LESSON_PRESENT_STATUSES_SQL} "
++        f"   AND {ts} >= lo.scheduled_at "
++        f"   AND {ts} <= lo.scheduled_at "
++        "       + CAST(COALESCE(lo.duration_minutes, 60) || ' minutes' AS interval))"
++    )
+diff --git a/app/services/retention_service.py b/app/services/retention_service.py
+index 9b00cf8..fda285e 100644
+--- a/app/services/retention_service.py
++++ b/app/services/retention_service.py
+@@ -49,6 +49,7 @@ from typing import Any, Optional
+ from sqlalchemy import text
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
++from app.services.lesson_window_sql import in_lesson_sql
+ from app.services.teacher_lesson_summary_service import MANUAL_SOURCE
+ 
+ logger = logging.getLogger("app.retention")
+@@ -64,7 +65,7 @@ CONDITION_ITEMS_TOTAL = "between_lessons_items"
+ #: (tsk-494/504), см. docstring модуля. `UNION` (не `UNION ALL`) даёт
+ #: дедупликацию повторных верных сдач одного задания в один день — метрика
+ #: дашборда тоже считает DISTINCT по элементу.
+-_EVENTS_SQL = """
++_EVENTS_SQL = f"""
+ SELECT tr.user_id AS student_id,
+        (tr.submitted_at AT TIME ZONE 'Europe/Moscow')::date AS d,
+        'task' AS kind,
+@@ -74,13 +75,7 @@ JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
+ WHERE tr.user_id = ANY(:student_ids)
+   AND tr.is_correct = true
+   AND tr.source_system IS DISTINCT FROM :manual_source
+-  AND NOT EXISTS (
+-      SELECT 1 FROM lesson_occurrence_participant lop
+-      JOIN lesson_occurrence lo ON lo.id = lop.occurrence_id
+-      WHERE lop.student_id = tr.user_id
+-        AND tr.submitted_at BETWEEN lo.scheduled_at
+-            AND lo.scheduled_at + make_interval(mins => lo.duration_minutes)
+-  )
++  AND NOT {in_lesson_sql('tr.submitted_at', 'tr.user_id')}
+ UNION
+ SELECT smp.student_id,
+        (smp.completed_at AT TIME ZONE 'Europe/Moscow')::date,
+@@ -91,13 +86,7 @@ WHERE smp.student_id = ANY(:student_ids)
+   AND smp.status = 'completed'
+   AND smp.completed_at IS NOT NULL
+   AND smp.source IS DISTINCT FROM :manual_source
+-  AND NOT EXISTS (
+-      SELECT 1 FROM lesson_occurrence_participant lop
+-      JOIN lesson_occurrence lo ON lo.id = lop.occurrence_id
+-      WHERE lop.student_id = smp.student_id
+-        AND smp.completed_at BETWEEN lo.scheduled_at
+-            AND lo.scheduled_at + make_interval(mins => lo.duration_minutes)
+-  )
++  AND NOT {in_lesson_sql('smp.completed_at', 'smp.student_id')}
+ """
+ 
+ 
+diff --git a/app/services/student_dashboard_service.py b/app/services/student_dashboard_service.py
+index c89475e..3c5f8a0 100644
+--- a/app/services/student_dashboard_service.py
++++ b/app/services/student_dashboard_service.py
+@@ -96,6 +96,7 @@ from app.services import (
+     pricing_service,
+     retention_service,
+ )
++from app.services.lesson_window_sql import in_lesson_sql
+ from app.services.teacher_lesson_summary_service import (
+     DONE_STATUSES,
+     MANUAL_SOURCE,
+@@ -167,13 +168,7 @@ async def _load_in_class_hours_window(
+                 "    WHERE tr.user_id = :student_id AND tr.is_correct = true "
+                 "      AND tr.source_system IS DISTINCT FROM :manual_source "
+                 "      AND tr.submitted_at >= :period_from AND tr.submitted_at <= :period_to "
+-                "      AND EXISTS ( "
+-                "          SELECT 1 FROM lesson_occurrence lo "
+-                "          JOIN lesson_occurrence_participant lop "
+-                "              ON lop.occurrence_id = lo.id AND lop.student_id = :student_id "
+-                "          WHERE tr.submitted_at BETWEEN lo.scheduled_at "
+-                "              AND lo.scheduled_at + make_interval(mins => lo.duration_minutes) "
+-                "      ) "
++                f"      AND {in_lesson_sql('tr.submitted_at', ':student_id')} "
+                 "    ORDER BY tr.task_id, tr.submitted_at ASC "
+                 ") "
+                 "SELECT COUNT(*) AS completed, "
+@@ -201,13 +196,7 @@ async def _load_in_class_hours_window(
+                 "SELECT COUNT(*) AS cnt FROM help_requests hr "
+                 "WHERE hr.student_id = :student_id "
+                 "  AND hr.created_at >= :period_from AND hr.created_at <= :period_to "
+-                "  AND EXISTS ( "
+-                "      SELECT 1 FROM lesson_occurrence lo "
+-                "      JOIN lesson_occurrence_participant lop "
+-                "          ON lop.occurrence_id = lo.id AND lop.student_id = :student_id "
+-                "      WHERE hr.created_at BETWEEN lo.scheduled_at "
+-                "          AND lo.scheduled_at + make_interval(mins => lo.duration_minutes) "
+-                "  )"
++                f"  AND {in_lesson_sql('hr.created_at', ':student_id')}"
+             ),
+             {"student_id": student_id, "period_from": period_from, "period_to": period_to},
+         )
+@@ -221,13 +210,7 @@ async def _load_in_class_hours_window(
+                 "  AND smp.completed_at IS NOT NULL "
+                 "  AND smp.source IS DISTINCT FROM :manual_source "
+                 "  AND smp.completed_at >= :period_from AND smp.completed_at <= :period_to "
+-                "  AND EXISTS ( "
+-                "      SELECT 1 FROM lesson_occurrence lo "
+-                "      JOIN lesson_occurrence_participant lop "
+-                "          ON lop.occurrence_id = lo.id AND lop.student_id = :student_id "
+-                "      WHERE smp.completed_at BETWEEN lo.scheduled_at "
+-                "          AND lo.scheduled_at + make_interval(mins => lo.duration_minutes) "
+-                "  )"
++                f"  AND {in_lesson_sql('smp.completed_at', ':student_id')}"
+             ),
+             {
+                 "student_id": student_id,
+@@ -599,13 +582,7 @@ async def _bulk_between_lessons_activity(
+                 "SELECT tr.user_id, "
+                 "  COUNT(DISTINCT tr.task_id) AS total_n, "
+                 "  COUNT(DISTINCT tr.task_id) FILTER ( "
+-                "    WHERE EXISTS ( "
+-                "      SELECT 1 FROM lesson_occurrence_participant lop "
+-                "      JOIN lesson_occurrence lo ON lo.id = lop.occurrence_id "
+-                "      WHERE lop.student_id = tr.user_id "
+-                "        AND tr.submitted_at BETWEEN lo.scheduled_at "
+-                "            AND lo.scheduled_at + make_interval(mins => lo.duration_minutes) "
+-                "    ) "
++                f"    WHERE {in_lesson_sql('tr.submitted_at', 'tr.user_id')} "
+                 "  ) AS in_class_n "
+                 "FROM task_results tr "
+                 "JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL "
+@@ -626,13 +603,7 @@ async def _bulk_between_lessons_activity(
+                 "SELECT smp.student_id AS user_id, "
+                 "  COUNT(DISTINCT smp.material_id) AS total_n, "
+                 "  COUNT(DISTINCT smp.material_id) FILTER ( "
+-                "    WHERE EXISTS ( "
+-                "      SELECT 1 FROM lesson_occurrence_participant lop "
+-                "      JOIN lesson_occurrence lo ON lo.id = lop.occurrence_id "
+-                "      WHERE lop.student_id = smp.student_id "
+-                "        AND smp.completed_at BETWEEN lo.scheduled_at "
+-                "            AND lo.scheduled_at + make_interval(mins => lo.duration_minutes) "
+-                "    ) "
++                f"    WHERE {in_lesson_sql('smp.completed_at', 'smp.student_id')} "
+                 "  ) AS in_class_n "
+                 "FROM student_material_progress smp "
+                 "WHERE smp.student_id = ANY(:peer_ids) AND smp.status = 'completed' "
+diff --git a/tests/test_auto_confirm_attendance_tsk439.py b/tests/test_auto_confirm_attendance_tsk439.py
+index 2de6ec6..7cd199b 100644
+--- a/tests/test_auto_confirm_attendance_tsk439.py
++++ b/tests/test_auto_confirm_attendance_tsk439.py
+@@ -233,7 +233,7 @@ async def test_service_confirms_and_logs_auto_joined_event(db):
+ async def test_service_confirms_when_action_slightly_before_start(db):
+     """tsk-455: реальное действие за 13 секунд до scheduled_at (живой
+     инцидент, tsk-455) — сервис читает запас из настройки
+-    `lesson_auto_confirm_early_grace_minutes` (дефолт 15 мин) и всё равно
++    `lesson_auto_confirm_early_grace_minutes` (дефолт 5 мин, tsk-1111) и всё равно
+     подтверждает явку."""
+     student_id = await _create_user(db, role="student", prefix="tsk455-svc1")
+     teacher_id = await _create_user(db, role="teacher", prefix="tsk455-svc1t")
+diff --git a/tests/test_teacher_lesson_summary_tsk022_410.py b/tests/test_teacher_lesson_summary_tsk022_410.py
+index ffdd0ea..feadd16 100644
+--- a/tests/test_teacher_lesson_summary_tsk022_410.py
++++ b/tests/test_teacher_lesson_summary_tsk022_410.py
+@@ -303,6 +303,8 @@ async def test_summary_basic_shape_and_ad_hoc_flag(db, client):
+         "assigned_due_at": None, "assigned_is_overdue": None,
+         # tsk-1006: желательный ярус — тоже «не задавали».
+         "assigned_extra_total": None, "assigned_extra_done": None,
++        # tsk-1041: решённое на уроке — тоже «не задавали».
++        "assigned_on_lesson": None,
+     }
+ 
+ 
+diff --git a/tests/test_tsk741_homework.py b/tests/test_tsk741_homework.py
+index ecd8776..bb255d5 100644
+--- a/tests/test_tsk741_homework.py
++++ b/tests/test_tsk741_homework.py
+@@ -2669,3 +2669,80 @@ async def test_task_solved_at_home_after_lesson_attempt_counts(db):
+     current = await homework_service.get_current(db, student_id=student_id)
+     assert (current["done"], current["on_lesson"]) == (1, 0)
+ 
++
++
++# ===== tsk-1111: явка и «это ДЗ» — разные вещи =====
++
++
++@pytest.mark.asyncio
++async def test_task_solved_right_before_lesson_is_homework(db):
++    """Сдал за несколько минут до звонка — это ДЗ, даже если сдача отметила явку.
++
++    Жалоба оператора 24.09: ученики доделывают ДЗ прямо перед занятием, а
++    система пишет «выполнено на уроке». Окно урока начинается строго со
++    звонка; запас автоотметки явки на него не влияет.
++    """
++    student_id, course_id = await _student_with_program(db, materials=0, tasks=6)
++    teacher_id, _ = await _new_user(db, role="teacher", name="teach")
++    now = datetime.now(UTC)
++    lesson_at = now - timedelta(hours=2)
++    await _create_occurrence(
++        db, student_id=student_id, teacher_id=teacher_id, scheduled_at=lesson_at,
++    )
++    homework = await homework_service.issue(
++        db, student_id=student_id, due_at=now + timedelta(days=3),
++        source="teacher", volume_override=2, now=lesson_at - timedelta(days=1),
++    )
++    await db.commit()
++    before_bell = homework["items"][0]["item_id"]
++    await _submit(
++        db, student_id=student_id, task_id=before_bell, course_id=course_id,
++        is_correct=True, at=lesson_at - timedelta(seconds=30),
++    )
++    current = await homework_service.get_current(db, student_id=student_id)
++    item = {i["item_id"]: i for i in current["items"]}[before_bell]
++    assert (item["done"], item["on_lesson"]) == (True, False)
++
++
++@pytest.mark.asyncio
++@pytest.mark.parametrize("status", ["no_show", "declined", "rescheduled"])
++async def test_work_in_lesson_hour_without_attendance_is_homework(db, status):
++    """Решал в час урока, на котором его не было, — это работа дома.
++
++    Один и тот же предикат (`lesson_window_sql.in_lesson_sql`) у пометки
++    «решено на уроке» в ДЗ и у доли «на занятиях сделано N%».
++    """
++    student_id, course_id = await _student_with_program(db, materials=0, tasks=6)
++    teacher_id, _ = await _new_user(db, role="teacher", name="teach")
++    now = datetime.now(UTC)
++    lesson_at = now - timedelta(hours=2)
++    occurrence_id = await _create_occurrence(
++        db, student_id=student_id, teacher_id=teacher_id, scheduled_at=lesson_at,
++    )
++    await db.execute(
++        text(
++            "UPDATE lesson_occurrence_participant SET status = :st "
++            " WHERE occurrence_id = :oid AND student_id = :sid"
++        ),
++        {"st": status, "oid": occurrence_id, "sid": student_id},
++    )
++    homework = await homework_service.issue(
++        db, student_id=student_id, due_at=now + timedelta(days=3),
++        source="teacher", volume_override=2, now=lesson_at - timedelta(days=1),
++    )
++    await db.commit()
++    task_id = homework["items"][0]["item_id"]
++    await _submit(
++        db, student_id=student_id, task_id=task_id, course_id=course_id,
++        is_correct=True, at=lesson_at + timedelta(minutes=20),
++    )
++    current = await homework_service.get_current(db, student_id=student_id)
++    assert (current["done"], current["on_lesson"]) == (1, 0)
++
++    lesson_done = (
++        await db.execute(
++            text(homework_volume_service._LESSON_WORK_SQL),
++            {"student_id": student_id, "since": lesson_at - timedelta(days=1)},
++        )
++    ).scalar()
++    assert lesson_done == 0

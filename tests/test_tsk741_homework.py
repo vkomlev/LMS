@@ -2669,3 +2669,80 @@ async def test_task_solved_at_home_after_lesson_attempt_counts(db):
     current = await homework_service.get_current(db, student_id=student_id)
     assert (current["done"], current["on_lesson"]) == (1, 0)
 
+
+
+# ===== tsk-1111: явка и «это ДЗ» — разные вещи =====
+
+
+@pytest.mark.asyncio
+async def test_task_solved_right_before_lesson_is_homework(db):
+    """Сдал за несколько минут до звонка — это ДЗ, даже если сдача отметила явку.
+
+    Жалоба оператора 24.09: ученики доделывают ДЗ прямо перед занятием, а
+    система пишет «выполнено на уроке». Окно урока начинается строго со
+    звонка; запас автоотметки явки на него не влияет.
+    """
+    student_id, course_id = await _student_with_program(db, materials=0, tasks=6)
+    teacher_id, _ = await _new_user(db, role="teacher", name="teach")
+    now = datetime.now(UTC)
+    lesson_at = now - timedelta(hours=2)
+    await _create_occurrence(
+        db, student_id=student_id, teacher_id=teacher_id, scheduled_at=lesson_at,
+    )
+    homework = await homework_service.issue(
+        db, student_id=student_id, due_at=now + timedelta(days=3),
+        source="teacher", volume_override=2, now=lesson_at - timedelta(days=1),
+    )
+    await db.commit()
+    before_bell = homework["items"][0]["item_id"]
+    await _submit(
+        db, student_id=student_id, task_id=before_bell, course_id=course_id,
+        is_correct=True, at=lesson_at - timedelta(seconds=30),
+    )
+    current = await homework_service.get_current(db, student_id=student_id)
+    item = {i["item_id"]: i for i in current["items"]}[before_bell]
+    assert (item["done"], item["on_lesson"]) == (True, False)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["no_show", "declined", "rescheduled"])
+async def test_work_in_lesson_hour_without_attendance_is_homework(db, status):
+    """Решал в час урока, на котором его не было, — это работа дома.
+
+    Один и тот же предикат (`lesson_window_sql.in_lesson_sql`) у пометки
+    «решено на уроке» в ДЗ и у доли «на занятиях сделано N%».
+    """
+    student_id, course_id = await _student_with_program(db, materials=0, tasks=6)
+    teacher_id, _ = await _new_user(db, role="teacher", name="teach")
+    now = datetime.now(UTC)
+    lesson_at = now - timedelta(hours=2)
+    occurrence_id = await _create_occurrence(
+        db, student_id=student_id, teacher_id=teacher_id, scheduled_at=lesson_at,
+    )
+    await db.execute(
+        text(
+            "UPDATE lesson_occurrence_participant SET status = :st "
+            " WHERE occurrence_id = :oid AND student_id = :sid"
+        ),
+        {"st": status, "oid": occurrence_id, "sid": student_id},
+    )
+    homework = await homework_service.issue(
+        db, student_id=student_id, due_at=now + timedelta(days=3),
+        source="teacher", volume_override=2, now=lesson_at - timedelta(days=1),
+    )
+    await db.commit()
+    task_id = homework["items"][0]["item_id"]
+    await _submit(
+        db, student_id=student_id, task_id=task_id, course_id=course_id,
+        is_correct=True, at=lesson_at + timedelta(minutes=20),
+    )
+    current = await homework_service.get_current(db, student_id=student_id)
+    assert (current["done"], current["on_lesson"]) == (1, 0)
+
+    lesson_done = (
+        await db.execute(
+            text(homework_volume_service._LESSON_WORK_SQL),
+            {"student_id": student_id, "since": lesson_at - timedelta(days=1)},
+        )
+    ).scalar()
+    assert lesson_done == 0

@@ -52,6 +52,7 @@ from app.services import (
     program_scope_service,
 )
 # tsk-867: вес элемента — состав набирается до бюджета времени, а не до штук.
+from app.services.lesson_window_sql import in_lesson_sql
 from app.services.task_effort_service import (
     MATERIAL_EFFORT_SECONDS_PROXY,
     EffortTable,
@@ -861,15 +862,8 @@ async def auto_issue_after_lesson(
 
 
 def _in_lesson_sql(ts: str, sid: str) -> str:
-    """`ts` попадает в окно какого-то занятия ученика `sid`."""
-    return (
-        "EXISTS (SELECT 1 FROM lesson_occurrence_participant lop "
-        "  JOIN lesson_occurrence lo ON lo.id = lop.occurrence_id "
-        f" WHERE lop.student_id = {sid} AND lop.status <> 'rescheduled' "
-        f"   AND {ts} >= lo.scheduled_at "
-        f"   AND {ts} <= lo.scheduled_at "
-        "       + CAST(COALESCE(lo.duration_minutes, 60) || ' minutes' AS interval))"
-    )
+    """`ts` попадает в окно занятия, на котором был ученик `sid` (tsk-1111)."""
+    return in_lesson_sql(ts, sid)
 
 
 def _task_done_sql(

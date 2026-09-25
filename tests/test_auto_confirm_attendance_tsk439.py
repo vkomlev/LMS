@@ -233,7 +233,7 @@ async def test_service_confirms_and_logs_auto_joined_event(db):
 async def test_service_confirms_when_action_slightly_before_start(db):
     """tsk-455: реальное действие за 13 секунд до scheduled_at (живой
     инцидент, tsk-455) — сервис читает запас из настройки
-    `lesson_auto_confirm_early_grace_minutes` (дефолт 15 мин) и всё равно
+    `lesson_auto_confirm_early_grace_minutes` (дефолт 5 мин, tsk-1111) и всё равно
     подтверждает явку."""
     student_id = await _create_user(db, role="student", prefix="tsk455-svc1")
     teacher_id = await _create_user(db, role="teacher", prefix="tsk455-svc1t")

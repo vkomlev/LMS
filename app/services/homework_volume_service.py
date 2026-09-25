@@ -102,6 +102,7 @@ from app.services.task_effort_service import (
 )
 # tsk-741: «что вообще входит в программу» — одно правило на весь проект.
 from app.services.content_grace_service import graced_for_roots
+from app.services.lesson_window_sql import in_lesson_sql
 from app.services.manual_progress_service import REQUIREMENT_LEVELS
 # tsk-741: «занятие пропущено» — тоже одно правило; перенос пропуском не считается.
 from app.services import attendance_service
@@ -1039,18 +1040,12 @@ SELECT least(
 #: Зачем разделять (требование оператора 07.09): в сводке видно «делает N», но
 #: без разбивки непонятно, работает человек сам или только под присмотром
 #: преподавателя. Это разные выводы и разные действия.
+#:
+#: tsk-1111: окно урока — общий предикат `lesson_window_sql.in_lesson_sql`
+#: (тот же, что у пометки «решено на уроке» в ДЗ): прежняя копия считала и
+#: перенесённые занятия, и те, на которых ученика не было.
 _LESSON_WORK_SQL = f"""
-WITH RECURSIVE {SERVICE_COURSES_CTE},
-lessons AS (
-    SELECT lo.scheduled_at AS starts_at,
-           lo.scheduled_at
-             + CAST(COALESCE(lo.duration_minutes, 60) || ' minutes' AS interval)
-             AS ends_at
-      FROM lesson_occurrence_participant lop
-      JOIN lesson_occurrence lo ON lo.id = lop.occurrence_id
-     WHERE lop.student_id = :student_id
-       AND lo.scheduled_at >= CAST(:since AS timestamptz) - interval '1 day'
-)
+WITH RECURSIVE {SERVICE_COURSES_CTE}
 SELECT count(DISTINCT tr.task_id) AS n
   FROM task_results tr
   JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
@@ -1059,10 +1054,7 @@ SELECT count(DISTINCT tr.task_id) AS n
    AND {real_student_results_filter('tr')}
    AND {non_service_course_filter('t')}
    AND tr.submitted_at >= :since
-   AND EXISTS (
-       SELECT 1 FROM lessons l
-        WHERE tr.submitted_at BETWEEN l.starts_at AND l.ends_at
-   )
+   AND {in_lesson_sql('tr.submitted_at', ':student_id')}
 """
 
 
@@ -1070,6 +1062,9 @@ SELECT count(DISTINCT tr.task_id) AS n
 #: Сделанное в окнах СВОИХ посещённых часов, в разрезе рода элемента — вес
 #: одного часа занятия для этого ученика (tsk-914). Тот же разрез, что у
 #: `_FACT_WEIGHTS_SQL`: взвешивается той же таблицей.
+#: tsk-1111: своё окно, а не общий `in_lesson_sql`, сознательно — здесь нужны
+#: только уже прошедшие (`<= :now`) и подтверждённые часы: вес часа меряют по
+#: завершённым урокам, идущий урок с явкой `scheduled` его исказил бы.
 _OWN_LESSON_WEIGHTS_SQL = f"""
 WITH RECURSIVE {SERVICE_COURSES_CTE},
 lessons AS (

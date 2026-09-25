@@ -303,6 +303,8 @@ async def test_summary_basic_shape_and_ad_hoc_flag(db, client):
         "assigned_due_at": None, "assigned_is_overdue": None,
         # tsk-1006: желательный ярус — тоже «не задавали».
         "assigned_extra_total": None, "assigned_extra_done": None,
+        # tsk-1041: решённое на уроке — тоже «не задавали».
+        "assigned_on_lesson": None,
     }
 
 

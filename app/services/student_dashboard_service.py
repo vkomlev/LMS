@@ -96,6 +96,7 @@ from app.services import (
     pricing_service,
     retention_service,
 )
+from app.services.lesson_window_sql import in_lesson_sql
 from app.services.teacher_lesson_summary_service import (
     DONE_STATUSES,
     MANUAL_SOURCE,
@@ -167,13 +168,7 @@ async def _load_in_class_hours_window(
                 "    WHERE tr.user_id = :student_id AND tr.is_correct = true "
                 "      AND tr.source_system IS DISTINCT FROM :manual_source "
                 "      AND tr.submitted_at >= :period_from AND tr.submitted_at <= :period_to "
-                "      AND EXISTS ( "
-                "          SELECT 1 FROM lesson_occurrence lo "
-                "          JOIN lesson_occurrence_participant lop "
-                "              ON lop.occurrence_id = lo.id AND lop.student_id = :student_id "
-                "          WHERE tr.submitted_at BETWEEN lo.scheduled_at "
-                "              AND lo.scheduled_at + make_interval(mins => lo.duration_minutes) "
-                "      ) "
+                f"      AND {in_lesson_sql('tr.submitted_at', ':student_id')} "
                 "    ORDER BY tr.task_id, tr.submitted_at ASC "
                 ") "
                 "SELECT COUNT(*) AS completed, "
@@ -201,13 +196,7 @@ async def _load_in_class_hours_window(
                 "SELECT COUNT(*) AS cnt FROM help_requests hr "
                 "WHERE hr.student_id = :student_id "
                 "  AND hr.created_at >= :period_from AND hr.created_at <= :period_to "
-                "  AND EXISTS ( "
-                "      SELECT 1 FROM lesson_occurrence lo "
-                "      JOIN lesson_occurrence_participant lop "
-                "          ON lop.occurrence_id = lo.id AND lop.student_id = :student_id "
-                "      WHERE hr.created_at BETWEEN lo.scheduled_at "
-                "          AND lo.scheduled_at + make_interval(mins => lo.duration_minutes) "
-                "  )"
+                f"  AND {in_lesson_sql('hr.created_at', ':student_id')}"
             ),
             {"student_id": student_id, "period_from": period_from, "period_to": period_to},
         )
@@ -221,13 +210,7 @@ async def _load_in_class_hours_window(
                 "  AND smp.completed_at IS NOT NULL "
                 "  AND smp.source IS DISTINCT FROM :manual_source "
                 "  AND smp.completed_at >= :period_from AND smp.completed_at <= :period_to "
-                "  AND EXISTS ( "
-                "      SELECT 1 FROM lesson_occurrence lo "
-                "      JOIN lesson_occurrence_participant lop "
-                "          ON lop.occurrence_id = lo.id AND lop.student_id = :student_id "
-                "      WHERE smp.completed_at BETWEEN lo.scheduled_at "
-                "          AND lo.scheduled_at + make_interval(mins => lo.duration_minutes) "
-                "  )"
+                f"  AND {in_lesson_sql('smp.completed_at', ':student_id')}"
             ),
             {
                 "student_id": student_id,
@@ -599,13 +582,7 @@ async def _bulk_between_lessons_activity(
                 "SELECT tr.user_id, "
                 "  COUNT(DISTINCT tr.task_id) AS total_n, "
                 "  COUNT(DISTINCT tr.task_id) FILTER ( "
-                "    WHERE EXISTS ( "
-                "      SELECT 1 FROM lesson_occurrence_participant lop "
-                "      JOIN lesson_occurrence lo ON lo.id = lop.occurrence_id "
-                "      WHERE lop.student_id = tr.user_id "
-                "        AND tr.submitted_at BETWEEN lo.scheduled_at "
-                "            AND lo.scheduled_at + make_interval(mins => lo.duration_minutes) "
-                "    ) "
+                f"    WHERE {in_lesson_sql('tr.submitted_at', 'tr.user_id')} "
                 "  ) AS in_class_n "
                 "FROM task_results tr "
                 "JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL "
@@ -626,13 +603,7 @@ async def _bulk_between_lessons_activity(
                 "SELECT smp.student_id AS user_id, "
                 "  COUNT(DISTINCT smp.material_id) AS total_n, "
                 "  COUNT(DISTINCT smp.material_id) FILTER ( "
-                "    WHERE EXISTS ( "
-                "      SELECT 1 FROM lesson_occurrence_participant lop "
-                "      JOIN lesson_occurrence lo ON lo.id = lop.occurrence_id "
-                "      WHERE lop.student_id = smp.student_id "
-                "        AND smp.completed_at BETWEEN lo.scheduled_at "
-                "            AND lo.scheduled_at + make_interval(mins => lo.duration_minutes) "
-                "    ) "
+                f"    WHERE {in_lesson_sql('smp.completed_at', 'smp.student_id')} "
                 "  ) AS in_class_n "
                 "FROM student_material_progress smp "
                 "WHERE smp.student_id = ANY(:peer_ids) AND smp.status = 'completed' "
