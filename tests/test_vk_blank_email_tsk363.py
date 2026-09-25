@@ -49,8 +49,8 @@ class _FakeClient:
 
 @pytest.mark.parametrize(
     "raw_email",
-    ["", "   ", None],
-    ids=["пустая строка", "только пробелы", "ключ отсутствует"],
+    ["", "   ", None, "79246868410"],
+    ids=["пустая строка", "только пробелы", "ключ отсутствует", "телефон вместо почты (tsk-1123)"],
 )
 @pytest.mark.asyncio
 async def test_fetch_vk_userinfo_blank_email_becomes_none(

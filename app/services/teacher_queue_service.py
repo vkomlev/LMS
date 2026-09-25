@@ -22,6 +22,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.audit_context import set_audit_actor
+from app.utils.name_search import name_match_sql
 from app.schemas.task_content import MANUAL_REVIEW_TASK_TYPES
 # tsk-575: файл вложения мог быть утрачен дефектом хранения — преподавателю
 # отдаём работу с пометкой, а не с рабочей на вид ссылкой в никуда.
@@ -1447,8 +1448,11 @@ async def list_pending_reviews(
         params["user_id"] = user_id
     student_name_cond = ""
     if student_name:
-        student_name_cond = "AND u.full_name ILIKE :student_name_pattern"
-        params["student_name_pattern"] = f"%{student_name}%"
+        # tsk-1123: общее правило поиска людей (слова через AND, ё = е,
+        # экранирование % и _ — раньше здесь его не было).
+        name_sql, name_params = name_match_sql("u.full_name", student_name, "student_name")
+        student_name_cond = f"AND {name_sql}"
+        params.update(name_params)
 
     # tsk-539: фильтр по датам сдачи — по дню (включительно), не по timestamp:
     # submitted_to переводим в exclusive-верхнюю границу (+1 день) в Python,

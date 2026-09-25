@@ -5,6 +5,7 @@ from sqlalchemy.sql import ColumnElement
 
 from app.models.users import Users
 from app.repos.base import BaseRepository
+from app.utils.name_search import name_match_clause
 
 class UsersRepository(BaseRepository[Users]):
     """
@@ -148,7 +149,7 @@ class UsersRepository(BaseRepository[Users]):
         """
         Поиск пользователей по full_name с опциональной фильтрацией по роли.
 
-        - Поиск: ILIKE %q% (case-insensitive)
+        - Поиск: каждое слово запроса ILIKE по full_name, через AND, ё = е (tsk-1123)
         - Сортировка: full_name ASC
         - role_name: сравнение имени роли case-insensitive
         - blocked: та же ось блокировки, что в `list_with_role_filter` (tsk-559)
@@ -175,12 +176,14 @@ class UsersRepository(BaseRepository[Users]):
             }
             return mapping.get(n, [n] if n else [])
 
-        if not q:
+        # tsk-1123: слова запроса через AND, порядок неважен, ё = е.
+        name_cond = name_match_clause(Users.full_name, q)
+        if name_cond is None:
             return []
 
         stmt = (
             select(Users)
-            .where(Users.full_name.ilike(f"%{q}%", escape="\\"), Users.is_active.is_(True))
+            .where(name_cond, Users.is_active.is_(True))
             .order_by(Users.full_name.asc())
         )
 

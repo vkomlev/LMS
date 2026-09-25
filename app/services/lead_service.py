@@ -6,6 +6,8 @@ from typing import Optional
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.utils.name_search import name_match_sql
+
 from app.models.lead import LEAD_SOURCE_OTHER
 from app.schemas.lead import (
     ExternalLeadStatus,
@@ -237,21 +239,25 @@ async def search_students(db: AsyncSession, *, q: str, limit: int = 20) -> list[
     ролями под гейтом methodist/admin, и расширять его на маркетолога значило бы
     отдать ему персональные данные всех людей школы. Здесь — только id и имя.
     """
+    # tsk-1123: общее правило поиска людей — слова через AND, ё = е.
+    name_sql, name_params = name_match_sql("u.full_name", q, "name")
+    if not name_params:
+        return []
     rows = (
         await db.execute(
             text(
-                """
+                f"""
                 SELECT u.id, u.full_name
                   FROM users u
                   JOIN user_roles ur ON ur.user_id = u.id
                   JOIN roles r ON r.id = ur.role_id AND r.name = 'student'
                  WHERE u.is_active
-                   AND u.full_name ILIKE :pattern
+                   AND {name_sql}
                  ORDER BY u.full_name
                  LIMIT :limit
                 """
             ),
-            {"pattern": f"%{_escape_like(q)}%", "limit": limit},
+            {**name_params, "limit": limit},
         )
     ).all()
     return [StudentBrief(id=r.id, full_name=r.full_name) for r in rows]
@@ -345,10 +351,6 @@ async def ingest_external_lead(
 
     await db.commit()
     return int(lead_id), True
-
-
-def _escape_like(value: str) -> str:
-    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 async def _lead_exists(db: AsyncSession, lead_id: int) -> bool:
