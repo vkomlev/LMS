@@ -39,6 +39,7 @@ import app.models.operating_hours
 import app.models.lesson_slot
 import app.models.lesson_slot_student
 import app.models.lesson_slot_teacher
+import app.models.schedule_group     # группы расписания (tsk-1124)
 import app.models.lesson_occurrence
 import app.models.lesson_occurrence_participant
 import app.models.lesson_occurrence_teacher

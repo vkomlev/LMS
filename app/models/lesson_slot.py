@@ -8,7 +8,10 @@ from sqlalchemy import (
     CheckConstraint,
     Date,
     DateTime,
+    FetchedValue,
+    ForeignKey,
     ForeignKeyConstraint,
+    Index,
     Integer,
     PrimaryKeyConstraint,
     SmallInteger,
@@ -45,6 +48,7 @@ class LessonSlot(Base):
         PrimaryKeyConstraint("id", name="lesson_slot_pkey"),
         CheckConstraint("weekday BETWEEN 0 AND 6", name="lesson_slot_weekday_check"),
         CheckConstraint("duration_minutes > 0", name="lesson_slot_duration_positive_check"),
+        Index("lesson_slot_group_id_idx", "group_id"),
         {"comment": "Закреплённый повторяющийся слот преподавателя, групповой (tsk-435)"},
     )
 
@@ -84,6 +88,16 @@ class LessonSlot(Base):
             "Парная к active_until (tsk-756): без неё слот, заведённый 31 августа "
             "под осеннюю сетку, считался действовавшим и весь август — то есть "
             "смена расписания переписывала прошлое."
+        ),
+    )
+    group_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("schedule_group.id", ondelete="RESTRICT", name="lesson_slot_group_id_fkey"),
+        nullable=False,
+        server_default=FetchedValue(),
+        comment=(
+            "Группа расписания (tsk-1124). Не передана — триггер "
+            "lesson_slot_default_group ставит группу по умолчанию"
         ),
     )
     created_by: Mapped[Optional[int]] = mapped_column(
