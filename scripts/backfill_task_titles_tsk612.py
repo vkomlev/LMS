@@ -51,6 +51,7 @@ import argparse
 import asyncio
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any, Optional, Sequence
@@ -105,7 +106,9 @@ _SYSTEM_PROMPT = """\
 - названия в одном ответе должны ОТЛИЧАТЬСЯ друг от друга: если два задания
   похожи, найди в условиях то, чем они различаются (разный вопрос к одному коду,
   разные числа, разные переменные), иначе список снова станет нечитаемым;
-- не выдумывай того, чего нет в условии.
+- не выдумывай того, чего нет в условии;
+- НЕ пиши в названии ОТВЕТ и результат решения («длиной 9 км», «равно 4»):
+  название видит ученик прямо над условием (tsk-1058).
 
 Ответ — строго JSON: {"titles": [{"id": <число>, "title": "<название>"}, ...]}
 Ровно по одному объекту на каждое присланное задание, id — из запроса."""
@@ -146,7 +149,8 @@ SELECT t.id,
        t.course_id,
        c.title AS course_title,
        t.task_content->>'stem' AS stem,
-       t.task_content->>'type' AS task_type
+       t.task_content->>'type' AS task_type,
+       t.solution_rules->'short_answer'->'accepted_answers'->0->>'value' AS answer
 FROM tasks t
 JOIN courses c ON c.id = t.course_id
 WHERE t.is_active IS TRUE
@@ -189,8 +193,26 @@ def _render_batch(items: Sequence[dict[str, Any]]) -> str:
     return "\n\n---\n\n".join(parts)
 
 
-def _valid_title(raw: Any) -> Optional[str]:
-    """Отсеять отписки и пересказы. Возвращает нормализованное название или None."""
+#: Числовой ответ целым токеном («9» в «…между A и E 9 км», но не в «19»).
+_NUMERIC_ANSWER_RE = re.compile(r"^-?\d+(?:[.,]\d+)?$")
+
+
+def _title_leaks_answer(title: str, answer: Optional[str]) -> bool:
+    """True, если в названии стоит числовой ответ задания (tsk-1058).
+
+    Модель ответа не видит, но решает задачу сама, чтобы различить похожие
+    варианты, — так 17 заданий «кратчайший путь» получили длину пути в названии.
+    Отсев грубый намеренно: совпало с числом условия — тоже в брак, задание
+    останется без названия до следующего прохода, это безопаснее слива.
+    """
+    ans = (answer or "").strip()
+    if not _NUMERIC_ANSWER_RE.match(ans):
+        return False
+    return bool(re.search(r"(?<![\d.,])" + re.escape(ans) + r"(?![\d])", title))
+
+
+def _valid_title(raw: Any, answer: Optional[str] = None) -> Optional[str]:
+    """Отсеять отписки, пересказы и слив ответа. Возвращает название или None."""
     if not isinstance(raw, str):
         return None
     title = " ".join(raw.split()).strip().strip('"').rstrip(".")
@@ -201,6 +223,8 @@ def _valid_title(raw: Any) -> Optional[str]:
     if lowered.startswith(("задание", "задача", "вариант")):
         return None
     if "#" in title:
+        return None
+    if _title_leaks_answer(title, answer):
         return None
     return title
 
@@ -220,6 +244,7 @@ def _match_batch(payload_text: str, items: Sequence[dict[str, Any]]) -> dict[int
     if not isinstance(rows, list):
         return {}
     asked = {int(it["id"]) for it in items}
+    answers = {int(it["id"]): it.get("answer") for it in items}
     out: dict[int, str] = {}
     for row in rows:
         if not isinstance(row, dict):
@@ -230,7 +255,7 @@ def _match_batch(payload_text: str, items: Sequence[dict[str, Any]]) -> dict[int
             continue
         if task_id not in asked:
             continue
-        title = _valid_title(row.get("title"))
+        title = _valid_title(row.get("title"), answers.get(task_id))
         if title:
             out[task_id] = title
     return out
