@@ -20,7 +20,7 @@ from sqlalchemy import (
     UniqueConstraint,
     text,
 )
-from sqlalchemy.dialects.postgresql import UUID as PgUUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -104,6 +104,9 @@ class Lead(Base):
     )
     quiz_course_id: Mapped[Optional[int]] = mapped_column(
         Integer, comment="Курс-квиз, после которого оставлен контакт (tsk-053)"
+    )
+    attribution: Mapped[Optional[dict]] = mapped_column(
+        JSONB, comment="Метки источника, ветка квиза, согласие (tsk-1139)"
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("now()"), nullable=False

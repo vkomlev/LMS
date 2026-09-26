@@ -11,7 +11,7 @@ import logging
 from datetime import datetime, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Path, Request, status
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Path, Request, Response, status
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,12 +21,13 @@ from app.models.guest_session import GuestSession
 from app.schemas.guest_quiz import (
     QuizAnswerRequest,
     QuizAnswerResponse,
+    QuizAttributionRequest,
     QuizLeadRequest,
     QuizLeadResponse,
     QuizResponse,
     QuizResultResponse,
 )
-from app.services import guest_quiz_service
+from app.services import guest_quiz_service, quiz_funnel_service
 from app.services.rate_limit_service import get_redis, is_rate_limited
 from app.utils.exceptions import DomainError
 
@@ -165,7 +166,36 @@ async def get_quiz_result(
     )
     if result is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Квиз не найден.")
+    if result.funnel is not None and result.funnel.bot_start_url:
+        # Итог ветки воронки заводит токен стартовой ссылки бота (tsk-1139).
+        await db.commit()
     return result
+
+
+# ── POST /learning/guest/quiz/{course_uid}/attribution ─────────────────────
+
+@router.post(
+    "/{course_uid}/attribution",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def record_quiz_attribution(
+    body: QuizAttributionRequest,
+    course_uid: str = Path(..., description="course_uid квиза, на который пришёл человек"),
+    guest_session: str | None = Cookie(default=None),
+    db: AsyncSession = Depends(get_bare_db),
+) -> Response:
+    """Запомнить метки первого касания (utm_*, страница, ветка) — tsk-1139.
+
+    Пишет один раз на сессию: переход из входного квиза в ветку их не перетирает.
+    При выключенной воронке — тихо ничего не делает (204), SPW от рубильника не зависит.
+    """
+    gs_uuid = _require_session(guest_session)
+    if quiz_funnel_service.is_enabled():
+        raw = dict(body.attribution)
+        raw.setdefault("entry_uid", course_uid)
+        await quiz_funnel_service.record_attribution(db, gs_uuid, raw)
+        await db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 # ── POST /learning/guest/quiz/{course_uid}/lead ────────────────────────────

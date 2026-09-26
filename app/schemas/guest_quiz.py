@@ -36,6 +36,14 @@ class QuizQuestion(BaseModel):
     )
 
 
+class QuizBranchLink(BaseModel):
+    """Вариант входного вопроса, ведущий в квиз-ветку воронки (tsk-1139)."""
+
+    branch_code: str = Field(..., description="Код ветки для ?for= и меток")
+    option_id: str = Field(..., description="ID варианта ответа входного вопроса")
+    quiz_uid: str = Field(..., description="course_uid квиза-ветки, куда перейти")
+
+
 class QuizResponse(BaseModel):
     """Ответ на GET /learning/guest/quiz/{course_uid}."""
 
@@ -46,6 +54,10 @@ class QuizResponse(BaseModel):
     answered_count: int = Field(..., description="Сколько вопросов уже отвечено этой гостевой сессией")
     total_count: int
     is_complete: bool = Field(..., description="True — отвечены все вопросы, можно показывать итог")
+    branches: List[QuizBranchLink] = Field(
+        default_factory=list,
+        description="Непусто только у входного квиза воронки: после ответа — переход в ветку",
+    )
 
 
 class QuizAnswerRequest(BaseModel):
@@ -76,6 +88,31 @@ class QuizRecommendation(BaseModel):
     description: Optional[str] = None
 
 
+class QuizFunnelInfo(BaseModel):
+    """Блок воронки в итоге квиза-ветки (tsk-1139).
+
+    Гостю в воронке показывается часть итога (название рекомендации); полный
+    разбор — шкалы и описание — после регистрации.
+    """
+
+    branch_code: str
+    registration_enabled: bool = Field(
+        ..., description="False — вместо регистрации вести на PDF в боте и пробное"
+    )
+    bot_start_url: Optional[str] = Field(
+        default=None, description="Ссылка в бот за PDF ветки; null — бонуса нет"
+    )
+
+
+class QuizAttributionRequest(BaseModel):
+    """Тело POST /learning/guest/quiz/{course_uid}/attribution — метки из адреса."""
+
+    attribution: Dict[str, str] = Field(
+        default_factory=dict,
+        description="utm_*, page, referrer, for; прочие ключи отбрасываются",
+    )
+
+
 class QuizResultResponse(BaseModel):
     """Ответ на GET /learning/guest/quiz/{course_uid}/result.
 
@@ -96,6 +133,9 @@ class QuizResultResponse(BaseModel):
     contact_url: str = Field(..., description="Ссылка на переписку с уже заполненным сообщением")
     lead_submitted: bool = Field(
         ..., description="True — контакт из этой гостевой сессии уже оставлен"
+    )
+    funnel: Optional[QuizFunnelInfo] = Field(
+        default=None, description="Заполнен только у квиза-ветки воронки при включённом рубильнике"
     )
 
     model_config = ConfigDict(from_attributes=True)

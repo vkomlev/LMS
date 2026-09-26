@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, List, Optional
 from uuid import UUID
 
 from sqlalchemy import DateTime, ForeignKey, Integer, Text, text
-from sqlalchemy.dialects.postgresql import INET, UUID as PgUUID
+from sqlalchemy.dialects.postgresql import INET, JSONB, UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -32,6 +32,8 @@ class GuestSession(Base):
     last_used_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("now()"), nullable=False
     )
+    #: Метки первого касания (utm_*, page, for, referrer, entry_uid) — tsk-1139.
+    attribution: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
     attributed_user_id: Mapped[Optional[int]] = mapped_column(
         Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )

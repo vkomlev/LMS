@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_async_db, require_role
 from app.auth.current_user import CurrentUser
-from app.schemas.guest_quiz_funnel import QuizFunnelRow
+from app.schemas.guest_quiz_funnel import QuizFunnelRow, SiteFunnelRow
 from app.schemas.lead import (
     LeadCreateRequest,
     LeadLinkRequest,
@@ -21,7 +21,7 @@ from app.schemas.lead import (
     LeadUpdateRequest,
     StudentBrief,
 )
-from app.services import guest_quiz_service, lead_service
+from app.services import guest_quiz_service, lead_service, quiz_funnel_service
 
 router = APIRouter(prefix="/marketer", tags=["marketer_leads"])
 
@@ -71,6 +71,29 @@ async def quiz_funnel(
 ) -> list[QuizFunnelRow]:
     rows = await guest_quiz_service.get_quiz_funnel(db)
     return [QuizFunnelRow(**row) for row in rows]
+
+
+@router.get(
+    "/quiz-funnel/site",
+    response_model=list[SiteFunnelRow],
+    summary="Воронка сайта по веткам входного квиза",
+    description=(
+        "tsk-1139: старт → итог → регистрация → первое решённое задание → бот → "
+        "пробное → оплата, по каждой ветке. Фильтр по utm_source/utm_campaign "
+        "из меток первого касания."
+    ),
+)
+async def site_funnel(
+    entry_uid: str = Query(..., min_length=1, max_length=200),
+    utm_source: Optional[str] = Query(None, max_length=300),
+    utm_campaign: Optional[str] = Query(None, max_length=300),
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(_LEADS_GATE),
+) -> list[SiteFunnelRow]:
+    rows = await quiz_funnel_service.get_site_funnel(db, entry_uid, utm_source, utm_campaign)
+    if rows is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Входной квиз не найден.")
+    return [SiteFunnelRow(**row) for row in rows]
 
 
 @router.get(

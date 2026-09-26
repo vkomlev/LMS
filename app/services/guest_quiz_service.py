@@ -39,6 +39,8 @@ from app.models.tasks import Tasks
 from app.schemas.checking import StudentAnswer, StudentResponse
 from app.schemas.guest_quiz import (
     QuizAnswerResponse,
+    QuizBranchLink,
+    QuizFunnelInfo,
     QuizOption,
     QuizQuestion,
     QuizRecommendation,
@@ -47,7 +49,7 @@ from app.schemas.guest_quiz import (
 )
 from app.schemas.solution_rules import SolutionRules
 from app.schemas.task_content import TaskContent
-from app.services import lead_magnet_service
+from app.services import lead_magnet_service, quiz_funnel_service
 from app.services.assignment_rules_service import quiz_scale_matched
 from app.services.checking_service import CheckingService
 from app.services.learning_guest_service import is_task_visible_to_guest
@@ -177,6 +179,17 @@ async def get_quiz(
         )
 
     answered = sum(1 for i in items if i.selected_option_ids)
+    branches: List[QuizBranchLink] = []
+    if quiz_funnel_service.is_enabled():
+        branches = [
+            QuizBranchLink(
+                branch_code=b.branch_code,
+                option_id=b.entry_option_id,
+                quiz_uid=c.course_uid,
+            )
+            for b, c in await quiz_funnel_service.list_entry_branches(db, course.id)
+            if c.course_uid and c.is_public_demo
+        ]
     return QuizResponse(
         course_uid=course.course_uid or course_uid,
         title=course.title,
@@ -185,6 +198,7 @@ async def get_quiz(
         answered_count=answered,
         total_count=len(items),
         is_complete=answered == len(items),
+        branches=branches,
     )
 
 
@@ -326,6 +340,32 @@ async def _resolve_recommendation(
     return None
 
 
+async def evaluate_quiz(
+    db: AsyncSession, course_uid: str, guest_session_id: UUID
+) -> Optional[Tuple[Courses, bool, Dict[str, int], Optional[QuizRecommendation]]]:
+    """Полный итог квиза для сессии: (курс, пройден ли, шкалы, рекомендация).
+
+    Общий расчёт для гостевого итога и для полного разбора после регистрации
+    (tsk-1139) — чтобы разбор в кабинете не разошёлся с тем, что видел гость.
+
+    :return: None — квиза нет среди публичных или в нём нет вопросов.
+    """
+    course = await _load_quiz_course(db, course_uid)
+    if course is None:
+        return None
+    questions = await _load_questions(db, course.id)
+    if not questions:
+        return None
+    task_ids = [t.id for t, _ in questions]
+    answers = await _last_answers(db, guest_session_id, task_ids)
+    is_complete = all(_selected_ids(answers.get(tid)) for tid in task_ids)
+    totals = await _accumulate_guest_scales(db, guest_session_id, task_ids)
+    recommendation = (
+        await _resolve_recommendation(db, course.id, totals) if is_complete else None
+    )
+    return course, is_complete, totals, recommendation
+
+
 def _contact_url(quiz_title: str, recommendation: Optional[QuizRecommendation]) -> str:
     """Ссылка на переписку с заранее заполненным сообщением.
 
@@ -375,16 +415,40 @@ async def get_quiz_result(
             await lead_magnet_service.find_lead(db, guest_session_id, course.id)
         ) is not None
 
+    funnel: Optional[QuizFunnelInfo] = None
+    scales_out: Dict[str, int] = totals
+    branch = (
+        await quiz_funnel_service.get_branch(db, course.id)
+        if quiz_funnel_service.is_enabled()
+        else None
+    )
+    if branch is not None:
+        # Воронка: гостю — часть итога (какая программа), полный разбор
+        # (шкалы и описание) — после регистрации, в /me/quiz-funnel/claim.
+        scales_out = {}
+        if recommendation is not None:
+            recommendation = recommendation.model_copy(update={"description": None})
+        bot_url: Optional[str] = None
+        if branch.pdf_url and guest_session_id is not None and is_complete:
+            token = await quiz_funnel_service.ensure_bot_token(db, guest_session_id, course.id)
+            bot_url = quiz_funnel_service.bot_start_url(token)
+        funnel = QuizFunnelInfo(
+            branch_code=branch.branch_code,
+            registration_enabled=branch.registration_enabled,
+            bot_start_url=bot_url,
+        )
+
     return QuizResultResponse(
         course_uid=course.course_uid or course_uid,
         title=course.title,
         is_complete=is_complete,
         answered_count=answered,
         total_count=len(task_ids),
-        scales=totals,
+        scales=scales_out,
         recommendation=recommendation,
         contact_url=_contact_url(course.title, recommendation),
         lead_submitted=lead_submitted,
+        funnel=funnel,
     )
 
 

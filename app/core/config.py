@@ -490,6 +490,19 @@ class Settings:
         # ссылка собирается как https://t.me/<ник>?text=... Настройкой, а не
         # константой в коде — контакт для записи меняется, а выкат ради него не нужен.
         self.quiz_contact_tg: str = os.getenv("QUIZ_CONTACT_TG", "Vvkomlev")
+        # Воронка сайта (tsk-1139): развилка квиза, регистрация из итога, гость в
+        # боте. Выключена по умолчанию — включается, когда готов контент веток.
+        self.quiz_funnel_enabled: bool = os.getenv(
+            "QUIZ_FUNNEL_ENABLED", "false"
+        ).lower() in ("true", "1", "yes")
+        # Ник ученического бота без «@» — стартовая ссылка t.me/<ник>?start=q_<токен>.
+        # Пусто — кнопка бота на итоге не показывается.
+        self.quiz_funnel_bot_username: str = os.getenv("QUIZ_FUNNEL_BOT_USERNAME", "")
+        # Напоминания гостю в боте (+1/+3/+7 дней). Отдельный рубильник: PDF можно
+        # выдавать раньше, чем включать дожим.
+        self.quiz_funnel_reminders_enabled: bool = os.getenv(
+            "QUIZ_FUNNEL_REMINDERS_ENABLED", "false"
+        ).lower() in ("true", "1", "yes")
         self.magic_link_secret: str = os.getenv("MAGIC_LINK_SECRET", "")
         self.session_signing_key: str = os.getenv("SESSION_SIGNING_KEY", "")
         self.fernet_master_key: str = os.getenv("FERNET_MASTER_KEY", "")

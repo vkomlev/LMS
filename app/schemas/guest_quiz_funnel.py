@@ -27,3 +27,22 @@ class QuizFunnelRow(BaseModel):
             "ещё никто не завершил, делить не на что"
         ),
     )
+
+
+class SiteFunnelRow(BaseModel):
+    """Строка воронки сайта по ветке входного квиза (tsk-1139).
+
+    Каждый шаг — число гостевых сессий ветки, дошедших до него. Выборки малые:
+    читать числами, а не процентами.
+    """
+
+    branch_code: str
+    course_uid: str
+    total_q: int
+    started: int
+    completed: int
+    registered: int
+    first_solved: int
+    bot_started: int
+    trial_requested: int
+    paid: int
