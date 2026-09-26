@@ -1609,7 +1609,70 @@ class CheckingService:
             return cls._matches_spaced_number(value, accepted)
         if cls._normalize_text(value, steps) == cls._normalize_text(accepted, steps):
             return True
+        if "strip_punctuation" in steps and cls._matches_numbers_in_text(
+            value, accepted, steps
+        ):
+            return True
         return cls._matches_spaced_number(value, accepted)
+
+    #: Метка на месте числа в «скелете» ответа: только буквы, чтобы
+    #: `_strip_punctuation` видел кусок как слово и не склеивал соседей.
+    _NUMBER_MARK = " qnumq "
+    #: Цифры, склеенные двумя и более знаками: IP, дата, версия, список без пробелов.
+    _NUMBER_CHAIN_RE = re.compile(r"\d[.,]\d+[.,/:]\d|\d[/:]\d+[.,]\d")
+
+    @classmethod
+    def _matches_numbers_in_text(
+        cls, value: str, accepted: str, steps: List[str]
+    ) -> bool:
+        """Дробные числа внутри ответа из нескольких токенов — по значению (tsk-1131).
+
+        `_compare_decimal_numbers` работает, только когда ВЕСЬ ответ — одно число.
+        В ответе «A: 2.33 / C: 1.00» против эталона «… C: 1.0» `strip_punctuation`
+        склеивал «100» и «10», и верный ответ отвергался. Здесь числа вынимаются из
+        обеих сторон, на их место ставится метка, и «скелеты» сравниваются прежней
+        нормализацией; числа — попарно, в том же порядке и количестве.
+
+        Путь только добавляет зачёты (вызывается после провала текстового
+        сравнения) и включается, лишь если хоть одно число дробное. Целые пары
+        сравниваются как текст: «0101» ≠ «101» (двоичная запись). Знаков после
+        разделителя у ученика должно быть не меньше, чем у эталона: «1.00» за
+        «1.0» — зачёт, «89.9» за «89.90» — нет.
+        """
+        raw_value = unicodedata.normalize("NFKC", value or "")
+        raw_accepted = unicodedata.normalize("NFKC", accepted or "")
+        # IP, даты, версии, «1,2,3» без пробелов — не дроби: «192.168.1.10»
+        # распалось бы на «192.168» и «1.10» и сравнилось по значению с «1.1».
+        if cls._NUMBER_CHAIN_RE.search(raw_value) or cls._NUMBER_CHAIN_RE.search(
+            raw_accepted
+        ):
+            return False
+        nums_value = cls._DECIMAL_NUMBER_RE.findall(raw_value)
+        nums_accepted = cls._DECIMAL_NUMBER_RE.findall(raw_accepted)
+        if not nums_value or len(nums_value) != len(nums_accepted):
+            return False
+        if not any(sep in "".join(nums_value + nums_accepted) for sep in ".,"):
+            return False
+        for left, right in zip(nums_value, nums_accepted):
+            if not any(sep in left + right for sep in ".,"):
+                if left != right:
+                    return False
+                continue
+            # Ученик не может быть МЕНЕЕ точен, чем эталон: в заданиях на
+            # форматирование «89.9» против «89.90» — ошибка (id-10378).
+            if cls._fraction_digits(left) < cls._fraction_digits(right):
+                return False
+            try:
+                if Decimal(left.replace(",", ".")) != Decimal(right.replace(",", ".")):
+                    return False
+            except InvalidOperation:
+                logger.warning("Не разобрано как число: %r / %r", left, right)
+                return False
+        skeleton_value = cls._DECIMAL_NUMBER_RE.sub(cls._NUMBER_MARK, raw_value)
+        skeleton_accepted = cls._DECIMAL_NUMBER_RE.sub(cls._NUMBER_MARK, raw_accepted)
+        return cls._normalize_text(skeleton_value, steps) == cls._normalize_text(
+            skeleton_accepted, steps
+        )
 
     @classmethod
     def _protect_code_operators(cls, value: str) -> str:
@@ -1666,6 +1729,14 @@ class CheckingService:
         except InvalidOperation:
             logger.warning("Не разобрано как число: %r / %r", raw_value, raw_accepted)
             return None
+
+    @staticmethod
+    def _fraction_digits(number: str) -> int:
+        """Количество цифр после десятичного разделителя («1.00» → 2, «5» → 0)."""
+        for sep in ".,":
+            if sep in number:
+                return len(number.split(sep, 1)[1])
+        return 0
 
     #: Одно целое число целиком (эталон, к которому применимо послабление ниже).
     _WHOLE_NUMBER_RE = re.compile(r"\d+")
