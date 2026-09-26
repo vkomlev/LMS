@@ -72,6 +72,9 @@ class LessonSlotCreate(BaseModel):
     )
     #: tsk-1124: группа расписания; пусто — группа по умолчанию.
     group_id: Optional[int] = Field(default=None, description="Группа расписания слота")
+    #: tsk-1124: ученик не в группе слота → 409 `schedule_group_mismatch`;
+    #: `true` — добавить ученику группу слота и продолжить.
+    force_group: bool = False
 
 
 class LessonSlotUpdate(BaseModel):
@@ -176,6 +179,9 @@ class EndSlotsResult(BaseModel):
 
 class AddSlotParticipantRequest(BaseModel):
     student_id: int = Field(..., description="Ученик, добавляемый в групповой слот")
+    #: tsk-1124: ученик не в группе слота → 409 `schedule_group_mismatch`;
+    #: `true` — добавить ученику группу слота и продолжить.
+    force_group: bool = False
 
 
 class SlotParticipantRead(BaseModel):
@@ -251,6 +257,9 @@ class TeacherLessonOccurrenceRead(LessonOccurrenceRead):
     """Occurrence в панели преподавателя — с полным списком участников."""
 
     participants: list[TeacherParticipantRead] = Field(default_factory=list)
+    #: tsk-1124: группа расписания занятия — группа его слота; у разового
+    #: занятия без слота — группа по умолчанию. Для фильтра в кабинетах.
+    group_id: Optional[int] = None
     # tsk-741 (дефект 02.09): момент, с которого занятие пора подводить, а не
     # разглядывать. Отдаём ВРЕМЯ, а не готовый признак: панель открыта весь
     # урок, и признак, посчитанный на сервере при загрузке, к середине занятия

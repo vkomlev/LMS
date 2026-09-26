@@ -30,7 +30,7 @@ from app.schemas.lesson_calendar import (
     OperatingHoursUpdate,
     SlotParticipantRead,
 )
-from app.services import lesson_calendar_service
+from app.services import lesson_calendar_service, schedule_group_service
 
 router = APIRouter(tags=["lesson_calendar_admin"])
 
@@ -136,6 +136,14 @@ async def create_lesson_slot(
     db: AsyncSession = Depends(get_async_db),
     current_user: CurrentUser = Depends(_ADMIN_GATE),
 ) -> LessonSlotRead:
+    by = current_user.id if not current_user.is_service else None
+    if body.group_id is not None:
+        await schedule_group_service.ensure_active_group(db, body.group_id)
+    slot_group_id = body.group_id or await schedule_group_service.default_group_id(db)
+    for student_id in body.student_ids:
+        await schedule_group_service.guard_staff_slot_assignment(
+            db, student_id, slot_group_id, force=body.force_group, added_by=by,
+        )
     row = await lesson_calendar_service.create_lesson_slot(
         db,
         teacher_id=body.teacher_id,
@@ -244,6 +252,11 @@ async def add_slot_participant(
     db: AsyncSession = Depends(get_async_db),
     current_user: CurrentUser = Depends(_ADMIN_GATE),
 ) -> SlotParticipantRead:
+    slot = await lesson_calendar_service.get_lesson_slot(db, slot_id)
+    await schedule_group_service.guard_staff_slot_assignment(
+        db, body.student_id, slot.group_id, force=body.force_group,
+        added_by=current_user.id if not current_user.is_service else None,
+    )
     row = await lesson_calendar_service.add_slot_participant(
         db, slot_id, body.student_id,
         added_by=current_user.id if not current_user.is_service else None,
@@ -359,6 +372,9 @@ class TransferSlotParticipantRequest(BaseModel):
     """Куда переводим ученика."""
 
     target_slot_id: int = Field(..., description="Слот, в который ученик переезжает")
+    #: tsk-1124: ученик не в группе слота → 409 `schedule_group_mismatch`;
+    #: `true` — добавить ученику группу слота и продолжить.
+    force_group: bool = False
 
 
 @router.post(
@@ -378,7 +394,7 @@ class TransferSlotParticipantRequest(BaseModel):
     ),
     responses={
         404: {"description": "Слот не найден или ученик не числится в исходном слоте"},
-        409: {"description": "Целевой слот выключен либо время занято другим слотом ученика"},
+        409: {"description": "Целевой слот выключен, время занято другим слотом ученика, либо ученик не в группе слота (`payload.code = schedule_group_mismatch`, повторить с `force_group: true`)"},
         422: {"description": "Исходный и целевой слоты совпадают"},
     },
 )
@@ -395,6 +411,7 @@ async def transfer_slot_participant(
         target_slot_id=body.target_slot_id,
         student_id=student_id,
         added_by=current_user.id if not current_user.is_service else None,
+        force_group=body.force_group,
     )
     return SlotParticipantRead.model_validate(row)
 

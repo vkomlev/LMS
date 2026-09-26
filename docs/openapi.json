@@ -31411,7 +31411,7 @@
             "description": "Слот не найден или ученик не числится в исходном слоте"
           },
           "409": {
-            "description": "Целевой слот выключен либо время занято другим слотом ученика"
+            "description": "Целевой слот выключен, время занято другим слотом ученика, либо ученик не в группе слота (`payload.code = schedule_group_mismatch`, повторить с `force_group: true`)"
           },
           "422": {
             "description": "Исходный и целевой слоты совпадают"
@@ -46582,6 +46582,11 @@
             "type": "integer",
             "title": "Student Id",
             "description": "Ученик, добавляемый в групповой слот"
+          },
+          "force_group": {
+            "type": "boolean",
+            "title": "Force Group",
+            "default": false
           }
         },
         "type": "object",
@@ -58461,6 +58466,11 @@
             ],
             "title": "Group Id",
             "description": "Группа расписания слота"
+          },
+          "force_group": {
+            "type": "boolean",
+            "title": "Force Group",
+            "default": false
           }
         },
         "type": "object",
@@ -74413,6 +74423,17 @@
             "type": "array",
             "title": "Participants"
           },
+          "group_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group Id"
+          },
           "wrapup_from": {
             "type": "string",
             "format": "date-time",
@@ -75634,6 +75655,11 @@
             "type": "integer",
             "title": "Target Slot Id",
             "description": "Слот, в который ученик переезжает"
+          },
+          "force_group": {
+            "type": "boolean",
+            "title": "Force Group",
+            "default": false
           }
         },
         "type": "object",

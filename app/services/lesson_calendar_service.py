@@ -673,8 +673,14 @@ async def transfer_slot_participant(
     target_slot_id: int,
     student_id: int,
     added_by: Optional[int],
+    force_group: Optional[bool] = None,
 ) -> LessonSlotStudent:
     """Перевести ученика из одного слота в другой НАСОВСЕМ, одним действием.
+
+    ``force_group`` (tsk-1124): ``None`` — группу не проверять (внутренние
+    пути); ``False``/``True`` — путь методиста, см.
+    `schedule_group_service.guard_staff_slot_assignment`. Проверка стоит после
+    остальных отказов, чтобы методист не подтверждал группу ради другого отказа.
 
     Открепление и прикрепление по отдельности дают тот же результат только
     если не забыть второй шаг и если первый не упадёт на полпути. Здесь оба
@@ -711,6 +717,11 @@ async def transfer_slot_participant(
             f"({WEEKDAY_NAMES[conflict.weekday]}, {conflict.start_time:%H:%M}) — "
             "сначала освободите его",
             status_code=409,
+        )
+
+    if force_group is not None:
+        await schedule_group_service.guard_staff_slot_assignment(
+            db, student_id, target.group_id, force=force_group, added_by=added_by,
         )
 
     await _detach_student_from_slot(db, source_slot_id, student_id)

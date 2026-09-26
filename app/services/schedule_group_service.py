@@ -170,6 +170,24 @@ def slot_visible(slot_group_id: int, group_ids: list[int]) -> bool:
     return slot_group_id in group_ids
 
 
+async def occurrence_group_ids(
+    db: AsyncSession, slot_ids: list[Optional[int]]
+) -> dict[Optional[int], int]:
+    """Группа занятия по его ``slot_id`` — одним запросом на весь список.
+    Ключ ``None`` (разовое занятие без слота) → группа по умолчанию, по тому же
+    правилу, что `occurrence_visible`. Нужна фильтру занятий в кабинетах."""
+    from app.models.lesson_slot import LessonSlot  # локально: модель слота тянет этот модуль
+
+    real = sorted({sid for sid in slot_ids if sid is not None})
+    result: dict[Optional[int], int] = {None: await default_group_id(db)}
+    if real:
+        rows = await db.execute(
+            select(LessonSlot.id, LessonSlot.group_id).where(LessonSlot.id.in_(real))
+        )
+        result.update({sid: gid for sid, gid in rows.all()})
+    return result
+
+
 async def occurrence_visible(db: AsyncSession, slot_id: Optional[int], group_ids: list[int]) -> bool:
     """Видимо ли ученику занятие: группа его слота, а у занятия без слота
     (разовое) — группа по умолчанию, по тому же правилу, что ученик без группы."""
@@ -181,6 +199,55 @@ async def occurrence_visible(db: AsyncSession, slot_id: Optional[int], group_ids
         await db.execute(select(LessonSlot.group_id).where(LessonSlot.id == slot_id))
     ).scalar_one_or_none()
     return slot_group is not None and slot_visible(slot_group, group_ids)
+
+
+GROUP_MISMATCH_CODE = "schedule_group_mismatch"
+
+
+async def guard_staff_slot_assignment(
+    db: AsyncSession,
+    student_id: int,
+    slot_group_id: int,
+    *,
+    force: bool,
+    added_by: Optional[int],
+) -> None:
+    """Методист ставит ученика в слот (добавление, перевод) — tsk-1124 Ф4.
+
+    Группа слота среди групп ученика — пропускаем. Нет — 409 с машинным
+    признаком ``schedule_group_mismatch``: экран спросит «добавить ученику группу?».
+    С ``force`` группа слота ДОБАВЛЯЕТСЯ к эффективным группам ученика (а не
+    заменяет их: ученик без явных групп иначе потерял бы группу по умолчанию).
+    Коммит — на вызывающем. Несуществующий или не-ученик — 404/422 раньше
+    вопроса про группу (иначе вставка упала бы на внешнем ключе с 500).
+    """
+    from app.services.lesson_calendar_service import ensure_user_has_role
+
+    await ensure_user_has_role(db, student_id, "student")
+    groups = await effective_group_ids(db, student_id)
+    if slot_visible(slot_group_id, groups):
+        return
+    slot_group = await get_group(db, slot_group_id)
+    if not force:
+        raise DomainError(
+            f"Ученик не в группе «{slot_group.name}». Добавить ему эту группу и поставить в слот?",
+            status_code=409,
+            payload={
+                "code": GROUP_MISMATCH_CODE,
+                "slot_group_id": slot_group_id,
+                "student_group_ids": groups,
+            },
+        )
+    for gid in sorted(set(groups) | {slot_group_id}):
+        await db.execute(
+            pg_insert(UserScheduleGroup)
+            .values(user_id=student_id, group_id=gid, added_by=added_by)
+            .on_conflict_do_nothing(index_elements=["user_id", "group_id"])
+        )
+    logger.info(
+        "tsk-1124: ученику %s добавлена группа %s при постановке в слот (кем: %s)",
+        student_id, slot_group_id, added_by,
+    )
 
 
 async def set_student_groups(

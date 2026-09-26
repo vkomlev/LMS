@@ -164,3 +164,130 @@ async def test_student_groups_roles_and_missing_user(db, client):
         assert (await client.put(url, json={"group_ids": []}, headers=headers)).status_code == 403
     missing = await client.get("/api/v1/schedule-groups/students/999999999", headers=methodist)
     assert missing.status_code in (404, 422), missing.text
+
+
+@pytest.mark.asyncio
+async def test_staff_add_transfer_group_mismatch_and_force(db, client):
+    """Методист ставит детского ученика во взрослый слот: 409 с признаком,
+    с force_group — группа добавляется к детской, а не заменяет её."""
+    _, methodist = await _auth(db, "methodist")
+    teacher_id = await _user(db, "teacher")
+    kid = await _user(db, "student")
+    kids = await _gid(db, "Дети · Информатика")
+    adults = await _gid(db, "Взрослые · Тестирование")
+    base = {"teacher_id": teacher_id, "start_time": "12:00:00", "duration_minutes": 60}
+    kid_slot = (await client.post("/api/v1/lesson-slots", json={**base, "weekday": 0}, headers=methodist)).json()["id"]
+    adult_slot = (await client.post(
+        "/api/v1/lesson-slots", json={**base, "weekday": 4, "group_id": adults}, headers=methodist,
+    )).json()["id"]
+
+    ok = await client.post(f"/api/v1/lesson-slots/{kid_slot}/participants", json={"student_id": kid}, headers=methodist)
+    assert ok.status_code == 201, ok.text
+
+    moved = await client.post(
+        f"/api/v1/lesson-slots/{kid_slot}/participants/{kid}/transfer",
+        json={"target_slot_id": adult_slot}, headers=methodist,
+    )
+    assert moved.status_code == 409, moved.text
+    assert moved.json()["payload"]["code"] == "schedule_group_mismatch"
+
+    added = await client.post(
+        f"/api/v1/lesson-slots/{adult_slot}/participants",
+        json={"student_id": kid}, headers=methodist,
+    )
+    assert added.status_code == 409 and added.json()["payload"]["slot_group_id"] == adults
+
+    forced = await client.post(
+        f"/api/v1/lesson-slots/{adult_slot}/participants",
+        json={"student_id": kid, "force_group": True}, headers=methodist,
+    )
+    assert forced.status_code == 201, forced.text
+    groups = (await client.get(f"/api/v1/schedule-groups/students/{kid}", headers=methodist)).json()
+    assert sorted(groups["effective_group_ids"]) == sorted([kids, adults])
+
+
+@pytest.mark.asyncio
+async def test_create_slot_with_foreign_students_needs_force(db, client):
+    _, methodist = await _auth(db, "methodist")
+    teacher_id = await _user(db, "teacher")
+    kid = await _user(db, "student")
+    adults = await _gid(db, "Взрослые · Тестирование")
+    body = {"teacher_id": teacher_id, "weekday": 4, "start_time": "12:00:00", "duration_minutes": 60,
+            "group_id": adults, "student_ids": [kid]}
+    refused = await client.post("/api/v1/lesson-slots", json=body, headers=methodist)
+    assert refused.status_code == 409, refused.text
+    created = await client.post("/api/v1/lesson-slots", json={**body, "force_group": True}, headers=methodist)
+    assert created.status_code == 201, created.text
+
+
+@pytest.mark.asyncio
+async def test_teacher_lessons_carry_group(db, client):
+    """Занятие в кабинете преподавателя несёт группу своего слота; разовое — группу по умолчанию."""
+    from datetime import datetime, timedelta, timezone as tz
+
+    teacher_id, teacher = await _auth(db, "teacher")
+    adults = await _gid(db, "Взрослые · Тестирование")
+    kids = await _gid(db, "Дети · Информатика")
+    slot_id = (await db.execute(text(
+        "INSERT INTO lesson_slot (teacher_id, weekday, start_time, duration_minutes, group_id) "
+        "VALUES (:t, 4, '12:00', 60, :g) RETURNING id"
+    ), {"t": teacher_id, "g": adults})).scalar_one()
+    at = datetime.now(tz.utc) + timedelta(days=2)
+    for sid, shift in ((slot_id, 0), (None, 3)):
+        await db.execute(text(
+            "INSERT INTO lesson_occurrence (slot_id, teacher_id, scheduled_at, duration_minutes) "
+            "VALUES (:s, :t, :at, 60)"
+        ), {"s": sid, "t": teacher_id, "at": at + timedelta(hours=shift)})
+    await db.commit()
+    resp = await client.get(
+        f"/api/v1/teacher/lesson-occurrences?teacher_id={teacher_id}", headers=teacher,
+    )
+    assert resp.status_code == 200, resp.text
+    by_slot = {o["slot_id"]: o["group_id"] for o in resp.json()}
+    assert by_slot == {slot_id: adults, None: kids}
+
+
+@pytest.mark.asyncio
+async def test_staff_force_unknown_student_is_not_500(db, client):
+    """Несуществующий ученик с force_group — 404/422, а не 500 на внешнем ключе."""
+    _, methodist = await _auth(db, "methodist")
+    teacher_id = await _user(db, "teacher")
+    adults = await _gid(db, "Взрослые · Тестирование")
+    slot = (await client.post(
+        "/api/v1/lesson-slots",
+        json={"teacher_id": teacher_id, "weekday": 4, "start_time": "12:00:00",
+              "duration_minutes": 60, "group_id": adults},
+        headers=methodist,
+    )).json()["id"]
+    resp = await client.post(
+        f"/api/v1/lesson-slots/{slot}/participants",
+        json={"student_id": 999_999_999, "force_group": True}, headers=methodist,
+    )
+    assert resp.status_code in (404, 422), resp.text
+
+
+@pytest.mark.asyncio
+async def test_transfer_other_refusal_comes_before_group_and_rolls_back(db, client):
+    """Перевод в выключенный слот чужой группы: отказ «выключен», а не вопрос про
+    группу; с force_group группа ученику при отказе НЕ добавляется (откат)."""
+    _, methodist = await _auth(db, "methodist")
+    teacher_id = await _user(db, "teacher")
+    kid = await _user(db, "student")
+    adults = await _gid(db, "Взрослые · Тестирование")
+    base = {"teacher_id": teacher_id, "start_time": "12:00:00", "duration_minutes": 60}
+    kid_slot = (await client.post(
+        "/api/v1/lesson-slots", json={**base, "weekday": 0, "student_ids": [kid]}, headers=methodist,
+    )).json()["id"]
+    adult_slot = (await client.post(
+        "/api/v1/lesson-slots", json={**base, "weekday": 4, "group_id": adults}, headers=methodist,
+    )).json()["id"]
+    await client.delete(f"/api/v1/lesson-slots/{adult_slot}", headers=methodist)
+    for force in (False, True):
+        resp = await client.post(
+            f"/api/v1/lesson-slots/{kid_slot}/participants/{kid}/transfer",
+            json={"target_slot_id": adult_slot, "force_group": force}, headers=methodist,
+        )
+        assert resp.status_code == 409, resp.text
+        assert resp.json().get("payload", {}).get("code") != "schedule_group_mismatch"
+    groups = (await client.get(f"/api/v1/schedule-groups/students/{kid}", headers=methodist)).json()
+    assert groups["group_ids"] == []

@@ -49,6 +49,7 @@ from app.schemas.lesson_calendar import (
 from app.services import (
     lesson_occurrence_service,
     lesson_plan_service,
+    schedule_group_service,
     teacher_lesson_summary_service,
 )
 
@@ -108,9 +109,14 @@ async def list_teacher_occurrences(
     summary_minutes = settings_store.get_int("lesson_summary_after_start_minutes")
     wrapup_minutes = settings_store.get_int("lesson_wrapup_before_end_minutes")
 
+    group_by_slot = await schedule_group_service.occurrence_group_ids(
+        db, [occurrence.slot_id for occurrence, _ in pairs]
+    )
+
     result: list[TeacherLessonOccurrenceRead] = []
     for occurrence, participant_pairs in pairs:
         data = LessonOccurrenceRead.model_validate(occurrence).model_dump()
+        data["group_id"] = group_by_slot.get(occurrence.slot_id)
         ends_at = occurrence.scheduled_at + timedelta(
             minutes=int(occurrence.duration_minutes)
         )
