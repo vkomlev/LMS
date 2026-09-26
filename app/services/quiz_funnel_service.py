@@ -293,7 +293,7 @@ async def submit_answer(
         raise DomainError(
             detail="Этого вопроса нет на вашем пути.", status_code=404, payload={"code": code}
         )
-    ctx = engine.Context(answers={**answers, **w.prefilled}, role=w.role)
+    ctx = engine.Context(answers=dict(w.path_answers), role=w.role)
     visible = {o["id"] for o in engine.visible_options(step.question, ctx)}
     qtype = (step.question.get("task_content") or {}).get("type", "SC_Qw")
     if (

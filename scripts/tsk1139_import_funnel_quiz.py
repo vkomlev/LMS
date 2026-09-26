@@ -99,6 +99,16 @@ async def run(conn: asyncpg.Connection, spec: Dict[str, Any], apply: bool) -> No
             course_id, spec.get("title") or quiz_uid, spec.get("description"),
         )
     difficulty_id = await conn.fetchval("SELECT id FROM difficulties ORDER BY id LIMIT 1")
+    # Порядок вопросов задаёт спецификация, order_position нужен лишь уникальным.
+    # Триггер вставки сдвигает соседей — при upsert поверх прежних вопросов строка
+    # задевалась дважды (CardinalityViolation). Выключаем его на транзакцию и
+    # расставляем сами: прежние — прочь с дороги, затем 1..N.
+    await conn.execute("SET LOCAL app.skip_task_order_trigger = 'true'")
+    await conn.execute(
+        "UPDATE tasks SET order_position = order_position + 100000 "
+        "WHERE course_id = $1 AND order_position IS NOT NULL",
+        course_id,
+    )
     for order, row in enumerate(rows, start=1):
         mode = "multi" if row["content"].get("type") == "MC_Qw" else "single"
         rules = {"max_score": 1, "quiz": {"scales": [TECH_SCALE], "mode": mode}}

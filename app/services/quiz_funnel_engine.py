@@ -61,6 +61,9 @@ class Walk:
     is_complete: bool
     prefilled: Dict[str, List[str]]
     remaining_estimate: int
+    #: Ответы только на вопросы этого пути (включая предзаполненные) — их и
+    #: видят условия итогов, признаков и регистрации.
+    path_answers: Dict[str, List[str]] = field(default_factory=dict)
 
 
 def eval_condition(cond: Any, ctx: Context) -> bool:
@@ -157,6 +160,9 @@ def walk(
     merged: Dict[str, List[str]] = {k: list(v) for k, v in answers.items() if v}
     prefilled: Dict[str, List[str]] = {}
     steps: List[PathStep] = []
+    # Условия видят только ответы с этого пути: ответ из ветки, по которой человек
+    # ходил раньше (вернулся к развилке, сменил ветку), не должен ничего решать.
+    on_path: Dict[str, List[str]] = {}
 
     for _hop in range(_MAX_BRANCH_HOPS):
         jumped = False
@@ -165,12 +171,14 @@ def walk(
             code = question.get("code")
             if not code:
                 continue
-            ctx = Context(answers=merged, role=role)
+            ctx = Context(answers=on_path, role=role)
             if code in skip:
                 filled = _prefill(question, params)
                 if filled and code not in merged:
                     merged[code] = filled
                     prefilled[code] = filled
+                if merged.get(code):
+                    on_path[code] = merged[code]
                 target = _goto(question, merged.get(code))
             else:
                 if question.get("show_if") is not None and not eval_condition(
@@ -182,7 +190,8 @@ def walk(
                     remaining = sum(
                         1 for q in questions[index + 1:] if q.get("code") not in skip
                     )
-                    return Walk(steps, branch, role, False, prefilled, remaining)
+                    return Walk(steps, branch, role, False, prefilled, remaining, on_path)
+                on_path[code] = merged[code]
                 target = _goto(question, merged.get(code))
             if target and target in branches and target != branch:
                 if branch == ROOT_BRANCH and target in ROLE_BRANCHES:
@@ -193,9 +202,9 @@ def walk(
                 jumped = True
                 break
         if not jumped:
-            return Walk(steps, branch, role, True, prefilled, 0)
+            return Walk(steps, branch, role, True, prefilled, 0, on_path)
     logger.warning("quiz_funnel_engine: превышено число переходов goto — петля в спецификации")
-    return Walk(steps, branch, role, True, prefilled, 0)
+    return Walk(steps, branch, role, True, prefilled, 0, on_path)
 
 
 def _goto(question: Mapping[str, Any], chosen: Optional[Sequence[str]]) -> Optional[str]:
@@ -284,8 +293,7 @@ def evaluate(
 ) -> Evaluation:
     """Полный расчёт: путь, признаки, итог (только у пройденного до конца)."""
     w = walk(spec, answers, params)
-    merged = {**{k: list(v) for k, v in answers.items() if v}, **w.prefilled}
-    ctx = Context(answers=merged, role=w.role)
+    ctx = Context(answers=dict(w.path_answers), role=w.role)
     ctx.derived = compute_derived(spec, ctx)
     if not w.is_complete:
         return Evaluation(w, ctx, None, [])

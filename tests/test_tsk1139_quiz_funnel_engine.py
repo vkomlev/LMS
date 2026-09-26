@@ -140,3 +140,16 @@ def test_goto_loop_does_not_hang():
                                 "goto": {"y": "root"}}]}}
     w = eng.walk(loop, {"A": ["x"], "B": ["y"]}, {})
     assert w.is_complete
+
+
+def test_answers_from_abandoned_branch_do_not_leak():
+    """Человек прошёл подростковую ветку («11–13»), вернулся и ушёл в ЕГЭ:
+    старый ответ T1 не должен участвовать в условиях итога и регистрации."""
+    spec = json.loads(json.dumps(SPEC))
+    spec["registration_closed_if"] = {"T1": ["t_age_11_13"]}
+    stale = {"T1": ["t_age_11_13"]}
+    ev = _finish({"branch": "ege", "role": "parent"})
+    answers = {**stale, **ev.ctx.answers}
+    again = eng.evaluate(spec, answers, {"branch": "ege", "role": "parent"})
+    assert "T1" not in again.ctx.answers
+    assert not eng.eval_condition(spec["registration_closed_if"], again.ctx)
