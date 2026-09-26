@@ -10,9 +10,9 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from fastapi import HTTPException, status
 from sqlalchemy import select
@@ -39,6 +39,7 @@ class BotStart:
     branch_code: str
     pdf_url: Optional[str]
     trial_requested: bool
+    channels: List[Dict[str, str]] = field(default_factory=list)
 
 
 @dataclass
@@ -49,6 +50,7 @@ class DueReminder:
     tg_id: int
     branch_code: str
     step: int
+    channels: List[Dict[str, str]] = field(default_factory=list)
 
 
 def _now() -> datetime:
@@ -68,6 +70,17 @@ async def _load(db: AsyncSession, bot_lead_id: int, tg_id: int) -> QuizFunnelBot
     if row is None or row.tg_id != tg_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Гость бота не найден.")
     return row
+
+
+async def _channels(db: AsyncSession, row: QuizFunnelBotLead) -> List[Dict[str, str]]:
+    """Каналы для кнопок: по итогу гостя, иначе по его ветке."""
+    funnel = await quiz_funnel_service.load_funnel_by_id(db, row.quiz_course_id)
+    if funnel is None:
+        return []
+    evaluation = await quiz_funnel_service.evaluate_session(db, funnel, row.guest_session_id)
+    return quiz_funnel_service.channels_for(
+        funnel.spec, evaluation.walk.branch, evaluation.outcome
+    )
 
 
 async def _branch_code(db: AsyncSession, row: QuizFunnelBotLead) -> str:
@@ -113,6 +126,7 @@ async def start(
         branch_code=branch_code,
         pdf_url=quiz_funnel_service.pdf_url(funnel.spec, branch_code) if funnel else None,
         trial_requested=row.trial_requested_at is not None,
+        channels=await _channels(db, row),
     )
 
 
@@ -140,7 +154,11 @@ async def list_due(db: AsyncSession, limit: int = 50) -> List[DueReminder]:
     ).all()
     return [
         DueReminder(
-            bot_lead_id=r.id, tg_id=int(r.tg_id), branch_code=code or "unknown", step=r.reminder_step
+            bot_lead_id=r.id,
+            tg_id=int(r.tg_id),
+            branch_code=code or "unknown",
+            step=r.reminder_step,
+            channels=await _channels(db, r),
         )
         for r, code in rows
     ]

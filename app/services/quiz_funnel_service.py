@@ -55,6 +55,8 @@ REGISTRATION_BUTTON_KINDS = ("register", "demo")
 #: До текста согласия на данные несовершеннолетнего регистрация родителя закрыта
 #: (решение оператора 26.09). Спецификация может переопределить.
 DEFAULT_REGISTRATION_CLOSED = ("parent",)
+#: Роль «родитель» без регистрации и в других ветках (ЕГЭ голосом родителя).
+DEFAULT_REGISTRATION_CLOSED_ROLES = ("parent",)
 #: Подпись кнопки, заменяющей регистрацию, когда регистрирует взрослый.
 SHARE_PARENT_TEXT = "Отправить ссылку родителям"
 
@@ -135,22 +137,30 @@ async def _task_ids(db: AsyncSession, funnel: Funnel) -> Dict[str, int]:
 
 
 async def _answers(
-    db: AsyncSession, guest_session_id: Optional[UUID], task_ids: Mapping[str, int]
+    db: AsyncSession,
+    guest_session_id: Optional[UUID],
+    task_ids: Mapping[str, int],
+    since: Optional[datetime] = None,
 ) -> Dict[str, List[str]]:
     """Последний ответ гостя по каждому вопросу: код → выбранные варианты.
 
     Последний, а не первый: ответ разрешено менять, путь пересчитывается.
+    ``since`` — начало текущего прохождения: ответы до него (человек вернулся
+    по другой ссылке) не учитываются.
     """
     if guest_session_id is None or not task_ids:
         return {}
     by_task = {tid: code for code, tid in task_ids.items()}
+    conditions = [
+        GuestAttempt.guest_session_id == guest_session_id,
+        GuestAttempt.task_id.in_(list(by_task)),
+    ]
+    if since is not None:
+        conditions.append(GuestAttempt.created_at >= since)
     rows = (
         await db.execute(
             select(GuestAttempt)
-            .where(
-                GuestAttempt.guest_session_id == guest_session_id,
-                GuestAttempt.task_id.in_(list(by_task)),
-            )
+            .where(*conditions)
             .order_by(GuestAttempt.task_id, GuestAttempt.id.desc())
             .distinct(GuestAttempt.task_id)
         )
@@ -170,23 +180,25 @@ async def _progress(
     return await db.get(QuizFunnelProgress, (guest_session_id, course_id))
 
 
-async def _params(
+async def _session_inputs(
     db: AsyncSession, funnel: Funnel, guest_session_id: Optional[UUID]
-) -> Dict[str, str]:
-    """Параметры ссылки, с которыми начато прохождение."""
+) -> tuple[Dict[str, int], Dict[str, List[str]], Dict[str, str]]:
+    """(код → задание, ответы текущего прохождения, параметры ссылки)."""
+    task_ids = await _task_ids(db, funnel)
     if guest_session_id is None:
-        return {}
+        return task_ids, {}, {}
     progress = await _progress(db, guest_session_id, funnel.course.id)
-    return dict(progress.params or {}) if progress else {}
+    since = progress.created_at if progress else None
+    answers = await _answers(db, guest_session_id, task_ids, since)
+    params = dict(progress.params or {}) if progress else {}
+    return task_ids, answers, params
 
 
 async def evaluate_session(
     db: AsyncSession, funnel: Funnel, guest_session_id: Optional[UUID]
 ) -> engine.Evaluation:
     """Путь, признаки и итог для сессии по её ответам и параметрам ссылки."""
-    task_ids = await _task_ids(db, funnel)
-    answers = await _answers(db, guest_session_id, task_ids)
-    params = await _params(db, funnel, guest_session_id)
+    _, answers, params = await _session_inputs(db, funnel, guest_session_id)
     return engine.evaluate(funnel.spec, answers, params)
 
 
@@ -202,7 +214,9 @@ async def start(
     """Начало прохождения: параметры ссылки и метки первого касания.
 
     Метки пишутся в сессию один раз (повторный заход с другой страницы источник
-    не подменяет); параметры ссылки — на прохождение, последние заданные.
+    не подменяет). Пришёл по ссылке с другими параметрами — прохождение
+    начинается заново: ответы прошлого пути больше не учитываются (попытки не
+    удаляются, отсекаются по времени начала прохождения).
     """
     params = engine.valid_params(funnel.spec, params_raw)
     session = await db.get(GuestSession, guest_session_id)
@@ -221,8 +235,15 @@ async def start(
                 role=params.get("role"),
             )
         )
-    elif params:
+    elif params and params != (progress.params or {}):
+        now = datetime.now(timezone.utc)
         progress.params = params
+        progress.created_at = now
+        progress.updated_at = now
+        progress.branch = params.get("branch")
+        progress.role = params.get("role")
+        progress.outcome_code = None
+        progress.completed_at = None
     await db.flush()
 
 
@@ -284,9 +305,11 @@ async def submit_answer(
         DomainError 404: вопроса нет на текущем пути (скрыт условием или чужой ветки).
         DomainError 400: вариант не из видимых или одиночный выбор с несколькими.
     """
-    task_ids = await _task_ids(db, funnel)
-    answers = await _answers(db, guest_session_id, task_ids)
-    params = await _params(db, funnel, guest_session_id)
+    if await _progress(db, guest_session_id, funnel.course.id) is None:
+        # Прохождение без старта (старый клиент): завести до попытки, иначе
+        # попытка окажется раньше начала прохождения и отсечётся.
+        await start(db, funnel, guest_session_id, {}, None)
+    task_ids, answers, params = await _session_inputs(db, funnel, guest_session_id)
     w = engine.walk(funnel.spec, answers, params)
     step = next((s for s in w.steps if s.code == code), None)
     if step is None or code not in task_ids:
@@ -352,23 +375,37 @@ def _by_role(outcome: Mapping[str, Any], key: str, role: Optional[str]) -> Any:
     return by_role[role] if role and role in by_role else outcome.get(key)
 
 
+def registration_mode(
+    spec: Mapping[str, Any], branch: str, ctx: Optional[engine.Context] = None
+) -> str:
+    """Как быть со входом из итога: ``open`` — открыт; ``drop`` — закрыт, кнопки
+    входа убрать; ``share`` — закрыт, вместо входа «ссылка родителям».
+
+    * ``drop`` — ветка в ``registration_closed_branches`` или роль в
+      ``registration_closed_roles`` (по умолчанию родитель — решение оператора:
+      родитель получает итог, пробное и бота без регистрации, ребёнка
+      регистрируют при записи);
+    * ``share`` — сработало ``registration_closed_if`` (подросток 11–13:
+      регистрирует взрослый).
+    """
+    branches = spec.get("registration_closed_branches")
+    branches = DEFAULT_REGISTRATION_CLOSED if branches is None else branches
+    roles = spec.get("registration_closed_roles")
+    roles = DEFAULT_REGISTRATION_CLOSED_ROLES if roles is None else roles
+    role = ctx.role if ctx is not None else None
+    if branch in branches or (role is not None and role in roles):
+        return "drop"
+    condition = spec.get("registration_closed_if")
+    if condition is not None and ctx is not None and engine.eval_condition(condition, ctx):
+        return "share"
+    return "open"
+
+
 def registration_open(
     spec: Mapping[str, Any], branch: str, ctx: Optional[engine.Context] = None
 ) -> bool:
-    """Открыта ли регистрация из итога.
-
-    Закрыта, если ветка в ``registration_closed_branches`` (по умолчанию
-    ``parent`` — до текста согласия) или сработало ``registration_closed_if``
-    (например, подросток 11–13: регистрирует только родитель).
-    """
-    closed = spec.get("registration_closed_branches")
-    closed = DEFAULT_REGISTRATION_CLOSED if closed is None else closed
-    if branch in closed:
-        return False
-    condition = spec.get("registration_closed_if")
-    if condition is not None and ctx is not None and engine.eval_condition(condition, ctx):
-        return False
-    return True
+    """Открыт ли вход из итога (см. :func:`registration_mode`)."""
+    return registration_mode(spec, branch, ctx) == "open"
 
 
 def contact_url(title: str) -> str:
@@ -390,7 +427,7 @@ def pdf_url(spec: Mapping[str, Any], branch: str) -> Optional[str]:
 
 
 def _buttons(
-    outcome: Mapping[str, Any], reg_open: bool, bot_url: Optional[str], contact: str
+    outcome: Mapping[str, Any], reg_mode: str, bot_url: Optional[str], contact: str
 ) -> List[Dict[str, Any]]:
     """Кнопки итога. Регистрационные — только при открытой регистрации, бот —
     только при настроенном боте и PDF; ``url`` заполняется там, где его знает
@@ -399,9 +436,9 @@ def _buttons(
     has_share = any(b.get("kind") == "share_parent_link" for b in outcome.get("buttons") or [])
     for button in outcome.get("buttons") or []:
         kind = button.get("kind")
-        if kind in REGISTRATION_BUTTON_KINDS and not reg_open:
-            # Регистрирует взрослый: вместо входа — ссылка родителям (одна).
-            if has_share:
+        if kind in REGISTRATION_BUTTON_KINDS and reg_mode != "open":
+            # drop — вход просто убрать; share — вместо входа ссылка родителям (одна).
+            if reg_mode == "drop" or has_share:
                 continue
             has_share = True
             button = {**button, "kind": "share_parent_link", "text": SHARE_PARENT_TEXT}
@@ -435,7 +472,8 @@ async def get_result(
     if outcome is None:
         return empty
     branch, role = evaluation.walk.branch, evaluation.walk.role
-    reg_open = registration_open(funnel.spec, branch, evaluation.ctx)
+    reg_mode = registration_mode(funnel.spec, branch, evaluation.ctx)
+    reg_open = reg_mode == "open"
     bot_url = None
     if pdf_url(funnel.spec, branch):
         bot_url = bot_start_url(await ensure_bot_token(db, guest_session_id, funnel.course.id))
@@ -449,12 +487,31 @@ async def get_result(
         "role": role,
         "title": title,
         "visible": list(_by_role(outcome, "visible", role) or []),
-        "buttons": _buttons(outcome, reg_open, bot_url, contact),
+        "buttons": _buttons(outcome, reg_mode, bot_url, contact),
+        "modifiers": [m["text"] for m in evaluation.modifiers if m.get("text")],
+        "checks": _checks(funnel, evaluation),
         "target_course_uid": outcome.get("target_course_uid"),
         "registration_enabled": reg_open,
         "bot_start_url": bot_url,
         "contact_url": contact,
     }
+
+
+def _checks(funnel: Funnel, evaluation: engine.Evaluation) -> List[Dict[str, str]]:
+    """Разборы мини-проверок, на которые человек ответил на своём пути."""
+    out: List[Dict[str, str]] = []
+    for step in evaluation.walk.steps:
+        if not step.question.get("check"):
+            continue
+        feedback = engine.check_feedback(
+            funnel.spec, step.code, evaluation.ctx.answers.get(step.code) or []
+        )
+        if feedback:
+            out.append({
+                "stem": engine.stem_for(step.question, evaluation.walk.role),
+                "feedback": feedback,
+            })
+    return out
 
 
 def full_breakdown(funnel: Funnel, evaluation: engine.Evaluation) -> Dict[str, Any]:
@@ -466,25 +523,32 @@ def full_breakdown(funnel: Funnel, evaluation: engine.Evaluation) -> Dict[str, A
     template = (funnel.spec.get("full_templates") or {}).get(outcome.get("full_template") or "")
     if isinstance(template, dict):
         template = template.get(role or "") or template.get("default")
-    checks = []
-    for step in evaluation.walk.steps:
-        if not step.question.get("check"):
-            continue
-        feedback = engine.check_feedback(
-            funnel.spec, step.code, evaluation.ctx.answers.get(step.code) or []
-        )
-        if feedback:
-            checks.append({"stem": engine.stem_for(step.question, role), "feedback": feedback})
     return {
         "title": _by_role(outcome, "title", role) or "",
         "visible": list(_by_role(outcome, "visible", role) or []),
         "modifiers": [m["text"] for m in evaluation.modifiers if m.get("text")],
-        "checks": checks,
+        "checks": _checks(funnel, evaluation),
         "full": list(template or []),
     }
 
 
 # ── бот ─────────────────────────────────────────────────────────────────────
+
+def channels_for(
+    spec: Mapping[str, Any], branch: str, outcome: Optional[Mapping[str, Any]]
+) -> List[Dict[str, str]]:
+    """Каналы и группы для кнопок бота: у итога (``outcome.channels``) — точнее,
+    иначе по ветке (``spec.channels[ветка]``). Детского канала нет — у ветки
+    может быть пусто, тогда бот кнопок каналов не показывает."""
+    raw = (outcome or {}).get("channels")
+    if raw is None:
+        raw = (spec.get("channels") or {}).get(branch) or []
+    return [
+        {"text": str(c["text"]), "url": str(c["url"])}
+        for c in raw
+        if isinstance(c, Mapping) and c.get("text") and str(c.get("url", "")).startswith("https://")
+    ]
+
 
 async def ensure_bot_token(db: AsyncSession, guest_session_id: UUID, course_id: int) -> str:
     """Токен стартовой ссылки бота для пары (сессия, квиз) — один на пару.

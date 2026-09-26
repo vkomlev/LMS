@@ -59,6 +59,7 @@ async def _seed(db):
     """Квиз из контента; курсы итогов взрослой ветки → один бесплатный курс."""
     spec = copy.deepcopy(_SPEC)
     spec["quiz_uid"] = _QUIZ_UID
+    spec["channels"] = {"adult": [{"text": "Канал", "url": "https://t.me/CyberGuruKomlev"}]}
     for outcome in spec["outcomes"]:
         if outcome["branch"] == "adult":
             outcome["target_course_uid"] = _FREE_UID
@@ -264,14 +265,14 @@ async def test_result_incomplete(client):
 
 
 @pytest.mark.asyncio
-async def test_parent_of_graduate_goes_to_ege_with_registration(client):
-    """Цель «ЕГЭ» у родителя уводит в ветку ЕГЭ голосом родителя; выпускнику
-    16–17 лет согласие родителя на данные младше 14 не нужно — вход открыт."""
+async def test_parent_of_graduate_goes_to_ege_without_registration(client):
+    """Цель «ЕГЭ» у родителя уводит в ветку ЕГЭ голосом родителя; решение
+    оператора 27.09 — родитель без регистрации (ребёнка регистрируют при записи)."""
     await _begin(client, branch="parent")
     state = await _answer_until(client)
     assert state["branch"] == "ege" and state["role"] == "parent"
     body = (await client.get(f"{_BASE}/result")).json()
-    assert body["registration_enabled"] is True
+    assert body["registration_enabled"] is False
 
 
 @pytest.mark.asyncio
@@ -428,6 +429,7 @@ async def test_bot_start_trial_and_reminders(client, db, monkeypatch):
     assert start.status_code == 200, start.text
     started = start.json()
     assert started["branch_code"] == "adult"
+    assert started["channels"] == [{"text": "Канал", "url": "https://t.me/CyberGuruKomlev"}]
     assert started["pdf_url"] == "/media/funnel/04-vzroslyj-karta-vhoda.pdf"
     bot_lead_id = started["bot_lead_id"]
 
@@ -502,3 +504,41 @@ async def test_site_funnel_counts_steps(client, db):
     assert (adult["opened"], adult["started"], adult["completed"], adult["registered"]) == (1, 1, 1, 1)
     assert adult["paid"] == 0
     assert await quiz_funnel_service.get_site_funnel(db, "no-such-quiz") is None
+
+
+@pytest.mark.asyncio
+async def test_new_link_in_same_session_starts_clean_path(client):
+    """Прошёл родительскую ветку, вернулся по ссылке ?branch=teen: развилка
+    пропущена, путь подростка, чужие ответы не подставлены."""
+    await _begin(client, branch="parent")
+    await _answer_until(client, pick=-1)
+    resp = await client.post(f"{_BASE}/start", json={"branch": "teen"})
+    assert resp.status_code == 204
+    state = (await client.get(_BASE)).json()
+    assert state["branch"] == "teen"
+    assert [q["code"] for q in state["questions"]][0] == "T1"
+    assert state["questions"][0]["selected_option_ids"] is None
+
+
+
+@pytest.mark.asyncio
+async def test_parent_role_in_ege_has_no_registration_and_no_share(client):
+    """Родитель в ветке ЕГЭ: входа нет, и «ссылки родителям» тоже нет — он сам родитель."""
+    await _begin(client, branch="ege", role="parent")
+    await _answer_until(client)
+    body = (await client.get(f"{_BASE}/result")).json()
+    kinds = {b["kind"] for b in body["buttons"]}
+    assert body["registration_enabled"] is False
+    assert not kinds & {"register", "demo"}
+    assert all(b["text"] != "Отправить ссылку родителям" for b in body["buttons"])
+
+
+@pytest.mark.asyncio
+async def test_result_shows_modifiers_and_checks(client):
+    await _begin(client, branch="adult")
+    await _answer_until(client, stop_code="A4")
+    await client.post(f"{_BASE}/answer", json={"code": "A4", "selected_option_ids": ["a_xl_15"]})
+    await _answer_until(client)
+    body = (await client.get(f"{_BASE}/result")).json()
+    assert "modifiers" in body
+    assert any("СРЗНАЧ" in c["stem"] or c["feedback"] for c in body["checks"])

@@ -49689,6 +49689,24 @@
         "title": "BookableSlotsRead",
         "description": "Всё, что нужно экрану выбора времени."
       },
+      "BotChannel": {
+        "properties": {
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url"
+          }
+        },
+        "type": "object",
+        "required": [
+          "text",
+          "url"
+        ],
+        "title": "BotChannel"
+      },
       "BotDueItem": {
         "properties": {
           "bot_lead_id": {
@@ -49707,6 +49725,13 @@
             "type": "integer",
             "title": "Step",
             "description": "0 — демо (+1 день), 1 — пробное (+3), 2 — последнее (+7)"
+          },
+          "channels": {
+            "items": {
+              "$ref": "#/components/schemas/BotChannel"
+            },
+            "type": "array",
+            "title": "Channels"
           }
         },
         "type": "object",
@@ -49795,6 +49820,14 @@
           "trial_requested": {
             "type": "boolean",
             "title": "Trial Requested"
+          },
+          "channels": {
+            "items": {
+              "$ref": "#/components/schemas/BotChannel"
+            },
+            "type": "array",
+            "title": "Channels",
+            "description": "Канал/группа по ветке или итогу; пусто — без кнопок"
           }
         },
         "type": "object",
@@ -55361,6 +55394,24 @@
         "type": "object",
         "title": "FunnelButton"
       },
+      "FunnelCheck": {
+        "properties": {
+          "stem": {
+            "type": "string",
+            "title": "Stem"
+          },
+          "feedback": {
+            "type": "string",
+            "title": "Feedback"
+          }
+        },
+        "type": "object",
+        "required": [
+          "stem",
+          "feedback"
+        ],
+        "title": "FunnelCheck"
+      },
       "FunnelLeadRequest": {
         "properties": {
           "contact": {
@@ -55567,6 +55618,22 @@
             },
             "type": "array",
             "title": "Visible"
+          },
+          "modifiers": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Modifiers",
+            "description": "Абзацы-уточнения к итогу"
+          },
+          "checks": {
+            "items": {
+              "$ref": "#/components/schemas/FunnelCheck"
+            },
+            "type": "array",
+            "title": "Checks",
+            "description": "Разборы мини-проверок"
           },
           "buttons": {
             "items": {

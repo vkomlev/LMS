@@ -27,6 +27,11 @@ class BotStartRequest(BaseModel):
     tg_username: Optional[str] = Field(default=None, max_length=64)
 
 
+class BotChannel(BaseModel):
+    text: str
+    url: str
+
+
 class BotStartResponse(BaseModel):
     bot_lead_id: int
     branch_code: str
@@ -34,6 +39,9 @@ class BotStartResponse(BaseModel):
         default=None, description="Путь PDF ветки; относительный — от адреса LMS API"
     )
     trial_requested: bool
+    channels: List[BotChannel] = Field(
+        default_factory=list, description="Канал/группа по ветке или итогу; пусто — без кнопок"
+    )
 
 
 class BotTgRequest(BaseModel):
@@ -50,6 +58,7 @@ class BotDueItem(BaseModel):
     tg_id: int
     branch_code: str
     step: int = Field(..., description="0 — демо (+1 день), 1 — пробное (+3), 2 — последнее (+7)")
+    channels: List[BotChannel] = Field(default_factory=list)
 
 
 class BotTrialResponse(BaseModel):

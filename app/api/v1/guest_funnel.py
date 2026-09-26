@@ -88,6 +88,11 @@ class FunnelButton(BaseModel):
     url: Optional[str] = Field(default=None, description="Готовый адрес (бот, переписка)")
 
 
+class FunnelCheck(BaseModel):
+    stem: str
+    feedback: str
+
+
 class FunnelResult(BaseModel):
     """Видимая гостю часть итога. Полный разбор — POST /me/quiz-funnel/claim."""
 
@@ -98,6 +103,8 @@ class FunnelResult(BaseModel):
     role: Optional[str] = None
     title: Optional[str] = None
     visible: List[str] = Field(default_factory=list)
+    modifiers: List[str] = Field(default_factory=list, description="Абзацы-уточнения к итогу")
+    checks: List[FunnelCheck] = Field(default_factory=list, description="Разборы мини-проверок")
     buttons: List[FunnelButton] = Field(default_factory=list)
     target_course_uid: Optional[str] = None
     registration_enabled: bool = False
