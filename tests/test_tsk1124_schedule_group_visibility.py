@@ -128,13 +128,17 @@ async def test_bookable_shows_only_own_group(db, scene):
 @pytest.mark.asyncio
 async def test_join_foreign_group_slot_is_404(db, scene):
     await _fill_pref(db, scene["kid"])
-    await _fill_pref(db, scene["adult"])
-    for student, slot in ((scene["kid"], scene["adult_slot"]), (scene["adult"], scene["kid_slot"])):
+    with pytest.raises(DomainError) as exc:
+        await schedule_booking_service.join_slot(db, scene["kid"], scene["adult_slot"])
+    assert exc.value.status_code == 404
+    await db.rollback()
+    # Ф5: взрослые сами не записываются (опрос и самозапись — детским группам),
+    # их ставит методист; отказ говорит об этом прямо.
+    for slot in (scene["kid_slot"], scene["adult_slot"]):
         with pytest.raises(DomainError) as exc:
-            await schedule_booking_service.join_slot(db, student, slot)
-        assert exc.value.status_code == 404
+            await schedule_booking_service.join_slot(db, scene["adult"], slot)
+        assert exc.value.status_code == 403 and "методист" in exc.value.detail
         await db.rollback()
-    await schedule_booking_service.join_slot(db, scene["adult"], scene["adult_slot"])
 
 
 @pytest.mark.asyncio
@@ -282,3 +286,14 @@ async def test_free_slots_unknown_group_is_error(db, scene):
     with pytest.raises(DomainError) as exc:
         await schedule_booking_service.get_free_slots(db, group_id=999_999)
     assert exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_adult_request_other_time_refusal_is_honest(db, scene):
+    """Ф5: «Не нашёл подходящее время» у взрослого — «записывает методист»,
+    а не «доступно тем, кто продолжает учиться»."""
+    with pytest.raises(DomainError) as exc:
+        await schedule_booking_service.create_request(db, scene["adult"], None)
+    assert exc.value.status_code == 403
+    assert "методист" in exc.value.detail
+    assert "продолжает" not in exc.value.detail

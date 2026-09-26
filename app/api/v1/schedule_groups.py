@@ -79,6 +79,7 @@ async def get_student_schedule_groups(
         student_id=student_id,
         group_ids=await schedule_group_service.explicit_group_ids(db, student_id),
         effective_group_ids=await schedule_group_service.effective_group_ids(db, student_id),
+        pricing_hint=await schedule_group_service.pricing_hint(db, student_id),
     )
 
 
@@ -97,4 +98,5 @@ async def set_student_schedule_groups(
         student_id=student_id,
         group_ids=explicit,
         effective_group_ids=await schedule_group_service.effective_group_ids(db, student_id),
+        pricing_hint=await schedule_group_service.pricing_hint(db, student_id),
     )

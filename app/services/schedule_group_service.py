@@ -16,9 +16,9 @@
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from typing import Any, Optional
 
-from sqlalchemy import delete, func, select, true
+from sqlalchemy import delete, func, select, text, true
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -147,20 +147,52 @@ async def explicit_group_ids(db: AsyncSession, user_id: int) -> list[int]:
     return list(res.scalars().all())
 
 
+def effective_groups_sql(user_expr: str) -> str:
+    """SQL-подзапрос «id эффективных групп ученика» для выражения ``user_expr``
+    (например ``u.id`` или ``:uid``). Единственный источник правила: явные
+    АКТИВНЫЕ группы, а если их нет — группа по умолчанию. Выключенная группа
+    не держит ученика — иначе он потерял бы все слоты.
+
+    Им пользуется и `effective_group_ids`, и SQL аудитории опроса (Ф5):
+    Python и SQL не могут разойтись, потому что это один и тот же текст.
+    ``user_expr`` — только имя колонки или параметра из кода, не ввод человека.
+    """
+    explicit = (
+        "SELECT usg.group_id FROM user_schedule_group usg "
+        "JOIN schedule_group ug ON ug.id = usg.group_id AND ug.is_active "
+        f"WHERE usg.user_id = {user_expr}"
+    )
+    return (
+        f"(SELECT g.id FROM schedule_group g WHERE g.id IN ({explicit}) "
+        f"OR (g.is_default AND NOT EXISTS ({explicit})))"
+    )
+
+
 async def effective_group_ids(db: AsyncSession, user_id: int) -> list[int]:
     """Группы, слоты которых ученик видит: явные, иначе группа по умолчанию.
 
-    Единственная точка правила «ученик без группы — детский» (tsk-1124).
+    Единственная точка правила «ученик без группы — детский» (tsk-1124) —
+    исполняет `effective_groups_sql`.
     """
-    # Выключенная группа не держит ученика: иначе он потерял бы все слоты.
-    res = await db.execute(
-        select(UserScheduleGroup.group_id)
-        .join(ScheduleGroup, ScheduleGroup.id == UserScheduleGroup.group_id)
-        .where(UserScheduleGroup.user_id == user_id, ScheduleGroup.is_active.is_(True))
-        .order_by(UserScheduleGroup.group_id)
+    rows = await db.execute(
+        text(f"SELECT gid FROM {effective_groups_sql(':uid')} AS e(gid) ORDER BY gid"),
+        {"uid": user_id},
     )
-    active = list(res.scalars().all())
-    return active or [await default_group_id(db)]
+    ids = [int(r[0]) for r in rows.all()]
+    return ids or [await default_group_id(db)]
+
+
+def has_kids_group_sql(user_expr: str) -> str:
+    """SQL-условие «среди эффективных групп ученика есть детская».
+
+    tsk-1124 Ф5, решение оператора 26.09: опрос «Пожелания к расписанию»
+    построен на детской сетке, у взрослых один фиксированный слот — опрос,
+    напоминания, сводка и вёрстка их не касаются.
+    """
+    return (
+        "EXISTS (SELECT 1 FROM schedule_group gk WHERE gk.audience = 'kids' "
+        f"AND gk.id IN {effective_groups_sql(user_expr)})"
+    )
 
 
 def slot_visible(slot_group_id: int, group_ids: list[int]) -> bool:
@@ -199,6 +231,64 @@ async def occurrence_visible(db: AsyncSession, slot_id: Optional[int], group_ids
         await db.execute(select(LessonSlot.group_id).where(LessonSlot.id == slot_id))
     ).scalar_one_or_none()
     return slot_group is not None and slot_visible(slot_group, group_ids)
+
+
+async def pricing_hint(db: AsyncSession, student_id: int) -> Optional[dict[str, Any]]:
+    """Подсказка тарифа по группам расписания ученика (tsk-1124 Ф6).
+
+    Берутся эффективные группы, у которых задана тарифная группа; первая из
+    них (по id) — рекомендация. Рядом — тарифная группа действующей подписки
+    (``ends_on IS NULL``, своя копия ``pricing_group_id``). Функция ТОЛЬКО
+    читает: сменить тариф — отдельное действие в оплате (решение оператора:
+    денег без подтверждения не двигать). ``None`` — подсказать нечего.
+    """
+    groups = await effective_group_ids(db, student_id)
+    row = (
+        await db.execute(
+            text(
+                """
+                SELECT sg.id, sg.name, pg.id, pg.name
+                  FROM schedule_group sg
+                  JOIN pricing_group pg ON pg.id = sg.pricing_group_id
+                 WHERE sg.id = ANY(:ids)
+                 ORDER BY sg.id
+                 LIMIT 1
+                """
+            ),
+            {"ids": groups},
+        )
+    ).first()
+    if row is None:
+        return None
+    current = (
+        await db.execute(
+            text(
+                """
+                SELECT ss.pricing_group_id, pg.name, sp.code
+                  FROM student_subscription ss
+                  JOIN subscription_plan sp ON sp.id = ss.plan_id
+                  LEFT JOIN pricing_group pg ON pg.id = ss.pricing_group_id
+                 WHERE ss.student_id = :sid AND ss.ends_on IS NULL
+                   -- Подписка с будущим starts_on — это переезд, а не текущий тариф.
+                   AND ss.starts_on <= current_date
+                 ORDER BY ss.starts_on DESC, ss.id DESC
+                 LIMIT 1
+                """
+            ),
+            {"sid": student_id},
+        )
+    ).first()
+    current_id = current[0] if current else None
+    return {
+        "schedule_group_id": row[0],
+        "schedule_group_name": row[1],
+        "suggested_pricing_group_id": row[2],
+        "suggested_pricing_group_name": row[3],
+        "current_pricing_group_id": current_id,
+        "current_pricing_group_name": current[1] if current else None,
+        "current_plan_code": current[2] if current else None,
+        "matches": current_id == row[2],
+    }
 
 
 GROUP_MISMATCH_CODE = "schedule_group_mismatch"

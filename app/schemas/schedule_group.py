@@ -41,12 +41,29 @@ class ScheduleGroupUpdate(BaseModel):
     is_active: Optional[bool] = None
 
 
+class PricingHint(BaseModel):
+    """tsk-1124 Ф6: какой тариф подсказывает группа расписания. Только чтение —
+    сменить тариф методист может в оплате ученика, сам сервер деньги не двигает."""
+
+    schedule_group_id: int
+    schedule_group_name: str
+    suggested_pricing_group_id: int
+    suggested_pricing_group_name: str
+    current_pricing_group_id: Optional[int] = None
+    current_pricing_group_name: Optional[str] = None
+    current_plan_code: Optional[str] = None
+    #: Тариф ученика уже совпадает с подсказкой.
+    matches: bool
+
+
 class StudentScheduleGroupsRead(BaseModel):
     student_id: int
     #: Явно назначенные группы; пусто — ученик в группе по умолчанию.
     group_ids: list[int]
     #: Группы, слоты которых ученик видит при записи и переносе.
     effective_group_ids: list[int]
+    #: Подсказка тарифа по группе (Ф6); `null` — подсказать нечего.
+    pricing_hint: Optional[PricingHint] = None
 
 
 class StudentScheduleGroupsUpdate(BaseModel):

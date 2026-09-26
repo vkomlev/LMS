@@ -198,6 +198,38 @@ async def _load_slots(db: AsyncSession, student_id: int) -> list[dict[str, Any]]
     ]
 
 
+_ADULT_REFUSAL = (
+    "Во взрослые группы записывает методист — напишите преподавателю, "
+    "и он подберёт вам время."
+)
+
+
+async def _refuse_outside_audience(
+    db: AsyncSession, student_id: int, pref: dict[str, Any], message: str
+) -> None:
+    """Отказ тому, кто вне аудитории опроса, — честными словами (tsk-1124 Ф5).
+
+    Взрослому (нет детской группы) — «записывает методист»: он учится, просто
+    опрос и самозапись у школы детские. Остальным — прежний ``message``.
+    """
+    if pref["is_audience"]:
+        return
+    if not await _in_kids_group(db, student_id):
+        raise DomainError(_ADULT_REFUSAL, status_code=403)
+    raise DomainError(message, status_code=403)
+
+
+async def _in_kids_group(db: AsyncSession, student_id: int) -> bool:
+    """Есть ли среди эффективных групп ученика детская (tsk-1124 Ф5)."""
+    row = (
+        await db.execute(
+            text(f"SELECT {schedule_group_service.has_kids_group_sql(':uid')}"),
+            {"uid": student_id},
+        )
+    ).scalar()
+    return bool(row)
+
+
 def _grid_ok(weekday: int, start_time: time, audience: str) -> bool:
     """Час допустим для записи. Сетка (Пн-Чт 12-19, Сб 9-14) — расписание
     ДЕТСКИХ групп; у взрослых своё время (tsk-1124: пятница 12:00), и сетка
@@ -364,12 +396,12 @@ async def join_slot(
     прошли бы проверку «девять из десяти» и в слоте стало бы одиннадцать.
     """
     pref = await schedule_preference_service.get_preference(db, student_id)
-    if not pref["is_audience"]:
-        raise DomainError(
-            "Запись на занятия открыта тем, кто продолжает учиться. "
-            "Если это ошибка — напишите преподавателю.",
-            status_code=403,
-        )
+    # tsk-1124 Ф5: опрос и самозапись — для детских групп; взрослых ставит методист.
+    await _refuse_outside_audience(
+        db, student_id, pref,
+        "Запись на занятия открыта тем, кто продолжает учиться. "
+        "Если это ошибка — напишите преподавателю.",
+    )
     if not pref["is_filled"]:
         raise DomainError(
             "Сначала расскажите, когда вам удобно заниматься, — по этим "
@@ -588,10 +620,9 @@ async def create_request(
     потерять момент, когда он готов был рассказать, что ему не подходит.
     """
     pref = await schedule_preference_service.get_preference(db, student_id)
-    if not pref["is_audience"]:
-        raise DomainError(
-            "Подбор времени доступен тем, кто продолжает учиться.", status_code=403
-        )
+    await _refuse_outside_audience(
+        db, student_id, pref, "Подбор времени доступен тем, кто продолжает учиться."
+    )
 
     snapshot = [
         {

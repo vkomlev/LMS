@@ -63704,6 +63704,73 @@
         "type": "object",
         "title": "PricingGroupUpdateRequest"
       },
+      "PricingHint": {
+        "properties": {
+          "schedule_group_id": {
+            "type": "integer",
+            "title": "Schedule Group Id"
+          },
+          "schedule_group_name": {
+            "type": "string",
+            "title": "Schedule Group Name"
+          },
+          "suggested_pricing_group_id": {
+            "type": "integer",
+            "title": "Suggested Pricing Group Id"
+          },
+          "suggested_pricing_group_name": {
+            "type": "string",
+            "title": "Suggested Pricing Group Name"
+          },
+          "current_pricing_group_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Pricing Group Id"
+          },
+          "current_pricing_group_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Pricing Group Name"
+          },
+          "current_plan_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Plan Code"
+          },
+          "matches": {
+            "type": "boolean",
+            "title": "Matches"
+          }
+        },
+        "type": "object",
+        "required": [
+          "schedule_group_id",
+          "schedule_group_name",
+          "suggested_pricing_group_id",
+          "suggested_pricing_group_name",
+          "matches"
+        ],
+        "title": "PricingHint",
+        "description": "tsk-1124 Ф6: какой тариф подсказывает группа расписания. Только чтение —\nсменить тариф методист может в оплате ученика, сам сервер деньги не двигает."
+      },
       "ProgressBulkResponse": {
         "properties": {
           "student_id": {
@@ -69906,6 +69973,16 @@
             },
             "type": "array",
             "title": "Effective Group Ids"
+          },
+          "pricing_hint": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PricingHint"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",

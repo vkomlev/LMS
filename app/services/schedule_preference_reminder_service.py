@@ -37,11 +37,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.cron_registry import register_interval_job
 from app.db.session import async_session_factory
 from app.services import inbox_service
-from app.services.schedule_preference_service import (
-    EXCLUDED_PLAN_CODES,
-    NOT_COUNTED_PLAN_CODES,
-    _plan_filter,
-)
+from app.services.schedule_preference_service import COUNTED_AUDIENCE_FROM
 
 logger = logging.getLogger(__name__)
 
@@ -100,10 +96,9 @@ _LINK = "https://learn.victor-komlev.ru/me/schedule"
 async def list_silent(db: AsyncSession) -> list[dict[str, Any]]:
     """Кто из аудитории опроса ещё не оставил пожеланий.
 
-    Условие аудитории повторяет `schedule_preference_service._AUDIENCE_CORE`
-    намеренным дублем в одном месте — здесь нужен ещё и `tg_id`, а расширять
-    ради этого общую выборку значило бы тащить лишнюю колонку во все её
-    остальные вызовы.
+    Условие аудитории — общий `COUNTED_AUDIENCE_FROM` (tsk-1124 Ф5: раньше здесь
+    жила его копия, и правило «опрос только детским группам» пришлось бы
+    дописывать дважды; `tg_id` берётся из той же выборки).
 
     Аудитория здесь — **счётная, не показная** (tsk-923, тот же фильтр, что и
     охват). До 2026-09-12 тестовые учётки (`test`) сюда намеренно входили
@@ -121,21 +116,15 @@ async def list_silent(db: AsyncSession) -> list[dict[str, Any]]:
             text(
                 f"""
                 SELECT u.id, u.full_name, u.tg_id
-                  FROM users u
-                  JOIN user_roles ur ON ur.user_id = u.id
-                  JOIN roles r ON r.id = ur.role_id AND r.name = 'student'
-                  LEFT JOIN (
-                      SELECT ss.student_id, sp.code
-                        FROM student_subscription ss
-                        JOIN subscription_plan sp ON sp.id = ss.plan_id
-                       WHERE ss.ends_on IS NULL
-                  ) cur ON cur.student_id = u.id
-                  LEFT JOIN student_schedule_preference pref ON pref.student_id = u.id
-                  LEFT JOIN student_schedule_preference_ack ack ON ack.student_id = u.id
-                 WHERE u.is_active
-                   AND {_plan_filter(EXCLUDED_PLAN_CODES + NOT_COUNTED_PLAN_CODES)}
-                   AND pref.id IS NULL
-                   AND ack.student_id IS NULL
+                {COUNTED_AUDIENCE_FROM}
+                   AND NOT EXISTS (
+                       SELECT 1 FROM student_schedule_preference pref
+                        WHERE pref.student_id = u.id
+                   )
+                   AND NOT EXISTS (
+                       SELECT 1 FROM student_schedule_preference_ack ack
+                        WHERE ack.student_id = u.id
+                   )
                  ORDER BY u.id
                 """
             )

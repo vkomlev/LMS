@@ -35,7 +35,7 @@ from app.schemas.schedule_preference import (
     SchedulePreferenceHour,
     SchedulePreferenceWrite,
 )
-from app.services import inbox_service
+from app.services import inbox_service, schedule_group_service
 
 logger = logging.getLogger(__name__)
 
@@ -97,20 +97,28 @@ _AUDIENCE_CORE = """
     ) cur ON cur.student_id = u.id
    WHERE u.is_active
      AND {plan_filter}
+     AND {kids_filter}
 """
 
 #: Кусок SQL: **кому опрос показывается**. По нему живут флаг в `/me` и
 #: напоминания. Держится одной строкой, потому что показ и напоминание обязаны
 #: совпадать: плашка без напоминания и напоминание без плашки одинаково
 #: выглядят как поломка.
-AUDIENCE_FROM = _AUDIENCE_CORE.format(plan_filter=_plan_filter(EXCLUDED_PLAN_CODES))
+#: tsk-1124 Ф5: опрос — только ученикам детских групп (у взрослых один
+#: фиксированный слот, сетка опроса детская).
+_KIDS_FILTER = schedule_group_service.has_kids_group_sql("u.id")
+
+AUDIENCE_FROM = _AUDIENCE_CORE.format(
+    plan_filter=_plan_filter(EXCLUDED_PLAN_CODES), kids_filter=_KIDS_FILTER,
+)
 
 #: Кусок SQL: **кого считают**. Та же аудитория минус тестовые. По нему живут
 #: сводка охвата, спрос по часам и вёрстка расписания (tsk-674 фаза 2). Собран
 #: из того же куска, что и показ, — иначе два списка разъедутся молча, и
 #: методист увидит «в опросе 61, а в вёрстке 49», не понимая, кто прав.
 COUNTED_AUDIENCE_FROM = _AUDIENCE_CORE.format(
-    plan_filter=_plan_filter(EXCLUDED_PLAN_CODES + NOT_COUNTED_PLAN_CODES)
+    plan_filter=_plan_filter(EXCLUDED_PLAN_CODES + NOT_COUNTED_PLAN_CODES),
+    kids_filter=_KIDS_FILTER,
 )
 
 
@@ -754,6 +762,7 @@ async def get_summary(db: AsyncSession) -> dict[str, Any]:
                   ) slots ON TRUE
                  WHERE u.is_active
                    AND {_plan_filter(EXCLUDED_PLAN_CODES + NOT_COUNTED_PLAN_CODES)}
+                   AND {_KIDS_FILTER}
                  ORDER BY (pref.id IS NOT NULL OR ack.student_id IS NOT NULL),
                           u.full_name NULLS LAST, u.id
                 """

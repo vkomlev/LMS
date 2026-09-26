@@ -87,7 +87,9 @@ async def test_student_groups_default_replace_and_reset(db, client):
     url = f"/api/v1/schedule-groups/students/{student_id}"
 
     resp = await client.get(url, headers=methodist)
-    assert resp.json() == {"student_id": student_id, "group_ids": [], "effective_group_ids": [kids]}
+    assert resp.json() == {
+        "student_id": student_id, "group_ids": [], "effective_group_ids": [kids], "pricing_hint": None,
+    }
 
     resp = await client.put(url, json={"group_ids": [adults]}, headers=methodist)
     assert resp.status_code == 200, resp.text
@@ -291,3 +293,37 @@ async def test_transfer_other_refusal_comes_before_group_and_rolls_back(db, clie
         assert resp.json().get("payload", {}).get("code") != "schedule_group_mismatch"
     groups = (await client.get(f"/api/v1/schedule-groups/students/{kid}", headers=methodist)).json()
     assert groups["group_ids"] == []
+
+
+@pytest.mark.asyncio
+async def test_pricing_hint_is_read_only(db, client):
+    """Ф6: взрослая группа подсказывает тарифную группу плана adults; назначение
+    группы не трогает подписку и начисления — деньги двигает только методист."""
+    _, methodist = await _auth(db, "methodist")
+    student_id = await _user(db, "student")
+    adults = await _gid(db, "Взрослые · Тестирование")
+    url = f"/api/v1/schedule-groups/students/{student_id}"
+
+    kid_view = (await client.get(url, headers=methodist)).json()
+    assert kid_view["pricing_hint"] is None  # у детской группы тарифной подсказки нет
+
+    subs_before = (await db.execute(text(
+        "SELECT count(*) FROM student_subscription WHERE student_id = :s"), {"s": student_id})).scalar()
+    charges_before = (await db.execute(text(
+        "SELECT count(*) FROM student_monthly_charge WHERE student_id = :s"), {"s": student_id})).scalar()
+
+    resp = await client.put(url, json={"group_ids": [adults]}, headers=methodist)
+    hint = resp.json()["pricing_hint"]
+    plan_pg = (await db.execute(text(
+        "SELECT pricing_group_id FROM subscription_plan WHERE code = 'adults'"))).scalar()
+    if plan_pg is None:
+        assert hint is None
+    else:
+        assert hint["suggested_pricing_group_id"] == plan_pg
+        assert hint["schedule_group_id"] == adults
+        assert hint["matches"] is False and hint["current_pricing_group_id"] is None
+
+    assert (await db.execute(text(
+        "SELECT count(*) FROM student_subscription WHERE student_id = :s"), {"s": student_id})).scalar() == subs_before
+    assert (await db.execute(text(
+        "SELECT count(*) FROM student_monthly_charge WHERE student_id = :s"), {"s": student_id})).scalar() == charges_before
