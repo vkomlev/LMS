@@ -74,7 +74,7 @@ async def claim(
     if outcome is None:
         raise HTTPException(status.HTTP_409_CONFLICT, "Квиз не пройден до конца.")
     branch, role = evaluation.walk.branch, evaluation.walk.role
-    if not quiz_funnel_service.registration_open(funnel.spec, branch):
+    if not quiz_funnel_service.registration_open(funnel.spec, branch, evaluation.ctx):
         raise HTTPException(status.HTTP_409_CONFLICT, "Регистрация из этой ветки пока закрыта.")
 
     try:

@@ -8,7 +8,7 @@ SPW тогда показывает обычный квиз.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Path, Request, status
@@ -82,7 +82,7 @@ class FunnelButton(BaseModel):
     text: Optional[str] = None
     kind: Optional[str] = Field(
         default=None,
-        description="register | demo | lead_trial | telegram_bot | link | share_parent_link | contact",
+        description="register | demo | lead_trial | lead_waitlist | telegram_bot | link | share_parent_link | contact",
     )
     target: Optional[str] = Field(default=None, description="course_uid для link")
     url: Optional[str] = Field(default=None, description="Готовый адрес (бот, переписка)")
@@ -109,6 +109,9 @@ class FunnelLeadRequest(BaseModel):
     contact: str = Field(..., min_length=3, max_length=200,
                          description="Телефон, почта или ник — как удобнее")
     full_name: Optional[str] = Field(default=None, max_length=200)
+    kind: Literal["trial", "waitlist"] = Field(
+        default="trial", description="trial — пробное; waitlist — лист ожидания (итог без курса)"
+    )
 
 
 class FunnelLeadResponse(BaseModel):
@@ -243,7 +246,8 @@ async def submit_funnel_lead(
     funnel = await _funnel(db, course_uid)
     try:
         lead_id = await quiz_funnel_service.submit_lead(
-            db, funnel, gs, body.contact.strip(), (body.full_name or "").strip() or None
+            db, funnel, gs, body.contact.strip(), (body.full_name or "").strip() or None,
+            kind=body.kind,
         )
     except DomainError:
         await db.rollback()

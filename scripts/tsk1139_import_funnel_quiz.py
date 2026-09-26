@@ -22,7 +22,11 @@
     DBCHECK_OK=1 python scripts/tsk1139_import_funnel_quiz.py --file <путь> --apply
 
 Файл со статусом «не загружать» без `--force-draft` не импортируется: контент
-сначала утверждает оператор.
+сначала утверждает оператор (утверждение в чате — повод для флага, статус в файле
+ведёт контентная сессия).
+
+`--pdf-map map.json` — адреса PDF веток в хранилище медиа (`/api/v1/media/<sha>.pdf`),
+подменяют имена файлов из контента, сам файл контента не меняется.
 """
 from __future__ import annotations
 
@@ -119,6 +123,8 @@ async def main() -> None:
     parser = argparse.ArgumentParser(description="Импорт квиза-воронки (tsk-1139)")
     parser.add_argument("--file", required=True, help="JSON контента квиза")
     parser.add_argument("--apply", action="store_true", help="записать; без флага — разбор")
+    parser.add_argument("--pdf-map",
+                        help="JSON {ветка: адрес PDF} — подменяет spec.pdf (адреса в хранилище медиа)")
     parser.add_argument("--force-draft", action="store_true",
                         help="импортировать файл со статусом «не загружать» (только dev)")
     args = parser.parse_args()
@@ -129,6 +135,16 @@ async def main() -> None:
     if "не загружать" in status and not args.force_draft:
         logger.error("статус файла: %r — контент не утверждён, импорт отменён", status)
         sys.exit(3)
+
+    if args.pdf_map:
+        with open(args.pdf_map, encoding="utf-8") as fh:
+            pdf_map = json.load(fh)
+        unknown = set(pdf_map) - set((spec.get("branches") or {}))
+        if unknown:
+            logger.error("в --pdf-map ветки, которых нет в квизе: %s", sorted(unknown))
+            sys.exit(5)
+        spec["pdf"] = {**(spec.get("pdf") or {}), **pdf_map}
+        logger.info("PDF веток из %s: %s", args.pdf_map, sorted(pdf_map))
 
     coverage = engine.coverage_check(spec)
     logger.info("проверка правил: %d прохождений, без итога %d, недостижимых итогов %d",

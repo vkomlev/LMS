@@ -55331,7 +55331,7 @@
               }
             ],
             "title": "Kind",
-            "description": "register | demo | lead_trial | telegram_bot | link | share_parent_link | contact"
+            "description": "register | demo | lead_trial | lead_waitlist | telegram_bot | link | share_parent_link | contact"
           },
           "target": {
             "anyOf": [
@@ -55381,6 +55381,16 @@
               }
             ],
             "title": "Full Name"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "trial",
+              "waitlist"
+            ],
+            "title": "Kind",
+            "description": "trial — пробное; waitlist — лист ожидания (итог без курса)",
+            "default": "trial"
           }
         },
         "type": "object",

@@ -291,10 +291,46 @@ async def test_trial_lead_from_result_carries_branch_and_outcome(client, db):
 
 
 @pytest.mark.asyncio
+async def test_waitlist_lead_marked_as_waitlist(client, db):
+    await _begin(client, branch="parent")
+    await _answer_until(client, pick=-1)
+    resp = await client.post(f"{_BASE}/lead", json={"contact": "@parent", "kind": "waitlist"})
+    assert resp.status_code == 201
+    attribution = (
+        await db.execute(text("SELECT attribution FROM leads WHERE id = :i"),
+                         {"i": resp.json()["lead_id"]})
+    ).scalar_one()
+    assert attribution.get("waitlist") is True and "trial_requested" not in attribution
+
+
+@pytest.mark.asyncio
 async def test_trial_lead_before_finish_409(client):
     await _begin(client)
     resp = await client.post(f"{_BASE}/lead", json={"contact": "+79000000000"})
     assert resp.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_registration_closed_by_condition_turns_into_share(client, db):
+    """`registration_closed_if` (подросток 11–13): вход закрыт, вместо кнопок
+    регистрации — одна «Отправить ссылку родителям»; claim отказывает."""
+    await db.execute(
+        text(
+            "UPDATE quiz_funnel_spec SET spec = spec || "
+            "CAST(:p AS jsonb) WHERE course_id = :c"
+        ),
+        {"p": json.dumps({"registration_closed_if": {"role": ["teen"]}}), "c": _STATE["quiz_id"]},
+    )
+    await db.commit()
+    await _begin(client, branch="teen")
+    await _answer_until(client)
+    body = (await client.get(f"{_BASE}/result")).json()
+    assert body["registration_enabled"] is False
+    kinds = [b["kind"] for b in body["buttons"]]
+    assert "register" not in kinds and "demo" not in kinds
+    assert kinds.count("share_parent_link") <= 1
+    _, headers = await _student(db)
+    assert (await _claim(client, headers)).status_code == 409
 
 
 # ─── claim ───────────────────────────────────────────────────────────────────

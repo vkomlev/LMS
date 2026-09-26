@@ -55,6 +55,8 @@ REGISTRATION_BUTTON_KINDS = ("register", "demo")
 #: До текста согласия на данные несовершеннолетнего регистрация родителя закрыта
 #: (решение оператора 26.09). Спецификация может переопределить.
 DEFAULT_REGISTRATION_CLOSED = ("parent",)
+#: Подпись кнопки, заменяющей регистрацию, когда регистрирует взрослый.
+SHARE_PARENT_TEXT = "Отправить ссылку родителям"
 
 
 def is_enabled() -> bool:
@@ -350,11 +352,23 @@ def _by_role(outcome: Mapping[str, Any], key: str, role: Optional[str]) -> Any:
     return by_role[role] if role and role in by_role else outcome.get(key)
 
 
-def registration_open(spec: Mapping[str, Any], branch: str) -> bool:
-    """Открыта ли регистрация из итога ветки."""
+def registration_open(
+    spec: Mapping[str, Any], branch: str, ctx: Optional[engine.Context] = None
+) -> bool:
+    """Открыта ли регистрация из итога.
+
+    Закрыта, если ветка в ``registration_closed_branches`` (по умолчанию
+    ``parent`` — до текста согласия) или сработало ``registration_closed_if``
+    (например, подросток 11–13: регистрирует только родитель).
+    """
     closed = spec.get("registration_closed_branches")
     closed = DEFAULT_REGISTRATION_CLOSED if closed is None else closed
-    return branch not in closed
+    if branch in closed:
+        return False
+    condition = spec.get("registration_closed_if")
+    if condition is not None and ctx is not None and engine.eval_condition(condition, ctx):
+        return False
+    return True
 
 
 def contact_url(title: str) -> str:
@@ -382,10 +396,16 @@ def _buttons(
     только при настроенном боте и PDF; ``url`` заполняется там, где его знает
     сервер (бот, переписка), остальное SPW строит по ``kind``/``target``."""
     out: List[Dict[str, Any]] = []
+    has_share = any(b.get("kind") == "share_parent_link" for b in outcome.get("buttons") or [])
     for button in outcome.get("buttons") or []:
         kind = button.get("kind")
         if kind in REGISTRATION_BUTTON_KINDS and not reg_open:
-            continue
+            # Регистрирует взрослый: вместо входа — ссылка родителям (одна).
+            if has_share:
+                continue
+            has_share = True
+            button = {**button, "kind": "share_parent_link", "text": SHARE_PARENT_TEXT}
+            kind = "share_parent_link"
         url: Optional[str] = None
         if kind == "telegram_bot":
             if not bot_url:
@@ -415,7 +435,7 @@ async def get_result(
     if outcome is None:
         return empty
     branch, role = evaluation.walk.branch, evaluation.walk.role
-    reg_open = registration_open(funnel.spec, branch)
+    reg_open = registration_open(funnel.spec, branch, evaluation.ctx)
     bot_url = None
     if pdf_url(funnel.spec, branch):
         bot_url = bot_start_url(await ensure_bot_token(db, guest_session_id, funnel.course.id))
@@ -581,8 +601,12 @@ async def submit_lead(
     guest_session_id: UUID,
     contact: str,
     full_name: Optional[str],
+    kind: str = "trial",
 ) -> int:
-    """Заявка на пробное с итога квиза: контакт + ветка, роль, итог, метки.
+    """Заявка с итога квиза: контакт + ветка, роль, итог, метки.
+
+    ``kind``: ``trial`` — запись на пробное; ``waitlist`` — лист ожидания
+    (итог без курса: «группу собираю»).
 
     Одна заявка на (сессию, квиз): повторная отправка обновляет контакт, а
     регистрация и бот потом дописывают в ту же запись.
@@ -599,11 +623,12 @@ async def submit_lead(
         "branch": evaluation.walk.branch,
         "role": evaluation.walk.role,
         "outcome": outcome.get("code"),
-        "trial_requested": True,
+        ("waitlist" if kind == "waitlist" else "trial_requested"): True,
     }
+    what = "лист ожидания" if kind == "waitlist" else "запись на пробное"
     note = (
         f"Квиз «{funnel.course.title}», ветка {evaluation.walk.branch}, итог "
-        f"{outcome.get('code')}: запись на пробное с сайта."
+        f"{outcome.get('code')}: {what} с сайта."
     )
     lead_id, _ = await lead_magnet_service.upsert_lead(
         db,
