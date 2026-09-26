@@ -76,23 +76,23 @@ async def quiz_funnel(
 @router.get(
     "/quiz-funnel/site",
     response_model=list[SiteFunnelRow],
-    summary="Воронка сайта по веткам входного квиза",
+    summary="Воронка сайта по веткам квиза-воронки",
     description=(
-        "tsk-1139: старт → итог → регистрация → первое решённое задание → бот → "
-        "пробное → оплата, по каждой ветке. Фильтр по utm_source/utm_campaign "
+        "tsk-1139: открыли → начали → итог → регистрация → первое решённое задание → "
+        "бот → пробное → оплата, по каждой ветке. Фильтр по utm_source/utm_campaign "
         "из меток первого касания."
     ),
 )
 async def site_funnel(
-    entry_uid: str = Query(..., min_length=1, max_length=200),
+    quiz_uid: str = Query(..., min_length=1, max_length=200),
     utm_source: Optional[str] = Query(None, max_length=300),
     utm_campaign: Optional[str] = Query(None, max_length=300),
     db: AsyncSession = Depends(get_async_db),
     current_user: CurrentUser = Depends(_LEADS_GATE),
 ) -> list[SiteFunnelRow]:
-    rows = await quiz_funnel_service.get_site_funnel(db, entry_uid, utm_source, utm_campaign)
+    rows = await quiz_funnel_service.get_site_funnel(db, quiz_uid, utm_source, utm_campaign)
     if rows is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Входной квиз не найден.")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Квиз-воронка не найдена.")
     return [SiteFunnelRow(**row) for row in rows]
 
 

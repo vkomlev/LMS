@@ -1,0 +1,2107 @@
+{
+  "quiz_uid": "wp:kviz-razvilka",
+  "title": "Подберём курс за 3 минуты",
+  "description": "Короткий квиз: для кого курс, цель и опыт. Итог — сразу, полный разбор и демо — после регистрации.",
+  "task": "tsk-1139",
+  "status": "draft — на утверждение оператору, не загружать",
+  "human_doc": "2026-09-26-quiz-scenario-razvilka.md",
+  "base_format": "LMS scripts/tsk053_seed_quiz.py: task_content SC_Qw/MC_Qw, options {id,text}",
+  "engine_gaps": [
+    "ветвление: goto по варианту ответа и show_if по прошлым ответам (сейчас вопросы линейны)",
+    "параметры ссылки branch/role/dir: пропуск вопросов и предзаполнение",
+    "итоги с условиями all/any/not, первое подходящее сверху, else (сейчас argmax/min_score по шкалам)",
+    "производные признаки E.S и A.L до выбора итога",
+    "свои тексты итога (сейчас текст = title/description курса) + модификаторы-абзацы",
+    "видимая часть итога сразу, полная — после регистрации по ссылке из письма (tsk-1109)",
+    "кнопки итога разных видов: пробное, регистрация, демо, ссылка, бот, «показать родителям»",
+    "мини-проверки: разбор ответа (check_feedback), вариант ответа не влияет на шкалы",
+    "роль голоса (parent/teen) для ветки ЕГЭ: stem_by_role"
+  ],
+  "link_params": {
+    "branch": [
+      "parent",
+      "ege",
+      "teen",
+      "adult"
+    ],
+    "role": [
+      "parent",
+      "teen"
+    ],
+    "dir": [
+      "qa",
+      "analyst",
+      "backend",
+      "sql",
+      "ai"
+    ],
+    "skip": {
+      "branch=parent": [
+        "Q0"
+      ],
+      "branch=teen": [
+        "Q0"
+      ],
+      "branch=adult": [
+        "Q0"
+      ],
+      "branch=ege&role=parent": [
+        "Q0",
+        "P1",
+        "P2"
+      ],
+      "branch=ege&role=teen": [
+        "Q0",
+        "T1",
+        "T2"
+      ],
+      "dir=*": [
+        "A1"
+      ]
+    }
+  },
+  "privacy": {
+    "teen": "никаких полей имени, телефона, почты, школы, города; возраст диапазоном; регистрирует ребёнка до 14 лет родитель"
+  },
+  "branches": {
+    "root": [
+      {
+        "code": "Q0",
+        "task_content": {
+          "type": "SC_Qw",
+          "stem": "Для кого подбираем курс?",
+          "options": [
+            {
+              "id": "a_parent",
+              "text": "Для ребёнка, я родитель"
+            },
+            {
+              "id": "a_teen",
+              "text": "Для себя, я школьник"
+            },
+            {
+              "id": "a_adult",
+              "text": "Для себя, я взрослый"
+            }
+          ]
+        },
+        "goto": {
+          "a_parent": "parent",
+          "a_teen": "teen",
+          "a_adult": "adult"
+        },
+        "method_note": "Подпись: «3 минуты, без регистрации. Итог покажем сразу»."
+      }
+    ],
+    "parent": [
+      {
+        "code": "P1",
+        "task_content": {
+          "type": "SC_Qw",
+          "stem": "Сколько лет ребёнку?",
+          "options": [
+            {
+              "id": "p_age_10_12",
+              "text": "10–12 лет (4–6 класс)"
+            },
+            {
+              "id": "p_age_13_15",
+              "text": "13–15 лет (7–9 класс)"
+            },
+            {
+              "id": "p_age_16_17",
+              "text": "16–17 лет (10–11 класс)"
+            },
+            {
+              "id": "p_age_other",
+              "text": "Младше 10 или старше 17"
+            }
+          ]
+        }
+      },
+      {
+        "code": "P2",
+        "task_content": {
+          "type": "SC_Qw",
+          "stem": "Какая главная цель?",
+          "options": [
+            {
+              "id": "p_goal_ege",
+              "text": "Подготовиться к ЕГЭ по информатике"
+            },
+            {
+              "id": "p_goal_oge",
+              "text": "Подготовиться к ОГЭ по информатике"
+            },
+            {
+              "id": "p_goal_hobby",
+              "text": "Чтобы ребёнок занимался полезным и интересным делом"
+            },
+            {
+              "id": "p_goal_career",
+              "text": "Понять, подходит ли ему ИТ как будущая профессия"
+            },
+            {
+              "id": "p_goal_school",
+              "text": "Подтянуть школьную информатику"
+            }
+          ]
+        },
+        "show_if": {
+          "not": {
+            "P1": [
+              "p_age_other"
+            ]
+          }
+        },
+        "goto": {
+          "p_goal_ege": "ege"
+        },
+        "method_note": "Для p_age_16_17 вариант ЕГЭ ставить первым; для p_age_10_12 ЕГЭ скрыть."
+      },
+      {
+        "code": "P3",
+        "task_content": {
+          "type": "SC_Qw",
+          "stem": "Как ребёнок обращается с компьютером?",
+          "options": [
+            {
+              "id": "p_pc_low",
+              "text": "Больше телефон, на компьютере печатает медленно"
+            },
+            {
+              "id": "p_pc_mid",
+              "text": "Уверенно: игры, браузер, школьные задания"
+            },
+            {
+              "id": "p_pc_high",
+              "text": "Сам ставит программы, что-то настраивает, пробовал кодить"
+            }
+          ]
+        },
+        "show_if": {
+          "not": {
+            "P1": [
+              "p_age_other"
+            ]
+          }
+        }
+      },
+      {
+        "code": "P4",
+        "task_content": {
+          "type": "MC_Qw",
+          "stem": "Что ему интереснее всего? Можно выбрать несколько",
+          "options": [
+            {
+              "id": "p_int_games",
+              "text": "Игры: хочет понять, как они устроены"
+            },
+            {
+              "id": "p_int_bots",
+              "text": "Telegram, соцсети, боты"
+            },
+            {
+              "id": "p_int_hw",
+              "text": "Техника, роботы, «как это работает внутри»"
+            },
+            {
+              "id": "p_int_logic",
+              "text": "Задачки, головоломки, математика"
+            },
+            {
+              "id": "p_int_unknown",
+              "text": "Пока не понятно, хочу это выяснить"
+            }
+          ]
+        },
+        "show_if": {
+          "not": {
+            "P1": [
+              "p_age_other"
+            ]
+          }
+        }
+      },
+      {
+        "code": "P5",
+        "task_content": {
+          "type": "SC_Qw",
+          "stem": "Пробовал ли ребёнок программировать?",
+          "options": [
+            {
+              "id": "p_exp_none",
+              "text": "Нет"
+            },
+            {
+              "id": "p_exp_blocks",
+              "text": "Собирал программы из блоков (Scratch и похожее)"
+            },
+            {
+              "id": "p_exp_python",
+              "text": "Писал на Python или другом языке"
+            }
+          ]
+        },
+        "show_if": {
+          "not": {
+            "P1": [
+              "p_age_other"
+            ]
+          }
+        }
+      },
+      {
+        "code": "P6",
+        "task_content": {
+          "type": "SC_Qw",
+          "stem": "Чья это идея — заниматься программированием?",
+          "options": [
+            {
+              "id": "p_init_child",
+              "text": "Ребёнок сам просит"
+            },
+            {
+              "id": "p_init_together",
+              "text": "Решили вместе"
+            },
+            {
+              "id": "p_init_parent",
+              "text": "Моя, ребёнка ещё не спрашивали"
+            }
+          ]
+        },
+        "show_if": {
+          "not": {
+            "P1": [
+              "p_age_other"
+            ]
+          }
+        }
+      },
+      {
+        "code": "P7",
+        "task_content": {
+          "type": "SC_Qw",
+          "stem": "Сколько раз в неделю реально найдётся время на занятия?",
+          "options": [
+            {
+              "id": "p_time_1",
+              "text": "Один раз"
+            },
+            {
+              "id": "p_time_2",
+              "text": "Два раза"
+            },
+            {
+              "id": "p_time_3",
+              "text": "Три раза"
+            }
+          ]
+        },
+        "show_if": {
+          "not": {
+            "P1": [
+              "p_age_other"
+            ]
+          }
+        }
+      }
+    ],
+    "ege": [
+      {
+        "code": "E1",
+        "task_content": {
+          "type": "SC_Qw",
+          "stem": "В каком ты классе?",
+          "options": [
+            {
+              "id": "e_grade_11",
+              "text": "11 класс — ЕГЭ весной 2027"
+            },
+            {
+              "id": "e_grade_10",
+              "text": "10 класс — ЕГЭ весной 2028"
+            },
+            {
+              "id": "e_grade_9",
+              "text": "9 класс и младше"
+            }
+          ]
+        },
+        "stem_by_role": {
+          "parent": "В каком классе ребёнок?"
+        }
+      },
+      {
+        "code": "E2",
+        "task_content": {
+          "type": "SC_Qw",
+          "stem": "Как у тебя с Python?",
+          "options": [
+            {
+              "id": "e_py_0",
+              "text": "Не начинал(а)"
+            },
+            {
+              "id": "e_py_1",
+              "text": "Знаю основы: переменные, условия, простые циклы"
+            },
+            {
+              "id": "e_py_2",
+              "text": "Уверенно: списки, строки, функции, чтение файлов"
+            },
+            {
+              "id": "e_py_unknown",
+              "text": "Не знаю"
+            }
+          ]
+        },
+        "stem_by_role": {
+          "parent": "Как у ребёнка с Python?"
+        },
+        "method_note": "e_py_unknown показывать только в голосе parent."
+      },
+      {
+        "code": "E3",
+        "task_content": {
+          "type": "SC_Qw",
+          "stem": "Мини-проверка. Что выведет программа?",
+          "options": [
+            {
+              "id": "e_chk_3",
+              "text": "3"
+            },
+            {
+              "id": "e_chk_6",
+              "text": "6"
+            },
+            {
+              "id": "e_chk_10",
+              "text": "10"
+            },
+            {
+              "id": "e_chk_idk",
+              "text": "Не знаю"
+            }
+          ],
+          "code": {
+            "lang": "python",
+            "text": "s = 0\nfor i in range(1, 4):\n    s = s + i\nprint(s)"
+          }
+        },
+        "show_if": {
+          "role": [
+            "teen"
+          ]
+        },
+        "check": {
+          "correct_option": "e_chk_6",
+          "affects": "outcome"
+        },
+        "method_note": "Блум: применение. 10 — «range включает 4», 3 — «печатает последнее i»."
+      },
+      {
+        "code": "E4",
+        "task_content": {
+          "type": "SC_Qw",
+          "stem": "Сколько заданий ЕГЭ получается решать уже сейчас?",
+          "options": [
+            {
+              "id": "e_now_0",
+              "text": "Пока ни одного или не пробовал(а)"
+            },
+            {
+              "id": "e_now_1",
+              "text": "Несколько простых, до 8"
+            },
+            {
+              "id": "e_now_2",
+              "text": "Примерно половину, 9–16"
+            },
+            {
+              "id": "e_now_3",
+              "text": "Большую часть, 17 и больше"
+            }
+          ]
+        },
+        "stem_by_role": {
+          "parent": "Сколько заданий ЕГЭ ребёнок решает уже сейчас?"
+        }
+      },
+      {
+        "code": "E5",
+        "task_content": {
+          "type": "SC_Qw",
+          "stem": "На сколько баллов цель?",
+          "options": [
+            {
+              "id": "e_goal_pass",
+              "text": "Сдать и поступить, баллы не главное"
+            },
+            {
+              "id": "e_goal_70",
+              "text": "70–79"
+            },
+            {
+              "id": "e_goal_80",
+              "text": "80–89"
+            },
+            {
+              "id": "e_goal_90",
+              "text": "90 и выше"
+            }
+          ]
+        }
+      },
+      {
+        "code": "E6",
+        "task_content": {
+          "type": "SC_Qw",
+          "stem": "Решал(а) ли ты полный пробный вариант?",
+          "options": [
+            {
+              "id": "e_mock_no",
+              "text": "Нет"
+            },
+            {
+              "id": "e_mock_yes",
+              "text": "Да"
+            }
+          ]
+        },
+        "stem_by_role": {
+          "parent": "Решал ли ребёнок полный пробный вариант?"
+        },
+        "method_note": "При e_mock_yes — необязательное поле «сколько первичных баллов», число 0–29."
+      },
+      {
+        "code": "E7",
+        "task_content": {
+          "type": "SC_Qw",
+          "stem": "Сколько часов в неделю готов(а) заниматься информатикой, кроме школы?",
+          "options": [
+            {
+              "id": "e_h_2",
+              "text": "До 2 часов"
+            },
+            {
+              "id": "e_h_4",
+              "text": "3–5 часов"
+            },
+            {
+              "id": "e_h_6",
+              "text": "6 и больше"
+            }
+          ]
+        },
+        "stem_by_role": {
+          "parent": "Сколько часов в неделю ребёнок готов заниматься информатикой, кроме школы?"
+        }
+      }
+    ],
+    "teen": [
+      {
+        "code": "T1",
+        "task_content": {
+          "type": "SC_Qw",
+          "stem": "Сколько тебе лет?",
+          "options": [
+            {
+              "id": "t_age_11_13",
+              "text": "11–13"
+            },
+            {
+              "id": "t_age_14_15",
+              "text": "14–15"
+            },
+            {
+              "id": "t_age_16_17",
+              "text": "16–17"
+            },
+            {
+              "id": "t_age_other",
+              "text": "Младше 11 или старше 17"
+            }
+          ]
+        }
+      },
+      {
+        "code": "T2",
+        "task_content": {
+          "type": "SC_Qw",
+          "stem": "Зачем тебе программирование?",
+          "options": [
+            {
+              "id": "t_goal_make",
+              "text": "Хочу делать свои штуки: ботов, игры, программы"
+            },
+            {
+              "id": "t_goal_ege",
+              "text": "Готовлюсь к ЕГЭ по информатике"
+            },
+            {
+              "id": "t_goal_oge",
+              "text": "Готовлюсь к ОГЭ"
+            },
+            {
+              "id": "t_goal_try",
+              "text": "Просто интересно попробовать"
+            }
+          ]
+        },
+        "show_if": {
+          "not": {
+            "T1": [
+              "t_age_other"
+            ]
+          }
+        },
+        "goto": {
+          "t_goal_ege": "ege"
+        }
+      },
+      {
+        "code": "T3",
+        "task_content": {
+          "type": "SC_Qw",
+          "stem": "Что хочется сделать первым?",
+          "options": [
+            {
+              "id": "t_make_bot",
+              "text": "Своего бота в Telegram"
+            },
+            {
+              "id": "t_make_game",
+              "text": "Игру"
+            },
+            {
+              "id": "t_make_hw",
+              "text": "Что-то с техникой или роботами"
+            },
+            {
+              "id": "t_make_idk",
+              "text": "Пока не знаю"
+            }
+          ]
+        },
+        "show_if": {
+          "not": {
+            "T1": [
+              "t_age_other"
+            ]
+          }
+        }
+      },
+      {
+        "code": "T4",
+        "task_content": {
+          "type": "SC_Qw",
+          "stem": "Программировал(а) раньше?",
+          "options": [
+            {
+              "id": "t_exp_none",
+              "text": "Нет"
+            },
+            {
+              "id": "t_exp_blocks",
+              "text": "Только блоками, в Scratch или похожем"
+            },
+            {
+              "id": "t_exp_python",
+              "text": "Да, на Python"
+            },
+            {
+              "id": "t_exp_other",
+              "text": "Да, на другом языке"
+            }
+          ]
+        },
+        "show_if": {
+          "not": {
+            "T1": [
+              "t_age_other"
+            ]
+          }
+        }
+      },
+      {
+        "code": "T5",
+        "task_content": {
+          "type": "SC_Qw",
+          "stem": "Мини-задачка. Что напечатает программа?",
+          "options": [
+            {
+              "id": "t_chk_ok",
+              "text": "Привет, Бот!"
+            },
+            {
+              "id": "t_chk_var",
+              "text": "Привет, name!"
+            },
+            {
+              "id": "t_chk_quote",
+              "text": "\"Привет, \" + name + \"!\""
+            },
+            {
+              "id": "t_chk_idk",
+              "text": "Понятия не имею, но интересно"
+            }
+          ],
+          "code": {
+            "lang": "python",
+            "text": "name = \"Бот\"\nprint(\"Привет, \" + name + \"!\")"
+          }
+        },
+        "show_if": {
+          "not": {
+            "T1": [
+              "t_age_other"
+            ]
+          }
+        },
+        "check": {
+          "correct_option": "t_chk_ok",
+          "affects": "outcome"
+        },
+        "method_note": "Блум: понимание. Переменная против текста в кавычках."
+      },
+      {
+        "code": "T6",
+        "task_content": {
+          "type": "SC_Qw",
+          "stem": "Сколько времени в неделю готов(а) тратить?",
+          "options": [
+            {
+              "id": "t_time_1",
+              "text": "Час-два"
+            },
+            {
+              "id": "t_time_3",
+              "text": "Три-пять часов"
+            },
+            {
+              "id": "t_time_6",
+              "text": "Больше"
+            }
+          ]
+        },
+        "show_if": {
+          "not": {
+            "T1": [
+              "t_age_other"
+            ]
+          }
+        }
+      }
+    ],
+    "adult": [
+      {
+        "code": "A1",
+        "task_content": {
+          "type": "SC_Qw",
+          "stem": "Какое направление вам ближе?",
+          "options": [
+            {
+              "id": "a_dir_qa",
+              "text": "Тестирование программ"
+            },
+            {
+              "id": "a_dir_analyst",
+              "text": "Аналитика данных, Excel"
+            },
+            {
+              "id": "a_dir_backend",
+              "text": "Программирование, backend на Python"
+            },
+            {
+              "id": "a_dir_sql",
+              "text": "Базы данных, SQL"
+            },
+            {
+              "id": "a_dir_ai",
+              "text": "Нейросети в работе или бизнесе"
+            },
+            {
+              "id": "a_dir_unknown",
+              "text": "Пока не знаю, хочу разобраться"
+            }
+          ]
+        },
+        "method_note": "Пропускается, если в ссылке есть dir=…"
+      },
+      {
+        "code": "A2",
+        "task_content": {
+          "type": "SC_Qw",
+          "stem": "Какая у вас цель?",
+          "options": [
+            {
+              "id": "a_goal_switch",
+              "text": "Сменить профессию"
+            },
+            {
+              "id": "a_goal_boost",
+              "text": "Усилить нынешнюю работу новым навыком"
+            },
+            {
+              "id": "a_goal_business",
+              "text": "Автоматизировать свой бизнес или делать решения для клиентов"
+            },
+            {
+              "id": "a_goal_self",
+              "text": "Для себя, интересно"
+            }
+          ]
+        }
+      },
+      {
+        "code": "A3",
+        "task_content": {
+          "type": "SC_Qw",
+          "stem": "Ваш опыт с компьютером и таблицами",
+          "options": [
+            {
+              "id": "a_pc_basic",
+              "text": "Пользуюсь почтой и документами, таблицы — редко"
+            },
+            {
+              "id": "a_pc_excel",
+              "text": "Работаю в Excel: формулы, фильтры"
+            },
+            {
+              "id": "a_pc_pro",
+              "text": "Сводные таблицы, сложные формулы, макросы"
+            }
+          ]
+        }
+      },
+      {
+        "code": "A4",
+        "task_content": {
+          "type": "SC_Qw",
+          "stem": "Мини-проверка. В ячейках A1, A2, A3 числа 2, 4 и 9. Что покажет формула =СРЗНАЧ(A1:A3)?",
+          "options": [
+            {
+              "id": "a_xl_5",
+              "text": "5"
+            },
+            {
+              "id": "a_xl_15",
+              "text": "15"
+            },
+            {
+              "id": "a_xl_3",
+              "text": "3"
+            },
+            {
+              "id": "a_xl_idk",
+              "text": "Не знаю"
+            }
+          ]
+        },
+        "check": {
+          "correct_option": "a_xl_5",
+          "affects": "outcome"
+        },
+        "method_note": "15 — путаница с СУММ, 3 — с количеством."
+      },
+      {
+        "code": "A5",
+        "task_content": {
+          "type": "SC_Qw",
+          "stem": "Программировали когда-нибудь?",
+          "options": [
+            {
+              "id": "a_code_none",
+              "text": "Нет"
+            },
+            {
+              "id": "a_code_bit",
+              "text": "Немного, по урокам или в школе"
+            },
+            {
+              "id": "a_code_python",
+              "text": "Пишу на Python"
+            },
+            {
+              "id": "a_code_other",
+              "text": "Пишу на другом языке"
+            }
+          ]
+        }
+      },
+      {
+        "code": "A6",
+        "task_content": {
+          "type": "SC_Qw",
+          "stem": "Мини-проверка по коду. Что выведет print(2 + 3 * 2)?",
+          "options": [
+            {
+              "id": "a_py_10",
+              "text": "10"
+            },
+            {
+              "id": "a_py_8",
+              "text": "8"
+            },
+            {
+              "id": "a_py_232",
+              "text": "232"
+            },
+            {
+              "id": "a_py_idk",
+              "text": "Не знаю"
+            }
+          ]
+        },
+        "show_if": {
+          "not": {
+            "A5": [
+              "a_code_none"
+            ]
+          }
+        },
+        "check": {
+          "correct_option": "a_py_8",
+          "affects": "outcome"
+        },
+        "method_note": "10 — порядок действий, 232 — склейка как текста."
+      },
+      {
+        "code": "A7",
+        "task_content": {
+          "type": "SC_Qw",
+          "stem": "Сколько часов в неделю вы реально готовы учиться?",
+          "options": [
+            {
+              "id": "a_h_2",
+              "text": "До 3"
+            },
+            {
+              "id": "a_h_5",
+              "text": "3–6"
+            },
+            {
+              "id": "a_h_8",
+              "text": "7 и больше"
+            }
+          ]
+        }
+      },
+      {
+        "code": "A8",
+        "task_content": {
+          "type": "SC_Qw",
+          "stem": "Как вам удобнее учиться?",
+          "options": [
+            {
+              "id": "a_fmt_self",
+              "text": "Сам(а), в своём темпе, с автопроверкой"
+            },
+            {
+              "id": "a_fmt_mentor",
+              "text": "С преподавателем, который проверяет и разбирает"
+            },
+            {
+              "id": "a_fmt_try",
+              "text": "Сначала попробовать, потом решу"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "derived": {
+    "E.S": [
+      {
+        "value": "S0",
+        "if": {
+          "any": [
+            {
+              "E2": [
+                "e_py_0"
+              ]
+            },
+            {
+              "E3": [
+                "e_chk_3",
+                "e_chk_10",
+                "e_chk_idk"
+              ]
+            },
+            {
+              "all": [
+                {
+                  "E2": [
+                    "e_py_unknown"
+                  ]
+                },
+                {
+                  "E4": [
+                    "e_now_0"
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "value": "S2",
+        "if": {
+          "all": [
+            {
+              "E2": [
+                "e_py_2"
+              ]
+            },
+            {
+              "E4": [
+                "e_now_2",
+                "e_now_3"
+              ]
+            },
+            {
+              "any": [
+                {
+                  "E3": [
+                    "e_chk_6"
+                  ]
+                },
+                {
+                  "role": [
+                    "parent"
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "value": "S1",
+        "if": "else"
+      }
+    ],
+    "A.L": [
+      {
+        "value": "L0",
+        "if": {
+          "all": [
+            {
+              "A5": [
+                "a_code_none"
+              ]
+            },
+            {
+              "any": [
+                {
+                  "A3": [
+                    "a_pc_basic"
+                  ]
+                },
+                {
+                  "not": {
+                    "A4": [
+                      "a_xl_5"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "value": "L2",
+        "if": {
+          "any": [
+            {
+              "all": [
+                {
+                  "A5": [
+                    "a_code_python"
+                  ]
+                },
+                {
+                  "A6": [
+                    "a_py_8"
+                  ]
+                }
+              ]
+            },
+            {
+              "all": [
+                {
+                  "A3": [
+                    "a_pc_pro"
+                  ]
+                },
+                {
+                  "A4": [
+                    "a_xl_5"
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "value": "L1",
+        "if": "else"
+      }
+    ]
+  },
+  "outcomes": [
+    {
+      "code": "R_P_OUT",
+      "branch": "parent",
+      "if": {
+        "P1": [
+          "p_age_other"
+        ]
+      },
+      "target_course_uid": null,
+      "title": "Что подойдёт вашему ребёнку",
+      "visible": [
+        "Групповых курсов для этого возраста у нас сейчас нет. Напишите, сколько лет ребёнку и что его интересует. Подскажу, есть ли индивидуальный вариант."
+      ],
+      "buttons": [
+        {
+          "id": "ask",
+          "text": "Задать вопрос",
+          "kind": "contact"
+        }
+      ],
+      "full_template": "full_parent"
+    },
+    {
+      "code": "R_P_OGE",
+      "branch": "parent",
+      "if": {
+        "P2": [
+          "p_goal_oge"
+        ]
+      },
+      "target_course_uid": "wp:oge-informatika",
+      "title": "Что подойдёт вашему ребёнку",
+      "visible": [
+        "Вам подойдёт подготовка к ОГЭ по информатике: разбираем задания экзамена по номерам, решения ребёнок проверяет в учебном кабинете между занятиями.",
+        "Лучше всего это проверить на пробном занятии: ребёнок напишет первую программу вместе с преподавателем, а вы увидите, как проходят уроки."
+      ],
+      "buttons": [
+        {
+          "id": "trial",
+          "text": "Записать на пробное занятие",
+          "kind": "lead_trial"
+        },
+        {
+          "id": "full",
+          "text": "Получить полный разбор и демо-доступ",
+          "kind": "register"
+        },
+        {
+          "id": "bot_pdf",
+          "text": "Забрать PDF в Telegram",
+          "kind": "telegram_bot",
+          "start_param": "quiz_parent_{outcome}",
+          "pdf": "bonuses/01-roditel-pervyj-yazyk.pdf"
+        }
+      ],
+      "full_template": "full_parent"
+    },
+    {
+      "code": "R_P_INF",
+      "branch": "parent",
+      "if": {
+        "any": [
+          {
+            "P2": [
+              "p_goal_school"
+            ]
+          },
+          {
+            "P3": [
+              "p_pc_low"
+            ]
+          }
+        ]
+      },
+      "target_course_uid": "wp:informatika-5-11",
+      "title": "Что подойдёт вашему ребёнку",
+      "visible": [
+        "Начать стоит с информатики за свой класс: как устроен компьютер, файлы, алгоритмы. Когда руки перестанут спотыкаться о клавиатуру, программирование пойдёт легче, и переход к Python будет естественным.",
+        "Лучше всего это проверить на пробном занятии: ребёнок напишет первую программу вместе с преподавателем, а вы увидите, как проходят уроки."
+      ],
+      "buttons": [
+        {
+          "id": "trial",
+          "text": "Записать на пробное занятие",
+          "kind": "lead_trial"
+        },
+        {
+          "id": "full",
+          "text": "Получить полный разбор и демо-доступ",
+          "kind": "register"
+        },
+        {
+          "id": "bot_pdf",
+          "text": "Забрать PDF в Telegram",
+          "kind": "telegram_bot",
+          "start_param": "quiz_parent_{outcome}",
+          "pdf": "bonuses/01-roditel-pervyj-yazyk.pdf"
+        }
+      ],
+      "full_template": "full_parent"
+    },
+    {
+      "code": "R_P_BOTS",
+      "branch": "parent",
+      "if": {
+        "all": [
+          {
+            "P5": [
+              "p_exp_python"
+            ]
+          },
+          {
+            "P4": [
+              "p_int_bots",
+              "p_int_games"
+            ]
+          }
+        ]
+      },
+      "target_course_uid": "wp:chat-boty-tg-vk-max",
+      "title": "Что подойдёт вашему ребёнку",
+      "visible": [
+        "У ребёнка уже есть база Python, и ему интересно делать настоящие вещи. Подойдёт курс «Чат-боты на Python»: за курс он сделает своих ботов для Telegram и ВКонтакте.",
+        "Лучше всего это проверить на пробном занятии: ребёнок напишет первую программу вместе с преподавателем, а вы увидите, как проходят уроки."
+      ],
+      "buttons": [
+        {
+          "id": "trial",
+          "text": "Записать на пробное занятие",
+          "kind": "lead_trial"
+        },
+        {
+          "id": "full",
+          "text": "Получить полный разбор и демо-доступ",
+          "kind": "register"
+        },
+        {
+          "id": "bot_pdf",
+          "text": "Забрать PDF в Telegram",
+          "kind": "telegram_bot",
+          "start_param": "quiz_parent_{outcome}",
+          "pdf": "bonuses/01-roditel-pervyj-yazyk.pdf"
+        }
+      ],
+      "full_template": "full_parent"
+    },
+    {
+      "code": "R_P_MECH",
+      "branch": "parent",
+      "if": {
+        "all": [
+          {
+            "P1": [
+              "p_age_16_17"
+            ]
+          },
+          {
+            "P4": [
+              "p_int_hw"
+            ]
+          }
+        ]
+      },
+      "target_course_uid": "wp:mehatronika-arduino-monitoring",
+      "title": "Что подойдёт вашему ребёнку",
+      "visible": [
+        "Раз ребёнка тянет к технике, посмотрите курс «Мехатроника для 9–11 класса». Покупать оборудование не нужно.",
+        "Лучше всего это проверить на пробном занятии: ребёнок напишет первую программу вместе с преподавателем, а вы увидите, как проходят уроки."
+      ],
+      "buttons": [
+        {
+          "id": "trial",
+          "text": "Записать на пробное занятие",
+          "kind": "lead_trial"
+        },
+        {
+          "id": "full",
+          "text": "Получить полный разбор и демо-доступ",
+          "kind": "register"
+        },
+        {
+          "id": "bot_pdf",
+          "text": "Забрать PDF в Telegram",
+          "kind": "telegram_bot",
+          "start_param": "quiz_parent_{outcome}",
+          "pdf": "bonuses/01-roditel-pervyj-yazyk.pdf"
+        }
+      ],
+      "full_template": "full_parent"
+    },
+    {
+      "code": "R_P_PY",
+      "branch": "parent",
+      "if": {
+        "P1": [
+          "p_age_10_12",
+          "p_age_13_15"
+        ]
+      },
+      "target_course_uid": "wp:python-podrostki-11-14",
+      "title": "Что подойдёт вашему ребёнку",
+      "visible": [
+        "Вашему ребёнку подойдёт курс «Python для подростков». На Python первая программа занимает одну строку, поэтому результат виден на первом же занятии. К концу третьего месяца у ребёнка обычно появляется своя законченная программа: игра, бот или викторина.",
+        "Лучше всего это проверить на пробном занятии: ребёнок напишет первую программу вместе с преподавателем, а вы увидите, как проходят уроки."
+      ],
+      "buttons": [
+        {
+          "id": "trial",
+          "text": "Записать на пробное занятие",
+          "kind": "lead_trial"
+        },
+        {
+          "id": "full",
+          "text": "Получить полный разбор и демо-доступ",
+          "kind": "register"
+        },
+        {
+          "id": "bot_pdf",
+          "text": "Забрать PDF в Telegram",
+          "kind": "telegram_bot",
+          "start_param": "quiz_parent_{outcome}",
+          "pdf": "bonuses/01-roditel-pervyj-yazyk.pdf"
+        }
+      ],
+      "full_template": "full_parent"
+    },
+    {
+      "code": "R_P_PY_OLDER",
+      "branch": "parent",
+      "if": "else",
+      "target_course_uid": "wp:python-podrostki-11-14",
+      "title": "Что подойдёт вашему ребёнку",
+      "visible": [
+        "Вашему ребёнку подойдёт курс «Python для подростков». В 16–17 лет темп выше, преподаватель подберёт задачи по уровню. [уточнить у Виктора: куда вести 16–17 без цели ЕГЭ]",
+        "Лучше всего это проверить на пробном занятии: ребёнок напишет первую программу вместе с преподавателем, а вы увидите, как проходят уроки."
+      ],
+      "buttons": [
+        {
+          "id": "trial",
+          "text": "Записать на пробное занятие",
+          "kind": "lead_trial"
+        },
+        {
+          "id": "full",
+          "text": "Получить полный разбор и демо-доступ",
+          "kind": "register"
+        },
+        {
+          "id": "bot_pdf",
+          "text": "Забрать PDF в Telegram",
+          "kind": "telegram_bot",
+          "start_param": "quiz_parent_{outcome}",
+          "pdf": "bonuses/01-roditel-pervyj-yazyk.pdf"
+        }
+      ],
+      "full_template": "full_parent"
+    },
+    {
+      "code": "R_E_EARLY",
+      "branch": "ege",
+      "if": {
+        "E1": [
+          "e_grade_9"
+        ]
+      },
+      "target_course_uid": "wp:python-podrostki-11-14",
+      "title": "Твоя стартовая точка",
+      "visible": [
+        "До ЕГЭ ещё далеко, и это хорошо: сейчас лучшее время спокойно выучить Python. Посмотри курс «Python для подростков», а в 9 классе подготовку к ОГЭ."
+      ],
+      "buttons": [
+        {
+          "id": "demo",
+          "text": "Попробовать демо сейчас",
+          "kind": "demo"
+        },
+        {
+          "id": "trial",
+          "text": "Записать на пробное занятие",
+          "kind": "lead_trial"
+        },
+        {
+          "id": "bot_pdf",
+          "text": "Забрать PDF в Telegram",
+          "kind": "telegram_bot",
+          "start_param": "quiz_ege_{outcome}",
+          "pdf": "bonuses/02-ege-plan-po-nomeram.pdf"
+        }
+      ],
+      "full_template": "full_ege"
+    },
+    {
+      "code": "R_E_S0_11",
+      "branch": "ege",
+      "if": {
+        "all": [
+          {
+            "E.S": [
+              "S0"
+            ]
+          },
+          {
+            "E1": [
+              "e_grade_11"
+            ]
+          }
+        ]
+      },
+      "target_course_uid": "wp:ege-informatika",
+      "title": "Твоя стартовая точка",
+      "visible": [
+        "Сейчас главное для тебя Python. Больше половины заданий ЕГЭ удобнее решать короткой программой, и без уверенных циклов и списков они превращаются в зубрёжку шаблонов. До экзамена весной 2027 года времени хватает, если начать в этом месяце. Параллельно можно брать задания без программирования: они приносят те же баллы.",
+        "Это предварительная оценка по 7 вопросам. Точную картину по каждому из 27 номеров даёт полная диагностика. С ней и приходи на разбор к преподавателю."
+      ],
+      "buttons": [
+        {
+          "id": "diag",
+          "text": "Пройти полную диагностику",
+          "kind": "link",
+          "target": "wp:ege-diagnostika"
+        },
+        {
+          "id": "review",
+          "text": "Записаться на разбор с преподавателем",
+          "kind": "lead_trial"
+        },
+        {
+          "id": "full",
+          "text": "Получить полный разбор и демо-доступ",
+          "kind": "register"
+        },
+        {
+          "id": "bot_pdf",
+          "text": "Забрать PDF в Telegram",
+          "kind": "telegram_bot",
+          "start_param": "quiz_ege_{outcome}",
+          "pdf": "bonuses/02-ege-plan-po-nomeram.pdf"
+        }
+      ],
+      "full_template": "full_ege"
+    },
+    {
+      "code": "R_E_S0_10",
+      "branch": "ege",
+      "if": {
+        "all": [
+          {
+            "E.S": [
+              "S0"
+            ]
+          },
+          {
+            "E1": [
+              "e_grade_10"
+            ]
+          }
+        ]
+      },
+      "target_course_uid": "wp:ege-informatika",
+      "title": "Твоя стартовая точка",
+      "visible": [
+        "У тебя есть год без пробников, и это редкая роскошь. Спокойно закрой Python в этом учебном году и не бросай летом: самая частая ошибка — три месяца перерыва после 10 класса, осенью всё приходится начинать заново.",
+        "Это предварительная оценка по 7 вопросам. Точную картину по каждому из 27 номеров даёт полная диагностика. С ней и приходи на разбор к преподавателю."
+      ],
+      "buttons": [
+        {
+          "id": "diag",
+          "text": "Пройти полную диагностику",
+          "kind": "link",
+          "target": "wp:ege-diagnostika"
+        },
+        {
+          "id": "review",
+          "text": "Записаться на разбор с преподавателем",
+          "kind": "lead_trial"
+        },
+        {
+          "id": "full",
+          "text": "Получить полный разбор и демо-доступ",
+          "kind": "register"
+        },
+        {
+          "id": "bot_pdf",
+          "text": "Забрать PDF в Telegram",
+          "kind": "telegram_bot",
+          "start_param": "quiz_ege_{outcome}",
+          "pdf": "bonuses/02-ege-plan-po-nomeram.pdf"
+        }
+      ],
+      "full_template": "full_ege"
+    },
+    {
+      "code": "R_E_S1",
+      "branch": "ege",
+      "if": {
+        "E.S": [
+          "S1"
+        ]
+      },
+      "target_course_uid": "wp:ege-informatika",
+      "title": "Твоя стартовая точка",
+      "visible": [
+        "Основы Python есть, можно переходить к заданиям. Начни с базовой группы номеров: таблицы истинности, черепаха, рекурсия. Они короткие, и на них быстро видно, где проседает Python.",
+        "Это предварительная оценка по 7 вопросам. Точную картину по каждому из 27 номеров даёт полная диагностика. С ней и приходи на разбор к преподавателю."
+      ],
+      "buttons": [
+        {
+          "id": "diag",
+          "text": "Пройти полную диагностику",
+          "kind": "link",
+          "target": "wp:ege-diagnostika"
+        },
+        {
+          "id": "review",
+          "text": "Записаться на разбор с преподавателем",
+          "kind": "lead_trial"
+        },
+        {
+          "id": "full",
+          "text": "Получить полный разбор и демо-доступ",
+          "kind": "register"
+        },
+        {
+          "id": "bot_pdf",
+          "text": "Забрать PDF в Telegram",
+          "kind": "telegram_bot",
+          "start_param": "quiz_ege_{outcome}",
+          "pdf": "bonuses/02-ege-plan-po-nomeram.pdf"
+        }
+      ],
+      "full_template": "full_ege"
+    },
+    {
+      "code": "R_E_S2",
+      "branch": "ege",
+      "if": {
+        "E.S": [
+          "S2"
+        ]
+      },
+      "target_course_uid": "wp:ege-informatika",
+      "title": "Твоя стартовая точка",
+      "visible": [
+        "Ты уже решаешь большую часть. Дальше средняя и сложная группы номеров и полные варианты на время: они покажут, где теряются баллы.",
+        "Это предварительная оценка по 7 вопросам. Точную картину по каждому из 27 номеров даёт полная диагностика. С ней и приходи на разбор к преподавателю."
+      ],
+      "buttons": [
+        {
+          "id": "diag",
+          "text": "Пройти полную диагностику",
+          "kind": "link",
+          "target": "wp:ege-diagnostika"
+        },
+        {
+          "id": "review",
+          "text": "Записаться на разбор с преподавателем",
+          "kind": "lead_trial"
+        },
+        {
+          "id": "full",
+          "text": "Получить полный разбор и демо-доступ",
+          "kind": "register"
+        },
+        {
+          "id": "bot_pdf",
+          "text": "Забрать PDF в Telegram",
+          "kind": "telegram_bot",
+          "start_param": "quiz_ege_{outcome}",
+          "pdf": "bonuses/02-ege-plan-po-nomeram.pdf"
+        }
+      ],
+      "full_template": "full_ege"
+    },
+    {
+      "code": "R_T_OUT",
+      "branch": "teen",
+      "if": {
+        "T1": [
+          "t_age_other"
+        ]
+      },
+      "target_course_uid": null,
+      "title": "Твой трек",
+      "visible": [
+        "Если тебе меньше 11, покажи родителям страницу для них. Если больше 17, тебе во взрослую ветку, там свои курсы."
+      ],
+      "buttons": [
+        {
+          "id": "parents",
+          "text": "Показать родителям",
+          "kind": "share_parent_link"
+        },
+        {
+          "id": "adult",
+          "text": "Перейти во взрослую ветку",
+          "kind": "link",
+          "target": "?branch=adult"
+        }
+      ],
+      "full_template": "full_teen"
+    },
+    {
+      "code": "R_T_OGE",
+      "branch": "teen",
+      "if": {
+        "T2": [
+          "t_goal_oge"
+        ]
+      },
+      "target_course_uid": "wp:oge-informatika",
+      "title": "Твой трек",
+      "visible": [
+        "Готовишься к ОГЭ? Открой задания экзамена по номерам в демо и проверь, какие уже получаются."
+      ],
+      "buttons": [
+        {
+          "id": "demo",
+          "text": "Попробовать демо сейчас",
+          "kind": "demo"
+        },
+        {
+          "id": "parents",
+          "text": "Показать родителям",
+          "kind": "share_parent_link"
+        },
+        {
+          "id": "bot_pdf",
+          "text": "Забрать PDF в Telegram",
+          "kind": "telegram_bot",
+          "start_param": "quiz_teen_{outcome}",
+          "pdf": "bonuses/03-podrostok-telegram-bot.pdf"
+        }
+      ],
+      "full_template": "full_teen"
+    },
+    {
+      "code": "R_T_BOT",
+      "branch": "teen",
+      "if": {
+        "all": [
+          {
+            "T4": [
+              "t_exp_python"
+            ]
+          },
+          {
+            "T5": [
+              "t_chk_ok"
+            ]
+          },
+          {
+            "T3": [
+              "t_make_bot",
+              "t_make_idk"
+            ]
+          }
+        ]
+      },
+      "target_course_uid": "wp:chat-boty-tg-vk-max",
+      "title": "Твой трек",
+      "visible": [
+        "Python ты уже знаешь, так что можно сразу к ботам. Курс «Чат-боты на Python»: Telegram, ВКонтакте, кнопки, базы данных. Первые темы открыты бесплатно."
+      ],
+      "buttons": [
+        {
+          "id": "demo",
+          "text": "Попробовать демо сейчас",
+          "kind": "demo"
+        },
+        {
+          "id": "parents",
+          "text": "Показать родителям",
+          "kind": "share_parent_link"
+        },
+        {
+          "id": "bot_pdf",
+          "text": "Забрать PDF в Telegram",
+          "kind": "telegram_bot",
+          "start_param": "quiz_teen_{outcome}",
+          "pdf": "bonuses/03-podrostok-telegram-bot.pdf"
+        }
+      ],
+      "full_template": "full_teen"
+    },
+    {
+      "code": "R_T_HW",
+      "branch": "teen",
+      "if": {
+        "all": [
+          {
+            "T3": [
+              "t_make_hw"
+            ]
+          },
+          {
+            "T1": [
+              "t_age_16_17"
+            ]
+          }
+        ]
+      },
+      "target_course_uid": "wp:mehatronika-arduino-monitoring",
+      "title": "Твой трек",
+      "visible": [
+        "Раз тянет к технике, посмотри «Мехатронику для 9–11 класса»: как программы управляют устройствами. Покупать железо не нужно."
+      ],
+      "buttons": [
+        {
+          "id": "demo",
+          "text": "Попробовать демо сейчас",
+          "kind": "demo"
+        },
+        {
+          "id": "parents",
+          "text": "Показать родителям",
+          "kind": "share_parent_link"
+        },
+        {
+          "id": "bot_pdf",
+          "text": "Забрать PDF в Telegram",
+          "kind": "telegram_bot",
+          "start_param": "quiz_teen_{outcome}",
+          "pdf": "bonuses/03-podrostok-telegram-bot.pdf"
+        }
+      ],
+      "full_template": "full_teen"
+    },
+    {
+      "code": "R_T_PY_BOT",
+      "branch": "teen",
+      "if": {
+        "T3": [
+          "t_make_bot"
+        ]
+      },
+      "target_course_uid": "wp:python-podrostki-11-14",
+      "title": "Твой трек",
+      "visible": [
+        "Твой трек: сначала Python, потом свой бот. Первые темы (переменные, условия, циклы) занимают несколько недель, и уже на них можно сделать игру «угадай число». Потом переходишь к ботам: курс «Чат-боты на Python» как раз для этого."
+      ],
+      "buttons": [
+        {
+          "id": "demo",
+          "text": "Попробовать демо сейчас",
+          "kind": "demo"
+        },
+        {
+          "id": "parents",
+          "text": "Показать родителям",
+          "kind": "share_parent_link"
+        },
+        {
+          "id": "bot_pdf",
+          "text": "Забрать PDF в Telegram",
+          "kind": "telegram_bot",
+          "start_param": "quiz_teen_{outcome}",
+          "pdf": "bonuses/03-podrostok-telegram-bot.pdf"
+        }
+      ],
+      "full_template": "full_teen"
+    },
+    {
+      "code": "R_T_PY",
+      "branch": "teen",
+      "if": "else",
+      "target_course_uid": "wp:python-podrostki-11-14",
+      "title": "Твой трек",
+      "visible": [
+        "Твой трек: Python с нуля. Первая программа занимает одну строку, первую игру сделаешь через пару недель. Начать можно прямо сейчас в демо."
+      ],
+      "buttons": [
+        {
+          "id": "demo",
+          "text": "Попробовать демо сейчас",
+          "kind": "demo"
+        },
+        {
+          "id": "parents",
+          "text": "Показать родителям",
+          "kind": "share_parent_link"
+        },
+        {
+          "id": "bot_pdf",
+          "text": "Забрать PDF в Telegram",
+          "kind": "telegram_bot",
+          "start_param": "quiz_teen_{outcome}",
+          "pdf": "bonuses/03-podrostok-telegram-bot.pdf"
+        }
+      ],
+      "full_template": "full_teen"
+    },
+    {
+      "code": "R_A_QA",
+      "branch": "adult",
+      "if": {
+        "A1": [
+          "a_dir_qa"
+        ]
+      },
+      "target_course_uid": "wp:ruchnoe-testirovanie",
+      "title": "С чего вам начать",
+      "visible": [
+        "Вам подойдёт курс «Тестировщик ПО». Программировать на старте не нужно: сначала вы учитесь проверять программы по шагам и описывать найденные ошибки. В курсе есть глава про трудоустройство и сквозной проект, из которого собирается портфолио.",
+        "Первые уроки откройте прямо сейчас бесплатно: задания проверяются автоматически, за вечер станет понятно, ваше это или нет."
+      ],
+      "buttons": [
+        {
+          "id": "open",
+          "text": "Открыть первые уроки",
+          "kind": "demo"
+        },
+        {
+          "id": "mentor",
+          "text": "Разобрать план с преподавателем",
+          "kind": "lead_trial"
+        },
+        {
+          "id": "bot_pdf",
+          "text": "Забрать PDF в Telegram",
+          "kind": "telegram_bot",
+          "start_param": "quiz_adult_{outcome}",
+          "pdf": "bonuses/04-vzroslyj-karta-vhoda.pdf"
+        }
+      ],
+      "full_template": "full_adult"
+    },
+    {
+      "code": "R_A_AN",
+      "branch": "adult",
+      "if": {
+        "A1": [
+          "a_dir_analyst"
+        ]
+      },
+      "target_course_uid": "wp:analitik-dannyh",
+      "title": "С чего вам начать",
+      "visible": [
+        "Вам подойдёт курс «Аналитик данных»: Excel, Python, работа с таблицами данных, статистика и SQL. Первые три темы открыты бесплатно: начните с них и посмотрите, нравится ли вам искать ответы в цифрах."
+      ],
+      "buttons": [
+        {
+          "id": "open",
+          "text": "Открыть первые уроки",
+          "kind": "demo"
+        },
+        {
+          "id": "mentor",
+          "text": "Разобрать план с преподавателем",
+          "kind": "lead_trial"
+        },
+        {
+          "id": "bot_pdf",
+          "text": "Забрать PDF в Telegram",
+          "kind": "telegram_bot",
+          "start_param": "quiz_adult_{outcome}",
+          "pdf": "bonuses/04-vzroslyj-karta-vhoda.pdf"
+        }
+      ],
+      "full_template": "full_adult"
+    },
+    {
+      "code": "R_A_SQL",
+      "branch": "adult",
+      "if": {
+        "A1": [
+          "a_dir_sql"
+        ]
+      },
+      "target_course_uid": "[уточнить course_uid «Базы данных и SQL», tsk-826]",
+      "title": "С чего вам начать",
+      "visible": [
+        "Курс «Базы данных и SQL»: запросы пишутся прямо в кабинете, проверка автоматическая. Первые запросы напишете в первый же вечер."
+      ],
+      "buttons": [
+        {
+          "id": "open",
+          "text": "Открыть первые уроки",
+          "kind": "demo"
+        },
+        {
+          "id": "mentor",
+          "text": "Разобрать план с преподавателем",
+          "kind": "lead_trial"
+        },
+        {
+          "id": "bot_pdf",
+          "text": "Забрать PDF в Telegram",
+          "kind": "telegram_bot",
+          "start_param": "quiz_adult_{outcome}",
+          "pdf": "bonuses/04-vzroslyj-karta-vhoda.pdf"
+        }
+      ],
+      "full_template": "full_adult"
+    },
+    {
+      "code": "R_A_BE_L2",
+      "branch": "adult",
+      "if": {
+        "all": [
+          {
+            "A1": [
+              "a_dir_backend"
+            ]
+          },
+          {
+            "A.L": [
+              "L2"
+            ]
+          }
+        ]
+      },
+      "target_course_uid": "lms:tsk768:backend",
+      "title": "С чего вам начать",
+      "visible": [
+        "База Python у вас есть. Пройдите диагностику «Готов ли ты к Backend»: она покажет, с какой главы курса «Backend-разработчик на Python» начинать, чтобы не тратить время на знакомое."
+      ],
+      "buttons": [
+        {
+          "id": "be_diag",
+          "text": "Пройти диагностику",
+          "kind": "link",
+          "target": "wp:backend-gotovnost"
+        },
+        {
+          "id": "mentor",
+          "text": "Разобрать план с преподавателем",
+          "kind": "lead_trial"
+        },
+        {
+          "id": "bot_pdf",
+          "text": "Забрать PDF в Telegram",
+          "kind": "telegram_bot",
+          "start_param": "quiz_adult_{outcome}",
+          "pdf": "bonuses/04-vzroslyj-karta-vhoda.pdf"
+        }
+      ],
+      "full_template": "full_adult"
+    },
+    {
+      "code": "R_A_BE_L0",
+      "branch": "adult",
+      "if": {
+        "A1": [
+          "a_dir_backend"
+        ]
+      },
+      "target_course_uid": "[уточнить course_uid «Основы Python для новичков»]",
+      "title": "С чего вам начать",
+      "visible": [
+        "Backend начинается с уверенного Python. Начните с бесплатного курса «Основы Python для новичков»: 10 тем, задания с автопроверкой. Потом пройдите диагностику «Готов ли ты к Backend»: она покажет, каких тем не хватает."
+      ],
+      "buttons": [
+        {
+          "id": "open",
+          "text": "Открыть первые уроки",
+          "kind": "demo"
+        },
+        {
+          "id": "mentor",
+          "text": "Разобрать план с преподавателем",
+          "kind": "lead_trial"
+        },
+        {
+          "id": "bot_pdf",
+          "text": "Забрать PDF в Telegram",
+          "kind": "telegram_bot",
+          "start_param": "quiz_adult_{outcome}",
+          "pdf": "bonuses/04-vzroslyj-karta-vhoda.pdf"
+        }
+      ],
+      "full_template": "full_adult"
+    },
+    {
+      "code": "R_A_AI",
+      "branch": "adult",
+      "if": {
+        "A1": [
+          "a_dir_ai"
+        ]
+      },
+      "target_course_uid": "wp:ai-predprinimatel",
+      "title": "С чего вам начать",
+      "visible": [
+        "Посмотрите курс «ИИ-предприниматель»: как поручать нейросетям рутину и делать решения для реальных задач. Три варианта: для тех, кто делает продукты, для руководителей и для маркетологов."
+      ],
+      "buttons": [
+        {
+          "id": "open",
+          "text": "Открыть первые уроки",
+          "kind": "demo"
+        },
+        {
+          "id": "mentor",
+          "text": "Разобрать план с преподавателем",
+          "kind": "lead_trial"
+        },
+        {
+          "id": "bot_pdf",
+          "text": "Забрать PDF в Telegram",
+          "kind": "telegram_bot",
+          "start_param": "quiz_adult_{outcome}",
+          "pdf": "bonuses/04-vzroslyj-karta-vhoda.pdf"
+        }
+      ],
+      "full_template": "full_adult"
+    },
+    {
+      "code": "R_A_UNK",
+      "branch": "adult",
+      "if": "else",
+      "target_course_uid": null,
+      "title": "С чего вам начать",
+      "visible": [
+        "Если направление ещё не выбрано, начните с того, где порог ниже: тестирование или Excel. Неделя на первых уроках скажет больше, чем месяц чтения обзоров. Карту всех направлений пришлём в PDF."
+      ],
+      "buttons": [
+        {
+          "id": "open",
+          "text": "Открыть первые уроки",
+          "kind": "demo"
+        },
+        {
+          "id": "mentor",
+          "text": "Разобрать план с преподавателем",
+          "kind": "lead_trial"
+        },
+        {
+          "id": "bot_pdf",
+          "text": "Забрать PDF в Telegram",
+          "kind": "telegram_bot",
+          "start_param": "quiz_adult_{outcome}",
+          "pdf": "bonuses/04-vzroslyj-karta-vhoda.pdf"
+        }
+      ],
+      "full_template": "full_adult"
+    }
+  ],
+  "modifiers": [
+    {
+      "code": "M_ASK_CHILD",
+      "branch": "parent",
+      "if": {
+        "P6": [
+          "p_init_parent"
+        ]
+      },
+      "text": "Перед записью спросите ребёнка, хочет ли он попробовать. Занятия, на которые ребёнок не соглашался, почти всегда заканчиваются через месяц. На пробное можно прийти вдвоём и решить после."
+    },
+    {
+      "code": "M_ONCE_WEEK",
+      "branch": "parent",
+      "if": {
+        "P7": [
+          "p_time_1"
+        ]
+      },
+      "text": "Одного занятия в неделю хватит для старта. Чтобы тема не забывалась, между занятиями ребёнок решает короткие задания в кабинете. [уточнить у Виктора: норма самостоятельной работы]"
+    },
+    {
+      "code": "M_GOAL_TIME",
+      "branch": "ege",
+      "if": {
+        "any": [
+          {
+            "all": [
+              {
+                "E5": [
+                  "e_goal_90"
+                ]
+              },
+              {
+                "E.S": [
+                  "S0"
+                ]
+              },
+              {
+                "E1": [
+                  "e_grade_11"
+                ]
+              }
+            ]
+          },
+          {
+            "all": [
+              {
+                "E5": [
+                  "e_goal_80",
+                  "e_goal_90"
+                ]
+              },
+              {
+                "E7": [
+                  "e_h_2"
+                ]
+              },
+              {
+                "E1": [
+                  "e_grade_11"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "text": "Цель высокая, а времени в неделю немного. Отказываться от цели не нужно, нужно честно посчитать. На разборе с преподавателем прикинем, какие номера реально закрыть к весне."
+    },
+    {
+      "code": "M_FEW_HOURS",
+      "branch": "adult",
+      "if": {
+        "A7": [
+          "a_h_2"
+        ]
+      },
+      "text": "Трёх часов в неделю хватит, если заниматься регулярно. Первую тему пройдите и засеките время: так вы честно посчитаете, сколько недель займёт курс у вас."
+    }
+  ],
+  "check_feedback": {
+    "E3": {
+      "e_chk_6": "Ответ 6 верный: цикл складывает 1 + 2 + 3.",
+      "e_chk_10": "Правильно 6: range(1, 4) даёт 1, 2, 3, четвёрка не входит.",
+      "e_chk_3": "Правильно 6: print стоит после цикла и печатает сумму, а не последнее i.",
+      "e_chk_idk": "Правильно 6: цикл складывает 1 + 2 + 3. Разберём в первых темах."
+    },
+    "T5": {
+      "t_chk_ok": "Верно: переменная name подставила своё значение.",
+      "t_chk_var": "Почти. Слово name без кавычек — переменная, Python подставит то, что в ней лежит: «Бот». Получится «Привет, Бот!».",
+      "t_chk_quote": "Python не печатает сам код. Он сначала склеивает кусочки текста, а потом выводит результат: «Привет, Бот!».",
+      "t_chk_idk": "Правильный ответ: «Привет, Бот!». Почему так, разберёшь в первой же теме демо."
+    },
+    "A4": {
+      "a_xl_5": "Верно 5: (2 + 4 + 9) / 3.",
+      "a_xl_15": "Правильно 5. 15 получится у функции СУММ.",
+      "a_xl_3": "Правильно 5. 3 покажет функция СЧЁТ: это количество чисел.",
+      "a_xl_idk": "Правильно 5: СРЗНАЧ складывает и делит на количество."
+    },
+    "A6": {
+      "a_py_8": "Верно 8: сначала умножение, потом сложение.",
+      "a_py_10": "Правильно 8: умножение выполняется раньше сложения.",
+      "a_py_232": "Правильно 8: это числа, а не текст, их не склеивают.",
+      "a_py_idk": "Правильно 8: сначала 3 * 2, потом + 2."
+    }
+  },
+  "pdf": {
+    "parent": "01-roditel-pervyj-yazyk.pdf",
+    "ege": "02-ege-plan-po-nomeram.pdf",
+    "teen": "03-podrostok-telegram-bot.pdf",
+    "adult": "04-vzroslyj-karta-vhoda.pdf"
+  }
+}

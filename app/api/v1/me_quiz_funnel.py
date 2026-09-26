@@ -1,11 +1,11 @@
-"""`POST /me/quiz-funnel/claim` — регистрация из итога квиза-ветки (tsk-1139, Ф2).
+"""`POST /me/quiz-funnel/claim` — регистрация из итога квиза-воронки (tsk-1139).
 
 SPW зовёт после входа по ссылке из письма, на странице `/quiz/{uid}/done`.
 """
 from __future__ import annotations
 
 import logging
-from typing import Dict, Optional
+from typing import List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, status
@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import CurrentUser, require_authenticated
 from app.core.config import Settings
 from app.db.session import get_async_db
-from app.schemas.guest_quiz import QuizRecommendation
+from app.api.v1.guest_funnel import FunnelButton
 from app.services import quiz_funnel_claim_service
 from app.services.rate_limit_service import get_redis, is_rate_limited
 
@@ -27,32 +27,52 @@ _settings = Settings()
 class QuizFunnelClaimRequest(BaseModel):
     """Тело claim. guest_session_id — запасной путь, если cookie не дошла."""
 
-    quiz_uid: str = Field(..., min_length=1, max_length=200, description="course_uid квиза-ветки")
+    quiz_uid: str = Field(..., min_length=1, max_length=200, description="course_uid квиза-воронки")
     guest_session_id: Optional[UUID] = Field(
         default=None, description="Если не передан — берётся из cookie guest_session"
     )
+
+
+class QuizFunnelCheck(BaseModel):
+    stem: str
+    feedback: str
+
+
+class QuizFunnelBreakdown(BaseModel):
+    """Полный разбор: видимая часть итога, уточнения, разборы проверок, шаблон."""
+
+    title: str
+    visible: List[str]
+    modifiers: List[str]
+    checks: List[QuizFunnelCheck]
+    full: List[str] = Field(..., description="Абзацы шаблона полного разбора; пусто — не задан")
 
 
 class QuizFunnelClaimResponse(BaseModel):
     """Полный разбор и куда вести ученика дальше."""
 
     quiz_uid: str
-    branch_code: str
-    scales: Dict[str, int]
-    recommendation: Optional[QuizRecommendation] = None
+    outcome_code: str
+    branch: str
+    role: Optional[str] = None
+    breakdown: QuizFunnelBreakdown
+    target_course_uid: Optional[str] = None
     course_id: Optional[int] = Field(
-        default=None, description="Рекомендованный курс; открыть его (демо-темы или курс)"
+        default=None, description="Курс итога; открыть его (демо-темы или курс)"
     )
     enrolled: bool = Field(..., description="True — записан на бесплатный курс")
     lead_id: int
     bot_start_url: Optional[str] = Field(default=None, description="Ссылка в бот за PDF ветки")
+    buttons: List[FunnelButton] = Field(
+        default_factory=list, description="Кнопки итога без ведущих в регистрацию"
+    )
 
 
 @router.post(
     "/claim",
     response_model=QuizFunnelClaimResponse,
     responses={
-        404: {"description": "Воронка выключена или это не квиз-ветка"},
+        404: {"description": "Воронка выключена или квиза-воронки нет"},
         409: {"description": "Регистрация из ветки закрыта, квиз не пройден, сессия чужая"},
         422: {"description": "Нет гостевой сессии"},
     },

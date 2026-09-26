@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.courses import Courses
 from app.models.guest_session import GuestSession
 from app.models.lead import Lead, LeadSource
-from app.models.quiz_funnel import QuizFunnelBotLead, QuizFunnelBranch
+from app.models.quiz_funnel import QuizFunnelBotLead, QuizFunnelProgress
 from app.services import quiz_funnel_service
 from app.services.lead_magnet_service import LEAD_MAGNET_SOURCE_CODE, find_lead
 
@@ -70,9 +70,10 @@ async def _load(db: AsyncSession, bot_lead_id: int, tg_id: int) -> QuizFunnelBot
     return row
 
 
-async def _branch_code(db: AsyncSession, quiz_course_id: int) -> str:
-    branch = await db.get(QuizFunnelBranch, quiz_course_id)
-    return branch.branch_code if branch else "unknown"
+async def _branch_code(db: AsyncSession, row: QuizFunnelBotLead) -> str:
+    """Ветка гостя — из его прохождения квиза."""
+    progress = await db.get(QuizFunnelProgress, (row.guest_session_id, row.quiz_course_id))
+    return progress.branch if progress and progress.branch else "unknown"
 
 
 async def start(
@@ -92,7 +93,8 @@ async def start(
     ).scalar_one_or_none()
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Ссылка устарела.")
-    branch = await db.get(QuizFunnelBranch, row.quiz_course_id)
+    branch_code = await _branch_code(db, row)
+    funnel = await quiz_funnel_service.load_funnel_by_id(db, row.quiz_course_id)
 
     if row.tg_id is None:
         now = _now()
@@ -108,8 +110,8 @@ async def start(
 
     return BotStart(
         bot_lead_id=row.id,
-        branch_code=branch.branch_code if branch else "unknown",
-        pdf_url=branch.pdf_url if branch else None,
+        branch_code=branch_code,
+        pdf_url=quiz_funnel_service.pdf_url(funnel.spec, branch_code) if funnel else None,
         trial_requested=row.trial_requested_at is not None,
     )
 
@@ -120,10 +122,11 @@ async def list_due(db: AsyncSession, limit: int = 50) -> List[DueReminder]:
         return []
     rows = (
         await db.execute(
-            select(QuizFunnelBotLead, QuizFunnelBranch.branch_code)
-            .join(
-                QuizFunnelBranch,
-                QuizFunnelBranch.quiz_course_id == QuizFunnelBotLead.quiz_course_id,
+            select(QuizFunnelBotLead, QuizFunnelProgress.branch)
+            .outerjoin(
+                QuizFunnelProgress,
+                (QuizFunnelProgress.guest_session_id == QuizFunnelBotLead.guest_session_id)
+                & (QuizFunnelProgress.course_id == QuizFunnelBotLead.quiz_course_id),
             )
             .where(
                 QuizFunnelBotLead.next_reminder_at <= _now(),
@@ -136,7 +139,9 @@ async def list_due(db: AsyncSession, limit: int = 50) -> List[DueReminder]:
         )
     ).all()
     return [
-        DueReminder(bot_lead_id=r.id, tg_id=int(r.tg_id), branch_code=code, step=r.reminder_step)
+        DueReminder(
+            bot_lead_id=r.id, tg_id=int(r.tg_id), branch_code=code or "unknown", step=r.reminder_step
+        )
         for r, code in rows
     ]
 
@@ -176,7 +181,7 @@ async def request_trial(db: AsyncSession, *, bot_lead_id: int, tg_id: int) -> in
 
     course = await db.get(Courses, row.quiz_course_id)
     session = await db.get(GuestSession, row.guest_session_id)
-    branch_code = await _branch_code(db, row.quiz_course_id)
+    branch_code = await _branch_code(db, row)
     contact = f"@{row.tg_username}" if row.tg_username else f"tg:{row.tg_id}"
     note = f"Запись на пробное из бота (ветка {branch_code}), Telegram {contact}."
     attribution = {

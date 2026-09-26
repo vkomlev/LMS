@@ -498,6 +498,8 @@ class Settings:
         # Ник ученического бота без «@» — стартовая ссылка t.me/<ник>?start=q_<токен>.
         # Пусто — кнопка бота на итоге не показывается.
         self.quiz_funnel_bot_username: str = os.getenv("QUIZ_FUNNEL_BOT_USERNAME", "")
+        # Где лежат PDF-бонусы веток (имя файла — из спецификации квиза).
+        self.quiz_funnel_pdf_base: str = os.getenv("QUIZ_FUNNEL_PDF_BASE", "/media/funnel")
         # Напоминания гостю в боте (+1/+3/+7 дней). Отдельный рубильник: PDF можно
         # выдавать раньше, чем включать дожим.
         self.quiz_funnel_reminders_enabled: bool = os.getenv(

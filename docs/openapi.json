@@ -28783,70 +28783,6 @@
         }
       }
     },
-    "/api/v1/learning/guest/quiz/{course_uid}/attribution": {
-      "post": {
-        "tags": [
-          "guest-quiz"
-        ],
-        "summary": "Record Quiz Attribution",
-        "description": "Запомнить метки первого касания (utm_*, страница, ветка) — tsk-1139.\n\nПишет один раз на сессию: переход из входного квиза в ветку их не перетирает.\nПри выключенной воронке — тихо ничего не делает (204), SPW от рубильника не зависит.",
-        "operationId": "record_quiz_attribution_api_v1_learning_guest_quiz__course_uid__attribution_post",
-        "parameters": [
-          {
-            "name": "course_uid",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "description": "course_uid квиза, на который пришёл человек",
-              "title": "Course Uid"
-            },
-            "description": "course_uid квиза, на который пришёл человек"
-          },
-          {
-            "name": "guest_session",
-            "in": "cookie",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Guest Session"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/QuizAttributionRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "204": {
-            "description": "Successful Response"
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/v1/learning/guest/quiz/{course_uid}/lead": {
       "post": {
         "tags": [
@@ -29022,13 +28958,333 @@
             }
           },
           "404": {
-            "description": "Воронка выключена или это не квиз-ветка"
+            "description": "Воронка выключена или квиза-воронки нет"
           },
           "409": {
             "description": "Регистрация из ветки закрыта, квиз не пройден, сессия чужая"
           },
           "422": {
             "description": "Нет гостевой сессии"
+          }
+        }
+      }
+    },
+    "/api/v1/learning/guest/funnel/{course_uid}": {
+      "get": {
+        "tags": [
+          "guest-funnel"
+        ],
+        "summary": "Get Funnel State",
+        "description": "Видимые вопросы и текущий шаг.",
+        "operationId": "get_funnel_state_api_v1_learning_guest_funnel__course_uid__get",
+        "parameters": [
+          {
+            "name": "course_uid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "course_uid квиза-воронки",
+              "title": "Course Uid"
+            },
+            "description": "course_uid квиза-воронки"
+          },
+          {
+            "name": "guest_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Guest Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FunnelState"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/learning/guest/funnel/{course_uid}/start": {
+      "post": {
+        "tags": [
+          "guest-funnel"
+        ],
+        "summary": "Start Funnel",
+        "description": "Параметры ссылки (branch/role/dir) и метки первого касания.",
+        "operationId": "start_funnel_api_v1_learning_guest_funnel__course_uid__start_post",
+        "parameters": [
+          {
+            "name": "course_uid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Course Uid"
+            }
+          },
+          {
+            "name": "guest_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Guest Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FunnelStartRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/learning/guest/funnel/{course_uid}/answer": {
+      "post": {
+        "tags": [
+          "guest-funnel"
+        ],
+        "summary": "Answer Funnel",
+        "description": "Ответ на вопрос текущего пути. Возвращает новый путь и разбор проверки.",
+        "operationId": "answer_funnel_api_v1_learning_guest_funnel__course_uid__answer_post",
+        "parameters": [
+          {
+            "name": "course_uid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Course Uid"
+            }
+          },
+          {
+            "name": "guest_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Guest Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FunnelAnswerRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FunnelState"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/learning/guest/funnel/{course_uid}/result": {
+      "get": {
+        "tags": [
+          "guest-funnel"
+        ],
+        "summary": "Get Funnel Result",
+        "description": "Видимая часть итога и кнопки (заводит токен бота и фиксирует итог для замеров).",
+        "operationId": "get_funnel_result_api_v1_learning_guest_funnel__course_uid__result_get",
+        "parameters": [
+          {
+            "name": "course_uid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Course Uid"
+            }
+          },
+          {
+            "name": "guest_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Guest Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FunnelResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/learning/guest/funnel/{course_uid}/lead": {
+      "post": {
+        "tags": [
+          "guest-funnel"
+        ],
+        "summary": "Submit Funnel Lead",
+        "description": "Запись на пробное с итога: заявка с веткой, итогом и метками.\n\nЛимит строже чтения — ручка публичная и пишущая (как у заявки квиза).",
+        "operationId": "submit_funnel_lead_api_v1_learning_guest_funnel__course_uid__lead_post",
+        "parameters": [
+          {
+            "name": "course_uid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Course Uid"
+            }
+          },
+          {
+            "name": "guest_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Guest Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FunnelLeadRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FunnelLeadResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
           }
         }
       }
@@ -36197,8 +36453,8 @@
         "tags": [
           "marketer_leads"
         ],
-        "summary": "Воронка сайта по веткам входного квиза",
-        "description": "tsk-1139: старт → итог → регистрация → первое решённое задание → бот → пробное → оплата, по каждой ветке. Фильтр по utm_source/utm_campaign из меток первого касания.",
+        "summary": "Воронка сайта по веткам квиза-воронки",
+        "description": "tsk-1139: открыли → начали → итог → регистрация → первое решённое задание → бот → пробное → оплата, по каждой ветке. Фильтр по utm_source/utm_campaign из меток первого касания.",
         "operationId": "site_funnel_api_v1_marketer_quiz_funnel_site_get",
         "security": [
           {
@@ -36210,14 +36466,14 @@
         ],
         "parameters": [
           {
-            "name": "entry_uid",
+            "name": "quiz_uid",
             "in": "query",
             "required": true,
             "schema": {
               "type": "string",
               "minLength": 1,
               "maxLength": 200,
-              "title": "Entry Uid"
+              "title": "Quiz Uid"
             }
           },
           {
@@ -55016,6 +55272,478 @@
         "title": "FreeSlotsRead",
         "description": "Свободные окна расписания целиком."
       },
+      "FunnelAnswerRequest": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Code"
+          },
+          "selected_option_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 20,
+            "minItems": 1,
+            "title": "Selected Option Ids"
+          }
+        },
+        "type": "object",
+        "required": [
+          "code",
+          "selected_option_ids"
+        ],
+        "title": "FunnelAnswerRequest"
+      },
+      "FunnelButton": {
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id"
+          },
+          "text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind",
+            "description": "register | demo | lead_trial | telegram_bot | link | share_parent_link | contact"
+          },
+          "target": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target",
+            "description": "course_uid для link"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url",
+            "description": "Готовый адрес (бот, переписка)"
+          }
+        },
+        "type": "object",
+        "title": "FunnelButton"
+      },
+      "FunnelLeadRequest": {
+        "properties": {
+          "contact": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 3,
+            "title": "Contact",
+            "description": "Телефон, почта или ник — как удобнее"
+          },
+          "full_name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Full Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "contact"
+        ],
+        "title": "FunnelLeadRequest"
+      },
+      "FunnelLeadResponse": {
+        "properties": {
+          "lead_id": {
+            "type": "integer",
+            "title": "Lead Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "lead_id"
+        ],
+        "title": "FunnelLeadResponse"
+      },
+      "FunnelOption": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "text"
+        ],
+        "title": "FunnelOption"
+      },
+      "FunnelQuestion": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "branch": {
+            "type": "string",
+            "title": "Branch"
+          },
+          "type": {
+            "type": "string",
+            "title": "Type",
+            "description": "SC_Qw — один вариант, MC_Qw — несколько"
+          },
+          "stem": {
+            "type": "string",
+            "title": "Stem",
+            "description": "Формулировка голосом роли (родителю — «ваш ребёнок»)"
+          },
+          "options": {
+            "items": {
+              "$ref": "#/components/schemas/FunnelOption"
+            },
+            "type": "array",
+            "title": "Options"
+          },
+          "code_snippet": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code Snippet",
+            "description": "Код к мини-проверке: {lang, text}"
+          },
+          "selected_option_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Selected Option Ids"
+          },
+          "feedback": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Feedback",
+            "description": "Разбор мини-проверки после ответа"
+          }
+        },
+        "type": "object",
+        "required": [
+          "code",
+          "branch",
+          "type",
+          "stem",
+          "options"
+        ],
+        "title": "FunnelQuestion"
+      },
+      "FunnelResult": {
+        "properties": {
+          "quiz_uid": {
+            "type": "string",
+            "title": "Quiz Uid"
+          },
+          "is_complete": {
+            "type": "boolean",
+            "title": "Is Complete"
+          },
+          "outcome_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outcome Code"
+          },
+          "branch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch"
+          },
+          "role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Role"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "visible": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Visible"
+          },
+          "buttons": {
+            "items": {
+              "$ref": "#/components/schemas/FunnelButton"
+            },
+            "type": "array",
+            "title": "Buttons"
+          },
+          "target_course_uid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Course Uid"
+          },
+          "registration_enabled": {
+            "type": "boolean",
+            "title": "Registration Enabled",
+            "default": false
+          },
+          "bot_start_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bot Start Url"
+          },
+          "contact_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contact Url"
+          }
+        },
+        "type": "object",
+        "required": [
+          "quiz_uid",
+          "is_complete"
+        ],
+        "title": "FunnelResult",
+        "description": "Видимая гостю часть итога. Полный разбор — POST /me/quiz-funnel/claim."
+      },
+      "FunnelStartRequest": {
+        "properties": {
+          "branch": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 32
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch"
+          },
+          "role": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 32
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Role"
+          },
+          "dir": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 32
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dir"
+          },
+          "attribution": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Attribution",
+            "description": "utm_*, page, referrer; прочие ключи отбрасываются"
+          }
+        },
+        "type": "object",
+        "title": "FunnelStartRequest"
+      },
+      "FunnelState": {
+        "properties": {
+          "quiz_uid": {
+            "type": "string",
+            "title": "Quiz Uid"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "branch": {
+            "type": "string",
+            "title": "Branch"
+          },
+          "role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Role"
+          },
+          "questions": {
+            "items": {
+              "$ref": "#/components/schemas/FunnelQuestion"
+            },
+            "type": "array",
+            "title": "Questions"
+          },
+          "answered_count": {
+            "type": "integer",
+            "title": "Answered Count"
+          },
+          "remaining_estimate": {
+            "type": "integer",
+            "title": "Remaining Estimate",
+            "description": "Сколько вопросов примерно осталось в ветке"
+          },
+          "is_complete": {
+            "type": "boolean",
+            "title": "Is Complete"
+          },
+          "feedback": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Feedback",
+            "description": "Разбор только что отвеченной проверки"
+          }
+        },
+        "type": "object",
+        "required": [
+          "quiz_uid",
+          "title",
+          "branch",
+          "questions",
+          "answered_count",
+          "remaining_estimate",
+          "is_complete"
+        ],
+        "title": "FunnelState",
+        "description": "Видимые вопросы до текущего включительно. Путь зависит от ответов,\nпоэтому после каждого ответа список перезапрашивается."
+      },
       "GatewayPaymentStart": {
         "properties": {
           "payment_id": {
@@ -65413,47 +66141,70 @@
         "title": "QuizAnswerResponse",
         "description": "Ответ на POST /learning/guest/quiz/answers — прогресс, а не «верно/неверно»."
       },
-      "QuizAttributionRequest": {
+      "QuizFunnelBreakdown": {
         "properties": {
-          "attribution": {
-            "additionalProperties": {
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "visible": {
+            "items": {
               "type": "string"
             },
-            "type": "object",
-            "title": "Attribution",
-            "description": "utm_*, page, referrer, for; прочие ключи отбрасываются"
-          }
-        },
-        "type": "object",
-        "title": "QuizAttributionRequest",
-        "description": "Тело POST /learning/guest/quiz/{course_uid}/attribution — метки из адреса."
-      },
-      "QuizBranchLink": {
-        "properties": {
-          "branch_code": {
-            "type": "string",
-            "title": "Branch Code",
-            "description": "Код ветки для ?for= и меток"
+            "type": "array",
+            "title": "Visible"
           },
-          "option_id": {
-            "type": "string",
-            "title": "Option Id",
-            "description": "ID варианта ответа входного вопроса"
+          "modifiers": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Modifiers"
           },
-          "quiz_uid": {
-            "type": "string",
-            "title": "Quiz Uid",
-            "description": "course_uid квиза-ветки, куда перейти"
+          "checks": {
+            "items": {
+              "$ref": "#/components/schemas/QuizFunnelCheck"
+            },
+            "type": "array",
+            "title": "Checks"
+          },
+          "full": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Full",
+            "description": "Абзацы шаблона полного разбора; пусто — не задан"
           }
         },
         "type": "object",
         "required": [
-          "branch_code",
-          "option_id",
-          "quiz_uid"
+          "title",
+          "visible",
+          "modifiers",
+          "checks",
+          "full"
         ],
-        "title": "QuizBranchLink",
-        "description": "Вариант входного вопроса, ведущий в квиз-ветку воронки (tsk-1139)."
+        "title": "QuizFunnelBreakdown",
+        "description": "Полный разбор: видимая часть итога, уточнения, разборы проверок, шаблон."
+      },
+      "QuizFunnelCheck": {
+        "properties": {
+          "stem": {
+            "type": "string",
+            "title": "Stem"
+          },
+          "feedback": {
+            "type": "string",
+            "title": "Feedback"
+          }
+        },
+        "type": "object",
+        "required": [
+          "stem",
+          "feedback"
+        ],
+        "title": "QuizFunnelCheck"
       },
       "QuizFunnelClaimRequest": {
         "properties": {
@@ -65462,7 +66213,7 @@
             "maxLength": 200,
             "minLength": 1,
             "title": "Quiz Uid",
-            "description": "course_uid квиза-ветки"
+            "description": "course_uid квиза-воронки"
           },
           "guest_session_id": {
             "anyOf": [
@@ -65491,26 +66242,38 @@
             "type": "string",
             "title": "Quiz Uid"
           },
-          "branch_code": {
+          "outcome_code": {
             "type": "string",
-            "title": "Branch Code"
+            "title": "Outcome Code"
           },
-          "scales": {
-            "additionalProperties": {
-              "type": "integer"
-            },
-            "type": "object",
-            "title": "Scales"
+          "branch": {
+            "type": "string",
+            "title": "Branch"
           },
-          "recommendation": {
+          "role": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/QuizRecommendation"
+                "type": "string"
               },
               {
                 "type": "null"
               }
-            ]
+            ],
+            "title": "Role"
+          },
+          "breakdown": {
+            "$ref": "#/components/schemas/QuizFunnelBreakdown"
+          },
+          "target_course_uid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Course Uid"
           },
           "course_id": {
             "anyOf": [
@@ -65522,7 +66285,7 @@
               }
             ],
             "title": "Course Id",
-            "description": "Рекомендованный курс; открыть его (демо-темы или курс)"
+            "description": "Курс итога; открыть его (демо-темы или курс)"
           },
           "enrolled": {
             "type": "boolean",
@@ -65544,50 +66307,27 @@
             ],
             "title": "Bot Start Url",
             "description": "Ссылка в бот за PDF ветки"
+          },
+          "buttons": {
+            "items": {
+              "$ref": "#/components/schemas/FunnelButton"
+            },
+            "type": "array",
+            "title": "Buttons",
+            "description": "Кнопки итога без ведущих в регистрацию"
           }
         },
         "type": "object",
         "required": [
           "quiz_uid",
-          "branch_code",
-          "scales",
+          "outcome_code",
+          "branch",
+          "breakdown",
           "enrolled",
           "lead_id"
         ],
         "title": "QuizFunnelClaimResponse",
         "description": "Полный разбор и куда вести ученика дальше."
-      },
-      "QuizFunnelInfo": {
-        "properties": {
-          "branch_code": {
-            "type": "string",
-            "title": "Branch Code"
-          },
-          "registration_enabled": {
-            "type": "boolean",
-            "title": "Registration Enabled",
-            "description": "False — вместо регистрации вести на PDF в боте и пробное"
-          },
-          "bot_start_url": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Bot Start Url",
-            "description": "Ссылка в бот за PDF ветки; null — бонуса нет"
-          }
-        },
-        "type": "object",
-        "required": [
-          "branch_code",
-          "registration_enabled"
-        ],
-        "title": "QuizFunnelInfo",
-        "description": "Блок воронки в итоге квиза-ветки (tsk-1139).\n\nГостю в воронке показывается часть итога (название рекомендации); полный\nразбор — шкалы и описание — после регистрации."
       },
       "QuizFunnelRow": {
         "properties": {
@@ -65851,14 +66591,6 @@
             "type": "boolean",
             "title": "Is Complete",
             "description": "True — отвечены все вопросы, можно показывать итог"
-          },
-          "branches": {
-            "items": {
-              "$ref": "#/components/schemas/QuizBranchLink"
-            },
-            "type": "array",
-            "title": "Branches",
-            "description": "Непусто только у входного квиза воронки: после ответа — переход в ветку"
           }
         },
         "type": "object",
@@ -65922,17 +66654,6 @@
             "type": "boolean",
             "title": "Lead Submitted",
             "description": "True — контакт из этой гостевой сессии уже оставлен"
-          },
-          "funnel": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/QuizFunnelInfo"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Заполнен только у квиза-ветки воронки при включённом рубильнике"
           }
         },
         "type": "object",
@@ -68940,17 +69661,13 @@
       },
       "SiteFunnelRow": {
         "properties": {
-          "branch_code": {
+          "branch": {
             "type": "string",
-            "title": "Branch Code"
+            "title": "Branch"
           },
-          "course_uid": {
-            "type": "string",
-            "title": "Course Uid"
-          },
-          "total_q": {
+          "opened": {
             "type": "integer",
-            "title": "Total Q"
+            "title": "Opened"
           },
           "started": {
             "type": "integer",
@@ -68983,9 +69700,8 @@
         },
         "type": "object",
         "required": [
-          "branch_code",
-          "course_uid",
-          "total_q",
+          "branch",
+          "opened",
           "started",
           "completed",
           "registered",
@@ -68995,7 +69711,7 @@
           "paid"
         ],
         "title": "SiteFunnelRow",
-        "description": "Строка воронки сайта по ветке входного квиза (tsk-1139).\n\nКаждый шаг — число гостевых сессий ветки, дошедших до него. Выборки малые:\nчитать числами, а не процентами."
+        "description": "Строка воронки сайта по ветке квиза-воронки (tsk-1139).\n\nКаждый шаг — число гостевых сессий ветки, дошедших до него. Ветка — где\nчеловек закончил (родитель выпускника, ушедший в ЕГЭ, считается в ege);\nroot — не выбрал «для кого». Выборки малые: читать числами, не процентами."
       },
       "SlotParticipantRead": {
         "properties": {
