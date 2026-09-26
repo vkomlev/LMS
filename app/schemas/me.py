@@ -432,6 +432,8 @@ class SyllabusTaskItem(BaseModel):
     is_active: bool = True
     attempts_used: int
     attempts_limit_effective: int
+    # tsk-1134: задание проверяет наставник — лимит попыток не действует.
+    attempts_unlimited: bool = False
     last_score: int | None
     last_max_score: int | None
     last_submitted_at: datetime | None

@@ -117,6 +117,9 @@ class TaskStateResponse(BaseModel):
     last_finished_at: Optional[datetime] = None
     attempts_used: int = 0
     attempts_limit_effective: int = 3
+    # tsk-1134: задание проверяет наставник — лимит не действует, BLOCKED_LIMIT
+    # не наступает; клиент показывает «Попыток: N» без «/ лимит».
+    attempts_unlimited: bool = False
     # tsk-222: сохранённый ответ ученика по последнему task_result. SPW показывает
     # его как «Мой ответ» (read-only) на пройденном/на-проверке/заблокированном
     # задании. Содержит только ответ ученика (StudentAnswer), эталон не раскрывается.

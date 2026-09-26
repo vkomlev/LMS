@@ -70734,6 +70734,11 @@
             "type": "integer",
             "title": "Attempts Limit Effective"
           },
+          "attempts_unlimited": {
+            "type": "boolean",
+            "title": "Attempts Unlimited",
+            "default": false
+          },
           "last_score": {
             "anyOf": [
               {
@@ -73830,6 +73835,11 @@
             "type": "integer",
             "title": "Attempts Limit Effective",
             "default": 3
+          },
+          "attempts_unlimited": {
+            "type": "boolean",
+            "title": "Attempts Unlimited",
+            "default": false
           },
           "last_answer_json": {
             "anyOf": [

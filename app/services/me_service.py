@@ -19,7 +19,7 @@ from app.schemas.task_content import QUIZ_TASK_TYPES
 # и «следующий шаг» считали долг одинаково.
 from app.services.content_grace_service import compute_graced_items
 # Y-3.2 (S3-A4): единая точка правды — учебный движок.
-from app.services.learning_engine_service import PASS_THRESHOLD_RATIO
+from app.services.learning_engine_service import PASS_THRESHOLD_RATIO, is_mentor_reviewed
 # tsk-656: единственное место, где живёт правило «это реальная сдача ученика»,
 # а не отметка преподавателя. Копировать условие сюда нельзя — разъедется.
 from app.services.learning_gaps_service import (
@@ -1085,6 +1085,10 @@ def _compute_syllabus_task_status(row: dict) -> str:
         # legacy pre-Y-6 pending state (TA/SA_COM до optimistic-PASSED backfill)
         return "pending_review"
     # is_correct is False
+    # tsk-1134: работу проверяет наставник — лимит не действует, возврат на
+    # доработку не блокирует повторную сдачу (паритет с compute_task_state).
+    if is_mentor_reviewed(row.get("task_type"), row.get("manual_review_required")):
+        return "failed"
     if limit_eff > 0 and attempts_used >= limit_eff:
         return "blocked_limit"
     return "failed"
@@ -1307,6 +1311,9 @@ async def get_syllabus_states(
                     "is_active": bool(t["is_active"]),
                     "attempts_used": int(t["attempts_used"] or 0),
                     "attempts_limit_effective": int(t["attempts_limit_effective"] or 0),
+                    "attempts_unlimited": is_mentor_reviewed(
+                        t["task_type"], t["manual_review_required"]
+                    ),
                     "last_score": int(t["last_score"]) if t["last_score"] is not None else None,
                     "last_max_score": (
                         int(t["last_max_score"]) if t["last_max_score"] is not None else None

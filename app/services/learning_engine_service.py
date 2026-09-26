@@ -64,6 +64,35 @@ DEFAULT_MAX_ATTEMPTS = 3
 # Квиз-вопросы (SC_Qw/MC_Qw, tsk-124): ровно одна попытка — измеряют шкалы,
 # у них нет «верно/неверно», повтор бессмысленен и задваивает scale_scores.
 QUIZ_MAX_ATTEMPTS = 1
+
+# tsk-1134: задания, которые проверяет наставник, лимитом попыток не
+# ограничиваются. Правило оценки проекта обещает «доработка — сдаёте снова»,
+# а при лимите 3 ученик после двух возвратов оказывался заблокирован. Цикл
+# «сдача → возврат → сдача» ведёт наставник, счётчик ему не нужен.
+# Ось та же, что у очереди обязательной проверки (MANDATORY_REVIEW_TEMPLATE),
+# но по свойству ЗАДАНИЯ, без вердикта конкретной работы: у partial_auto_check
+# отказ автоматики — тоже часть цикла доработки, блокировать его нельзя.
+MENTOR_REVIEWED_TYPES = frozenset({"SA", "SA_COM", "TBL_COM"})
+
+
+def is_mentor_reviewed(task_type: Optional[str], manual_review_required: Any) -> bool:
+    """Проверяет ли задание наставник (тогда лимит попыток не действует, tsk-1134).
+
+    Args:
+        task_type: task_content->>'type'.
+        manual_review_required: solution_rules->>'manual_review_required'
+            (строка 'true'/'false', bool или None).
+
+    Returns:
+        True для TA и для SA/SA_COM/TBL_COM с обязательной ручной проверкой.
+    """
+    if task_type == "TA":
+        return True
+    if task_type not in MENTOR_REVIEWED_TYPES:
+        return False
+    if isinstance(manual_review_required, bool):
+        return manual_review_required
+    return str(manual_review_required).strip().lower() == "true"
 PASS_THRESHOLD_RATIO = 0.5
 
 # tsk-626: пространство ключей advisory-lock для кеша `student_course_state`.
@@ -433,6 +462,17 @@ class LearningEngineService:
         попыткам задания независимо от пути.
         """
         limit = await self.get_effective_attempt_limit(db, student_id, task_id)
+        mrr_row = (
+            await db.execute(
+                text(
+                    "SELECT task_content->>'type', "
+                    "solution_rules->>'manual_review_required' "
+                    "FROM tasks WHERE id = :task_id"
+                ),
+                {"task_id": task_id},
+            )
+        ).fetchone()
+        unlimited = mrr_row is not None and is_mentor_reviewed(mrr_row[0], mrr_row[1])
 
         # tsk-264: у квиза (SC_Qw/MC_Qw) ответ ОДИН НАВСЕГДА — повтор задваивает
         # scale_scores, и submit отклоняет его глобально, без учёта курса
@@ -492,6 +532,7 @@ class LearningEngineService:
                 last_finished_at=None,
                 attempts_used=attempts_used,
                 attempts_limit_effective=limit,
+                attempts_unlimited=unlimited,
             )
 
         last_attempt_id, last_finished_at, last_score, last_max_score = (
@@ -515,12 +556,13 @@ class LearningEngineService:
                     last_finished_at=last_finished_at,
                     attempts_used=attempts_used,
                     attempts_limit_effective=limit,
+                    attempts_unlimited=unlimited,
                     last_answer_json=last_answer_json,
                     last_is_correct=last_is_correct,
                     last_checked_at=last_checked_at,
                 )
 
-        if attempts_used >= limit:
+        if attempts_used >= limit and not unlimited:
             return TaskStateResult(
                 state="BLOCKED_LIMIT",
                 last_attempt_id=last_attempt_id,
@@ -529,6 +571,7 @@ class LearningEngineService:
                 last_finished_at=last_finished_at,
                 attempts_used=attempts_used,
                 attempts_limit_effective=limit,
+                attempts_unlimited=unlimited,
                 last_answer_json=last_answer_json,
                 last_is_correct=last_is_correct,
                 last_checked_at=last_checked_at,
@@ -542,6 +585,7 @@ class LearningEngineService:
             last_finished_at=last_finished_at,
             attempts_used=attempts_used,
             attempts_limit_effective=limit,
+            attempts_unlimited=unlimited,
             last_answer_json=last_answer_json,
             last_is_correct=last_is_correct,
             last_checked_at=last_checked_at,
@@ -626,7 +670,8 @@ class LearningEngineService:
             await db.execute(
                 text(
                     "SELECT t.id, t.task_content->>'type' AS ttype, t.max_attempts, "
-                    "       o.max_attempts_override "
+                    "       o.max_attempts_override, "
+                    "       t.solution_rules->>'manual_review_required' AS mrr "
                     "FROM tasks t "
                     "LEFT JOIN student_task_limit_override o "
                     "       ON o.task_id = t.id AND o.student_id = :student_id "
@@ -637,8 +682,11 @@ class LearningEngineService:
         ).fetchall()
 
         limits: dict[int, int] = {}
-        for tid, ttype, max_attempts, override in limit_rows:
+        unlimited_ids: set[int] = set()
+        for tid, ttype, max_attempts, override, mrr in limit_rows:
             tid = int(tid)
+            if is_mentor_reviewed(ttype, mrr):
+                unlimited_ids.add(tid)
             if ttype in QUIZ_TASK_TYPES:
                 limits[tid] = QUIZ_MAX_ATTEMPTS
             elif override is not None:
@@ -710,6 +758,7 @@ class LearningEngineService:
         for tid in ids:
             limit = limits.get(tid, DEFAULT_MAX_ATTEMPTS)
             used = attempts_used.get(tid, 0)
+            unlimited = tid in unlimited_ids
             row = last_results.get(tid)
 
             if row is None:
@@ -717,6 +766,7 @@ class LearningEngineService:
                     state="OPEN" if used == 0 else "IN_PROGRESS",
                     attempts_used=used,
                     attempts_limit_effective=limit,
+                    attempts_unlimited=unlimited,
                 )
                 continue
 
@@ -737,13 +787,14 @@ class LearningEngineService:
                 last_finished_at=row["submitted_at"],
                 attempts_used=used,
                 attempts_limit_effective=limit,
+                attempts_unlimited=unlimited,
                 last_answer_json=last_answer_json,
                 last_is_correct=row["is_correct"],
                 last_checked_at=row["checked_at"],
             )
             if last_max_score > 0 and (last_score / last_max_score) >= PASS_THRESHOLD_RATIO:
                 results[tid] = TaskStateResult(state="PASSED", **common)
-            elif used >= limit:
+            elif used >= limit and not unlimited:
                 results[tid] = TaskStateResult(state="BLOCKED_LIMIT", **common)
             else:
                 results[tid] = TaskStateResult(state="FAILED", **common)
