@@ -36,6 +36,7 @@ if sys.platform == "win32":
 # убиралась одна. Короткое имя даёт один модуль в `sys.modules` на процесс.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from run_database import PROD_DB_SIGNATURES, provision_run_database  # noqa: E402
+from run_lock import acquire_full_test_lock  # noqa: E402
 
 _run_db = provision_run_database(os.environ.get("DATABASE_URL", ""))
 if _run_db.active:
@@ -107,7 +108,11 @@ def pytest_configure(config: "pytest.Config") -> None:
 
     Override — `ALLOW_PROD_TESTS=1`: используется только read-only живой
     проверкой на проде через явный отдельный запуск, не для обычных pytest-сессий.
+
+    tsk-1143: здесь же — машинный замок «один полный прогон тестов за раз»
+    (общий с SPW). Именно в хуке: пути и `-k` уже разобраны самим pytest.
     """
+    acquire_full_test_lock([str(a) for a in config.args], config.option.keyword)
     if os.environ.get("ALLOW_PROD_TESTS", "").strip().lower() in {"1", "true", "yes"}:
         return
     low = (_settings.database_url or "").lower()
