@@ -1,6 +1,6 @@
-@AGENTS.md
-
 # CLAUDE.md — LMS Core API
+
+> Долговременная память проекта — `docs/ai/PROJECT_MEMORY.md`: сверяться перед догадками о контексте проекта. Импорт `@AGENTS.md` снят 29.09 (weekly-audit): это генерируемый для Codex файл со списком скиллов-зеркал `skills/core/`, расходящихся с каноном `~/.claude/skills`.
 
 ## Project Overview
 
