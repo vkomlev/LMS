@@ -9,7 +9,7 @@ POST /api/v1/teacher/help-requests/{request_id}/reply — ответить ст�
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import date, datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Body, status
@@ -19,6 +19,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_bare_db, get_current_user
 from app.auth.current_user import CurrentUser
 from app.schemas.teacher_help_requests import (
+    TeacherDashboardItem,
+    TeacherDashboardResponse,
     HelpRequestListResponse,
     HelpRequestListItem,
     HelpRequestDetailResponse,
@@ -57,6 +59,7 @@ from app.services.help_requests_service import (
     MIN_REQUESTS_FOR_RATE,
 )
 from app.services import attachment_storage
+from app.services.teacher_dashboard_service import get_teacher_dashboard
 from app.utils.exceptions import DomainError
 from app.services import audit_service, roles_service
 from app.services.teacher_queue_service import (
@@ -190,6 +193,50 @@ async def help_request_reopen_kpi(
         total_reopens=sum(int(it["reopens"]) for it in items),
         since=since,
         min_requests_for_rate=MIN_REQUESTS_FOR_RATE,
+    )
+
+
+@router.get(
+    "/kpi/dashboard",
+    response_model=TeacherDashboardResponse,
+    summary="Дашборд преподавателей у методиста (tsk-1147)",
+    responses={
+        200: {"description": "Строки по всем действующим преподавателям"},
+        403: {"description": "Нет роли методиста или админа"},
+        422: {"description": "date_from позже date_to"},
+    },
+)
+async def help_request_teacher_dashboard(
+    date_from: date = Query(..., description="Начало периода по Москве, включительно"),
+    date_to: date = Query(..., description="Конец периода по Москве, включительно"),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_bare_db),
+) -> TeacherDashboardResponse:
+    """Повторные заявки, время реакции и обработанные заявки по способу помощи.
+
+    Это сравнение людей, поэтому видят его только методист и админ (как
+    сводку возвратов по всем). Определения показателей — в
+    `teacher_dashboard_service`.
+    """
+    is_privileged = current_user.is_service or bool(
+        {"methodist", "admin"}
+        & set(await roles_service.get_user_role_names(db, current_user.id))
+    )
+    if not is_privileged:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Дашборд преподавателей доступен методисту или админу",
+        )
+    if date_from > date_to:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, "Начало периода позже конца"
+        )
+    items = await get_teacher_dashboard(db, date_from=date_from, date_to=date_to)
+    return TeacherDashboardResponse(
+        date_from=date_from,
+        date_to=date_to,
+        min_requests=MIN_REQUESTS_FOR_RATE,
+        items=[TeacherDashboardItem(**it) for it in items],
     )
 
 
@@ -606,6 +653,7 @@ async def help_request_reply(
         idempotency_key=body.idempotency_key,
         lock_token=body.lock_token,
         attachment_id=body.attachment_id,
+        reply_kind=body.reply_kind,
     )
     if err == "not_found":
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Заявка не найдена")

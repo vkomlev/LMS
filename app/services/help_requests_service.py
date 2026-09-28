@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.help_requests import HelpRequests
 from app.models.help_request_replies import HelpRequestReplies
+from app.services.help_reply_kind import guess_reply_kind
 from app.utils.task_title import HINT_MAX_LEN, TITLE_MAX_LEN, humanize_task_title
 from app.services.learning_events_service import (
     record_help_request_opened,
@@ -1205,6 +1206,33 @@ async def _lock_request(db: AsyncSession, request_id: int) -> None:
 # меньше десяти заявок в месяц.
 MIN_REQUESTS_FOR_RATE = 10
 
+# Кому принадлежит заявка `h` — правило tsk-599 (обоснование в `get_reopen_kpi`).
+# Выражение, а не функция на Python: его зовут и сводка возвратов, и дашборд
+# преподавателей (tsk-1147) — одна формулировка, чтобы доля возвратов на двух
+# экранах не разошлась.
+HELP_REQUEST_OWNER_SQL = """COALESCE(
+    (SELECT rr.teacher_id
+       FROM help_request_reopens rr
+      WHERE rr.request_id = h.id
+        AND rr.teacher_id IS NOT NULL
+      ORDER BY rr.reopened_at DESC, rr.id DESC
+      LIMIT 1),
+    h.closed_by,
+    h.assigned_teacher_id
+)"""
+
+# Заявки-просьбы ученика (лестница tsk-303); `blocked_limit` — автоматическая.
+LADDER_TYPES_SQL = "('manual_help', 'individual_review')"
+
+# Действующие преподаватели: попадают в сводки и без заявок за период.
+ACTIVE_TEACHERS_SQL = """SELECT ur.user_id AS teacher_id
+      FROM user_roles ur
+      JOIN roles r ON r.id = ur.role_id
+      JOIN users u ON u.id = ur.user_id
+     WHERE r.name = 'teacher'
+       AND u.is_active
+       AND u.merged_into_user_id IS NULL"""
+
 
 async def get_reopen_kpi(
     db: AsyncSession,
@@ -1271,18 +1299,9 @@ async def get_reopen_kpi(
             text(f"""
                 WITH ladder AS (
                     SELECT h.id,
-                           COALESCE(
-                               (SELECT rr.teacher_id
-                                  FROM help_request_reopens rr
-                                 WHERE rr.request_id = h.id
-                                   AND rr.teacher_id IS NOT NULL
-                                 ORDER BY rr.reopened_at DESC, rr.id DESC
-                                 LIMIT 1),
-                               h.closed_by,
-                               h.assigned_teacher_id
-                           ) AS owner_id
+                           {HELP_REQUEST_OWNER_SQL} AS owner_id
                       FROM help_requests h
-                     WHERE h.request_type IN ('manual_help', 'individual_review')
+                     WHERE h.request_type IN {LADDER_TYPES_SQL}
                            {since_sql}
                 ),
                 per_request AS (
@@ -1307,13 +1326,7 @@ async def get_reopen_kpi(
                      GROUP BY owner_id
                 ),
                 roster AS (
-                    SELECT ur.user_id AS teacher_id
-                      FROM user_roles ur
-                      JOIN roles r ON r.id = ur.role_id
-                      JOIN users u ON u.id = ur.user_id
-                     WHERE r.name = 'teacher'
-                       AND u.is_active
-                       AND u.merged_into_user_id IS NULL
+                    {ACTIVE_TEACHERS_SQL}
                     UNION
                     SELECT teacher_id FROM agg
                 )
@@ -1852,9 +1865,13 @@ async def reply_help_request(
     idempotency_key: Optional[str] = None,
     lock_token: Optional[str] = None,
     attachment_id: Optional[str] = None,
+    reply_kind: Optional[str] = None,
 ) -> Tuple[Optional[dict[str, Any]], Optional[str]]:
     """
     Ответ на заявку: отправить сообщение студенту, записать reply, опционально закрыть.
+
+    tsk-1147: `reply_kind` — способ помощи, выбранный преподавателем; `None` —
+    догадка сервера по тексту (`help_reply_kind.guess_reply_kind`).
     Возвращает (response_dict, error). error: None | "not_found" | "forbidden" | "closed" | "lock_conflict".
     response_dict: request_id, message_id, thread_id, request_status, deduplicated.
 
@@ -1944,10 +1961,11 @@ async def reply_help_request(
     key_val = idempotency_key[:128] if idempotency_key else None
     await db.execute(
         text("""
-            INSERT INTO help_request_replies (request_id, teacher_id, message_id, body, close_after_reply, idempotency_key, created_at)
-            VALUES (:request_id, :teacher_id, :message_id, :body, :close_after_reply, :idem_key, now())
+            INSERT INTO help_request_replies (request_id, teacher_id, message_id, body, close_after_reply, idempotency_key, reply_kind, created_at)
+            VALUES (:request_id, :teacher_id, :message_id, :body, :close_after_reply, :idem_key, :reply_kind, now())
         """),
         {
+            "reply_kind": reply_kind or guess_reply_kind(body_trimmed),
             "request_id": request_id,
             "teacher_id": teacher_id,
             "message_id": msg.id,

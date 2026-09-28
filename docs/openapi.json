@@ -19709,6 +19709,116 @@
         }
       }
     },
+    "/api/v1/teacher/help-requests/kpi/dashboard": {
+      "get": {
+        "tags": [
+          "teacher_help_requests"
+        ],
+        "summary": "Дашборд преподавателей у методиста (tsk-1147)",
+        "description": "Повторные заявки, время реакции и обработанные заявки по способу помощи.\n\nЭто сравнение людей, поэтому видят его только методист и админ (как\nсводку возвратов по всем). Определения показателей — в\n`teacher_dashboard_service`.",
+        "operationId": "help_request_teacher_dashboard_api_v1_teacher_help_requests_kpi_dashboard_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "date_from",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date",
+              "description": "Начало периода по Москве, включительно",
+              "title": "Date From"
+            },
+            "description": "Начало периода по Москве, включительно"
+          },
+          {
+            "name": "date_to",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date",
+              "description": "Конец периода по Москве, включительно",
+              "title": "Date To"
+            },
+            "description": "Конец периода по Москве, включительно"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Строки по всем действующим преподавателям",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeacherDashboardResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Нет роли методиста или админа"
+          },
+          "422": {
+            "description": "date_from позже date_to"
+          }
+        }
+      }
+    },
     "/api/v1/teacher/help-requests": {
       "get": {
         "tags": [
@@ -57989,6 +58099,24 @@
             ],
             "title": "Attachment Id",
             "description": "Ключ файла из POST /learning/help-requests/attachments"
+          },
+          "reply_kind": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "text",
+                  "voice",
+                  "video",
+                  "telemost"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reply Kind",
+            "description": "Способ помощи: text — текстом, voice — разобрал устно на занятии, video — ссылка на видеоразбор, telemost — консультация в Телемосте. Не задан — сервер определяет по ссылкам в тексте"
           }
         },
         "type": "object",
@@ -76491,6 +76619,189 @@
             "teacher_id": 16
           }
         ]
+      },
+      "TeacherDashboardItem": {
+        "properties": {
+          "teacher_id": {
+            "type": "integer",
+            "title": "Teacher Id"
+          },
+          "teacher_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teacher Name"
+          },
+          "requests": {
+            "type": "integer",
+            "title": "Requests"
+          },
+          "reopened_requests": {
+            "type": "integer",
+            "title": "Reopened Requests"
+          },
+          "reopen_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reopen Rate"
+          },
+          "in_lesson": {
+            "$ref": "#/components/schemas/TeacherDashboardSide"
+          },
+          "off_lesson": {
+            "$ref": "#/components/schemas/TeacherDashboardSide"
+          },
+          "blocked_limit_closed": {
+            "type": "integer",
+            "title": "Blocked Limit Closed",
+            "description": "Справочно: снято лимитов попыток (автозаявки), в показатели не входят",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "teacher_id",
+          "requests",
+          "reopened_requests",
+          "in_lesson",
+          "off_lesson"
+        ],
+        "title": "TeacherDashboardItem",
+        "description": "Строка дашборда преподавателей (tsk-1147)."
+      },
+      "TeacherDashboardResponse": {
+        "properties": {
+          "date_from": {
+            "type": "string",
+            "format": "date",
+            "title": "Date From"
+          },
+          "date_to": {
+            "type": "string",
+            "format": "date",
+            "title": "Date To"
+          },
+          "min_requests": {
+            "type": "integer",
+            "title": "Min Requests",
+            "description": "Ниже этого числа доли и медианы не считаются"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TeacherDashboardItem"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "date_from",
+          "date_to",
+          "min_requests"
+        ],
+        "title": "TeacherDashboardResponse",
+        "description": "Дашборд преподавателей у методиста за период."
+      },
+      "TeacherDashboardSide": {
+        "properties": {
+          "requests": {
+            "type": "integer",
+            "title": "Requests",
+            "description": "Заявок за период у преподавателя"
+          },
+          "reopened_requests": {
+            "type": "integer",
+            "title": "Reopened Requests",
+            "description": "Из них ученик вернул хотя бы раз"
+          },
+          "reopen_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reopen Rate",
+            "description": "Доля возвращённых 0..1; null — меньше min_requests заявок"
+          },
+          "reacted": {
+            "type": "integer",
+            "title": "Reacted",
+            "description": "Заявок с реакцией: ответ или закрытие преподавателем"
+          },
+          "reaction_median_min": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reaction Median Min",
+            "description": "Медиана реакции, минут; null — мало данных"
+          },
+          "within_limit": {
+            "type": "integer",
+            "title": "Within Limit",
+            "description": "Реакций не дольше порога"
+          },
+          "within_limit_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Within Limit Rate",
+            "description": "Доля реакций в пределах порога; null — мало данных"
+          },
+          "reaction_limit_min": {
+            "type": "integer",
+            "title": "Reaction Limit Min",
+            "description": "Порог реакции, минут"
+          },
+          "processed": {
+            "type": "integer",
+            "title": "Processed",
+            "description": "Закрыто преподавателем"
+          },
+          "by_kind": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "By Kind",
+            "description": "Закрытые по способу: text, voice, video, telemost"
+          }
+        },
+        "type": "object",
+        "required": [
+          "requests",
+          "reopened_requests",
+          "reacted",
+          "within_limit",
+          "reaction_limit_min",
+          "processed"
+        ],
+        "title": "TeacherDashboardSide",
+        "description": "Половина строки дашборда: заявки на занятии или вне его (tsk-1147)."
       },
       "TeacherLessonOccurrenceRead": {
         "properties": {

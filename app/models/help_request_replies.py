@@ -57,6 +57,10 @@ class HelpRequestReplies(Base):
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
     idempotency_key: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    # tsk-1147: способ помощи — text | voice | video | telemost (CHECK в миграции).
+    reply_kind: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default=text("'text'")
+    )
 
     help_request: Mapped["HelpRequests"] = relationship(
         "HelpRequests",

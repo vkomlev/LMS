@@ -1,7 +1,7 @@
 """Схемы API заявок на помощь преподавателя (Learning Engine V1, этап 3.8 / 3.8.1)."""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Dict, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
@@ -181,6 +181,51 @@ class ReopenKpiResponse(BaseModel):
     )
 
 
+class TeacherDashboardSide(BaseModel):
+    """Половина строки дашборда: заявки на занятии или вне его (tsk-1147)."""
+    requests: int = Field(..., description="Заявок за период у преподавателя")
+    reopened_requests: int = Field(..., description="Из них ученик вернул хотя бы раз")
+    reopen_rate: Optional[float] = Field(
+        None, description="Доля возвращённых 0..1; null — меньше min_requests заявок"
+    )
+    reacted: int = Field(..., description="Заявок с реакцией: ответ или закрытие преподавателем")
+    reaction_median_min: Optional[float] = Field(
+        None, description="Медиана реакции, минут; null — мало данных"
+    )
+    within_limit: int = Field(..., description="Реакций не дольше порога")
+    within_limit_rate: Optional[float] = Field(
+        None, description="Доля реакций в пределах порога; null — мало данных"
+    )
+    reaction_limit_min: int = Field(..., description="Порог реакции, минут")
+    processed: int = Field(..., description="Закрыто преподавателем")
+    by_kind: Dict[str, int] = Field(
+        default_factory=dict,
+        description="Закрытые по способу: text, voice, video, telemost",
+    )
+
+
+class TeacherDashboardItem(BaseModel):
+    """Строка дашборда преподавателей (tsk-1147)."""
+    teacher_id: int
+    teacher_name: Optional[str] = None
+    requests: int
+    reopened_requests: int
+    reopen_rate: Optional[float] = None
+    in_lesson: TeacherDashboardSide
+    off_lesson: TeacherDashboardSide
+    blocked_limit_closed: int = Field(
+        0, description="Справочно: снято лимитов попыток (автозаявки), в показатели не входят"
+    )
+
+
+class TeacherDashboardResponse(BaseModel):
+    """Дашборд преподавателей у методиста за период."""
+    date_from: date
+    date_to: date
+    min_requests: int = Field(..., description="Ниже этого числа доли и медианы не считаются")
+    items: list[TeacherDashboardItem] = Field(default_factory=list)
+
+
 class WebinarLinkRequest(BaseModel):
     """Тело запроса ссылки на индивидуальный разбор (tsk-303, уровень 2)."""
     teacher_id: int = Field(..., description="ID преподавателя")
@@ -251,6 +296,16 @@ class HelpRequestReplyRequest(BaseModel):
     # пространство attachment_storage.HELP_REQUESTS, ролевого гейта у него нет.
     attachment_id: Optional[str] = Field(
         None, description="Ключ файла из POST /learning/help-requests/attachments"
+    )
+    # tsk-1147: способ помощи. Не прислан — сервер догадывается по тексту
+    # (`help_reply_kind.guess_reply_kind`), старые клиенты работают как раньше.
+    reply_kind: Optional[Literal["text", "voice", "video", "telemost"]] = Field(
+        None,
+        description=(
+            "Способ помощи: text — текстом, voice — разобрал устно на занятии, "
+            "video — ссылка на видеоразбор, telemost — консультация в Телемосте. "
+            "Не задан — сервер определяет по ссылкам в тексте"
+        ),
     )
 
 
