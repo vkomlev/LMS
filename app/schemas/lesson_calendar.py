@@ -347,6 +347,10 @@ class TeacherSummaryActivity(BaseModel):
     """Последнее выполненное задание/материал ученика (не ручной зачёт)."""
 
     kind: Literal["task", "material"]
+    item_id: Optional[int] = Field(
+        default=None,
+        description="id задания или материала — для ссылки на предпросмотр (tsk-1146)",
+    )
     title: str
     course_title: Optional[str] = None
     timestamp: datetime

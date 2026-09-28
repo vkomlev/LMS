@@ -335,6 +335,7 @@ async def _load_last_activity(db: AsyncSession, *, student_id: int) -> Optional[
     if task_row is not None:
         candidates.append({
             "kind": "task",
+            "item_id": task_row["task_id"],
             "title": humanize_task_title(
                 task_row["task_id"], task_row["title_raw"], task_row["stem"], task_row["external_uid"],
             ),
@@ -344,6 +345,7 @@ async def _load_last_activity(db: AsyncSession, *, student_id: int) -> Optional[
     if material_row is not None:
         candidates.append({
             "kind": "material",
+            "item_id": material_row["material_id"],
             "title": material_row["title"],
             "course_title": material_row["course_title"],
             "timestamp": material_row["completed_at"],

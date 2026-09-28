@@ -16209,6 +16209,222 @@
         }
       }
     },
+    "/api/v1/check/tasks/{task_id}/preview": {
+      "get": {
+        "tags": [
+          "checking"
+        ],
+        "summary": "Предпросмотр задания преподавателем: флаги формы без записи (tsk-1146)",
+        "description": "Флаги формы ответа для предпросмотра.\n\nЗамена ученическому `GET /learning/tasks/{id}/state`, который считает попытки\nвызывающего и при исчерпанном лимите создаёт заявку помощи. Здесь — только\nчтение задания, без попыток и без записи.",
+        "operationId": "preview_task_flags_endpoint_api_v1_check_tasks__task_id__preview_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Task Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskPreviewFlags"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "checking"
+        ],
+        "summary": "Предпросмотр задания преподавателем: проверка ответа без записи (tsk-1146)",
+        "description": "Проверить ответ на задание движком ученика, НИЧЕГО не записывая.\n\nРежим «глазами ученика» для staff (tsk-1146): преподаватель открывает задание\nчистым и пробует ответить. Обычная сдача пишет attempts, task_results,\nlearning_events (task_opened), явку, заявки помощи — здесь нет ни одного из\nэтих вызовов: задание читается, ответ проверяется stateless-движком\n(`CheckingService.check_task`), сессия БД не коммитится. Для тестов\nввода/вывода программа берётся из текста ответа, вложения не читаются\n(у предпросмотра нет попытки, к которой они привязаны).\n\nДоступ — только teacher/methodist/admin: результат проверки может раскрыть\nэталон, ученику этот путь закрыт (403).",
+        "operationId": "preview_check_task_endpoint_api_v1_check_tasks__task_id__preview_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Task Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StudentAnswer",
+                "description": "Ответ в том же виде, что сдаёт ученик."
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CheckResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Тип ответа не совпадает с типом задания"
+          },
+          "403": {
+            "description": "Только преподаватель, методист или администратор"
+          },
+          "404": {
+            "description": "Задание не найдено"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/check/tasks-batch": {
       "post": {
         "tags": [
@@ -74919,6 +75135,40 @@
         "title": "TaskOrderRead",
         "description": "Элемент ответа reorder: id задания и его новая позиция."
       },
+      "TaskPreviewFlags": {
+        "properties": {
+          "task_id": {
+            "type": "integer",
+            "title": "Task Id"
+          },
+          "requires_attachment": {
+            "type": "boolean",
+            "title": "Requires Attachment"
+          },
+          "partial_auto_check": {
+            "type": "boolean",
+            "title": "Partial Auto Check"
+          },
+          "has_reference_answer": {
+            "type": "boolean",
+            "title": "Has Reference Answer"
+          },
+          "has_io_tests": {
+            "type": "boolean",
+            "title": "Has Io Tests"
+          }
+        },
+        "type": "object",
+        "required": [
+          "task_id",
+          "requires_attachment",
+          "partial_auto_check",
+          "has_reference_answer",
+          "has_io_tests"
+        ],
+        "title": "TaskPreviewFlags",
+        "description": "Флаги формы ответа для предпросмотра — те же, что в состоянии задания ученика."
+      },
       "TaskRead": {
         "properties": {
           "id": {
@@ -77194,6 +77444,18 @@
               "material"
             ],
             "title": "Kind"
+          },
+          "item_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Item Id",
+            "description": "id задания или материала — для ссылки на предпросмотр (tsk-1146)"
           },
           "title": {
             "type": "string",

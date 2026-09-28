@@ -19,8 +19,7 @@ from app.api.error_handlers import is_deadlock_error
 from app.auth.current_user import CurrentUser
 from app.models.attempts import Attempts
 from app.models.tasks import Tasks
-from app.schemas.solution_rules import SolutionRules
-from app.schemas.task_content import SHORT_ANSWER_TASK_TYPES
+from app.services.task_form_flags import compute_task_form_flags
 from app.schemas.learning_api import (
     NextItemResponse,
     MaterialCompleteRequest,
@@ -622,25 +621,13 @@ async def get_task_state(
     # у SC/MC/TA/квизов блок `short_answer` не заполняется в принципе, и «эталона
     # нет» там значило бы не то же самое, что у короткого ответа, — клиент принял бы
     # это за «поле ответа не нужно». Для них флаг всегда true.
-    try:
-        rules = SolutionRules.model_validate(task.solution_rules or {})
-        requires_attachment = bool(rules.requires_attachment)
-        partial_auto_check = bool(rules.partial_auto_check)
-        task_type = (task.task_content or {}).get("type") if isinstance(task.task_content, dict) else None
-        has_reference_answer = (
-            rules.has_reference_answer()
-            if task_type in SHORT_ANSWER_TASK_TYPES
-            else True
-        )
-        # tsk-953: проверка прогоном программы на тестах — клиент показывает
-        # редактор кода как основное поле и кладёт программу в response.value.
-        has_io_tests = rules.io_tests is not None
-    except Exception:
-        # Некорректные solution_rules не должны ломать выдачу состояния задания.
-        requires_attachment = False
-        partial_auto_check = False
-        has_reference_answer = True
-        has_io_tests = False
+    # tsk-953: io_tests — клиент показывает редактор кода как основное поле.
+    # tsk-1146: расчёт вынесен, им же пользуется предпросмотр преподавателя.
+    form_flags = compute_task_form_flags(task.solution_rules, task.task_content)
+    requires_attachment = form_flags.requires_attachment
+    partial_auto_check = form_flags.partial_auto_check
+    has_reference_answer = form_flags.has_reference_answer
+    has_io_tests = form_flags.has_io_tests
     if state.state == "BLOCKED_LIMIT":
         await get_or_create_blocked_limit_help_request(
             db,

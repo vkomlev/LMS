@@ -5,10 +5,18 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from fastapi import APIRouter, Depends
-from app.api.deps import get_current_user
+from fastapi import APIRouter, Body, Depends, HTTPException, status
+from pydantic import BaseModel, ValidationError
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.api.deps import get_bare_db, get_current_user, require_role
 from app.auth.current_user import CurrentUser
+from app.schemas.task_content import TaskContent
+from app.services.code_review_service import pick_program_for_io_tests
+from app.services.task_form_flags import compute_task_form_flags
+from app.services.tasks_service import TasksService
 from app.schemas.checking import (
+    StudentAnswer,
     SingleCheckRequest,
     CheckResult,
     BatchCheckRequest,
@@ -26,6 +34,10 @@ router = APIRouter(
 )
 
 checking_service = CheckingService()
+tasks_service = TasksService()
+
+# tsk-1146: предпросмотр задания «глазами ученика» — только staff.
+_PREVIEW_GATE = require_role("teacher", "methodist", "admin")
 
 
 @router.post(
@@ -112,6 +124,120 @@ async def check_task_endpoint(
         logger.exception("check_task: unexpected error: %s", exc)
         # Позволяем глобальному 500-хэндлеру отработать
         raise
+
+
+class TaskPreviewFlags(BaseModel):
+    """Флаги формы ответа для предпросмотра — те же, что в состоянии задания ученика."""
+
+    task_id: int
+    requires_attachment: bool
+    partial_auto_check: bool
+    has_reference_answer: bool
+    has_io_tests: bool
+
+
+@router.get(
+    "/tasks/{task_id}/preview",
+    response_model=TaskPreviewFlags,
+    summary="Предпросмотр задания преподавателем: флаги формы без записи (tsk-1146)",
+)
+async def preview_task_flags_endpoint(
+    task_id: int,
+    current_user: CurrentUser = Depends(_PREVIEW_GATE),
+    db: AsyncSession = Depends(get_bare_db),
+) -> TaskPreviewFlags:
+    """
+    Флаги формы ответа для предпросмотра.
+
+    Замена ученическому `GET /learning/tasks/{id}/state`, который считает попытки
+    вызывающего и при исчерпанном лимите создаёт заявку помощи. Здесь — только
+    чтение задания, без попыток и без записи.
+    """
+    task = await tasks_service.get_by_id(db, task_id)
+    if task is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Задание не найдено")
+    flags = compute_task_form_flags(task.solution_rules, task.task_content)
+    return TaskPreviewFlags(
+        task_id=task.id,
+        requires_attachment=flags.requires_attachment,
+        partial_auto_check=flags.partial_auto_check,
+        has_reference_answer=flags.has_reference_answer,
+        has_io_tests=flags.has_io_tests,
+    )
+
+
+@router.post(
+    "/tasks/{task_id}/preview",
+    response_model=CheckResult,
+    summary="Предпросмотр задания преподавателем: проверка ответа без записи (tsk-1146)",
+    responses={
+        400: {"description": "Тип ответа не совпадает с типом задания"},
+        403: {"description": "Только преподаватель, методист или администратор"},
+        404: {"description": "Задание не найдено"},
+    },
+)
+async def preview_check_task_endpoint(
+    task_id: int,
+    answer: StudentAnswer = Body(..., description="Ответ в том же виде, что сдаёт ученик."),
+    current_user: CurrentUser = Depends(_PREVIEW_GATE),
+    db: AsyncSession = Depends(get_bare_db),
+) -> CheckResult:
+    """
+    Проверить ответ на задание движком ученика, НИЧЕГО не записывая.
+
+    Режим «глазами ученика» для staff (tsk-1146): преподаватель открывает задание
+    чистым и пробует ответить. Обычная сдача пишет attempts, task_results,
+    learning_events (task_opened), явку, заявки помощи — здесь нет ни одного из
+    этих вызовов: задание читается, ответ проверяется stateless-движком
+    (`CheckingService.check_task`), сессия БД не коммитится. Для тестов
+    ввода/вывода программа берётся из текста ответа, вложения не читаются
+    (у предпросмотра нет попытки, к которой они привязаны).
+
+    Доступ — только teacher/methodist/admin: результат проверки может раскрыть
+    эталон, ученику этот путь закрыт (403).
+    """
+    task = await tasks_service.get_by_id(db, task_id)
+    if task is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Задание не найдено")
+
+    try:
+        task_content = TaskContent.model_validate(task.task_content)
+        solution_rules = checking_service.build_solution_rules(
+            task.solution_rules, task.max_score
+        )
+    except ValidationError as exc:
+        logger.warning("preview_check: битое задание task_id=%s: %s", task.id, exc)
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "Задание сохранено с ошибкой и не проверяется."
+        ) from exc
+    if answer.type != task_content.type:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"Тип ответа ({answer.type}) не совпадает с типом задачи ({task_content.type}).",
+        )
+
+    check_answer = answer
+    if solution_rules.io_tests is not None:
+        picked_program = pick_program_for_io_tests(
+            answer.response.value,
+            answer.response.comment,
+            None,
+            attempt_id=None,
+            task_id=task.id,
+        )
+        check_answer = answer.model_copy(deep=True)
+        check_answer.response.value = picked_program or ""
+
+    logger.info(
+        "preview_check: user_id=%s task_id=%s type=%s",
+        current_user.id, task.id, task_content.type,
+    )
+    return await asyncio.to_thread(
+        checking_service.check_task,
+        task_content=task_content,
+        solution_rules=solution_rules,
+        answer=check_answer,
+    )
 
 
 @router.post(
