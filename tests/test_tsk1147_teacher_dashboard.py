@@ -279,3 +279,48 @@ async def test_individual_review_counts_as_telemost(db, client):
         assert off["reacted"] == 0, "системное закрытие — не реакция преподавателя"
     finally:
         await _cleanup(db, [sid, tid, mid], [task_id], [rid])
+
+
+async def test_test_plan_students_are_excluded(db, client):
+    """Служебный тариф `test` — не боевой контур: ни в дашборде, ни в возвратах."""
+    real, _ = await _user(db, "t1147 боевой ученик")
+    fake, _ = await _user(db, "t1147 тестовая учётка")
+    tid, _ = await _user(db, "t1147 учитель т", role="teacher")
+    mid, m_token = await _user(db, "t1147 методист т", role="methodist", with_session=True)
+    task_id = await _task(db)
+    await db.execute(
+        text(
+            "INSERT INTO student_subscription (student_id, plan_id, starts_on) "
+            "SELECT :s, id, DATE '2020-01-01' FROM subscription_plan WHERE code = 'test'"
+        ),
+        {"s": fake},
+    )
+    r_real = await _request(db, sid=real, task_id=task_id, teacher_id=tid)
+    r_fake = await _request(db, sid=fake, task_id=task_id, teacher_id=tid)
+    for rid in (r_real, r_fake):
+        await db.execute(
+            text("INSERT INTO help_request_reopens (request_id, teacher_id) VALUES (:r, :t)"),
+            {"r": rid, "t": tid},
+        )
+    await db.commit()
+    try:
+        created = datetime(2020, 6, 3, 12, 0, tzinfo=_MSK)
+        for rid in (r_real, r_fake):
+            await _backdate(db, rid, created, created)
+        await db.commit()
+        resp = await client.get(
+            "/api/v1/teacher/help-requests/kpi/dashboard?date_from=2020-06-01&date_to=2020-06-30",
+            headers=_bearer(m_token),
+        )
+        row = next(i for i in resp.json()["items"] if i["teacher_id"] == tid)
+        assert row["requests"] == 1 and row["reopened_requests"] == 1
+
+        kpi = await client.get(
+            f"/api/v1/teacher/help-requests/kpi/reopens?teacher_id={tid}",
+            headers=_bearer(m_token),
+        )
+        k = kpi.json()["items"][0]
+        assert k["requests"] == 1 and k["reopens"] == 1, "сводка возвратов считает то же множество"
+    finally:
+        await db.execute(text("DELETE FROM student_subscription WHERE student_id=:s"), {"s": fake})
+        await _cleanup(db, [real, fake, tid, mid], [task_id], [r_real, r_fake])

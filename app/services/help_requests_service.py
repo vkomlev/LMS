@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.help_requests import HelpRequests
 from app.models.help_request_replies import HelpRequestReplies
 from app.services.help_reply_kind import guess_reply_kind
+from app.services.schedule_preference_service import NOT_COUNTED_PLAN_CODES
 from app.utils.task_title import HINT_MAX_LEN, TITLE_MAX_LEN, humanize_task_title
 from app.services.learning_events_service import (
     record_help_request_opened,
@@ -1224,6 +1225,23 @@ HELP_REQUEST_OWNER_SQL = """COALESCE(
 # Заявки-просьбы ученика (лестница tsk-303); `blocked_limit` — автоматическая.
 LADDER_TYPES_SQL = "('manual_help', 'individual_review')"
 
+# tsk-1147: заявки учеников на служебном тарифе (`test` — учётки, на которых
+# проверяют кабинет, в т.ч. сами преподаватели) в показатели работы с заявками
+# не входят: они не боевой контур. Коды — общий список «не считать» (tsk-712).
+# Берётся ДЕЙСТВУЮЩИЙ тариф, как у кураторства и опроса расписания: строки
+# тарифов появились только при переезде на тарифы, и «тариф на момент заявки»
+# потерял бы все ранние тестовые заявки.
+def not_test_student_sql(student_col: str) -> str:
+    """SQL-условие: ученик `student_col` сейчас не на служебном тарифе."""
+    codes = ", ".join(f"'{c}'" for c in NOT_COUNTED_PLAN_CODES)
+    return (
+        "NOT EXISTS (SELECT 1 FROM student_subscription ss_t "
+        "JOIN subscription_plan sp_t ON sp_t.id = ss_t.plan_id "
+        f"WHERE ss_t.student_id = {student_col} AND ss_t.ends_on IS NULL "
+        f"AND sp_t.code IN ({codes}))"
+    )
+
+
 # Действующие преподаватели: попадают в сводки и без заявок за период.
 ACTIVE_TEACHERS_SQL = """SELECT ur.user_id AS teacher_id
       FROM user_roles ur
@@ -1302,6 +1320,7 @@ async def get_reopen_kpi(
                            {HELP_REQUEST_OWNER_SQL} AS owner_id
                       FROM help_requests h
                      WHERE h.request_type IN {LADDER_TYPES_SQL}
+                       AND {not_test_student_sql("h.student_id")}
                            {since_sql}
                 ),
                 per_request AS (

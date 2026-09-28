@@ -18,6 +18,9 @@
   закрывается системно после оценки ученика (`closed_by` пуст). Закрытый
   разбор без текстового ответа считается обработанным консультацией в Телемосте.
 
+Заявки учеников на служебном тарифе `test` не считаются нигде
+(`help_requests_service.not_test_student_sql`) — это не боевой контур.
+
 «На занятии» — момент создания заявки попал в окно занятия ученика: общий
 предикат `lesson_window_sql.in_lesson_sql` (tsk-1111).
 
@@ -40,6 +43,7 @@ from app.services.help_requests_service import (
     HELP_REQUEST_OWNER_SQL,
     LADDER_TYPES_SQL,
     MIN_REQUESTS_FOR_RATE,
+    not_test_student_sql,
 )
 from app.services.lesson_window_sql import in_lesson_sql
 
@@ -116,6 +120,7 @@ async def get_teacher_dashboard(
                            {in_lesson} AS in_lesson
                       FROM help_requests h
                      WHERE h.request_type IN {LADDER_TYPES_SQL}
+                       AND {not_test_student_sql("h.student_id")}
                        AND h.created_at >= :start AND h.created_at < :end
                 )
                 SELECT c.owner_id,
@@ -159,14 +164,15 @@ async def get_teacher_dashboard(
 
     blocked = (
         await db.execute(
-            text("""
-                SELECT closed_by, COUNT(*)
-                  FROM help_requests
-                 WHERE request_type = 'blocked_limit'
-                   AND closed_by IS NOT NULL
-                   AND created_at >= :start AND created_at < :end
-                 GROUP BY closed_by
-            """),
+            text(f"""
+                SELECT h.closed_by, COUNT(*)
+                  FROM help_requests h
+                 WHERE h.request_type = 'blocked_limit'
+                   AND h.closed_by IS NOT NULL
+                   AND {not_test_student_sql("h.student_id")}
+                   AND h.created_at >= :start AND h.created_at < :end
+                 GROUP BY h.closed_by
+            """),  # nosec B608 — литерал модуля
             {"start": start, "end": end},
         )
     ).fetchall()
