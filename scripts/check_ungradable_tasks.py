@@ -126,6 +126,9 @@ WHERE t.is_active
   AND NOT (coalesce((t.solution_rules#>>'{short_answer,use_regex}')::bool, false)
            AND coalesce(t.solution_rules#>>'{short_answer,regex}', '') <> '')
   AND jsonb_typeof(t.solution_rules->'turtle_sim') IS DISTINCT FROM 'object'
+  -- tsk-953: тесты ввода/вывода — исполняемый эталон. Без этой строки 30 заданий
+  -- курса 1181 (ОГЭ 16, тесты заведены 15.09) лежали в отчёте ложной тревогой (tsk-1148).
+  AND jsonb_typeof(t.solution_rules->'io_tests') IS DISTINCT FROM 'object'
   AND coalesce(jsonb_array_length(t.solution_rules->'correct_options'), 0) = 0
   AND coalesce(t.solution_rules->>'text_answer', '') = ''
   AND t.solution_rules->'custom_scoring_config' IS NOT DISTINCT FROM 'null'::jsonb
