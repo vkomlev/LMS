@@ -145,6 +145,8 @@ class SchedulePreferenceStudentRow(BaseModel):
     updated_at: datetime | None = None
     #: Слоты, в которых ученик занимается сейчас, — «его нынешнее время».
     current_slots: list[str] = Field(default_factory=list)
+    #: tsk-1155: эффективные группы расписания ученика — фильтр на экране сводки.
+    group_ids: list[int] = Field(default_factory=list)
 
 
 class SchedulePreferenceDemandCell(BaseModel):

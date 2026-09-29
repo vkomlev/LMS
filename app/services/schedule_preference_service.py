@@ -728,7 +728,12 @@ async def get_summary(db: AsyncSession) -> dict[str, Any]:
                        pref.updated_at,
                        COALESCE(cnt.preferred_count, 0) AS preferred_count,
                        COALESCE(cnt.possible_count, 0) AS possible_count,
-                       COALESCE(slots.labels, ARRAY[]::text[]) AS current_slots
+                       COALESCE(slots.labels, ARRAY[]::text[]) AS current_slots,
+                       -- tsk-1155: группы ученика для фильтра на экране методиста;
+                       -- то же правило, что у аудитории опроса.
+                       ARRAY(SELECT eg.id FROM schedule_group eg
+                              WHERE eg.id IN {schedule_group_service.effective_groups_sql("u.id")}
+                              ORDER BY eg.id) AS group_ids
                   FROM users u
                   JOIN user_roles ur ON ur.user_id = u.id
                   JOIN roles r ON r.id = ur.role_id AND r.name = 'student'
@@ -784,6 +789,7 @@ async def get_summary(db: AsyncSession) -> dict[str, Any]:
             "preferred_count": int(r[9]),
             "possible_count": int(r[10]),
             "current_slots": list(r[11] or []),
+            "group_ids": list(r[12] or []),
         }
         for r in rows
     ]

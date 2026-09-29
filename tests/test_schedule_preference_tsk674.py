@@ -387,6 +387,14 @@ async def test_summary_counts_and_demand(db, client):
     assert rows[filled_id]["possible_count"] == 1
     assert rows[silent_id]["is_filled"] is False
 
+    # tsk-1155: группы ученика для фильтра — то же правило, что у записи.
+    from app.services import schedule_group_service
+
+    for sid in (filled_id, silent_id):
+        expected = sorted(await schedule_group_service.effective_group_ids(db, sid))
+        assert rows[sid]["group_ids"] == expected
+        assert expected
+
     assert body["audience_total"] >= 2
     assert body["filled_total"] + body["silent_total"] == body["audience_total"]
 
