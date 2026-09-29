@@ -88,6 +88,19 @@ _THEORY_AHEAD_MAX_ITEMS = 6
 #: 46 минут при бюджете 29 (Леканова, 15.09).
 _SHORT_WINDOW_THEORY_MAX_ITEMS = 3
 
+#: tsk-1165: бюджет короткого окна, когда теории впереди не осталось.
+#:
+#: Правило tsk-984 «нет свободного вечера — только теория» у того, кто теорию
+#: уже прошёл, означало «не задавать ничего»: карточка пустая, и ученик видит
+#: поломку, а не замысел (Хайрварова 29.09: «была на уроке, но ДЗ не
+#: обновилось» — за сутки так остались без выдачи 11 человек). Решение
+#: оператора 29.09: задавать НЕМНОГО и объяснять, почему немного.
+#:
+#: Четверть часа — это два-три задания: вечер после занятия не рабочий, и
+#: смысл здесь не в норме, а в том, чтобы человек не потерял нить до
+#: завтрашнего урока. Основной объём по-прежнему ложится на длинное окно.
+_SHORT_WINDOW_MIN_MINUTES = 15
+
 #: tsk-1006: с какого недобора до нормы (в минутах на окно) добавляем
 #: желательный ярус. Меньше — это один пункт на две минуты, шум.
 _EXTRA_TIER_MIN_MINUTES = 10
@@ -495,7 +508,13 @@ async def issue(
     share = attendance_service.free_evening_share(
         window_days=days, lesson_days_per_week=lesson_days,
     )
-    theory_only = volume_override is None and share <= 0
+    # tsk-984 / tsk-1165: «короткое окно» — до следующего занятия нет ни
+    # одного свободного вечера. Сначала пробуем дать только теорию; если её
+    # впереди нет, `theory_only` снимается и идёт небольшой набор заданий
+    # (см. ниже). `short_window` остаётся признаком режима: он решает и
+    # подпись на экране, и то, что желательного яруса здесь не бывает.
+    short_window = volume_override is None and share <= 0
+    theory_only = short_window
     minutes_budget = homework_volume_service.minutes_for_window(plan, share=share)
 
     # tsk-867: ведёт БЮДЖЕТ ВРЕМЕНИ, штуки остаются ограждением. Ограждением
@@ -536,12 +555,22 @@ async def issue(
         effort_table=effort_table,
         theory_only=theory_only,
     )
+    if not items and theory_only:
+        # tsk-1165: теории впереди нет — вместо пустой карточки даём короткий
+        # набор заданий на четверть часа. Вес нужен обязательно: без него
+        # бюджет времени не работает, и «немного» превратилось бы в обычную
+        # выдачу по штукам.
+        effort_table = effort_table or await load_effort_table(db)
+        theory_only = False
+        minutes_budget = _SHORT_WINDOW_MIN_MINUTES
+        items = await _next_items(
+            db,
+            student_id=student_id,
+            limit=volume,
+            minutes_budget=minutes_budget,
+            effort_table=effort_table,
+        )
     if not items:
-        if theory_only:
-            raise ValueError(
-                "До следующего занятия нет свободного вечера, а теории впереди "
-                "нет — домашняя работа не задана; следующая ляжет на длинное окно."
-            )
         raise ValueError(
             "Программа пройдена: ученик идёт с опережением, и задавать больше "
             "нечего. Добавьте ему курс — тогда домашняя работа появится снова."
@@ -558,6 +587,9 @@ async def issue(
     if (
         volume_override is None
         and not theory_only
+        # tsk-1165: в коротком окне ярус «чтобы нагнать» неуместен — мы тут
+        # наоборот сознательно задаём меньше нормы.
+        and not short_window
         and minutes_budget is not None
         and effort_table is not None
         and plan.target_minutes_per_week is not None
@@ -595,6 +627,8 @@ async def issue(
     details["lesson_days_per_week"] = lesson_days
     details["free_evening_share"] = round(share, 2)
     details["theory_only"] = theory_only
+    # tsk-1165: почему задано немного — это и объясняет экран ученику.
+    details["short_window"] = short_window
     if volume_override is not None:
         details["volume_override"] = int(volume_override)
     # tsk-867: снимок бюджета и фактического веса состава. Пересчитывать вес

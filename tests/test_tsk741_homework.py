@@ -2527,6 +2527,38 @@ def test_free_evening_share_sums_to_one_over_the_week():
 
 
 @pytest.mark.asyncio
+async def test_short_window_without_theory_gets_a_small_set_of_tasks(db):
+    """tsk-1165: теории впереди нет — задаём немного заданий, а не ничего.
+
+    До этого короткое окно у прошедшего теорию значило пустую карточку:
+    «была на уроке, но ДЗ не обновилось» (Хайрварова 29.09; за сутки так
+    остались без выдачи 11 человек). Решение оператора 29.09 — задавать
+    немного и объяснять, почему немного.
+    """
+    student_id, course_id = await _student_with_program(db, materials=0, tasks=8)
+    teacher_id, _ = await _new_user(db, role="teacher", name="teach")
+    for weekday in (1, 2):
+        await _slot(db, teacher_id=teacher_id, student_id=student_id, weekday=weekday, hour=18)
+    now = datetime.now(UTC)
+
+    hw = await homework_service.issue(
+        db, student_id=student_id, due_at=now + timedelta(days=1), source="auto", now=now,
+    )
+    await db.commit()
+    assert hw["items"], "короткое окно без теории оставило ученика без ДЗ"
+    assert {i["kind"] for i in hw["items"]} == {"task"}
+    details = hw["volume_details"]
+    # Признак режима — для подписи на экране; «только теория» снято, потому
+    # что теории не нашлось.
+    assert details["short_window"] is True
+    assert details["theory_only"] is False
+    assert details["free_evening_share"] == 0.0
+    assert details["minutes_budget"] == homework_service._SHORT_WINDOW_MIN_MINUTES
+    # Немного — это меньше обычной недельной нормы и без желательного яруса.
+    assert hw["extra_total"] == 0
+
+
+@pytest.mark.asyncio
 async def test_short_window_gets_theory_only(db):
     """Следующее занятие завтра — только теория впереди, без заданий (tsk-984).
 
