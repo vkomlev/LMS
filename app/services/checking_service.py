@@ -1583,10 +1583,18 @@ class CheckingService:
         Returns:
             True, если ответ засчитывается за этот эталон.
         """
+        in_text_verdict: Optional[bool] = None
         if "strip_punctuation" in steps:
             numeric_verdict = cls._compare_decimal_numbers(value, accepted)
             if numeric_verdict is not None:
                 return numeric_verdict
+            # tsk-1136: скелеты совпали, а дробные числа по значению нет —
+            # вердикт окончательный. Иначе strip_punctuation склеит «1.0» в «10»
+            # и текстовый путь засчитает «C: 10» за эталон «C: 1.0».
+            # В code_ast отказ — только после разбора: `x = .5` и `x = 0.5` одна программа.
+            in_text_verdict = cls._compare_numbers_in_text(value, accepted, steps)
+            if in_text_verdict is False and "code_ast" not in steps:
+                return False
         if "code_ast" in steps:
             canon_value = cls._canon_code(value)
             if canon_value is not None:
@@ -1600,6 +1608,8 @@ class CheckingService:
             # как верный (см. тело задачи). Операторы защищены плейсхолдерами
             # ДО strip_punctuation — для остальных 2000+ заданий без code_ast
             # это ветвление не выполняется вовсе, их поведение не меняется.
+            if in_text_verdict is False:
+                return False
             protected_value = cls._protect_code_operators(value)
             protected_accepted = cls._protect_code_operators(accepted)
             if cls._normalize_text(protected_value, steps) == cls._normalize_text(
@@ -1609,9 +1619,7 @@ class CheckingService:
             return cls._matches_spaced_number(value, accepted)
         if cls._normalize_text(value, steps) == cls._normalize_text(accepted, steps):
             return True
-        if "strip_punctuation" in steps and cls._matches_numbers_in_text(
-            value, accepted, steps
-        ):
+        if in_text_verdict:
             return True
         return cls._matches_spaced_number(value, accepted)
 
@@ -1622,9 +1630,9 @@ class CheckingService:
     _NUMBER_CHAIN_RE = re.compile(r"\d[.,]\d+[.,/:]\d|\d[/:]\d+[.,]\d")
 
     @classmethod
-    def _matches_numbers_in_text(
+    def _compare_numbers_in_text(
         cls, value: str, accepted: str, steps: List[str]
-    ) -> bool:
+    ) -> Optional[bool]:
         """Дробные числа внутри ответа из нескольких токенов — по значению (tsk-1131).
 
         `_compare_decimal_numbers` работает, только когда ВЕСЬ ответ — одно число.
@@ -1638,6 +1646,10 @@ class CheckingService:
         сравниваются как текст: «0101» ≠ «101» (двоичная запись). Знаков после
         разделителя у ученика должно быть не меньше, чем у эталона: «1.00» за
         «1.0» — зачёт, «89.9» за «89.90» — нет.
+
+        tsk-1136: вердикт трёхзначный. None — путь неприменим (цепочки IP/дат,
+        разное число чисел, нет дробных, скелеты разошлись), решает прежняя
+        логика. True/False — окончательно: «C: 10» ≠ «C: 1.0».
         """
         raw_value = unicodedata.normalize("NFKC", value or "")
         raw_accepted = unicodedata.normalize("NFKC", accepted or "")
@@ -1646,13 +1658,19 @@ class CheckingService:
         if cls._NUMBER_CHAIN_RE.search(raw_value) or cls._NUMBER_CHAIN_RE.search(
             raw_accepted
         ):
-            return False
+            return None
         nums_value = cls._DECIMAL_NUMBER_RE.findall(raw_value)
         nums_accepted = cls._DECIMAL_NUMBER_RE.findall(raw_accepted)
         if not nums_value or len(nums_value) != len(nums_accepted):
-            return False
+            return None
         if not any(sep in "".join(nums_value + nums_accepted) for sep in ".,"):
-            return False
+            return None
+        skeleton_value = cls._DECIMAL_NUMBER_RE.sub(cls._NUMBER_MARK, raw_value)
+        skeleton_accepted = cls._DECIMAL_NUMBER_RE.sub(cls._NUMBER_MARK, raw_accepted)
+        if cls._normalize_text(skeleton_value, steps) != cls._normalize_text(
+            skeleton_accepted, steps
+        ):
+            return None
         for left, right in zip(nums_value, nums_accepted):
             if not any(sep in left + right for sep in ".,"):
                 if left != right:
@@ -1667,12 +1685,8 @@ class CheckingService:
                     return False
             except InvalidOperation:
                 logger.warning("Не разобрано как число: %r / %r", left, right)
-                return False
-        skeleton_value = cls._DECIMAL_NUMBER_RE.sub(cls._NUMBER_MARK, raw_value)
-        skeleton_accepted = cls._DECIMAL_NUMBER_RE.sub(cls._NUMBER_MARK, raw_accepted)
-        return cls._normalize_text(skeleton_value, steps) == cls._normalize_text(
-            skeleton_accepted, steps
-        )
+                return None
+        return True
 
     @classmethod
     def _protect_code_operators(cls, value: str) -> str:
