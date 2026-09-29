@@ -69542,6 +69542,13 @@
             },
             "type": "array",
             "title": "Current Slots"
+          },
+          "group_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Group Ids"
           }
         },
         "type": "object",
