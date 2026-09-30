@@ -255,3 +255,26 @@ async def test_bot_endpoint_returns_only_nudges(client, db):
         assert body["items"][0]["content"]
     finally:
         await _cleanup(db, [student, teacher], [course])
+
+
+@pytest.mark.asyncio
+async def test_cabinet_switch_gates_tick_without_restart():
+    """Рубильник из кабинета читается в каждом проходе: выключен — ничего не пишем."""
+    from app.core import settings_store
+
+    settings_store.apply_local("reengage_nudge_enabled", False)
+    try:
+        assert await nudge.nudge_tick() == {"disabled": True}
+    finally:
+        settings_store.forget_local("reengage_nudge_enabled")
+
+
+def test_settings_registered_for_cabinet():
+    """Обе настройки видны администратору, порог с границами."""
+    from app.core import settings_registry
+
+    keys = {d.key: d for d in settings_registry.SETTINGS}
+    assert keys["reengage_nudge_enabled"].kind == "bool"
+    assert keys["reengage_nudge_enabled"].default is False
+    days = keys["reengage_nudge_days"]
+    assert days.default == 7 and days.min_value and days.max_value

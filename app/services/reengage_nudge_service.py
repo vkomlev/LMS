@@ -22,8 +22,12 @@ student-бот TG_LMS (`GET /students/{id}/reengage-nudges/pending`).
 `real_student_plan_filter`, а не своя копия списка кодов. Также не трогаем тех,
 кто на перерыве (`student_break`), и заблокированных/слитых.
 
-**Рубильник** `REENGAGE_NUDGE_ENABLED` выключен по умолчанию: это сообщения
-живым людям, включение — правка `.env` + рестарт, без выката.
+**Рубильник и порог** — настройки школы в кабинете администратора
+(`reengage_nudge_enabled`, `reengage_nudge_days`, реестр
+`app/core/settings_registry.py`). Рубильник выключен по умолчанию: это сообщения
+живым людям. Проверяется в начале КАЖДОГО прохода, а не при старте
+планировщика — иначе включение требовало бы перезапуска (тот же приём, что у
+`curator_report_cron_service`).
 """
 from __future__ import annotations
 
@@ -34,6 +38,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import settings_store
 from app.core.config import Settings
 from app.core.cron_registry import register_interval_job
 from app.db.session import async_session_factory
@@ -158,8 +163,12 @@ async def enqueue_nudges(
 
 
 async def nudge_tick() -> dict[str, Any]:
-    """Один автоматический проход под advisory-lock (несколько worker'ов)."""
-    settings = Settings()
+    """Один автоматический проход под advisory-lock (несколько worker'ов).
+
+    Выключенный в кабинете рубильник — тихий выход без записи.
+    """
+    if not settings_store.get_bool("reengage_nudge_enabled"):
+        return {"disabled": True}
     async with async_session_factory() as db:
         got = await db.execute(
             text("SELECT pg_try_advisory_xact_lock(:k) AS locked"),
@@ -168,7 +177,7 @@ async def nudge_tick() -> dict[str, Any]:
         if not bool(got.scalar()):
             logger.debug("tsk-1177: проход уже идёт в другом worker'е")
             return {"skipped": True}
-        return await enqueue_nudges(db, days=int(settings.reengage_nudge_days))
+        return await enqueue_nudges(db, days=settings_store.get_int("reengage_nudge_days"))
 
 
 async def _safe_tick() -> None:
@@ -180,12 +189,8 @@ async def _safe_tick() -> None:
 
 
 def start_scheduler() -> Optional[AsyncIOScheduler]:
-    """Поднять суточный проход, если включён рубильник."""
+    """Поднять суточный проход. Поднимается всегда: рубильник — в самом проходе."""
     global _scheduler
-    settings = Settings()
-    if not settings.reengage_nudge_enabled:
-        logger.info("tsk-1177: мягкий возврат выключен (REENGAGE_NUDGE_ENABLED)")
-        return None
     if _scheduler is not None and _scheduler.running:
         return _scheduler
 
@@ -200,8 +205,9 @@ def start_scheduler() -> Optional[AsyncIOScheduler]:
     scheduler.start()
     _scheduler = scheduler
     logger.info(
-        "tsk-1177: мягкий возврат запущен, порог %s дн., интервал %s ч",
-        settings.reengage_nudge_days, _TICK_INTERVAL_HOURS,
+        "tsk-1177: планировщик мягкого возврата поднят, интервал %s ч "
+        "(включение и порог — в кабинете администратора)",
+        _TICK_INTERVAL_HOURS,
     )
     return scheduler
 
