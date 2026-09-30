@@ -156,6 +156,17 @@ class CheckResultDetails(BaseModel):
         description="Список оценок по рубрикам для развёрнутых ответов (TA).",
         examples=[[{"id": "content", "score": 5}], None],
     )
+    rejected_reason: Optional[Literal["evidence_required", "attachment_required", "text_required"]] = Field(
+        default=None,
+        description=(
+            "tsk-1168: ответ НЕ оценивался — его отклонил гейт сдачи, а не сверка с эталоном. "
+            "`evidence_required` — SA_COM/TBL_COM без комментария и файла (tsk-419); "
+            "`attachment_required` — задание требует файл (tsk-227); "
+            "`text_required` — пустой развёрнутый ответ (tsk-654). "
+            "Клиенту это сигнал показать «Ответ не принят» и причину, а не «Неверно»."
+        ),
+        examples=["evidence_required", None],
+    )
 
 
 class CheckFeedback(BaseModel):

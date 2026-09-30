@@ -31,6 +31,7 @@ from app.schemas.attempts import (
 from app.schemas.checking import (
     StudentAnswer,
     CheckResult,
+    CheckResultDetails,
     CheckFeedback,
 )
 from app.schemas.solution_rules import SolutionRules
@@ -99,6 +100,32 @@ task_results_service = TaskResultsService()
 tasks_service = TasksService()
 checking_service = CheckingService()
 learning_engine_service = LearningEngineService()
+
+# tsk-419/tsk-1168: текст отказа гейта «комментарий ИЛИ файл». Говорит, что ответ
+# НЕ проверялся и чего не хватает, — прежнее «…не засчитывается» под заголовком
+# «Неверно» ученик читал как неверный ответ. Бот TG_LMS держит дословную копию
+# (`MSG_SA_COM_EVIDENCE_REQUIRED`), менять парой.
+EVIDENCE_REQUIRED_MESSAGE = (
+    "Ответ не принят: нужен комментарий с ходом решения или файл. "
+    "Допишите комментарий или приложите файл и отправьте снова."
+)
+
+
+def _claimed_attachment_names(answer: StudentAnswer) -> list[str]:
+    """Имена файлов, которые клиент указал в `response.meta.attachments`.
+
+    Только для текста подсказки ученику: засчитывает вложение по-прежнему
+    хранилище (tsk-575), а не тело запроса.
+    """
+    meta = answer.response.meta or {}
+    items = meta.get("attachments") if isinstance(meta, dict) else None
+    if not isinstance(items, list):
+        return []
+    return [
+        str(item["filename"])
+        for item in items
+        if isinstance(item, dict) and isinstance(item.get("filename"), str) and item["filename"].strip()
+    ]
 
 
 # tsk-302: отбор работ на машинную оценку раньше шёл от ПОМЕТКИ у задания
@@ -1112,6 +1139,7 @@ async def submit_attempt_answers(
                     score=0,
                     max_score=check_result.max_score,
                     is_correct=False,
+                    details=CheckResultDetails(rejected_reason="attachment_required"),
                     feedback=CheckFeedback(
                         general=(
                             "Прикрепите файл-подтверждение (скриншот/файл) — "
@@ -1146,20 +1174,28 @@ async def submit_attempt_answers(
             has_comment = bool((answer.response.comment or "").strip())
             has_attachment = bool(task_attachment_files)
             if not has_comment and not has_attachment:
+                # tsk-1168: клиент прислал ссылку на файл, но у ЭТОЙ пары
+                # «попытка+задание» файла нет — чаще всего кабинет подставил
+                # вложение прошлой попытки. Называем это прямо: ученик видит
+                # свой файл на экране и иначе не поймёт, чего от него хотят.
+                claimed = _claimed_attachment_names(answer)
                 logger.info(
-                    "POST /attempts/%s/answers: task_id=%s (%s) без комментария и вложения → не зачёт (tsk-419)",
+                    "POST /attempts/%s/answers: task_id=%s (%s) без комментария и вложения → не зачёт (tsk-419)%s",
                     attempt_id, task.id, task_content.type,
+                    f"; в теле чужое вложение {claimed}" if claimed else "",
                 )
+                general = EVIDENCE_REQUIRED_MESSAGE
+                if claimed:
+                    general += (
+                        f" Файл «{claimed[0][:100]}» не найден у этой попытки "
+                        "(возможно, он из прошлой) — приложите его заново."
+                    )
                 check_result = CheckResult(
                     score=0,
                     max_score=check_result.max_score,
                     is_correct=False,
-                    feedback=CheckFeedback(
-                        general=(
-                            "Добавьте комментарий (например, ход решения) или приложите файл — "
-                            "без этого ответ не засчитывается."
-                        )
-                    ),
+                    details=CheckResultDetails(rejected_reason="evidence_required"),
+                    feedback=CheckFeedback(general=general),
                 )
 
         # 2.3g tsk-654: развёрнутый ответ (TA) не может быть пустым. Гейт 2.3d
@@ -1199,6 +1235,7 @@ async def submit_attempt_answers(
                     score=0,
                     max_score=check_result.max_score,
                     is_correct=False,
+                    details=CheckResultDetails(rejected_reason="text_required"),
                     feedback=CheckFeedback(
                         general=(
                             "Напишите развёрнутый ответ или приложите файл с работой — "

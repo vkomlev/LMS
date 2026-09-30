@@ -50875,6 +50875,27 @@
               ],
               null
             ]
+          },
+          "rejected_reason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "evidence_required",
+                  "attachment_required",
+                  "text_required"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rejected Reason",
+            "description": "tsk-1168: ответ НЕ оценивался — его отклонил гейт сдачи, а не сверка с эталоном. `evidence_required` — SA_COM/TBL_COM без комментария и файла (tsk-419); `attachment_required` — задание требует файл (tsk-227); `text_required` — пустой развёрнутый ответ (tsk-654). Клиенту это сигнал показать «Ответ не принят» и причину, а не «Неверно».",
+            "examples": [
+              "evidence_required",
+              null
+            ]
           }
         },
         "type": "object",

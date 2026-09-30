@@ -147,7 +147,57 @@ async def test_sa_com_correct_value_without_comment_or_attachment_not_passed(cli
         assert result["is_correct"] is False
         assert result["score"] == 0
         assert "коммент" in (result["feedback"]["general"] or "").lower()
+        # tsk-1168: клиенту — машинная причина, чтобы не рисовать «Неверно».
+        assert result["details"]["rejected_reason"] == "evidence_required"
+        assert (result["feedback"]["general"] or "").startswith("Ответ не принят")
     finally:
+        _cleanup_attachments(attempt_id)
+        await _cleanup(db, course_id=course_id, student_id=student_id)
+
+
+async def test_sa_com_attachment_of_previous_attempt_not_counted_and_named(client, db):
+    """tsk-1168: файл прошлой попытки в теле не засчитывается, но назван в ответе.
+
+    Кабинет подставил вложение вчерашней попытки (`meta.attachments`), в
+    хранилище у пары «новая попытка+задание» файла нет — гейт отказывает
+    (tsk-575), и ученик должен понять почему: свой файл он видит на экране.
+    """
+    student_id = await _make_student(db)
+    course_id = await _make_course(db)
+    task_id = await _make_task(db, course_id, task_type="SA_COM")
+    old_attempt = await _create_attempt(client, student_id=student_id, course_id=course_id)
+    attempt_id = old_attempt
+    try:
+        png = b"\x89PNG\r\n\x1a\n" + b"0" * 32
+        up = await client.post(
+            f"/api/v1/attempts/{old_attempt}/attachments",
+            files={"file": ("shot.png", png, "image/png")},
+            data={"task_id": str(task_id)},
+            headers=_headers(),
+        )
+        assert up.status_code == 201, up.text
+        old_att = up.json()
+        await client.post(
+            f"/api/v1/attempts/{old_attempt}/finish", headers=_headers(),
+        )
+        attempt_id = await _create_attempt(client, student_id=student_id, course_id=course_id)
+        assert attempt_id != old_attempt
+
+        resp = await client.post(
+            f"/api/v1/attempts/{attempt_id}/answers",
+            json={"items": [{"task_id": task_id, "answer": {
+                "type": "SA_COM",
+                "response": {"value": "готово", "meta": {"attachments": [old_att]}},
+            }}]},
+            headers=_headers(),
+        )
+        assert resp.status_code == 200, resp.text
+        result = resp.json()["results"][0]["check_result"]
+        assert result["is_correct"] is False
+        assert result["details"]["rejected_reason"] == "evidence_required"
+        assert "«shot.png» не найден у этой попытки" in result["feedback"]["general"]
+    finally:
+        _cleanup_attachments(old_attempt)
         _cleanup_attachments(attempt_id)
         await _cleanup(db, course_id=course_id, student_id=student_id)
 
