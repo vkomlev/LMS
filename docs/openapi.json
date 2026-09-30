@@ -30083,6 +30083,139 @@
         }
       }
     },
+    "/api/v1/admin/new-users": {
+      "get": {
+        "tags": [
+          "admin_new_users"
+        ],
+        "summary": "Новые регистрации после курсора (tsk-1171)",
+        "description": "Возвращает учётки с id > after_id старше min_age_sec, без слитых и тестовых.",
+        "operationId": "list_new_users_api_v1_admin_new_users_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "after_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Последний обработанный id. Не задан — вернуть только курсор (первый запуск)",
+              "title": "After Id"
+            },
+            "description": "Последний обработанный id. Не задан — вернуть только курсор (первый запуск)"
+          },
+          {
+            "name": "min_age_sec",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 3600,
+              "minimum": 0,
+              "default": 120,
+              "title": "Min Age Sec"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NewUsersResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/feedback-reports": {
       "post": {
         "tags": [
@@ -63361,6 +63494,118 @@
         ],
         "title": "MyLessonOccurrenceRead",
         "description": "Occurrence с точки зрения ОДНОГО ученика — его личный статус участия,\nбез списка остальных участников группы (приватность)."
+      },
+      "NewUserItem": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "full_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Full Name"
+          },
+          "channel": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Channel",
+            "description": "email | vk | telegram | admin; None — путь не записан в аудите"
+          },
+          "category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category"
+          },
+          "school_grade": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "School Grade"
+          },
+          "plan_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan Code"
+          },
+          "attribution": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attribution",
+            "description": "Метки первого касания (utm_*, квиз) из гостевой сессии или лида"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "created_at"
+        ],
+        "title": "NewUserItem",
+        "description": "Новая учётка для уведомления админа."
+      },
+      "NewUsersResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/NewUserItem"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "cursor": {
+            "type": "integer",
+            "title": "Cursor",
+            "description": "Передать как after_id в следующем запросе"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "cursor"
+        ],
+        "title": "NewUsersResponse",
+        "description": "Ответ ленты: новые учётки и курсор для следующего запроса."
       },
       "NextItemResponse": {
         "properties": {

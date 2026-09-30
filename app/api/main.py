@@ -439,6 +439,8 @@ app.include_router(auth_test_session_router, prefix=API_PREFIX)
 # Phase Y-6: methodist escalations
 from app.api.v1.methodist_escalations import router as methodist_escalations_router
 app.include_router(methodist_escalations_router, prefix=API_PREFIX)
+from app.api.v1.admin_new_users import router as admin_new_users_router
+app.include_router(admin_new_users_router, prefix=API_PREFIX)
 
 # tsk-303 Поток B: обращения о проблемах системы/контента и идеи фич
 from app.api.v1.feedback_reports import router as feedback_reports_router
