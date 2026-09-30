@@ -639,6 +639,14 @@ class Settings:
         self.retention_achievements_cron_startup_delay_min: float = float(
             os.getenv("RETENTION_ACHIEVEMENTS_CRON_STARTUP_DELAY_MIN", "2")
         )
+        # tsk-1177: мягкий возврат затихших учеников (напоминание в кабинет и
+        # бот). Выключен по умолчанию — это сообщения живым людям.
+        self.reengage_nudge_enabled: bool = os.getenv(
+            "REENGAGE_NUDGE_ENABLED", "false"
+        ).lower() in ("true", "1", "yes")
+        # Дней без сдач и входа, после которых напоминаем (и отсрочка повтора).
+        # 7 — решение оператора 2026-09-30; 14 дней — уже `dropout_risk`.
+        self.reengage_nudge_days: int = int(os.getenv("REENGAGE_NUDGE_DAYS", "7"))
         # Интервал APScheduler-тика reminder+no_show (чаще генератора —
         # десятиминутный порог no_show требует более мелкой гранулярности).
         self.lesson_attendance_cron_interval_min: int = int(

@@ -591,6 +591,27 @@ async def _stop_schedule_preference_reminders() -> None:
         logger.exception("tsk-674: не удалось остановить напоминания о пожеланиях")
 
 
+# tsk-1177: мягкий возврат затихших учеников. Рубильник REENGAGE_NUDGE_ENABLED
+# (по умолчанию выключен) проверяется внутри start_scheduler.
+from app.services import reengage_nudge_service as _reengage_nudge
+
+
+@app.on_event("startup")
+async def _start_reengage_nudge() -> None:
+    try:
+        _reengage_nudge.start_scheduler()
+    except Exception:
+        logger.exception("tsk-1177: не удалось запустить мягкий возврат")
+
+
+@app.on_event("shutdown")
+async def _stop_reengage_nudge() -> None:
+    try:
+        _reengage_nudge.stop_scheduler()
+    except Exception:
+        logger.exception("tsk-1177: не удалось остановить мягкий возврат")
+
+
 # Phase Y-6: APScheduler для escalation cron (review-loop).
 # Multi-worker safe через PG advisory lock внутри tick'а.
 from app.services import escalation_service as _y6_escalation_service

@@ -28,6 +28,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_async_db, get_current_user
 from app.auth.current_user import CurrentUser
+from app.schemas.schedule_preference import (
+    SchedulePreferenceReminderItem,
+    SchedulePreferenceReminderPending,
+)
+from app.services import reengage_nudge_service
 
 router = APIRouter(prefix="/students", tags=["student_lesson_reminders"])
 logger = logging.getLogger("api.student_lesson_reminders")
@@ -110,3 +115,58 @@ async def list_pending_lesson_reminders(
         for r in rows
     ]
     return StudentLessonReminderPendingResponse(items=items, count=len(items))
+
+
+@router.get(
+    "/{student_id}/reengage-nudges/pending",
+    response_model=SchedulePreferenceReminderPending,
+    status_code=status.HTTP_200_OK,
+    summary="Напоминания «продолжим учиться?» для ученика (tsk-1177)",
+    responses={
+        200: {"description": "Список (возможно пустой)"},
+        401: {"description": "Не аутентифицирован"},
+        403: {"description": "Не свой user_id и не сервисный токен"},
+    },
+)
+async def list_pending_reengage_nudges(
+    student_id: int,
+    limit: int = Query(20, ge=1, le=100),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db),
+) -> SchedulePreferenceReminderPending:
+    """Read-only. Для student-бота TG_LMS (tsk-1177).
+
+    Отдельный адрес по тому же правилу, что у опроса пожеланий (tsk-674): у
+    каждого вида свой текст и своя механика отправки в боте. Форма ответа та
+    же — с готовым текстом `content`, чтобы бот и кабинет говорили одно.
+    """
+    if not current_user.is_service and current_user.id != student_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
+
+    rows = (
+        await db.execute(
+            text(
+                "SELECT n.id, n.modified_at, n.kind, n.title, n.content, n.payload, n.read_at "
+                "  FROM notifications n "
+                " WHERE n.user_id = :uid AND n.kind = :kind "
+                # Самые свежие, а не самые старые: строки копятся раз в неделю,
+                # и через ~20 недель тишины новое напоминание не попало бы в
+                # выборку — бот молча его бы не отправил. Отдаём по возрастанию.
+                " ORDER BY n.id DESC LIMIT :lim"
+            ),
+            {"uid": student_id, "kind": reengage_nudge_service.NUDGE_KIND, "lim": int(limit)},
+        )
+    ).fetchall()[::-1]
+    items = [
+        SchedulePreferenceReminderItem(
+            id=int(r[0]),
+            created_at=r[1],
+            kind=str(r[2]),
+            title=r[3],
+            content=r[4],
+            payload=dict(r[5]) if r[5] else {},
+            read_at=r[6],
+        )
+        for r in rows
+    ]
+    return SchedulePreferenceReminderPending(items=items, count=len(items))

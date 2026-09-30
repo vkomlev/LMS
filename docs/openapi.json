@@ -34917,6 +34917,123 @@
         }
       }
     },
+    "/api/v1/students/{student_id}/reengage-nudges/pending": {
+      "get": {
+        "tags": [
+          "student_lesson_reminders"
+        ],
+        "summary": "Напоминания «продолжим учиться?» для ученика (tsk-1177)",
+        "description": "Read-only. Для student-бота TG_LMS (tsk-1177).\n\nОтдельный адрес по тому же правилу, что у опроса пожеланий (tsk-674): у\nкаждого вида свой текст и своя механика отправки в боте. Форма ответа та\nже — с готовым текстом `content`, чтобы бот и кабинет говорили одно.",
+        "operationId": "list_pending_reengage_nudges_api_v1_students__student_id__reengage_nudges_pending_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "student_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Student Id"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 20,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Список (возможно пустой)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SchedulePreferenceReminderPending"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Не аутентифицирован"
+          },
+          "403": {
+            "description": "Не свой user_id и не сервисный токен"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/students/{student_id}/dashboard": {
       "get": {
         "tags": [
