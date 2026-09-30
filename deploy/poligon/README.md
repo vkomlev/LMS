@@ -3,11 +3,17 @@
 **Пересмотр 2026-07-25:** полигон разворачивается на уже существующей
 инфраструктуре Timeweb, БЕЗ нового VPS — приложения на `lms-spw-vds`
 (5.42.102.20, тот же сервер, что уже крутит прод LMS+SPW), БД на уже
-существующем прод-Postgres-инстансе (5.42.107.253, где уже живут `learn` и
+существующем прод-Postgres-инстансе (где уже живут `learn` и
 `content_backbone`) — новые базы `poligon_dev`/`poligon_test`/`poligon_stage`,
 не новый сервер. Обоснование, диаграмма и честный разбор trade-off изоляции —
 `docs/briefs/2026-07-25-tsk182-poligon-timeweb.md`, раздел 4 «Изоляция — что
 изменилось».
+
+**Адреса облачных БД (с 2026-09-30, tsk-1175).** Сервер `lms-spw-vds` ходит к
+БД Timeweb по приватной сети «Humble Bittern» (192.168.0.0/24): Postgres —
+`192.168.0.4:5432`, Valkey (Redis) — `192.168.0.5:6379`. Публичный адрес
+Postgres `5.42.107.253` оставлен только для подключения с ПК (MCP, скрипты);
+у Valkey публичного адреса больше нет — снаружи он закрыт.
 
 Код — отдельная ветка `poligon` (никогда не мержится в `main`). Один git-чекаут
 на `lms-spw-vds` (`/opt/lms-poligon`, РЯДОМ с прод-чекаутом `/opt/lms`), три
@@ -18,8 +24,8 @@
 
 - Доступ по SSH на `lms-spw-vds` (уже есть — тот же сервер, что для прод LMS/SPW).
 - Доступ, достаточный для `CREATE DATABASE`/`CREATE ROLE` на Postgres-инстансе
-  5.42.107.253 (суперпользователь кластера или уже выданные права — уточнить
-  у оператора, если не под рукой).
+  (с сервера — 192.168.0.4, с ПК — 5.42.107.253; суперпользователь кластера или уже выданные права — уточнить
+  у оператора, если не под рукой)).
 - DNS: 6 A-записей (см. бриф, раздел «Домены») на IP `lms-spw-vds` (5.42.102.20).
 - Ветка `poligon` в репозитории LMS существует и содержит патчи из
   `deploy/poligon/new-code/` (применяются один раз при создании ветки — см.
@@ -35,9 +41,10 @@ ssh lms-spw-vds
 # python3.11-venv (если ещё не стоит отдельно от прод-venv).
 sudo mkdir -p /var/log/lms-poligon && sudo chown app:app /var/log/lms-poligon
 
-# 3 базы данных, 3 роли на СУЩЕСТВУЮЩЕМ прод-Postgres-инстансе (5.42.107.253) —
-# выполняется С ДОСТУПОМ К ЭТОМУ ИНСТАНСУ (не обязательно с lms-spw-vds — psql
-# может подключаться удалённо, если оператор дал доступ; если процедура
+# 3 базы данных, 3 роли на СУЩЕСТВУЮЩЕМ прод-Postgres-инстансе —
+# команды ниже написаны для запуска С ПК (публичный адрес 5.42.107.253);
+# с самого lms-spw-vds тот же инстанс доступен по приватному 192.168.0.4
+# (подставить его вместо 5.42.107.253). Если процедура
 # создания БД на проде задокументирована иначе — см. docs/ai/operator-runbook.md).
 psql "postgresql://<admin>@5.42.107.253:5432/postgres" -c \
   "CREATE ROLE poligon_dev_app   LOGIN PASSWORD '<сгенерировать>';"
@@ -72,9 +79,9 @@ psql "postgresql://<admin>@5.42.107.253:5432/postgres" -c \
 
 # Redis — ИСПРАВЛЕНО 2026-07-26 (проверено живым подключением): на самом
 # lms-spw-vds Redis НЕ запущен (systemctl redis-server = inactive). Прод LMS
-# использует удалённый managed-инстанс 94.141.162.219:6379 (db=2, см. прод
-# .env). Полигон переиспользует ТОТ ЖЕ managed-инстанс, db=3/4/5 —
-# отдельный Redis-процесс не ставим (сеть уже открыта, инстанс уже платный).
+# использует облачный Valkey Timeweb 192.168.0.5:6379 по приватной сети (db=2,
+# см. прод .env; публичный адрес у него выключен). Полигон переиспользует ТОТ
+# ЖЕ инстанс, db=3/4/5 — отдельный Redis-процесс не ставим (инстанс уже платный).
 
 # Клонировать репозиторий НА ВЕТКУ poligon (не main!), рядом с прод-чекаутом /opt/lms
 sudo -u app git clone --branch poligon https://github.com/vkomlev/LMS.git /opt/lms-poligon
@@ -86,7 +93,7 @@ sudo -u app ./venv/bin/pip install --upgrade -r requirements.txt
 sudo -u app cp deploy/poligon/.env.lms.dev.example   /opt/lms-poligon/.env.dev
 sudo -u app cp deploy/poligon/.env.lms.test.example  /opt/lms-poligon/.env.test
 sudo -u app cp deploy/poligon/.env.lms.stage.example /opt/lms-poligon/.env.stage
-# Заполнить DATABASE_URL (хост 5.42.107.253 + пароли ролей выше) и секреты —
+# Заполнить DATABASE_URL (приватный хост 192.168.0.4 + пароли ролей выше) и секреты —
 # см. комментарии в файлах
 sudo -u app nano /opt/lms-poligon/.env.dev
 sudo -u app nano /opt/lms-poligon/.env.test
@@ -143,7 +150,7 @@ sudo -u app bash /opt/lms-poligon/deploy/poligon/deploy-lms-poligon.sh
 ```
 
 Один прогон обновляет код (ветка `poligon`), прогоняет `alembic upgrade head`
-на ВСЕХ 3 БД полигона (5.42.107.253, `poligon_*`) и перезапускает все 3
+на ВСЕХ 3 БД полигона (192.168.0.4, `poligon_*`) и перезапускает все 3
 systemd-сервиса полигона — **прод `lms.service` этот скрипт не трогает** (он
 живёт в `/opt/lms`, отдельный чекаут, отдельный unit).
 
@@ -162,7 +169,7 @@ sudo -u app bash /opt/lms-poligon/deploy/poligon/rollback-lms-poligon.sh
 
 ## Безопасность/изоляция — что проверить после первого деплоя
 
-- `sudo -u postgres psql -h 5.42.107.253 -c "\du"` — 3 новые роли
+- `sudo -u postgres psql -h 192.168.0.4 -c "\du"` — 3 новые роли
   (`poligon_dev_app`/`poligon_test_app`/`poligon_stage_app`), КАЖДАЯ видит
   только свою БД (`\l` + `\c learn` под ролью полигона → ожидаем permission denied).
 - `systemctl status lms lms-poligon-dev lms-poligon-test lms-poligon-stage` —
@@ -170,6 +177,6 @@ sudo -u app bash /opt/lms-poligon/deploy/poligon/rollback-lms-poligon.sh
   -p ActiveEnterTimestamp` не изменился после деплоя полигона).
 - `curl https://api-stage-poligon.victor-komlev.ru/auth/test/issue-session -X POST`
   → 404 (двойной gate реально работает на stage — `ENV=production` там).
-- Ресурсы: `free -h` и `sudo -u postgres psql -h 5.42.107.253 -c
+- Ресурсы: `free -h` и `sudo -u postgres psql -h 192.168.0.4 -c
   "SELECT count(*) FROM pg_stat_activity;"` — сверить до/после первого деплоя,
   если растёт нагрузка — см. TODO в брифе (перенос на отдельный VPS).
