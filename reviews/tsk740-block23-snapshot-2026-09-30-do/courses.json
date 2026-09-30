@@ -1,0 +1,52 @@
+[
+ {
+  "id": 1490,
+  "title": "Задание 23 ЕГЭ по информатике. Анализ графов",
+  "description": "Новая тема задания 23 с 2027 года: оптимальный путь между вершинами графа и количество различных путей в ориентированном ациклическом графе. Задание решается программой по данным из приложенного файла.",
+  "course_uid": "lms:tsk740:ege2027:23",
+  "is_required": false,
+  "is_active": true,
+  "parent_course_id": 112,
+  "order_number": 22
+ },
+ {
+  "id": 1491,
+  "title": "Задание 23. Сложные",
+  "description": "Задания повышенной сложности из раздела «Задание 23 ЕГЭ по информатике. Анализ графов». Блок необязательный.",
+  "course_uid": "lms:tsk347:hard:1490",
+  "is_required": false,
+  "is_active": true,
+  "parent_course_id": 1378,
+  "order_number": 22
+ },
+ {
+  "id": 1492,
+  "title": "Кратчайший путь во взвешенном графе",
+  "description": "Длина кратчайшего пути между вершинами: алгоритм Дейкстры и проверка Беллманом-Фордом.",
+  "course_uid": "lms:tsk740:ege2027:23:short",
+  "is_required": false,
+  "is_active": true,
+  "parent_course_id": 1490,
+  "order_number": 2
+ },
+ {
+  "id": 1493,
+  "title": "Количество путей в ациклическом графе",
+  "description": "Подсчёт числа различных путей между вершинами: рекурсия с запоминанием.",
+  "course_uid": "lms:tsk740:ege2027:23:count",
+  "is_required": false,
+  "is_active": true,
+  "parent_course_id": 1490,
+  "order_number": 3
+ },
+ {
+  "id": 1494,
+  "title": "Читаем файл и собираем программу",
+  "description": "Формат файла задания 23, словарь смежности и сборка рабочей программы от скачанного файла до числа в ответе.",
+  "course_uid": "lms:tsk740:ege2027:23:osnova",
+  "is_required": false,
+  "is_active": true,
+  "parent_course_id": 1490,
+  "order_number": 1
+ }
+]
