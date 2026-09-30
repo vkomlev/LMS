@@ -8,7 +8,7 @@
 дальше в курсе defaultdict и как обойтись без него (граф.get(вершина, [])).
 
 Текст берётся из первоисточника tsk740_block23_materials.py (M2). Запись только
-если на проде лежит в точности прежняя версия M2 из git (HEAD) — иначе материал
+если на проде лежит в точности прежняя версия M2 из коммита fb761fb — иначе материал
 кто-то правил, стоп. Пометка ручной правки — manual_script (tsk-760).
 
 Запуск: вхолостую по умолчанию;
@@ -51,8 +51,8 @@ def _load(code: str, name: str):
 
 
 def old_and_new() -> tuple[str, object]:
-    """Прежний M2 из git HEAD и модуль с новым M2 из рабочей копии."""
-    head = subprocess.run(["git", "show", f"HEAD:{SRC}"], cwd=HERE.parent,
+    """Прежний M2 из коммита fb761fb (он и лежит на проде) и модуль с новым M2 из рабочей копии."""
+    head = subprocess.run(["git", "show", f"fb761fb:{SRC}"], cwd=HERE.parent,
                           capture_output=True, check=True).stdout.decode("utf-8")
     new = _load((HERE / "tsk740_block23_materials.py").read_text(encoding="utf-8"), "new")
     return _load(head, "old").M2, new
@@ -62,7 +62,7 @@ async def main(apply: bool) -> None:
     old, src = old_and_new()
     new = src.M2
     if old == new:
-        raise RuntimeError("M2 в рабочей копии не отличается от HEAD — нечего писать")
+        raise RuntimeError("M2 в рабочей копии не отличается от fb761fb — нечего писать")
     conn = await asyncpg.connect(src._dsn())
     try:
         async with conn.transaction():
