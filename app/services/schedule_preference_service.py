@@ -23,7 +23,8 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import time
+from datetime import date, datetime, time
+from zoneinfo import ZoneInfo
 from typing import Any, Optional
 
 from sqlalchemy import text
@@ -31,6 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.schemas.schedule_preference import (
     DEFAULT_LESSONS_PER_WEEK,
+    GRID_TIMEZONE,
     SCHEDULE_GRID,
     SchedulePreferenceHour,
     SchedulePreferenceWrite,
@@ -851,3 +853,142 @@ async def get_summary(db: AsyncSession) -> dict[str, Any]:
         ],
         "grid": grid_as_days(),
     }
+
+
+#: Причины расхождения расписания с пожеланием (tsk-1170).
+MISMATCH_OUTSIDE = "outside_windows"
+MISMATCH_COUNT = "count_mismatch"
+MISMATCH_NO_SLOTS = "no_slots"
+
+
+def moscow_today() -> date:
+    """Сегодняшний день по Москве — сетка школы ведётся в этом поясе."""
+    return datetime.now(ZoneInfo(GRID_TIMEZONE)).date()
+
+
+async def get_mismatches(db: AsyncSession) -> dict[str, Any]:
+    """Ученики, чьё расписание расходится с последним пожеланием (tsk-1170).
+
+    Правило выведено по данным прода 30.09, не придумано заранее:
+
+    - «Слот вне окон» — день и час слота не совпадают ни с одним выбранным
+      часом анкеты (желательным или возможным). Слоты и часы анкеты оба
+      московские и оба по сетке целого часа, поэтому сравнение точное.
+    - «Не то число занятий» — живых слотов больше или меньше, чем
+      `lessons_per_week`.
+    - «Ответил, а слотов нет» — только для тарифов с занятиями
+      (`subscription_plan.lessons`). На проде все девять таких случаев без этого
+      условия были выпускниками и демо: ушедший ученик — не расхождение.
+      Отметка «получено вручную» (tsk-923) здесь тоже считается ответом: часов
+      у неё нет, поэтому две другие причины к ней не применяются.
+    - «Пожелание новее правки расписания» — не причина, а пометка к причине: на
+      проде пятеро поправили анкету после последней вёрстки, а стоят ровно в
+      выбранных часах. Как отдельная причина это был бы шум.
+
+    «Живой» слот — активный, с активным участием и не закончившийся к
+    сегодняшнему московскому дню; слот, который начнётся позже, тоже живой:
+    это уже принятое решение. Аудитория — та же счётная, что у сводки охвата.
+    """
+    rows = (
+        await db.execute(
+            text(
+                f"""
+                SELECT u.id,
+                       u.full_name,
+                       u.email,
+                       COALESCE(cur.lessons, FALSE) AS plan_has_lessons,
+                       pref.id AS pref_id,
+                       pref.lessons_per_week,
+                       pref.updated_at AS pref_updated_at,
+                       ack.acknowledged_at,
+                       COALESCE((
+                           SELECT jsonb_agg(jsonb_build_object(
+                                    'weekday', h.weekday,
+                                    'start_time', to_char(h.start_time, 'HH24:MI'),
+                                    'kind', h.kind)
+                                  ORDER BY h.weekday, h.start_time)
+                             FROM student_schedule_preference_hour h
+                            WHERE h.preference_id = pref.id
+                       ), '[]'::jsonb) AS hours,
+                       COALESCE((
+                           SELECT jsonb_agg(jsonb_build_object(
+                                    'slot_id', ls.id,
+                                    'weekday', ls.weekday,
+                                    'start_time', to_char(ls.start_time, 'HH24:MI'),
+                                    'active_from', ls.active_from,
+                                    'in_wishes', EXISTS (
+                                        SELECT 1 FROM student_schedule_preference_hour h
+                                         WHERE h.preference_id = pref.id
+                                           AND h.weekday = ls.weekday
+                                           AND h.start_time = ls.start_time))
+                                  ORDER BY ls.weekday, ls.start_time)
+                             FROM lesson_slot_student lss
+                             JOIN lesson_slot ls ON ls.id = lss.slot_id
+                            WHERE lss.student_id = u.id AND lss.is_active AND ls.is_active
+                              AND (ls.active_until IS NULL OR ls.active_until >= :today)
+                       ), '[]'::jsonb) AS slots,
+                       (SELECT max(GREATEST(lss.created_at, ls.updated_at))
+                          FROM lesson_slot_student lss
+                          JOIN lesson_slot ls ON ls.id = lss.slot_id
+                         WHERE lss.student_id = u.id) AS schedule_changed_at,
+                       ARRAY(SELECT eg.id FROM schedule_group eg
+                              WHERE eg.id IN {schedule_group_service.effective_groups_sql("u.id")}
+                              ORDER BY eg.id) AS group_ids
+                  FROM users u
+                  JOIN user_roles ur ON ur.user_id = u.id
+                  JOIN roles r ON r.id = ur.role_id AND r.name = 'student'
+                  LEFT JOIN (
+                      SELECT ss.student_id, sp.code, sp.lessons
+                        FROM student_subscription ss
+                        JOIN subscription_plan sp ON sp.id = ss.plan_id
+                       WHERE ss.ends_on IS NULL
+                  ) cur ON cur.student_id = u.id
+                  LEFT JOIN student_schedule_preference pref ON pref.student_id = u.id
+                  LEFT JOIN student_schedule_preference_ack ack ON ack.student_id = u.id
+                 WHERE u.is_active
+                   AND (pref.id IS NOT NULL OR ack.student_id IS NOT NULL)
+                   AND {_plan_filter(EXCLUDED_PLAN_CODES + NOT_COUNTED_PLAN_CODES)}
+                   AND {_KIDS_FILTER}
+                 ORDER BY u.full_name NULLS LAST, u.id
+                """
+            ),
+            {"today": moscow_today()},
+        )
+    ).mappings().fetchall()
+
+    students: list[dict[str, Any]] = []
+    for r in rows:
+        slots = list(r["slots"] or [])
+        has_form = r["pref_id"] is not None
+        reasons: list[str] = []
+        if has_form:
+            if any(not s["in_wishes"] for s in slots):
+                reasons.append(MISMATCH_OUTSIDE)
+            if slots and len(slots) != r["lessons_per_week"]:
+                reasons.append(MISMATCH_COUNT)
+        if not slots and r["plan_has_lessons"]:
+            reasons.append(MISMATCH_NO_SLOTS)
+        if not reasons:
+            continue
+        answered_at = r["pref_updated_at"] if has_form else r["acknowledged_at"]
+        changed_at = r["schedule_changed_at"]
+        students.append(
+            {
+                "student_id": r["id"],
+                "full_name": r["full_name"],
+                "email": r["email"],
+                "group_ids": list(r["group_ids"] or []),
+                "answered_at": answered_at,
+                "acknowledged_manually": not has_form,
+                "lessons_per_week": r["lessons_per_week"],
+                "hours": list(r["hours"] or []),
+                "slots": slots,
+                "schedule_changed_at": changed_at,
+                "preference_newer": bool(
+                    answered_at is not None
+                    and (changed_at is None or answered_at > changed_at)
+                ),
+                "reasons": reasons,
+            }
+        )
+    return {"total": len(students), "students": students}

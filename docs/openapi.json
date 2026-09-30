@@ -45494,6 +45494,96 @@
         }
       }
     },
+    "/api/v1/methodist/schedule-preferences/mismatches": {
+      "get": {
+        "tags": [
+          "schedule_preferences"
+        ],
+        "summary": "Get Schedule Preference Mismatches",
+        "description": "Ученики, чьи слоты расходятся с последним пожеланием (tsk-1170).\n\nЛитеральный путь объявлен до ``/{student_id}`` — иначе его затенит\nпараметрический маршрут.",
+        "operationId": "get_schedule_preference_mismatches_api_v1_methodist_schedule_preferences_mismatches_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScheduleMismatches"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/methodist/schedule-preferences/remind": {
       "post": {
         "tags": [
@@ -69048,6 +69138,215 @@
         },
         "type": "object",
         "title": "ScheduleGroupUpdate"
+      },
+      "ScheduleMismatchHour": {
+        "properties": {
+          "weekday": {
+            "type": "integer",
+            "title": "Weekday"
+          },
+          "start_time": {
+            "type": "string",
+            "title": "Start Time"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "preferred",
+              "possible"
+            ],
+            "title": "Kind"
+          }
+        },
+        "type": "object",
+        "required": [
+          "weekday",
+          "start_time",
+          "kind"
+        ],
+        "title": "ScheduleMismatchHour",
+        "description": "Час из последнего пожелания ученика, время московское."
+      },
+      "ScheduleMismatchRow": {
+        "properties": {
+          "student_id": {
+            "type": "integer",
+            "title": "Student Id"
+          },
+          "full_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Full Name"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "group_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Group Ids"
+          },
+          "answered_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Answered At"
+          },
+          "acknowledged_manually": {
+            "type": "boolean",
+            "title": "Acknowledged Manually",
+            "default": false
+          },
+          "lessons_per_week": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lessons Per Week"
+          },
+          "hours": {
+            "items": {
+              "$ref": "#/components/schemas/ScheduleMismatchHour"
+            },
+            "type": "array",
+            "title": "Hours"
+          },
+          "slots": {
+            "items": {
+              "$ref": "#/components/schemas/ScheduleMismatchSlot"
+            },
+            "type": "array",
+            "title": "Slots"
+          },
+          "schedule_changed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Schedule Changed At"
+          },
+          "preference_newer": {
+            "type": "boolean",
+            "title": "Preference Newer",
+            "default": false
+          },
+          "reasons": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "outside_windows",
+                "count_mismatch",
+                "no_slots"
+              ]
+            },
+            "type": "array",
+            "title": "Reasons"
+          }
+        },
+        "type": "object",
+        "required": [
+          "student_id",
+          "full_name",
+          "email",
+          "answered_at",
+          "reasons"
+        ],
+        "title": "ScheduleMismatchRow",
+        "description": "Ученик, чьё расписание расходится с последним пожеланием."
+      },
+      "ScheduleMismatchSlot": {
+        "properties": {
+          "slot_id": {
+            "type": "integer",
+            "title": "Slot Id"
+          },
+          "weekday": {
+            "type": "integer",
+            "title": "Weekday"
+          },
+          "start_time": {
+            "type": "string",
+            "title": "Start Time"
+          },
+          "active_from": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active From"
+          },
+          "in_wishes": {
+            "type": "boolean",
+            "title": "In Wishes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "slot_id",
+          "weekday",
+          "start_time",
+          "in_wishes"
+        ],
+        "title": "ScheduleMismatchSlot",
+        "description": "Живой слот ученика и попал ли он в выбранные часы."
+      },
+      "ScheduleMismatches": {
+        "properties": {
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "students": {
+            "items": {
+              "$ref": "#/components/schemas/ScheduleMismatchRow"
+            },
+            "type": "array",
+            "title": "Students"
+          }
+        },
+        "type": "object",
+        "required": [
+          "total",
+          "students"
+        ],
+        "title": "ScheduleMismatches",
+        "description": "Ответ `GET /methodist/schedule-preferences/mismatches` (tsk-1170)."
       },
       "SchedulePlanApplyRequest": {
         "properties": {

@@ -204,3 +204,52 @@ class SchedulePreferenceSummary(BaseModel):
     demand: list[SchedulePreferenceDemandCell]
     grid: list[ScheduleGridDay]
     grid_timezone: str = GRID_TIMEZONE
+
+
+#: Причина расхождения расписания с пожеланием (tsk-1170).
+MismatchReason = Literal["outside_windows", "count_mismatch", "no_slots"]
+
+
+class ScheduleMismatchHour(BaseModel):
+    """Час из последнего пожелания ученика, время московское."""
+
+    weekday: int
+    start_time: str
+    kind: HourKind
+
+
+class ScheduleMismatchSlot(BaseModel):
+    """Живой слот ученика и попал ли он в выбранные часы."""
+
+    slot_id: int
+    weekday: int
+    start_time: str
+    active_from: date | None = None
+    in_wishes: bool
+
+
+class ScheduleMismatchRow(BaseModel):
+    """Ученик, чьё расписание расходится с последним пожеланием."""
+
+    student_id: int
+    full_name: str | None
+    email: str | None
+    group_ids: list[int] = Field(default_factory=list)
+    #: Когда ученик ответил: сохранение анкеты или отметка «получено вручную».
+    answered_at: datetime | None
+    acknowledged_manually: bool = False
+    lessons_per_week: int | None = None
+    hours: list[ScheduleMismatchHour] = Field(default_factory=list)
+    slots: list[ScheduleMismatchSlot] = Field(default_factory=list)
+    #: Последняя правка расписания ученика (добавление в слот, правка слота).
+    schedule_changed_at: datetime | None = None
+    #: Пожелание пришло после последней правки расписания — его, вероятно, не учли.
+    preference_newer: bool = False
+    reasons: list[MismatchReason]
+
+
+class ScheduleMismatches(BaseModel):
+    """Ответ `GET /methodist/schedule-preferences/mismatches` (tsk-1170)."""
+
+    total: int
+    students: list[ScheduleMismatchRow]

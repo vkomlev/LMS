@@ -7,6 +7,7 @@
 
 Методист/админ:
 - ``GET    /methodist/schedule-preferences/summary``              — охват опроса
+- ``GET    /methodist/schedule-preferences/mismatches``           — расхождения слотов с пожеланиями (tsk-1170)
 - ``GET    /methodist/schedule-preferences/{student_id}``         — пожелание ученика
 - ``POST   /methodist/schedule-preferences/{student_id}/ack``     — отметить «получено вручную» (tsk-923)
 - ``DELETE /methodist/schedule-preferences/{student_id}/ack``     — снять эту отметку (tsk-923)
@@ -30,6 +31,7 @@ from app.api.deps import (
 )
 from app.auth.current_user import CurrentUser
 from app.schemas.schedule_preference import (
+    ScheduleMismatches,
     SchedulePreferenceRead,
     SchedulePreferenceReminderItem,
     SchedulePreferenceReminderPending,
@@ -99,6 +101,22 @@ async def get_schedule_preferences_summary(
 ) -> SchedulePreferenceSummary:
     """Охват опроса: сколько заполнили, кто молчит, какой час сколько просят."""
     return SchedulePreferenceSummary(**await schedule_preference_service.get_summary(db))
+
+
+@router.get(
+    "/methodist/schedule-preferences/mismatches",
+    response_model=ScheduleMismatches,
+)
+async def get_schedule_preference_mismatches(
+    db: AsyncSession = Depends(get_async_db),
+    _current_user: CurrentUser = Depends(_SUMMARY_GATE),
+) -> ScheduleMismatches:
+    """Ученики, чьи слоты расходятся с последним пожеланием (tsk-1170).
+
+    Литеральный путь объявлен до ``/{student_id}`` — иначе его затенит
+    параметрический маршрут.
+    """
+    return ScheduleMismatches(**await schedule_preference_service.get_mismatches(db))
 
 
 @router.post(
