@@ -1,0 +1,105 @@
+diff --git a/.env.example b/.env.example
+index bdef6b7..9bbf6c3 100644
+--- a/.env.example
++++ b/.env.example
+@@ -175,6 +175,8 @@ CLOSEROUTER_BASE_URL=https://api.closerouter.dev
+ # Novaya os' "poddakivanie": model' podtverzhdaet nevernyy otvet uchenika.
+ # Vyvedeny: gpt-5.4-mini (mertva), haiku-4.5 (3 iz 3 v sessii 104), sonnet-5,
+ # gemini-3.6-flash (tret' otvetov pozzhe 12 c pod nagruzkoy).
++# Peresobrana 2026-10-01 (tsk-573): gpt-5.5 -> claude-sonnet-4.6.
++# gemini-3-flash (prod 7 ok iz 29) i glm-5.3 (0 iz 10) vyvedeny - taymauty.
+ LLM_TUTOR_MODELS=
+ # Sudeyskaya cepochka peresobrana 2026-09-01 po stendu (tsk-573).
+ # Golova - luna: edinstvennaya, kto ne otkazyval ni razu za den zamerov.
+@@ -182,7 +184,9 @@ LLM_TUTOR_MODELS=
+ # cherez 2 chasa dala luchshiy rezultat dnya (4.9 c) - otkaz prekhodyashchiy.
+ # gpt-5.4 vyvedena vtorym prokhodom v 13:05: 60.7 c pri byudzhete 30 c i format
+ # 2/3. Na prode za nedelyu 28 taymautov protiv 46 razborov.
+-LLM_JUDGE_MODELS=openai/gpt-5.6-luna,google/gemini-3.7-flash,z-ai/glm-5.3,openai/gpt-5.6-sol,google/gemini-3.6-flash
++# Peresobrana 2026-10-01 (tsk-573): golova gemini-3.7-flash (prod 10% taymautov,
++# stend 7 c); luna opushchena (18%, stend 29 c); glm-5.3 vyvedena (44% taymautov).
++LLM_JUDGE_MODELS=google/gemini-3.7-flash,google/gemini-3.6-flash,openai/gpt-5.6-luna,openai/gpt-5.6-sol
+ # Ротация (tsk-671): сколько секунд модель считается «только что отказавшей»
+ # и уходит в конец очереди, чтобы следующий ученик не платил за тот же отказ.
+ LLM_MODEL_COOLDOWN_SECONDS=120
+diff --git a/app/services/llm/providers.py b/app/services/llm/providers.py
+index 7c98249..c1ab69d 100644
+--- a/app/services/llm/providers.py
++++ b/app/services/llm/providers.py
+@@ -123,11 +123,19 @@ PROVIDER_NAME = "closerouter"
+ # быть головой: 11% поддакиваний и 7 отказов из 88 под нагрузкой (429, SSL, обрыв).
+ # `gpt-5.5` — самая честная (1%), но медленная и подорожала до $0,23/$1,40 —
+ # последний рубеж.
++#
++# Пересобрана 2026-10-01 (tsk-573, месячный стенд + боевой `llm_usage_event` за 14
++# дней, решение оператора). Голова 16.09 на проде не работала: `gemini-3-flash`
++# ответила 7 раз из 29 (остальное — таймауты), `glm-5.3` — 0 из 10; каждый их сбой
++# стоил ученику ~12 c ожидания перед откатом, а вела учеников фактически
++# `sonnet-4.6` (183 ответа). Обе выведены. Головой поставлена `gpt-5.5` — честность
++# важнее скорости: на стенде 0 сливов из 3 при 4,4 c до первого токена, а
++# `sonnet-4.6` на том же сценарии слила ответ 3 из 3 (01.09 было 0 из 3) при 11%
++# поддакиваний. `sonnet-4.6` — запасная: на проде таймаутов ~11% против ~18% у
++# `gpt-5.5`, так что промах головы она подхватывает.
+ _DEFAULT_TUTOR_MODELS = (
+-    "google/gemini-3-flash,"          # 2,4-3,7 c — голова, решение оператора 16.09
+-    "z-ai/glm-5.3,"                   # 4,4-6,6 c, честная, дешёвая
+-    "anthropic/claude-sonnet-4.6,"    # 3,0-4,1 c, лучшие объяснения, но 11% поддакиваний
+-    "openai/gpt-5.5"                  # 6,4-7,3 c, честнее всех, последний рубеж
++    "openai/gpt-5.5,"                 # 4,4 c, честнее всех — голова, решение оператора 01.10
++    "anthropic/claude-sonnet-4.6"     # 2,7 c, лучшие объяснения, надёжнее на проде
+ )
+ # Судейская цепочка собрана 2026-08-25 (tsk-678) по СВОЕЙ оси стенда
+ # (`--judge`), а не по наставницкой. Оси меряют разное: наставнику важны первый
+@@ -171,9 +179,15 @@ _DEFAULT_TUTOR_MODELS = (
+ # бюджете попытки 30 c, а в одном прогоне из трёх ответ не разобрался нашим же
+ # `_parse_verdict` (правило «формат по всем образцам»). Прод за неделю: 28
+ # таймаутов по 30 c против 46 разборов — больше трети обращений сгорало целиком.
++#
++# Пересобрана 2026-10-01 (tsk-573, решение оператора). Прод за 14 дней
++# (code_review): `gpt-5.6-luna` 360 таймаутов на 2043 вызова (18%), на стенде
++# медиана 29 c и худший 46 c; `gemini-3.7-flash` 10% таймаутов, на стенде 7 / 9 c —
++# стала головой. `gemini-3.6-flash` (13%, 6 / 7 c) — второй. `z-ai/glm-5.3` ВЫВЕДЕНА:
++# 44% таймаутов на проде и 1 успешный прогон из 3 на стенде.
+ _DEFAULT_JUDGE_MODELS = (
+-    "openai/gpt-5.6-luna,google/gemini-3.7-flash,z-ai/glm-5.3,"
+-    "openai/gpt-5.6-sol,google/gemini-3.6-flash"
++    "google/gemini-3.7-flash,google/gemini-3.6-flash,"
++    "openai/gpt-5.6-luna,openai/gpt-5.6-sol"
+ )
+ 
+ 
+diff --git a/docs/specs/2026-08-06-contract-llm-client.md b/docs/specs/2026-08-06-contract-llm-client.md
+index 006646b..b9b20f3 100644
+--- a/docs/specs/2026-08-06-contract-llm-client.md
++++ b/docs/specs/2026-08-06-contract-llm-client.md
+@@ -310,6 +310,30 @@ USD 0.05 call reservation` — 6 раз из 6, при нашем балансе
+ наставник 4,3 c, 204 чанка, 0 сливов), но поставлена ВТОРОЙ: одного дня замеров для
+ головы цепочки мало.
+ 
++### Действующие цепочки (пересмотр 2026-10-01, месячный стенд tsk-573)
++
++Решение оператора по стенду и боевому `llm_usage_event` за 14 дней (сводка
++`docs/qa/2026-10-01-llm-bakeoff-summary.md`):
++
++```
++наставник (канон в providers._DEFAULT_TUTOR_MODELS): openai/gpt-5.5, anthropic/claude-sonnet-4.6
++LLM_JUDGE_MODELS=google/gemini-3.7-flash,google/gemini-3.6-flash,openai/gpt-5.6-luna,openai/gpt-5.6-sol
++```
++
++**Наставник.** Голова 16.09 на проде не работала: `gemini-3-flash` — 7 ответов из 29,
++`glm-5.3` — 0 из 10, остальное таймауты по ~12 c перед откатом; учеников фактически вела
++`sonnet-4.6`. Обе выведены. Головой — `gpt-5.5` (стенд: 0 сливов из 3, 4,4 c; прод:
++~18% таймаутов), запасной — `sonnet-4.6` (на стенде слила 3 из 3 в сыром ответе при 0 из
++3 на 01.09, 11% поддакиваний 16.09; на проде ~11% таймаутов). Порядок выбран по
++честности: страж вывода закрывает слив только в режиме `thin`.
++
++**Судья.** `gemini-3.7-flash` — голова (прод 10% таймаутов, стенд 7 / 9 c),
++`gemini-3.6-flash` второй (13%, 6 / 7 c); `gpt-5.6-luna` опущена (18%, стенд 29 / 46 c при
++бюджете попытки 30 c); `z-ai/glm-5.3` выведена (44% таймаутов, на стенде 1 из 3).
++
++Новинки каталога (`gemini-3.8-flash`, `deepseek-v4.1-flash` — судья; `gpt-6.1-sol` —
++наставник) в цепочки не взяты до полной проверки по `model-routing.md`.
++
+ ### Страж вывода закрывает слив только в режиме `thin` (замер 2026-09-01)
+ 
+ Стенд гоняет промпт из файла методики, а не боевой, поэтому его вердикт «СЛИЛ» сам

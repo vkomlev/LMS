@@ -1,0 +1,385 @@
+diff --git a/app/api/v1/ai_tutor.py b/app/api/v1/ai_tutor.py
+index 7d3cb1d..6d67419 100644
+--- a/app/api/v1/ai_tutor.py
++++ b/app/api/v1/ai_tutor.py
+@@ -31,7 +31,7 @@ from app.core.config import Settings
+ from app.services import entitlements_service
+ from app.services.ai_tutor import session_service
+ from app.services.ai_tutor.answer_guard import TutorStreamGuard
+-from app.services.llm import Budget, LLMError, stream
++from app.services.llm import TUTOR_MAX_TOKENS, Budget, LLMError, stream
+ from app.utils.exceptions import DomainError
+ 
+ logger = logging.getLogger(__name__)
+@@ -275,7 +275,7 @@ async def ask(
+         try:
+             async for chunk in stream(
+                 messages, purpose="tutor", student_id=owner,
+-                budget=Budget.INTERACTIVE, max_tokens=900,
++                budget=Budget.INTERACTIVE, max_tokens=TUTOR_MAX_TOKENS,
+             ):
+                 if chunk.done:
+                     model_used = chunk.model
+diff --git a/app/services/llm/__init__.py b/app/services/llm/__init__.py
+index 313314b..d8ffb9c 100644
+--- a/app/services/llm/__init__.py
++++ b/app/services/llm/__init__.py
+@@ -13,6 +13,7 @@ from app.services.llm.client import complete, stream
+ from app.services.llm.contracts import (
+     Budget,
+     JUDGE_MAX_TOKENS,
++    TUTOR_MAX_TOKENS,
+     LLMChunk,
+     LLMConfigError,
+     LLMCooldown,
+@@ -34,6 +35,7 @@ __all__ = [
+     "stream",
+     "Budget",
+     "JUDGE_MAX_TOKENS",
++    "TUTOR_MAX_TOKENS",
+     "LLMMessage",
+     "LLMResult",
+     "LLMChunk",
+diff --git a/app/services/llm/contracts.py b/app/services/llm/contracts.py
+index e583e1b..3ba583d 100644
+--- a/app/services/llm/contracts.py
++++ b/app/services/llm/contracts.py
+@@ -69,6 +69,12 @@ class LLMChunk:
+ # же вызове, что быстрее повтора через тик.
+ JUDGE_MAX_TOKENS = 2500
+ 
++# Потолок реплики наставника. Одна константа для боя (`api/v1/ai_tutor.py`) и
++# стенда (`scripts/llm_model_bakeoff.py`): стенд с 700 при боевых 900 записывал
++# думающие модели (`glm-5.3`, `deepseek-v4.1-flash`) в «пустой ответ», хотя на
++# бою у них запас был больше (tsk-573, прогон 2026-10-01).
++TUTOR_MAX_TOKENS = 900
++
+ 
+ class Budget(Enum):
+     """Профиль таймаутов. Параметр вызова, не глобальная настройка: один клиент
+diff --git a/scripts/llm_model_bakeoff.py b/scripts/llm_model_bakeoff.py
+index 02a498a..ad826a7 100644
+--- a/scripts/llm_model_bakeoff.py
++++ b/scripts/llm_model_bakeoff.py
+@@ -18,7 +18,8 @@
+ `data: {"error": ...}`. Наивный клиент покажет ученику пустой ответ.
+ 
+ Запуск:
+-    python scripts/llm_model_bakeoff.py                 # кандидаты из .env + дефолтные
++    python scripts/llm_model_bakeoff.py                 # боевая цепочка наставника (полный прогон)
++    python scripts/llm_model_bakeoff.py --judge         # боевая цепочка судьи (полный прогон)
+     python scripts/llm_model_bakeoff.py --models a,b,c  # свой список
+     python scripts/llm_model_bakeoff.py --catalog       # только показать каталог с ценами
+     python scripts/llm_model_bakeoff.py --out docs/qa/  # куда положить отчёт
+@@ -63,13 +64,54 @@ STUDENT_TURN = (
+ # Слив: срез с числовыми литералами в любом виде.
+ LEAK_RE = re.compile(r"\[\s*-?\d+\s*:\s*-?\d+\s*\]|\bs\[\s*\d")
+ 
+-DEFAULT_CANDIDATES = [
+-    "x-ai/grok-4.1-fast",
+-    "openai/gpt-5.4-mini",
+-    "anthropic/claude-sonnet-4.5",
+-    "google/gemini-3.1-flash-lite",
+-    "deepseek/deepseek-v3.2",
+-]
++
++
++def _load_app_env() -> None:
++    """Подгрузить `.env` LMS в окружение и открыть импорт `app` (не перетирая заданное)."""
++    for k, v in dotenv_values(ROOT / ".env", encoding="utf-8-sig").items():
++        if v is not None:
++            os.environ.setdefault(k, v)
++    if str(ROOT) not in sys.path:
++        sys.path.insert(0, str(ROOT))
++
++
++def default_candidates(*, judge: bool) -> list[str]:
++    """Кандидаты прогона без `--models` — БОЕВАЯ цепочка своей оси.
++
++    Берутся оттуда же, откуда их берёт рантайм (`providers`): переменная
++    `LLM_TUTOR_MODELS`/`LLM_JUDGE_MODELS`, а без неё — цепочка в коде. До
++    01.10 здесь стоял зашитый августовский список (`grok-4.1-fast`,
++    `deepseek-v3.2`, …), которого в цепочках давно нет: прогон без `--models`
++    мерил не то, что работает на бою (tsk-573).
++    """
++    _load_app_env()
++    from app.services.llm import providers
++
++    return providers.judge_models() if judge else providers.tutor_models()
++
++
++def _tutor_max_tokens() -> int:
++    """Потолок реплики наставника — та же константа, что у боя (не копия числа)."""
++    _load_app_env()
++    from app.services.llm.contracts import TUTOR_MAX_TOKENS
++
++    return int(TUTOR_MAX_TOKENS)
++
++
++def _tutor_empty_reason(finish_reason: str | None, reasoning_chars: int, cap: int) -> str:
++    """Почему поток наставника кончился без текста — стенду важно различать.
++
++    Думающая модель льёт рассуждение отдельным полем (`reasoning_content`) в тот
++    же `max_tokens`: `finish_reason=length` при пустом `content` и непустом
++    рассуждении значит «потолок съело рассуждение», а не «модель промолчала»
++    (tsk-573, 01.10: `glm-5.3`, `glm-5.3-flash`, `deepseek-v4.1-flash`).
++    """
++    if finish_reason == "length" and reasoning_chars:
++        return (f"потолок {cap} съеден рассуждением "
++                f"(reasoning {reasoning_chars} симв.), текста нет")
++    if finish_reason == "length":
++        return f"потолок {cap} исчерпан, текста нет"
++    return "пустой ответ без ошибки в потоке"
+ 
+ 
+ def _env() -> tuple[str, str]:
+@@ -123,12 +165,15 @@ def probe(model: str, system_prompt: str, base: str, key: str) -> dict:
+     """Один кандидат: качество ответа + латентность стриминга за один вызов."""
+     res: dict = {"model": model, "leak": None, "chunks": 0, "first": None,
+                  "total": None, "text": "", "error": None, "ascii_scheme": None}
++    cap = _tutor_max_tokens()
+     payload = {
+         "model": model,
+         "messages": [{"role": "system", "content": system_prompt},
+                      {"role": "user", "content": STUDENT_TURN}],
+-        "temperature": 0.6, "max_tokens": 700, "stream": True,
++        "temperature": 0.6, "max_tokens": cap, "stream": True,
+     }
++    finish_reason: str | None = None
++    reasoning_chars = 0
+     t0 = time.monotonic()
+     try:
+         with _post(base, key, "/v1/chat/completions", payload, timeout=120) as r:
+@@ -146,7 +191,11 @@ def probe(model: str, system_prompt: str, base: str, key: str) -> dict:
+                 if (err := _sse_error(obj)) is not None:
+                     res["error"] = f"upstream_in_200: {err}"
+                     break
+-                delta = (obj.get("choices") or [{}])[0].get("delta", {}).get("content")
++                choice = (obj.get("choices") or [{}])[0]
++                finish_reason = choice.get("finish_reason") or finish_reason
++                d = choice.get("delta") or {}
++                reasoning_chars += len(d.get("reasoning_content") or d.get("reasoning") or "")
++                delta = d.get("content")
+                 if delta:
+                     res["chunks"] += 1
+                     if res["first"] is None:
+@@ -157,6 +206,8 @@ def probe(model: str, system_prompt: str, base: str, key: str) -> dict:
+     except Exception as e:  # noqa: BLE001
+         res["error"] = f"{type(e).__name__}: {e}"[:200]
+     res["total"] = time.monotonic() - t0
++    if not res["text"] and not res["error"]:
++        res["error"] = _tutor_empty_reason(finish_reason, reasoning_chars, cap)
+     if res["text"]:
+         res["leak"] = bool(LEAK_RE.search(res["text"]))
+         # Методика требует ASCII-схему в объяснении.
+@@ -459,7 +510,8 @@ def verdict(a: dict) -> tuple[str, str]:
+     if a["leaks"]:
+         return "СЛИЛ", f"выдал ответ числами в {a['leaks']} из {a['ok_runs']} прогонов"
+     if a["ok_runs"] < a["runs"]:
+-        return "НЕСТАБИЛЕН", f"успешных прогонов {a['ok_runs']} из {a['runs']}"
++        reasons = "; ".join(dict.fromkeys(e[:90] for e in a["errors"]))
++        return "НЕСТАБИЛЕН", f"успешных прогонов {a['ok_runs']} из {a['runs']}: {reasons}"
+     if a["first"] is None or a["first"] > FIRST_TOKEN_BUDGET_SEC:
+         f = f"{a['first']:.1f}" if a["first"] else "—"
+         return "МЕДЛЕННО", f"медиана первого токена {f} c > бюджета {FIRST_TOKEN_BUDGET_SEC} c"
+@@ -522,16 +574,15 @@ def main() -> None:
+             print("все модели боевых цепочек живы")
+         return
+ 
+-    # Частичный прогон = список моделей задан руками. Полный (каталог/цепочка из
+-    # .env) отчёт дня составляет и вправе его перезаписать, частичный — нет.
++    # Частичный прогон = список моделей задан руками. Полный (боевая цепочка
++    # оси) отчёт дня составляет и вправе его перезаписать, частичный — нет.
+     partial = bool(args.models)
+ 
+     if args.judge:
+         models = [m.strip() for m in args.models.split(",")] if args.models else \
+-            [m.strip() for m in (dotenv_values(ROOT / ".env", encoding="utf-8-sig")
+-                                 .get("LLM_JUDGE_MODELS") or "").split(",") if m.strip()]
++            default_candidates(judge=True)
+         if not models:
+-            sys.exit("нечего мерить: задай --models или LLM_JUDGE_MODELS в .env")
++            sys.exit("нечего мерить: задай --models или судейскую цепочку")
+         system_prompt, user_msgs = _judge_prompt()
+         print(f"судейская ось: кандидатов {len(models)}, прогонов на каждого {args.runs}\n")
+ 
+@@ -599,7 +650,8 @@ def main() -> None:
+         sys.exit(f"нет методики: {METHODOLOGY}")
+     core = METHODOLOGY.read_text(encoding="utf-8").split("# 2. UNIVERSAL-ядро")[1].split("```")[1].strip()
+ 
+-    models = [m.strip() for m in args.models.split(",")] if args.models else DEFAULT_CANDIDATES
++    models = [m.strip() for m in args.models.split(",")] if args.models else \
++        default_candidates(judge=False)
+     print(f"кандидатов: {len(models)}, прогонов на каждого: {args.runs}\n")
+ 
+     jobs = [(m, i) for m in models for i in range(args.runs)]
+diff --git a/scripts/tutor_replay_bakeoff.py b/scripts/tutor_replay_bakeoff.py
+index 837fe1c..07035d7 100644
+--- a/scripts/tutor_replay_bakeoff.py
++++ b/scripts/tutor_replay_bakeoff.py
+@@ -62,7 +62,7 @@ from app.services.ai_tutor.prompt import (  # noqa: E402
+     build_opening_user_message,
+     build_system_prompt,
+ )
+-from app.services.llm import Budget, LLMError, LLMMessage, complete, stream  # noqa: E402
++from app.services.llm import TUTOR_MAX_TOKENS, Budget, LLMError, LLMMessage, complete, stream  # noqa: E402
+ from app.services.llm import providers  # noqa: E402
+ 
+ FIRST_TOKEN_LIMIT = Budget.INTERACTIVE.first_token_timeout or 12.0
+@@ -269,7 +269,7 @@ async def run_unit(model: str, unit: Unit) -> Outcome:
+     try:
+         # Бюджет батча: предел первого куска — наша ось измерения, а не отсечка.
+         async for chunk in stream(unit.messages, model=model, purpose="tutor_replay",
+-                                  budget=Budget.BATCH, max_tokens=900):
++                                  budget=Budget.BATCH, max_tokens=TUTOR_MAX_TOKENS):
+             if chunk.done:
+                 if chunk.truncated:
+                     o.error = "обрыв после первого куска"
+diff --git a/scripts/tutor_role_gate.py b/scripts/tutor_role_gate.py
+index 0589107..f88dfa7 100644
+--- a/scripts/tutor_role_gate.py
++++ b/scripts/tutor_role_gate.py
+@@ -51,7 +51,7 @@ from app.services.ai_tutor.prompt import (  # noqa: E402
+     TutorTaskView,
+     build_system_prompt,
+ )
+-from app.services.llm import Budget, LLMMessage, stream  # noqa: E402
++from app.services.llm import TUTOR_MAX_TOKENS, Budget, LLMMessage, stream  # noqa: E402
+ from app.services.llm import providers  # noqa: E402
+ 
+ # Задание 118 боевой базы — то, на котором наставник и слил решение.
+@@ -137,7 +137,7 @@ async def _one_run(model: str) -> list[TurnResult]:
+         # срезанная им, ушла бы из отчёта без вердикта по роли.
+         async for chunk in stream(
+             history, model=model, purpose="tutor_role_gate",
+-            budget=Budget.BATCH, max_tokens=900,
++            budget=Budget.BATCH, max_tokens=TUTOR_MAX_TOKENS,
+         ):
+             if chunk.done:
+                 break
+diff --git a/tests/test_tsk573_bakeoff_defaults.py b/tests/test_tsk573_bakeoff_defaults.py
+new file mode 100644
+index 0000000..67a85f1
+--- /dev/null
++++ b/tests/test_tsk573_bakeoff_defaults.py
+@@ -0,0 +1,120 @@
++"""tsk-573: стенд LLM меряет боевые цепочки и различает, чем пуст ответ наставника.
++
++Прогон 2026-10-01 нашёл два дефекта стенда: (1) без `--models` он мерил зашитый
++августовский список, которого в цепочках давно нет; (2) наставницкая ось слала
++`max_tokens=700` при боевых 900, и думающие модели, потратив лимит на
++`reasoning_content`, попадали в «пустой ответ без ошибки в потоке».
++"""
++from __future__ import annotations
++
++import contextlib
++import io
++import json
++import pathlib
++import sys
++
++import pytest
++
++ROOT = pathlib.Path(__file__).resolve().parents[1]
++sys.path.insert(0, str(ROOT))
++sys.path.insert(0, str(ROOT / "scripts"))
++
++import llm_model_bakeoff as bakeoff  # noqa: E402
++
++from app.services.llm import TUTOR_MAX_TOKENS, providers  # noqa: E402
++
++
++@pytest.fixture
++def _no_env_file(monkeypatch: pytest.MonkeyPatch) -> None:
++    """Локальный `.env` не должен подменять цепочку в тесте."""
++    monkeypatch.setattr(bakeoff, "dotenv_values", lambda *a, **k: {})
++
++
++def test_default_candidates_are_live_chains(monkeypatch: pytest.MonkeyPatch, _no_env_file) -> None:
++    monkeypatch.delenv("LLM_TUTOR_MODELS", raising=False)
++    monkeypatch.delenv("LLM_JUDGE_MODELS", raising=False)
++    tutor = bakeoff.default_candidates(judge=False)
++    judge = bakeoff.default_candidates(judge=True)
++    assert tutor == [m.strip() for m in providers._DEFAULT_TUTOR_MODELS.split(",")]
++    assert judge == [m.strip() for m in providers._DEFAULT_JUDGE_MODELS.split(",")]
++    assert "x-ai/grok-4.1-fast" not in tutor + judge
++
++
++def test_default_candidates_follow_env_override(monkeypatch: pytest.MonkeyPatch, _no_env_file) -> None:
++    """Переменная окружения главнее цепочки в коде — как у рантайма."""
++    monkeypatch.setenv("LLM_TUTOR_MODELS", "a/one, b/two")
++    monkeypatch.setenv("LLM_JUDGE_MODELS", "c/three")
++    assert bakeoff.default_candidates(judge=False) == ["a/one", "b/two"]
++    assert bakeoff.default_candidates(judge=True) == ["c/three"]
++
++
++def test_tutor_axis_has_no_stale_list() -> None:
++    assert not hasattr(bakeoff, "DEFAULT_CANDIDATES")
++
++
++def test_tutor_cap_shared_with_live() -> None:
++    """Бой и стенд берут потолок из одной константы, число не дублируется."""
++    assert bakeoff._tutor_max_tokens() == TUTOR_MAX_TOKENS
++    src = (ROOT / "app" / "api" / "v1" / "ai_tutor.py").read_text(encoding="utf-8")
++    assert "max_tokens=TUTOR_MAX_TOKENS" in src
++    stand = (ROOT / "scripts" / "llm_model_bakeoff.py").read_text(encoding="utf-8")
++    assert '"max_tokens": 700' not in stand and '"max_tokens": 900' not in stand
++
++
++def _sse(frames: list[dict]):
++    body = "".join("data: " + json.dumps(f) + "\n\n" for f in frames) + "data: [DONE]\n\n"
++
++    @contextlib.contextmanager
++    def fake_post(base, key, path, payload, timeout):
++        fake_post.payload = payload
++        yield io.BytesIO(body.encode())
++
++    return fake_post
++
++
++def test_probe_sends_live_cap(monkeypatch: pytest.MonkeyPatch) -> None:
++    fake = _sse([{"choices": [{"delta": {"content": "Давай разберём"}, "finish_reason": "stop"}]}])
++    monkeypatch.setattr(bakeoff, "_post", fake)
++    r = bakeoff.probe("m", "sys", "https://p.test", "k")
++    assert fake.payload["max_tokens"] == TUTOR_MAX_TOKENS
++    assert r["error"] is None and r["text"] == "Давай разберём"
++
++
++def test_probe_reasoning_ate_cap(monkeypatch: pytest.MonkeyPatch) -> None:
++    """`glm-5.3` 01.10: рассуждение в `reasoning_content`, `finish_reason=length`."""
++    monkeypatch.setattr(bakeoff, "_post", _sse([
++        {"choices": [{"delta": {"reasoning_content": "Ученик просит готовый код..."}}]},
++        {"choices": [{"delta": {"reasoning_content": " надо дать подсказку"}}]},
++        {"choices": [{"delta": {}, "finish_reason": "length"}]},
++    ]))
++    r = bakeoff.probe("z-ai/glm-5.3", "sys", "https://p.test", "k")
++    assert r["text"] == ""
++    assert "съеден рассуждением" in r["error"] and str(TUTOR_MAX_TOKENS) in r["error"]
++
++
++def test_probe_plain_empty(monkeypatch: pytest.MonkeyPatch) -> None:
++    monkeypatch.setattr(bakeoff, "_post", _sse([
++        {"choices": [{"delta": {}, "finish_reason": "stop"}]},
++    ]))
++    r = bakeoff.probe("m", "sys", "https://p.test", "k")
++    assert r["error"] == "пустой ответ без ошибки в потоке"
++
++
++@pytest.mark.parametrize("finish, reasoning, expected", [
++    ("length", 120, "съеден рассуждением"),
++    ("length", 0, "исчерпан"),
++    ("stop", 120, "пустой ответ без ошибки в потоке"),
++    (None, 0, "пустой ответ без ошибки в потоке"),
++])
++def test_tutor_empty_reason(finish: str | None, reasoning: int, expected: str) -> None:
++    assert expected in bakeoff._tutor_empty_reason(finish, reasoning, 900)
++
++
++def test_tutor_unstable_verdict_lists_causes() -> None:
++    runs = [
++        {"model": "m", "error": None, "text": "ок", "leak": False, "first": 1.0, "chunks": 30},
++        {"model": "m", "error": "потолок 900 съеден рассуждением (reasoning 3000 симв.), текста нет",
++         "text": "", "leak": None, "first": None, "chunks": 0},
++    ]
++    v, why = bakeoff.verdict(bakeoff.aggregate(runs))
++    assert v == "НЕСТАБИЛЕН" and "1 из 2" in why and "съеден рассуждением" in why
