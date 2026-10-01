@@ -667,7 +667,13 @@ async def _start_steps(
             continue
         overdue_students.add(student_id)
         not_done.append(
-            _student_entry(student_id, names, f"ДЗ {done} из {total}, просрочено")
+            _student_entry(
+                student_id,
+                names,
+                "ДЗ "
+                f"{homework_service.format_homework_count(done, total, int(status.get('assigned_orphaned_done') or 0))}"
+                ", просрочено",
+            )
         )
     homework_step = _step(
         "homework",

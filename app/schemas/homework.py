@@ -28,6 +28,13 @@ class HomeworkItemRead(BaseModel):
         )
     )
     position: int = Field(description="Порядок в выдаче — учебный")
+    orphaned: bool = Field(
+        default=False,
+        description=(
+            "tsk-1193: решено из прошлой выдачи (tsk-968) — в `total`/`done` "
+            "не входит, считается в `orphaned_done`"
+        ),
+    )
     on_lesson: bool = Field(
         default=False,
         description=(
@@ -102,6 +109,14 @@ class HomeworkRead(BaseModel):
         default=0, description="tsk-1006: желательных пунктов «чтобы нагнать норму»"
     )
     extra_done: int = Field(default=0, description="tsk-1006: из них закрыто")
+    orphaned_done: int = Field(
+        default=0,
+        description=(
+            "tsk-1193: обязательных заданий из прошлых выдач, решённых после их "
+            "отмены и не вошедших в эту (tsk-968). В `total`/`done` не входят — "
+            "подпись «N из M · ещё K решено из прошлых выдач»"
+        ),
+    )
     on_lesson: int = Field(
         default=0,
         description="tsk-1041: обязательных пунктов, решённых только на уроке — в `done` не входят",

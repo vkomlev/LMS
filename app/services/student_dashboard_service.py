@@ -1270,6 +1270,7 @@ async def get_student_dashboard(
             "assigned_done": (homework_status or {}).get("assigned_done"),
             "assigned_extra_total": (homework_status or {}).get("assigned_extra_total"),
             "assigned_extra_done": (homework_status or {}).get("assigned_extra_done"),
+            "assigned_orphaned_done": (homework_status or {}).get("assigned_orphaned_done"),
             "assigned_on_lesson": (homework_status or {}).get("assigned_on_lesson"),
             "due_at": (homework_status or {}).get("due_at"),
             "is_overdue": (homework_status or {}).get("is_overdue"),

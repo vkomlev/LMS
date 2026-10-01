@@ -1102,6 +1102,9 @@ async def _load_orphaned_items(
                 "title": title,
                 "done": True,
                 "on_lesson": False,
+                # tsk-1193: решено из прошлой выдачи — в «N из M» текущей не
+                # входит, считается отдельно (`orphaned_done`).
+                "orphaned": True,
                 "position": position,
                 "tier": row["tier"],
                 "course_uid": course_uid,
@@ -1170,8 +1173,14 @@ def _to_homework_dict(
     """
     # tsk-1006: «X из N» — обязательное; желательное — отдельно и на
     # просрочку не влияет.
-    required = [i for i in items if i.get("tier", "required") != "extra"]
-    extra = [i for i in items if i.get("tier") == "extra"]
+    # tsk-1193: «N из M» — строго по составу выдачи; решённое из прошлых
+    # выдач (tsk-968) — отдельным числом, без слияния в одну дробь.
+    own = [i for i in items if not i.get("orphaned")]
+    required = [i for i in own if i.get("tier", "required") != "extra"]
+    extra = [i for i in own if i.get("tier") == "extra"]
+    orphaned_done = sum(
+        1 for i in items if i.get("orphaned") and i.get("tier", "required") != "extra"
+    )
     done = sum(1 for i in required if i["done"])
     raw_details = row["volume_details"]
     planned_minutes = (
@@ -1197,6 +1206,7 @@ def _to_homework_dict(
         "done": done,
         "extra_total": len(extra),
         "extra_done": sum(1 for i in extra if i["done"]),
+        "orphaned_done": orphaned_done,
         # tsk-1041: решено на уроке — в списке есть, в «сделано» нет.
         "on_lesson": sum(1 for i in required if i.get("on_lesson")),
         "is_overdue": bool(row["due_at"] <= moment and done < len(required)),
@@ -1270,10 +1280,22 @@ async def get_history(
     ).mappings().fetchall()
 
     result: list[dict[str, Any]] = []
+    current_marked = False
     for row in rows:
         items = await _load_items(db, homework_id=int(row["id"]), student_id=student_id)
         entry = _to_homework_dict(row, items, moment=moment)
         entry["cancelled_at"] = row["cancelled_at"]
+        # tsk-1193: у ДЕЙСТВУЮЩЕЙ выдачи — то же «ещё K решено из прошлых
+        # выдач», что в `get_current`, иначе история и карточка ученика снова
+        # разойдутся. Только число: состав записи остаётся ровно выданным.
+        if row["cancelled_at"] is None and not current_marked:
+            current_marked = True
+            orphaned = await _load_orphaned_items(
+                db, student_id=student_id, start_position=len(items)
+            )
+            entry["orphaned_done"] = sum(
+                1 for i in orphaned if i.get("tier", "required") != "extra"
+            )
         result.append(entry)
     return result
 
@@ -1412,9 +1434,10 @@ async def status_for_students(
     }
     result: dict[int, dict[str, Any]] = {}
     for row in rows:
-        extra = orphaned_by_student.get(int(row["student_id"]), 0)
-        total = int(row["total"] or 0) + extra
-        done = int(row["done"] or 0) + extra
+        # tsk-1193: осиротевшие — отдельным числом, не в «N из M».
+        orphaned = orphaned_by_student.get(int(row["student_id"]), 0)
+        total = int(row["total"] or 0)
+        done = int(row["done"] or 0)
         result[int(row["student_id"])] = {
             "homework_id": int(row["id"]),
             "issued_at": row["issued_at"],
@@ -1423,6 +1446,7 @@ async def status_for_students(
             "assigned_done": done,
             "assigned_extra_total": int(row["extra_total"] or 0),
             "assigned_extra_done": int(row["extra_done"] or 0),
+            "assigned_orphaned_done": orphaned,
             # tsk-1041: решено на уроке — не домашняя работа.
             "assigned_on_lesson": int(row["on_lesson"] or 0),
             "is_overdue": bool(row["due_at"] <= moment and done < total),
@@ -1551,3 +1575,16 @@ async def cancel(
         {"hid": homework_id, "now": moment},
     )
     return bool(result.rowcount)
+
+
+def format_homework_count(done: int, total: int, orphaned_done: int = 0) -> str:
+    """Единая подпись счёта ДЗ (tsk-1193): «N из M» + «ещё K решено из прошлых выдач».
+
+    Та же формула, что `homeworkCountLabel` в SPW: на всех экранах и в
+    уведомлениях счёт по составу выдачи и решённое из прошлых выдач не
+    сливаются в одну дробь.
+    """
+    label = f"{done} из {total}"
+    if orphaned_done > 0:
+        label += f" · ещё {orphaned_done} решено из прошлых выдач"
+    return label

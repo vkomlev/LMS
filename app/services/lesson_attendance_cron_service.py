@@ -106,8 +106,13 @@ async def _send_reminders(db: AsyncSession, *, lead_minutes: int) -> int:
         # Факт без оценки (решение оператора 01.09): ни похвалы, ни укора, ни
         # «ты отстаёшь». Число подросток прочтёт спокойно, бодрый тон — нет.
         homework_line = (
-            f" Домашняя работа: {status['assigned_done']} из "
-            f"{status['assigned_total']}."
+            " Домашняя работа: "
+            + homework_service.format_homework_count(
+                status["assigned_done"],
+                status["assigned_total"],
+                int(status.get("assigned_orphaned_done") or 0),
+            )
+            + "."
             if status and left > 0
             else ""
         )
@@ -130,6 +135,9 @@ async def _send_reminders(db: AsyncSession, *, lead_minutes: int) -> int:
                 # а разбирать строку ему нельзя.
                 "homework_done": status["assigned_done"] if status else None,
                 "homework_total": status["assigned_total"] if status else None,
+                "homework_orphaned_done": (
+                    status.get("assigned_orphaned_done", 0) if status else None
+                ),
             },
             created_by=None,
         )

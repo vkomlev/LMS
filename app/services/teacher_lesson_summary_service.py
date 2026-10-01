@@ -651,6 +651,7 @@ def _assigned_fields(status: Optional[dict[str, Any]]) -> dict[str, Any]:
             "assigned_is_overdue": None,
             "assigned_extra_total": None,
             "assigned_extra_done": None,
+            "assigned_orphaned_done": None,
             "assigned_on_lesson": None,
         }
     return {
@@ -660,6 +661,7 @@ def _assigned_fields(status: Optional[dict[str, Any]]) -> dict[str, Any]:
         "assigned_is_overdue": status["is_overdue"],
         "assigned_extra_total": status.get("assigned_extra_total", 0),
         "assigned_extra_done": status.get("assigned_extra_done", 0),
+        "assigned_orphaned_done": status.get("assigned_orphaned_done", 0),
         "assigned_on_lesson": status.get("assigned_on_lesson", 0),
     }
 
@@ -905,7 +907,11 @@ def _build_attention(
         return {
             "rank": 4,
             "reason": "homework_overdue",
-            "detail": f"домашняя работа {done} из {total}, срок прошёл",
+            "detail": (
+                "домашняя работа "
+                f"{homework_service.format_homework_count(done, total, int(homework.get('assigned_orphaned_done') or 0))}"
+                ", срок прошёл"
+            ),
             "task_id": None,
         }
 

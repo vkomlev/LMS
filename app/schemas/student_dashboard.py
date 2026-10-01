@@ -113,6 +113,8 @@ class StudentDashboardHomeworkRead(BaseModel):
     #: tsk-1006: желательных пунктов «чтобы нагнать норму» и из них закрыто.
     assigned_extra_total: Optional[int] = None
     assigned_extra_done: Optional[int] = None
+    #: tsk-1193: решено из прошлых выдач (tsk-968) — отдельно от «N из M».
+    assigned_orphaned_done: Optional[int] = None
     #: tsk-1041: решено только на уроке — не домашняя работа, в `assigned_done`
     #: не входит.
     assigned_on_lesson: Optional[int] = None

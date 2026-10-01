@@ -59104,6 +59104,12 @@
             "description": "tsk-1006: из них закрыто",
             "default": 0
           },
+          "orphaned_done": {
+            "type": "integer",
+            "title": "Orphaned Done",
+            "description": "tsk-1193: обязательных заданий из прошлых выдач, решённых после их отмены и не вошедших в эту (tsk-968). В `total`/`done` не входят — подпись «N из M · ещё K решено из прошлых выдач»",
+            "default": 0
+          },
           "on_lesson": {
             "type": "integer",
             "title": "On Lesson",
@@ -59261,6 +59267,12 @@
             "type": "integer",
             "title": "Position",
             "description": "Порядок в выдаче — учебный"
+          },
+          "orphaned": {
+            "type": "boolean",
+            "title": "Orphaned",
+            "description": "tsk-1193: решено из прошлой выдачи (tsk-968) — в `total`/`done` не входит, считается в `orphaned_done`",
+            "default": false
           },
           "on_lesson": {
             "type": "boolean",
@@ -59431,6 +59443,12 @@
             "type": "integer",
             "title": "Extra Done",
             "description": "tsk-1006: из них закрыто",
+            "default": 0
+          },
+          "orphaned_done": {
+            "type": "integer",
+            "title": "Orphaned Done",
+            "description": "tsk-1193: обязательных заданий из прошлых выдач, решённых после их отмены и не вошедших в эту (tsk-968). В `total`/`done` не входят — подпись «N из M · ещё K решено из прошлых выдач»",
             "default": 0
           },
           "on_lesson": {
@@ -71926,6 +71944,17 @@
             ],
             "title": "Assigned Extra Done"
           },
+          "assigned_orphaned_done": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assigned Orphaned Done"
+          },
           "assigned_on_lesson": {
             "anyOf": [
               {
@@ -78497,6 +78526,18 @@
             ],
             "title": "Assigned Extra Done",
             "description": "tsk-1006: из них закрыто"
+          },
+          "assigned_orphaned_done": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assigned Orphaned Done",
+            "description": "tsk-1193: решено из прошлых выдач (tsk-968), в `assigned_total`/`assigned_done` не входит; None — ДЗ не выдавали"
           },
           "assigned_on_lesson": {
             "anyOf": [

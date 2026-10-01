@@ -474,6 +474,13 @@ class TeacherSummaryHomework(BaseModel):
         ),
     )
     assigned_extra_done: Optional[int] = Field(default=None, description="tsk-1006: из них закрыто")
+    assigned_orphaned_done: Optional[int] = Field(
+        default=None,
+        description=(
+            "tsk-1193: решено из прошлых выдач (tsk-968), в `assigned_total`/"
+            "`assigned_done` не входит; None — ДЗ не выдавали"
+        ),
+    )
     assigned_on_lesson: Optional[int] = Field(
         default=None,
         description=(

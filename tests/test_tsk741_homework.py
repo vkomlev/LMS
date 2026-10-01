@@ -2322,8 +2322,14 @@ async def test_orphaned_completion_counts_toward_current_homework(db):
     )
 
     updated = await homework_service.get_current(db, student_id=student_id)
-    assert updated["total"] == 2, "решённое сверх узкого набора должно досчитаться"
-    assert updated["done"] == 1
+    # tsk-1193: «N из M» — по составу выдачи; решённое из прошлых — отдельно.
+    assert updated["total"] == 1
+    assert updated["done"] == 0
+    assert updated["orphaned_done"] == 1, "решённое сверх узкого набора должно досчитаться"
+    history = await homework_service.get_history(db, student_id=student_id)
+    assert history[0]["total"] == 1 and history[0]["done"] == 0
+    assert history[0]["orphaned_done"] == 1, "история текущей выдачи — тот же счёт"
+    assert all(h["orphaned_done"] == 0 for h in history[1:])
     assert any(
         i["item_id"] == orphan_task_id and i["done"] is True
         for i in updated["items"]
@@ -2357,8 +2363,9 @@ async def test_orphaned_completion_does_not_duplicate_once_recovered(db):
     )
 
     updated = await homework_service.get_current(db, student_id=student_id)
-    assert updated["total"] == 2, "дубля из осиротевших быть не должно"
+    assert updated["total"] == 2
     assert updated["done"] == 1
+    assert updated["orphaned_done"] == 0, "дубля из осиротевших быть не должно"
 
 
 @pytest.mark.asyncio
@@ -2387,8 +2394,19 @@ async def test_summary_counts_orphaned_completion_too(db):
     )
 
     status = await homework_service.status_for_students(db, student_ids=[student_id])
-    assert status[student_id]["assigned_total"] == 2
-    assert status[student_id]["assigned_done"] == 1
+    # tsk-1193: раздельно — «0 из 1 · ещё 1 решено из прошлых выдач».
+    assert status[student_id]["assigned_total"] == 1
+    assert status[student_id]["assigned_done"] == 0
+    assert status[student_id]["assigned_orphaned_done"] == 1
+
+
+def test_format_homework_count():
+    """tsk-1193: единая подпись счёта ДЗ."""
+    assert homework_service.format_homework_count(0, 4) == "0 из 4"
+    assert (
+        homework_service.format_homework_count(0, 4, 1)
+        == "0 из 4 · ещё 1 решено из прошлых выдач"
+    )
 
 
 @pytest.mark.asyncio
