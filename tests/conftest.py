@@ -339,6 +339,12 @@ SELF_MANAGED_CONNECTION_MODULES: frozenset[str] = frozenset(
         "test_teacher_next_modes_stage39.py",
         "test_triggers_smoke.py",
         "test_tsk088_task_content_hints_preserved.py",
+        # tsk-1134: граф курса и попытки коммитятся между шагами, движок
+        # считает состояние по закоммиченным строкам — откат общей `db` не годится.
+        "test_mentor_reviewed_no_attempt_limit_tsk1134.py",
+        # tsk-1146: приложение под HTTP-клиентом читает граф в своей сессии,
+        # данные должны быть закоммичены; тест сверяет «ни одной новой строки».
+        "test_task_preview_no_writes_tsk1146.py",
     }
 )
 
