@@ -18,7 +18,8 @@
 `data: {"error": ...}`. Наивный клиент покажет ученику пустой ответ.
 
 Запуск:
-    python scripts/llm_model_bakeoff.py                 # кандидаты из .env + дефолтные
+    python scripts/llm_model_bakeoff.py                 # боевая цепочка наставника (полный прогон)
+    python scripts/llm_model_bakeoff.py --judge         # боевая цепочка судьи (полный прогон)
     python scripts/llm_model_bakeoff.py --models a,b,c  # свой список
     python scripts/llm_model_bakeoff.py --catalog       # только показать каталог с ценами
     python scripts/llm_model_bakeoff.py --out docs/qa/  # куда положить отчёт
@@ -63,13 +64,54 @@ STUDENT_TURN = (
 # Слив: срез с числовыми литералами в любом виде.
 LEAK_RE = re.compile(r"\[\s*-?\d+\s*:\s*-?\d+\s*\]|\bs\[\s*\d")
 
-DEFAULT_CANDIDATES = [
-    "x-ai/grok-4.1-fast",
-    "openai/gpt-5.4-mini",
-    "anthropic/claude-sonnet-4.5",
-    "google/gemini-3.1-flash-lite",
-    "deepseek/deepseek-v3.2",
-]
+
+
+def _load_app_env() -> None:
+    """Подгрузить `.env` LMS в окружение и открыть импорт `app` (не перетирая заданное)."""
+    for k, v in dotenv_values(ROOT / ".env", encoding="utf-8-sig").items():
+        if v is not None:
+            os.environ.setdefault(k, v)
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+
+
+def default_candidates(*, judge: bool) -> list[str]:
+    """Кандидаты прогона без `--models` — БОЕВАЯ цепочка своей оси.
+
+    Берутся оттуда же, откуда их берёт рантайм (`providers`): переменная
+    `LLM_TUTOR_MODELS`/`LLM_JUDGE_MODELS`, а без неё — цепочка в коде. До
+    01.10 здесь стоял зашитый августовский список (`grok-4.1-fast`,
+    `deepseek-v3.2`, …), которого в цепочках давно нет: прогон без `--models`
+    мерил не то, что работает на бою (tsk-573).
+    """
+    _load_app_env()
+    from app.services.llm import providers
+
+    return providers.judge_models() if judge else providers.tutor_models()
+
+
+def _tutor_max_tokens() -> int:
+    """Потолок реплики наставника — та же константа, что у боя (не копия числа)."""
+    _load_app_env()
+    from app.services.llm.contracts import TUTOR_MAX_TOKENS
+
+    return int(TUTOR_MAX_TOKENS)
+
+
+def _tutor_empty_reason(finish_reason: str | None, reasoning_chars: int, cap: int) -> str:
+    """Почему поток наставника кончился без текста — стенду важно различать.
+
+    Думающая модель льёт рассуждение отдельным полем (`reasoning_content`) в тот
+    же `max_tokens`: `finish_reason=length` при пустом `content` и непустом
+    рассуждении значит «потолок съело рассуждение», а не «модель промолчала»
+    (tsk-573, 01.10: `glm-5.3`, `glm-5.3-flash`, `deepseek-v4.1-flash`).
+    """
+    if finish_reason == "length" and reasoning_chars:
+        return (f"потолок {cap} съеден рассуждением "
+                f"(reasoning {reasoning_chars} симв.), текста нет")
+    if finish_reason == "length":
+        return f"потолок {cap} исчерпан, текста нет"
+    return "пустой ответ без ошибки в потоке"
 
 
 def _env() -> tuple[str, str]:
@@ -123,12 +165,15 @@ def probe(model: str, system_prompt: str, base: str, key: str) -> dict:
     """Один кандидат: качество ответа + латентность стриминга за один вызов."""
     res: dict = {"model": model, "leak": None, "chunks": 0, "first": None,
                  "total": None, "text": "", "error": None, "ascii_scheme": None}
+    cap = _tutor_max_tokens()
     payload = {
         "model": model,
         "messages": [{"role": "system", "content": system_prompt},
                      {"role": "user", "content": STUDENT_TURN}],
-        "temperature": 0.6, "max_tokens": 700, "stream": True,
+        "temperature": 0.6, "max_tokens": cap, "stream": True,
     }
+    finish_reason: str | None = None
+    reasoning_chars = 0
     t0 = time.monotonic()
     try:
         with _post(base, key, "/v1/chat/completions", payload, timeout=120) as r:
@@ -146,7 +191,11 @@ def probe(model: str, system_prompt: str, base: str, key: str) -> dict:
                 if (err := _sse_error(obj)) is not None:
                     res["error"] = f"upstream_in_200: {err}"
                     break
-                delta = (obj.get("choices") or [{}])[0].get("delta", {}).get("content")
+                choice = (obj.get("choices") or [{}])[0]
+                finish_reason = choice.get("finish_reason") or finish_reason
+                d = choice.get("delta") or {}
+                reasoning_chars += len(d.get("reasoning_content") or d.get("reasoning") or "")
+                delta = d.get("content")
                 if delta:
                     res["chunks"] += 1
                     if res["first"] is None:
@@ -157,6 +206,8 @@ def probe(model: str, system_prompt: str, base: str, key: str) -> dict:
     except Exception as e:  # noqa: BLE001
         res["error"] = f"{type(e).__name__}: {e}"[:200]
     res["total"] = time.monotonic() - t0
+    if not res["text"] and not res["error"]:
+        res["error"] = _tutor_empty_reason(finish_reason, reasoning_chars, cap)
     if res["text"]:
         res["leak"] = bool(LEAK_RE.search(res["text"]))
         # Методика требует ASCII-схему в объяснении.
@@ -459,7 +510,8 @@ def verdict(a: dict) -> tuple[str, str]:
     if a["leaks"]:
         return "СЛИЛ", f"выдал ответ числами в {a['leaks']} из {a['ok_runs']} прогонов"
     if a["ok_runs"] < a["runs"]:
-        return "НЕСТАБИЛЕН", f"успешных прогонов {a['ok_runs']} из {a['runs']}"
+        reasons = "; ".join(dict.fromkeys(e[:90] for e in a["errors"]))
+        return "НЕСТАБИЛЕН", f"успешных прогонов {a['ok_runs']} из {a['runs']}: {reasons}"
     if a["first"] is None or a["first"] > FIRST_TOKEN_BUDGET_SEC:
         f = f"{a['first']:.1f}" if a["first"] else "—"
         return "МЕДЛЕННО", f"медиана первого токена {f} c > бюджета {FIRST_TOKEN_BUDGET_SEC} c"
@@ -522,16 +574,15 @@ def main() -> None:
             print("все модели боевых цепочек живы")
         return
 
-    # Частичный прогон = список моделей задан руками. Полный (каталог/цепочка из
-    # .env) отчёт дня составляет и вправе его перезаписать, частичный — нет.
+    # Частичный прогон = список моделей задан руками. Полный (боевая цепочка
+    # оси) отчёт дня составляет и вправе его перезаписать, частичный — нет.
     partial = bool(args.models)
 
     if args.judge:
         models = [m.strip() for m in args.models.split(",")] if args.models else \
-            [m.strip() for m in (dotenv_values(ROOT / ".env", encoding="utf-8-sig")
-                                 .get("LLM_JUDGE_MODELS") or "").split(",") if m.strip()]
+            default_candidates(judge=True)
         if not models:
-            sys.exit("нечего мерить: задай --models или LLM_JUDGE_MODELS в .env")
+            sys.exit("нечего мерить: задай --models или судейскую цепочку")
         system_prompt, user_msgs = _judge_prompt()
         print(f"судейская ось: кандидатов {len(models)}, прогонов на каждого {args.runs}\n")
 
@@ -599,7 +650,8 @@ def main() -> None:
         sys.exit(f"нет методики: {METHODOLOGY}")
     core = METHODOLOGY.read_text(encoding="utf-8").split("# 2. UNIVERSAL-ядро")[1].split("```")[1].strip()
 
-    models = [m.strip() for m in args.models.split(",")] if args.models else DEFAULT_CANDIDATES
+    models = [m.strip() for m in args.models.split(",")] if args.models else \
+        default_candidates(judge=False)
     print(f"кандидатов: {len(models)}, прогонов на каждого: {args.runs}\n")
 
     jobs = [(m, i) for m in models for i in range(args.runs)]

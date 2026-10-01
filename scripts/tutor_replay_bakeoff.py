@@ -62,7 +62,7 @@ from app.services.ai_tutor.prompt import (  # noqa: E402
     build_opening_user_message,
     build_system_prompt,
 )
-from app.services.llm import Budget, LLMError, LLMMessage, complete, stream  # noqa: E402
+from app.services.llm import TUTOR_MAX_TOKENS, Budget, LLMError, LLMMessage, complete, stream  # noqa: E402
 from app.services.llm import providers  # noqa: E402
 
 FIRST_TOKEN_LIMIT = Budget.INTERACTIVE.first_token_timeout or 12.0
@@ -269,7 +269,7 @@ async def run_unit(model: str, unit: Unit) -> Outcome:
     try:
         # Бюджет батча: предел первого куска — наша ось измерения, а не отсечка.
         async for chunk in stream(unit.messages, model=model, purpose="tutor_replay",
-                                  budget=Budget.BATCH, max_tokens=900):
+                                  budget=Budget.BATCH, max_tokens=TUTOR_MAX_TOKENS):
             if chunk.done:
                 if chunk.truncated:
                     o.error = "обрыв после первого куска"

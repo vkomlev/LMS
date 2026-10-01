@@ -51,7 +51,7 @@ from app.services.ai_tutor.prompt import (  # noqa: E402
     TutorTaskView,
     build_system_prompt,
 )
-from app.services.llm import Budget, LLMMessage, stream  # noqa: E402
+from app.services.llm import TUTOR_MAX_TOKENS, Budget, LLMMessage, stream  # noqa: E402
 from app.services.llm import providers  # noqa: E402
 
 # Задание 118 боевой базы — то, на котором наставник и слил решение.
@@ -137,7 +137,7 @@ async def _one_run(model: str) -> list[TurnResult]:
         # срезанная им, ушла бы из отчёта без вердикта по роли.
         async for chunk in stream(
             history, model=model, purpose="tutor_role_gate",
-            budget=Budget.BATCH, max_tokens=900,
+            budget=Budget.BATCH, max_tokens=TUTOR_MAX_TOKENS,
         ):
             if chunk.done:
                 break

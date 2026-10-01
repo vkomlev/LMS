@@ -31,7 +31,7 @@ from app.core.config import Settings
 from app.services import entitlements_service
 from app.services.ai_tutor import session_service
 from app.services.ai_tutor.answer_guard import TutorStreamGuard
-from app.services.llm import Budget, LLMError, stream
+from app.services.llm import TUTOR_MAX_TOKENS, Budget, LLMError, stream
 from app.utils.exceptions import DomainError
 
 logger = logging.getLogger(__name__)
@@ -275,7 +275,7 @@ async def ask(
         try:
             async for chunk in stream(
                 messages, purpose="tutor", student_id=owner,
-                budget=Budget.INTERACTIVE, max_tokens=900,
+                budget=Budget.INTERACTIVE, max_tokens=TUTOR_MAX_TOKENS,
             ):
                 if chunk.done:
                     model_used = chunk.model
