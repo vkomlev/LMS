@@ -740,3 +740,106 @@ async def test_tariff_other_fields_editable(db, client):
     assert updated["price_minor"] == 123400
     assert updated["is_default"] is True
     assert updated["sort_order"] == 7
+
+
+async def test_retro_break_recalculates_past_open_month(db, client):
+    """tsk-1194: перерыв задним числом гасит долг прошедшего открытого месяца.
+
+    Савинцева: перерыв на конец сентября завели 01.10 — занятия погасли, а
+    начисление сентября осталось, потому что автоматика прошлое не трогает
+    (tsk-756). Перерыв — решение человека о датах, его месяц пересчитывается.
+    """
+    env = await _setup(db, "retro", weekdays=(0,), price=550000)
+    student_id = env["student_id"]
+    past = charge_service.month_start(date.today() - timedelta(days=40))
+    past_mondays = _weekdays_in(past, 0)
+    # Ученик ходил весь прошлый месяц: привязка старше месяца, занятия были.
+    await db.execute(
+        text(
+            "UPDATE lesson_slot_student SET created_at = :at WHERE student_id = :s"
+        ),
+        {"at": datetime(past.year, past.month, 1, tzinfo=timezone.utc) - timedelta(days=30), "s": student_id},
+    )
+    for day in past_mondays:
+        occ_id = (
+            await db.execute(
+                text(
+                    "INSERT INTO lesson_occurrence (teacher_id, scheduled_at, duration_minutes) "
+                    "VALUES (:t, :at, 60) RETURNING id"
+                ),
+                {"t": env["teacher_id"], "at": datetime(day.year, day.month, day.day, 10, tzinfo=timezone(timedelta(hours=3)))},
+            )
+        ).scalar()
+        await db.execute(
+            text(
+                "INSERT INTO lesson_occurrence_participant (occurrence_id, student_id, status) "
+                "VALUES (:o, :s, 'scheduled')"
+            ),
+            {"o": occ_id, "s": student_id},
+        )
+    await db.commit()
+    await charge_service.recalculate_month(db, period=past, allow_past=True)
+    await charge_service.freeze_finished_months(db)
+    before = await _charge(client, env["token"], student_id, past)
+    assert before["total_minor"] == 550000
+
+    token = (await _new_user(db, role="methodist", name="me-retro"))[1]
+    resp = await client.post(
+        "/api/v1/methodist/breaks",
+        json={
+            "student_id": student_id,
+            "starts_on": past_mondays[-2].isoformat(),
+            "ends_on": (charge_service.next_month(past) - timedelta(days=1)).isoformat(),
+        },
+        headers=_auth(token),
+    )
+    assert resp.status_code == 201, resp.text
+
+    after = await _charge(client, env["token"], student_id, past)
+    assert after["break_lessons"] == 2
+    expected = 550000 * (len(past_mondays) - 2) // len(past_mondays)
+    assert after["total_minor"] == expected, "долг за погашенные занятия обязан уйти"
+    shifted = await charge_service.find_shifted_past_months(db)
+    assert all(s["student_id"] != student_id for s in shifted), (
+        "решение человека — не сдвиг: снимок итога догоняет новую сумму"
+    )
+
+
+async def test_retro_break_leaves_paid_past_month_alone(db, client):
+    """tsk-1194: прошедший месяц с оплатой перерыв молча не переписывает,
+    а кнопка «Пересчитать» называет такую строку пропущенной."""
+    env = await _setup(db, "retro-paid", weekdays=(0,), price=550000)
+    student_id = env["student_id"]
+    past = charge_service.month_start(date.today() - timedelta(days=40))
+    await charge_service.recalculate_month(db, period=past, allow_past=True)
+    before = await _charge(client, env["token"], student_id, past)
+    await db.execute(
+        text(
+            "INSERT INTO student_payment "
+            "(student_id, group_id, period, amount_minor, method, status, reviewed_at, purpose) "
+            "VALUES (:s, :g, :p, 100000, 'manual', 'confirmed', now(), 'monthly')"
+        ),
+        {"s": student_id, "g": env["group_id"], "p": past},
+    )
+    await db.commit()
+
+    token = (await _new_user(db, role="methodist", name="me-retro-paid"))[1]
+    resp = await client.post(
+        "/api/v1/methodist/breaks",
+        json={
+            "student_id": student_id,
+            "starts_on": past.isoformat(),
+            "ends_on": (charge_service.next_month(past) - timedelta(days=1)).isoformat(),
+        },
+        headers=_auth(token),
+    )
+    assert resp.status_code == 201, resp.text
+    after = await _charge(client, env["token"], student_id, past)
+    assert after["total_minor"] == before["total_minor"], "оплаченное прошлое не трогаем"
+
+    resp = await client.post(
+        f"/api/v1/marketer/charges/recalculate?period={past.isoformat()}&allow_past=true",
+        headers=_auth(env["token"]),
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["skipped_locked"] >= 1

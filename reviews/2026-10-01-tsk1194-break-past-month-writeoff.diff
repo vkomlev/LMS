@@ -1,0 +1,913 @@
+diff --git a/app/api/v1/marketer_charges.py b/app/api/v1/marketer_charges.py
+index ebb564a..d884659 100644
+--- a/app/api/v1/marketer_charges.py
++++ b/app/api/v1/marketer_charges.py
+@@ -25,6 +25,7 @@ from app.schemas.charge import (
+ from app.services import (
+     break_service,
+     charge_service,
++    charge_writeoff_service,
+     payment_block_hold_service,
+     payment_service,
+ )
+@@ -83,7 +84,9 @@ async def list_charges(
+         "уходит поправкой в следующий открытый месяц. Месяц, который уже "
+         "прошёл, пересчитывается только по явной команде (`allow_past=true`): "
+         "автоматика прошлое не трогает, потому что расписание помнит лишь своё "
+-        "сегодняшнее состояние (tsk-756)."
++        "сегодняшнее состояние (tsk-756). Прошедший месяц, закрытый или с "
++        "оплатой, не переписывается и в этом случае — он считается в "
++        "`skipped_locked` (tsk-1194)."
+     ),
+ )
+ async def recalculate(
+@@ -99,10 +102,13 @@ async def recalculate(
+     current_user: CurrentUser = Depends(_charges_gate),
+ ) -> RecalculateResult:
+     target = _resolve_period(period)
++    skipped: list[tuple[int, int]] = []
+     touched = await charge_service.recalculate_month(
+-        db, period=target, allow_past=allow_past
++        db, period=target, allow_past=allow_past, skipped=skipped
++    )
++    return RecalculateResult(
++        period=target, touched=touched, skipped_locked=len(skipped)
+     )
+-    return RecalculateResult(period=target, touched=touched)
+ 
+ 
+ @router.put(
+@@ -144,6 +150,44 @@ async def clear_manual(
+     return await _reload_charge(db, charge_id)
+ 
+ 
++@router.post(
++    "/charges/{charge_id}/write-off",
++    response_model=ChargeRead,
++    summary="Принять уход без оплаты",
++    description=(
++        "tsk-1194, политика школы: остаток месяца перестаёт быть долгом — "
++        "не входит в итоги, напоминания, рассылки и блокировку. Строка и сумма "
++        "остаются в истории; оплата, пришедшая позже, закрывает остаток штатно. "
++        "При выпуске ученика отметка ставится сама."
++    ),
++)
++async def write_off(
++    charge_id: int,
++    db: AsyncSession = Depends(get_async_db),
++    current_user: CurrentUser = Depends(_charges_gate),
++) -> ChargeRead:
++    if not await charge_writeoff_service.write_off_charge(
++        db, charge_id=charge_id, written_off_by=current_user.id
++    ):
++        raise HTTPException(status.HTTP_404_NOT_FOUND, "Начисление не найдено")
++    return await _reload_charge(db, charge_id)
++
++
++@router.delete(
++    "/charges/{charge_id}/write-off",
++    response_model=ChargeRead,
++    summary="Вернуть в долги",
++)
++async def restore_write_off(
++    charge_id: int,
++    db: AsyncSession = Depends(get_async_db),
++    current_user: CurrentUser = Depends(_charges_gate),
++) -> ChargeRead:
++    if not await charge_writeoff_service.restore_charge(db, charge_id=charge_id):
++        raise HTTPException(status.HTTP_404_NOT_FOUND, "Начисление не найдено")
++    return await _reload_charge(db, charge_id)
++
++
+ @router.post(
+     "/charges/close",
+     response_model=RecalculateResult,
+diff --git a/app/api/v1/methodist_breaks.py b/app/api/v1/methodist_breaks.py
+index faec7dd..20510a6 100644
+--- a/app/api/v1/methodist_breaks.py
++++ b/app/api/v1/methodist_breaks.py
+@@ -136,6 +136,10 @@ async def _recalc(
+ 
+     Перерыв может лежать поперёк границы месяцев — пересчёт только текущего
+     оставил бы соседний со старой суммой.
++
++    tsk-1194: прошедший месяц тоже — перерыв задним числом (заведён 01.10 на
++    конец сентября) иначе гасил занятия, но не долг. Закрытый месяц и так не
++    переписывается: разница уходит поправкой вперёд.
+     """
+     seen: set[date] = set()
+     cursor = charge_service.month_start(starts_on)
+@@ -143,7 +147,10 @@ async def _recalc(
+     while cursor <= last and cursor not in seen:
+         seen.add(cursor)
+         await charge_service.recalculate_for_student(
+-            db, student_id=student_id, period=cursor
++            db,
++            student_id=student_id,
++            period=cursor,
++            allow_past=charge_service.is_past_period(cursor),
+         )
+         cursor = charge_service.next_month(cursor)
+ 
+diff --git a/app/db/migrations/versions/2026_10_01_tsk1194_charge_written_off.py b/app/db/migrations/versions/2026_10_01_tsk1194_charge_written_off.py
+new file mode 100644
+index 0000000..c2be9bc
+--- /dev/null
++++ b/app/db/migrations/versions/2026_10_01_tsk1194_charge_written_off.py
+@@ -0,0 +1,47 @@
++"""tsk-1194: исход «принят уход без оплаты» у начисления ушедшего ученика.
++
++Политика школы (оператор 01.10): ушёл и не заплатил — не заплатит; такой долг
++искажает картину и в итоги, долги, напоминания и рассылки не входит. Строка и
++сумма остаются в истории — это отметка, а не удаление. Пришедшая позже оплата
++закрывает остаток и тем самым сама переводит строку в оплаченные.
++
++Без заполнения: уже ушедших переводит отдельный проход сервиса
++(`charge_writeoff_service.write_off_alumni_debts`) с контрольным слепком.
++
++Rollback: `alembic downgrade tsk1192_task_external_uid` — колонки снимаются, отметки
++теряются, долги ушедших снова видны в итогах и рассылках.
++
++Revision ID: tsk1194_charge_written_off
++Revises: tsk1192_task_external_uid
++Create Date: 2026-10-01
++"""
++from typing import Sequence, Union
++
++import sqlalchemy as sa
++from alembic import op
++
++revision: str = "tsk1194_charge_written_off"
++down_revision: Union[str, None] = "tsk1192_task_external_uid"
++branch_labels: Union[str, Sequence[str], None] = None
++depends_on: Union[str, Sequence[str], None] = None
++
++
++def upgrade() -> None:
++    op.add_column(
++        "student_monthly_charge",
++        sa.Column("written_off_at", sa.DateTime(timezone=True), nullable=True),
++    )
++    op.add_column(
++        "student_monthly_charge",
++        sa.Column(
++            "written_off_by",
++            sa.Integer(),
++            sa.ForeignKey("users.id", ondelete="SET NULL"),
++            nullable=True,
++        ),
++    )
++
++
++def downgrade() -> None:
++    op.drop_column("student_monthly_charge", "written_off_by")
++    op.drop_column("student_monthly_charge", "written_off_at")
+diff --git a/app/models/charge.py b/app/models/charge.py
+index bc10d3b..8eb384f 100644
+--- a/app/models/charge.py
++++ b/app/models/charge.py
+@@ -112,6 +112,14 @@ class StudentMonthlyCharge(Base):
+     closed_by: Mapped[int | None] = mapped_column(
+         ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+     )
++    #: tsk-1194: принят уход без оплаты — остаток не долг, а история. Оплата,
++    #: пришедшая позже, закрывает остаток и снимает исход сама собой.
++    written_off_at: Mapped[DateTime | None] = mapped_column(
++        DateTime(timezone=True), nullable=True
++    )
++    written_off_by: Mapped[int | None] = mapped_column(
++        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
++    )
+     created_at: Mapped[DateTime] = mapped_column(
+         DateTime(timezone=True), server_default=func.now()
+     )
+diff --git a/app/schemas/charge.py b/app/schemas/charge.py
+index 764babd..5485bfe 100644
+--- a/app/schemas/charge.py
++++ b/app/schemas/charge.py
+@@ -87,6 +87,10 @@ class ChargeRead(BaseModel):
+     #: маркетолог поставил деньги сам, не через чек/шлюз — на такое стоит
+     #: смотреть внимательнее (сумма, ученик не перепутаны).
+     has_manual_payment: bool = False
++    #: tsk-1194: остаток, принятый как уход без оплаты. Не долг: в итоги,
++    #: напоминания и рассылки не входит. 0 — исхода нет либо остаток оплачен.
++    written_off_minor: int = 0
++    written_off_at: Optional[datetime] = None
+ 
+ 
+ class ManualAmountRequest(BaseModel):
+@@ -139,6 +143,9 @@ class ClosePeriodRequest(BaseModel):
+ class RecalculateResult(BaseModel):
+     period: date
+     touched: int
++    #: tsk-1194: строки прошедшего месяца, которые не пересчитаны, потому что
++    #: месяц закрыт или по нему уже платили. Решает человек, а не пересчёт.
++    skipped_locked: int = 0
+ 
+ 
+ class BlockHoldRead(BaseModel):
+diff --git a/app/services/charge_service.py b/app/services/charge_service.py
+index f566cf2..765eb22 100644
+--- a/app/services/charge_service.py
++++ b/app/services/charge_service.py
+@@ -544,6 +544,34 @@ def is_past_period(period: date, *, today: Optional[date] = None) -> bool:
+     return period < month_start(today or date.today())
+ 
+ 
++async def past_month_locked(
++    db: AsyncSession, *, student_id: int, group_id: int, period: date
++) -> bool:
++    """Прошедший месяц нельзя переписывать даже по явной команде (tsk-1194).
++
++    Решение оператора 01.10: перерыв и кнопка «Пересчитать» пересчитывают
++    прошедший НЕОПЛАЧЕННЫЙ месяц, а закрытый или с деньгами (подтверждёнными
++    либо чеком на проверке) не трогают молча — сумму, за которую уже платили,
++    тихо менять нельзя. Такая строка пропускается и называется в ответе.
++    """
++    row = (
++        await db.execute(
++            text(
++                "SELECT ch.status = 'closed' "
++                "       OR EXISTS (SELECT 1 FROM student_payment p "
++                "                   WHERE p.student_id = ch.student_id "
++                "                     AND p.group_id = ch.group_id "
++                "                     AND p.period = ch.period "
++                "                     AND p.status IN ('confirmed', 'pending')) AS locked "
++                "  FROM student_monthly_charge ch "
++                " WHERE ch.student_id = :s AND ch.group_id = :g AND ch.period = :p"
++            ),
++            {"s": student_id, "g": group_id, "p": month_start(period)},
++        )
++    ).first()
++    return bool(row and row.locked)
++
++
+ async def recalculate_student_group(
+     db: AsyncSession,
+     *,
+@@ -595,6 +623,17 @@ async def recalculate_student_group(
+             group_id,
+         )
+         return None
++    if is_past_period(period, today=today) and await past_month_locked(
++        db, student_id=student_id, group_id=group_id, period=period
++    ):
++        logger.warning(
++            "tsk-1194: прошедший месяц %s ученика %s/%s не пересчитан — он закрыт "
++            "или по нему уже платили",
++            period,
++            student_id,
++            group_id,
++        )
++        return None
+     base = await _base_price_minor(
+         db, student_id=student_id, group_id=group_id, period=period
+     )
+@@ -994,11 +1033,22 @@ async def recalculate_open_months_for_group(
+ 
+ 
+ async def recalculate_for_student(
+-    db: AsyncSession, *, student_id: int, period: Optional[date] = None
++    db: AsyncSession,
++    *,
++    student_id: int,
++    period: Optional[date] = None,
++    allow_past: bool = False,
+ ) -> None:
+     """Пересчитать все группы одного ученика за месяц (по умолчанию текущий).
+ 
+     Точка входа для автопересчёта: её зовут смена расписания и правка перерыва.
++
++    `allow_past` (tsk-1194) — пересчитать ПРОШЕДШИЙ открытый месяц. Ставит его
++    только правка перерыва: перерыв — явное решение человека о датах именно
++    этого месяца, как «Пересчитать месяц» на экране, а не сдвиг сетки. Без
++    флага перерыв, заведённый 01.10 на конец сентября, сентябрь не трогал, и
++    долг за погашенные занятия оставался. Снимок итога догоняет новую сумму —
++    иначе страж tsk-756 принял бы решение человека за сдвиг.
+     """
+     period = month_start(period or date.today())
+     # tsk-301: группа берётся из подписки, если она есть, иначе из проданных
+@@ -1033,7 +1083,11 @@ async def recalculate_for_student(
+         try:
+             async with db.begin_nested():
+                 await recalculate_student_group(
+-                    db, student_id=student_id, group_id=group_id, period=period
++                    db,
++                    student_id=student_id,
++                    group_id=group_id,
++                    period=period,
++                    allow_past=allow_past,
+                 )
+         except IntegrityError:
+             logger.warning(
+@@ -1044,10 +1098,26 @@ async def recalculate_for_student(
+                 exc_info=True,
+             )
+     await db.commit()
++    if allow_past and is_past_period(period):
++        charge_ids = (
++            await db.execute(
++                text(
++                    "SELECT id FROM student_monthly_charge "
++                    " WHERE student_id = :s AND period = :p AND status = 'open'"
++                ),
++                {"s": student_id, "p": period},
++            )
++        ).scalars().all()
++        for charge_id in charge_ids:
++            await refresh_frozen_total(db, charge_id=int(charge_id))
+ 
+ 
+ async def recalculate_month(
+-    db: AsyncSession, *, period: date, allow_past: bool = False
++    db: AsyncSession,
++    *,
++    period: date,
++    allow_past: bool = False,
++    skipped: Optional[list[tuple[int, int]]] = None,
+ ) -> int:
+     """Пересчитать месяц по всем ученикам. Возвращает число затронутых строк.
+ 
+@@ -1089,7 +1159,16 @@ async def recalculate_month(
+             targets.append(pair)
+ 
+     touched = 0
++    past = allow_past and is_past_period(period)
+     for student_id, group_id in targets:
++        # tsk-1194: оплаченное и закрытое прошлое не переписывается молча —
++        # пропуск называется вызывающему, чтобы экран мог сказать о нём.
++        if past and await past_month_locked(
++            db, student_id=student_id, group_id=group_id, period=period
++        ):
++            if skipped is not None:
++                skipped.append((student_id, group_id))
++            continue
+         # Каждая пара — в своей вложенной транзакции: платёж, пришедший ровно
+         # между проверкой «нет оплат» и удалением строки месяца (tsk-010),
+         # уронил бы иначе пересчёт ВСЕГО месяца, а не одну строку.
+@@ -1146,6 +1225,7 @@ async def list_charges(db: AsyncSession, *, period: date) -> list[dict]:
+                        ch.after_leave_lessons,
+                        ch.status,
+                        ch.closed_at,
++                       ch.written_off_at,
+                        COALESCE(adj.total, 0) AS adjustments_minor,
+                        adj.details            AS adjustment_details,
+                        (ovr.price_minor IS NOT NULL) AS has_price_override,
+@@ -1205,6 +1285,7 @@ async def list_charges(db: AsyncSession, *, period: date) -> list[dict]:
+                 "after_leave_lessons": r.after_leave_lessons,
+                 "status": r.status,
+                 "closed_at": r.closed_at,
++                "written_off_at": r.written_off_at,
+                 "has_price_override": bool(r.has_price_override),
+                 "override_minor": r.override_minor,
+             }
+diff --git a/app/services/charge_writeoff_service.py b/app/services/charge_writeoff_service.py
+new file mode 100644
+index 0000000..ff021f8
+--- /dev/null
++++ b/app/services/charge_writeoff_service.py
+@@ -0,0 +1,128 @@
++"""tsk-1194 — исход «принят уход без оплаты» у долга ушедшего ученика.
++
++Политика школы (оператор 01.10.2026): ушёл и не заплатил — значит, не заплатит;
++такой долг только искажает картину. Он не входит в итоги начислений, долги,
++напоминания, рассылки и блокировку, а на экране лежит отдельным свёрнутым
++блоком. Строка и сумма остаются в истории — это отметка, а не удаление.
++
++Отметка ставится сама при выпуске (`graduation_service.apply`), а для уже
++ушедших — разовым проходом :func:`write_off_alumni_debts`. Снять её можно
++кнопкой «Вернуть в долги». Оплата, пришедшая позже, гасит остаток, и строка
++становится оплаченной без всякого снятия — исход описывает только неоплаченный
++остаток (см. `payment_service.attach_payment_state`).
++"""
++
++from __future__ import annotations
++
++import logging
++from datetime import date
++from typing import Iterable, Optional
++
++from sqlalchemy import text
++from sqlalchemy.ext.asyncio import AsyncSession
++
++from app.services import payment_reminder_service
++
++logger = logging.getLogger(__name__)
++
++__all__ = [
++    "write_off_lines",
++    "write_off_charge",
++    "restore_charge",
++    "write_off_alumni_debts",
++]
++
++
++async def write_off_lines(
++    db: AsyncSession,
++    *,
++    student_id: int,
++    lines: Iterable[tuple[int, date]],
++    written_off_by: Optional[int],
++) -> int:
++    """Отметить месяцы ученика (группа, период) как принятый уход без оплаты.
++
++    Уже отмеченные не трогаются: первая отметка — момент решения, и её время
++    не должно переезжать от повторного прохода. Не коммитит — вызывающий
++    решает, частью какого целого это действие.
++    """
++    marked = 0
++    for group_id, period in lines:
++        res = await db.execute(
++            text(
++                "UPDATE student_monthly_charge "
++                "   SET written_off_at = now(), written_off_by = :by, updated_at = now() "
++                " WHERE student_id = :s AND group_id = :g AND period = :p "
++                "   AND written_off_at IS NULL"
++            ),
++            {"s": student_id, "g": group_id, "p": period, "by": written_off_by},
++        )
++        marked += res.rowcount
++    if marked:
++        logger.info(
++            "tsk-1194: ученику %s принят уход без оплаты по %s мес.", student_id, marked
++        )
++    return marked
++
++
++async def write_off_charge(
++    db: AsyncSession, *, charge_id: int, written_off_by: Optional[int]
++) -> bool:
++    """Отметить одну строку кнопкой. False — строки нет."""
++    res = await db.execute(
++        text(
++            "UPDATE student_monthly_charge "
++            "   SET written_off_at = COALESCE(written_off_at, now()), "
++            "       written_off_by = COALESCE(written_off_by, :by), updated_at = now() "
++            " WHERE id = :id"
++        ),
++        {"id": charge_id, "by": written_off_by},
++    )
++    await db.commit()
++    return res.rowcount > 0
++
++
++async def restore_charge(db: AsyncSession, *, charge_id: int) -> bool:
++    """«Вернуть в долги»: снять исход, остаток снова считается долгом."""
++    res = await db.execute(
++        text(
++            "UPDATE student_monthly_charge "
++            "   SET written_off_at = NULL, written_off_by = NULL, updated_at = now() "
++            " WHERE id = :id"
++        ),
++        {"id": charge_id},
++    )
++    await db.commit()
++    return res.rowcount > 0
++
++
++async def write_off_alumni_debts(
++    db: AsyncSession, *, written_off_by: Optional[int] = None, apply: bool = False
++) -> list[dict]:
++    """Разовый проход по уже ушедшим: их долги — принятый уход без оплаты.
++
++    Список берётся тем же правилом, что и блок «долг ушедших» (tsk-925), —
++    своя копия признака «ушёл» разъехалась бы с ним. Без `apply` только
++    показывает, кого затронет.
++    """
++    debts = await payment_reminder_service.list_alumni_debts(db)
++    plan = [
++        {
++            "student_id": d.student_id,
++            "full_name": d.full_name,
++            "group_id": d.group_id,
++            "period": d.period,
++            "due_minor": d.due_minor,
++        }
++        for d in debts
++    ]
++    if apply:
++        for row in plan:
++            await write_off_lines(
++                db,
++                student_id=row["student_id"],
++                lines=[(row["group_id"], row["period"])],
++                written_off_by=written_off_by,
++            )
++        await db.commit()
++    return plan
+diff --git a/app/services/graduation_service.py b/app/services/graduation_service.py
+index b55e902..ca90688 100644
+--- a/app/services/graduation_service.py
++++ b/app/services/graduation_service.py
+@@ -43,7 +43,7 @@ from sqlalchemy import text
+ from sqlalchemy.exc import SQLAlchemyError
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+-from app.services import charge_service, inbox_service, payment_service
++from app.services import charge_service, charge_writeoff_service, inbox_service, payment_service
+ from app.utils.exceptions import DomainError
+ 
+ logger = logging.getLogger(__name__)
+@@ -223,6 +223,8 @@ async def settlement(
+                   ) pay ON TRUE
+                  WHERE ch.student_id = :s
+                    AND ch.status = 'open'
++                   -- tsk-1194: уже принятый уход без оплаты долгом не считается.
++                   AND ch.written_off_at IS NULL
+                  ORDER BY ch.period, ch.group_id
+                 """
+             ),
+@@ -633,6 +635,17 @@ async def apply(
+ 
+     slots, lessons = await _detach_from_schedule(db, student_id)
+ 
++    # tsk-1194: политика школы — ушёл без оплаты, значит не заплатит. Остаток
++    # уходит из долгов в историю; оплата, пришедшая позже, закроет его штатно.
++    # Эскалация ниже остаётся: маркетолог узнаёт, сколько школа не получила.
++    if debt.has_debt:
++        await charge_writeoff_service.write_off_lines(
++            db,
++            student_id=student_id,
++            lines=[(ln.group_id, ln.period) for ln in debt.lines if ln.due_minor > 0],
++            written_off_by=changed_by,
++        )
++
+     escalated: list[int] = []
+     if debt.has_debt:
+         full_name = await db.scalar(
+diff --git a/app/services/marketer_dashboard_service.py b/app/services/marketer_dashboard_service.py
+index 1fdc4bb..177b8d0 100644
+--- a/app/services/marketer_dashboard_service.py
++++ b/app/services/marketer_dashboard_service.py
+@@ -35,7 +35,7 @@ from app.schemas.marketer_dashboard import (
+     MarketerDashboardKpi,
+     MonthlyPoint,
+ )
+-from app.services import charge_service, payment_reminder_service
++from app.services import charge_service, payment_reminder_service, payment_service
+ 
+ __all__ = [
+     "get_dashboard",
+@@ -287,7 +287,10 @@ async def _charges_total_for_month(db: AsyncSession, period: date) -> int:
+     `charge_total_minor()`, единственное место формулы (tsk-010).
+     """
+     rows = await charge_service.list_charges(db, period=period)
+-    return sum(r["total_minor"] for r in rows)
++    # tsk-1194: принятый уход без оплаты в итоги не входит — вычитается его
++    # неоплаченный остаток, то же правило, что на экране начислений.
++    rows = await payment_service.attach_payment_state(db, rows, period=period)
++    return sum(r["total_minor"] - r["written_off_minor"] for r in rows)
+ 
+ 
+ async def _unprocessed_leads_count(db: AsyncSession, threshold_days: int) -> int:
+diff --git a/app/services/payment_access_service.py b/app/services/payment_access_service.py
+index 6caf892..ecd7c39 100644
+--- a/app/services/payment_access_service.py
++++ b/app/services/payment_access_service.py
+@@ -155,6 +155,8 @@ async def blocking_debt(
+                   ) pay ON TRUE
+                  WHERE ch.student_id = :s
+                    AND ch.status = 'open'
++                   -- tsk-1194: принятый уход без оплаты занятия не закрывает.
++                   AND ch.written_off_at IS NULL
+                 """
+             ),
+             {"s": student_id},
+diff --git a/app/services/payment_reminder_service.py b/app/services/payment_reminder_service.py
+index ff91cc4..de469f1 100644
+--- a/app/services/payment_reminder_service.py
++++ b/app/services/payment_reminder_service.py
+@@ -255,6 +255,8 @@ async def _fetch_debtors(
+                  -- замораживает сумму, а не прощает долг.
+                  WHERE u.is_active
+                    AND u.blocked_at IS NULL
++                   -- tsk-1194: принят уход без оплаты — это не долг, а история.
++                   AND ch.written_off_at IS NULL
+                    -- Тарифа нет — значит «ещё не размечен», а не «выпускник»:
+                    -- трактовать пустоту как уход значило бы выкинуть из
+                    -- рассылки всех, кому тариф просто не успели поставить.
+diff --git a/app/services/payment_service.py b/app/services/payment_service.py
+index b2b4a75..a7d2e5b 100644
+--- a/app/services/payment_service.py
++++ b/app/services/payment_service.py
+@@ -257,6 +257,8 @@ async def due_soon_notice(
+                   ) pay ON TRUE
+                  WHERE ch.student_id = :s
+                    AND ch.status = 'open'
++                   -- tsk-1194: принятый уход без оплаты плашкой не напоминает.
++                   AND ch.written_off_at IS NULL
+                 """
+             ),
+             {"s": student_id},
+@@ -362,10 +364,19 @@ async def attach_payment_state(
+         )
+         row["paid_minor"] = state.paid_minor
+         row["pending_minor"] = state.pending_minor
+-        row["due_minor"] = state.due_minor
+         row["overpaid_minor"] = state.overpaid_minor
+-        row["is_overdue"] = state.is_overdue
+         row["has_manual_payment"] = has_manual
++        # tsk-1194: принят уход без оплаты — остаток уходит из долга в отдельное
++        # число. Оплата, пришедшая позже, гасит остаток, и строка сама
++        # становится оплаченной: отметку снимать не нужно.
++        if row.get("written_off_at") is not None and state.due_minor > 0:
++            row["written_off_minor"] = state.due_minor
++            row["due_minor"] = 0
++            row["is_overdue"] = False
++        else:
++            row["written_off_minor"] = 0
++            row["due_minor"] = state.due_minor
++            row["is_overdue"] = state.is_overdue
+     return charges
+ 
+ 
+diff --git a/tests/test_tsk1194_alumni_writeoff.py b/tests/test_tsk1194_alumni_writeoff.py
+new file mode 100644
+index 0000000..665b450
+--- /dev/null
++++ b/tests/test_tsk1194_alumni_writeoff.py
+@@ -0,0 +1,151 @@
++"""tsk-1194 — исход «принят уход без оплаты» у долга ушедшего ученика.
++
++Политика школы: ушёл и не заплатил — долг уходит из итогов, долгов, напоминаний
++и блокировки, но строка и сумма остаются в истории. Пришедшая позже оплата
++переводит строку в оплаченные без снятия отметки.
++"""
++
++from __future__ import annotations
++
++from datetime import timedelta
++
++import pytest
++from sqlalchemy import text
++
++from app.services import (
++    charge_service,
++    charge_writeoff_service,
++    payment_access_service,
++    payment_reminder_service,
++    payment_service,
++)
++from tests.test_tsk010_payments import _recalc
++from tests.test_tsk505_marketer_pricing import _auth
++from tests.test_tsk511_charges_breaks import PERIOD, _setup
++from tests.test_tsk805_alumni_debts import _close_month, _make_alumni
++
++pytestmark = pytest.mark.asyncio
++
++OVERDUE_DAY = payment_service.due_date_for(PERIOD) + timedelta(days=30)
++
++
++async def _alumni_with_debt(db, tag: str) -> dict:
++    env = await _setup(db, tag, price=550000)
++    await _recalc(db, student_id=env["student_id"])
++    await _close_month(db, env["student_id"])
++    await _make_alumni(db, env["student_id"])
++    env["charge_id"] = (
++        await db.execute(
++            text("SELECT id FROM student_monthly_charge WHERE student_id = :s AND period = :p"),
++            {"s": env["student_id"], "p": PERIOD},
++        )
++    ).scalar_one()
++    return env
++
++
++async def _row(client, env) -> dict:
++    resp = await client.get(
++        f"/api/v1/marketer/charges?period={PERIOD.isoformat()}", headers=_auth(env["token"])
++    )
++    assert resp.status_code == 200, resp.text
++    return next(c for c in resp.json() if c["student_id"] == env["student_id"])
++
++
++async def test_backfill_moves_alumni_debt_out_of_debts(db, client):
++    """Разовый проход: долг ушедшего уходит из списка, строка остаётся с суммой."""
++    env = await _alumni_with_debt(db, "t1194-fill")
++
++    plan = await charge_writeoff_service.write_off_alumni_debts(db)
++    assert any(p["student_id"] == env["student_id"] for p in plan)
++    still = await payment_reminder_service.list_alumni_debts(db, today=OVERDUE_DAY)
++    assert any(d.student_id == env["student_id"] for d in still), "без apply — только план"
++
++    await charge_writeoff_service.write_off_alumni_debts(db, apply=True)
++    debts = await payment_reminder_service.list_alumni_debts(db, today=OVERDUE_DAY)
++    assert not any(d.student_id == env["student_id"] for d in debts)
++
++    row = await _row(client, env)
++    assert row["total_minor"] == 550000, "сумма остаётся в истории"
++    assert row["written_off_minor"] == 550000
++    assert row["due_minor"] == 0
++    assert row["is_overdue"] is False
++
++
++async def test_written_off_does_not_block_or_nag(db):
++    """Ни блокировки, ни плашки «скоро срок» по принятому уходу."""
++    env = await _setup(db, "t1194-block", price=550000)
++    await _recalc(db, student_id=env["student_id"])
++    await charge_writeoff_service.write_off_lines(
++        db, student_id=env["student_id"], lines=[(env["group_id"], PERIOD)], written_off_by=None
++    )
++    await db.commit()
++    assert await payment_access_service.blocking_debt(
++        db, env["student_id"], today=OVERDUE_DAY
++    ) is None
++    assert await payment_service.due_soon_notice(
++        db, env["student_id"], today=OVERDUE_DAY
++    ) is None
++    overdue = await payment_reminder_service.list_overdue(db, today=OVERDUE_DAY)
++    assert not any(d.student_id == env["student_id"] for d in overdue)
++
++
++async def test_late_payment_turns_row_into_paid(db, client):
++    """Заплатили позже — строка оплачена, отметку снимать не нужно."""
++    env = await _alumni_with_debt(db, "t1194-late")
++    resp = await client.post(
++        f"/api/v1/marketer/charges/{env['charge_id']}/write-off", headers=_auth(env["token"])
++    )
++    assert resp.status_code == 200, resp.text
++    assert resp.json()["written_off_minor"] == 550000
++
++    await db.execute(
++        text(
++            "INSERT INTO student_payment "
++            "(student_id, group_id, period, amount_minor, method, status, reviewed_at, purpose) "
++            "VALUES (:s, :g, :p, 550000, 'manual', 'confirmed', now(), 'monthly')"
++        ),
++        {"s": env["student_id"], "g": env["group_id"], "p": PERIOD},
++    )
++    await db.commit()
++    row = await _row(client, env)
++    assert row["written_off_minor"] == 0
++    assert row["paid_minor"] == 550000
++    assert row["due_minor"] == 0
++
++
++async def test_restore_returns_row_to_debts(db, client):
++    """«Вернуть в долги» снимает исход: долг снова в списке ушедших."""
++    env = await _alumni_with_debt(db, "t1194-back")
++    await client.post(
++        f"/api/v1/marketer/charges/{env['charge_id']}/write-off", headers=_auth(env["token"])
++    )
++    resp = await client.delete(
++        f"/api/v1/marketer/charges/{env['charge_id']}/write-off", headers=_auth(env["token"])
++    )
++    assert resp.status_code == 200, resp.text
++    assert resp.json()["written_off_minor"] == 0
++    assert resp.json()["due_minor"] == 550000
++    debts = await payment_reminder_service.list_alumni_debts(db, today=OVERDUE_DAY)
++    assert any(d.student_id == env["student_id"] for d in debts)
++
++
++async def test_write_off_unknown_charge_is_404(db, client):
++    env = await _setup(db, "t1194-404", price=550000)
++    resp = await client.post(
++        "/api/v1/marketer/charges/999999999/write-off", headers=_auth(env["token"])
++    )
++    assert resp.status_code == 404
++
++
++async def test_dashboard_charges_exclude_written_off(db):
++    """Плитка начислений не считает принятый уход без оплаты."""
++    from app.services import marketer_dashboard_service
++
++    env = await _alumni_with_debt(db, "t1194-tile")
++    before = await marketer_dashboard_service._charges_total_for_month(db, PERIOD)
++    await charge_writeoff_service.write_off_charge(
++        db, charge_id=env["charge_id"], written_off_by=None
++    )
++    after = await marketer_dashboard_service._charges_total_for_month(db, PERIOD)
++    assert before - after == 550000
++    assert charge_service.month_start(PERIOD) == PERIOD
+diff --git a/tests/test_tsk511_charges_breaks.py b/tests/test_tsk511_charges_breaks.py
+index 76a89a7..caeb3d4 100644
+--- a/tests/test_tsk511_charges_breaks.py
++++ b/tests/test_tsk511_charges_breaks.py
+@@ -740,3 +740,106 @@ async def test_tariff_other_fields_editable(db, client):
+     assert updated["price_minor"] == 123400
+     assert updated["is_default"] is True
+     assert updated["sort_order"] == 7
++
++
++async def test_retro_break_recalculates_past_open_month(db, client):
++    """tsk-1194: перерыв задним числом гасит долг прошедшего открытого месяца.
++
++    Савинцева: перерыв на конец сентября завели 01.10 — занятия погасли, а
++    начисление сентября осталось, потому что автоматика прошлое не трогает
++    (tsk-756). Перерыв — решение человека о датах, его месяц пересчитывается.
++    """
++    env = await _setup(db, "retro", weekdays=(0,), price=550000)
++    student_id = env["student_id"]
++    past = charge_service.month_start(date.today() - timedelta(days=40))
++    past_mondays = _weekdays_in(past, 0)
++    # Ученик ходил весь прошлый месяц: привязка старше месяца, занятия были.
++    await db.execute(
++        text(
++            "UPDATE lesson_slot_student SET created_at = :at WHERE student_id = :s"
++        ),
++        {"at": datetime(past.year, past.month, 1, tzinfo=timezone.utc) - timedelta(days=30), "s": student_id},
++    )
++    for day in past_mondays:
++        occ_id = (
++            await db.execute(
++                text(
++                    "INSERT INTO lesson_occurrence (teacher_id, scheduled_at, duration_minutes) "
++                    "VALUES (:t, :at, 60) RETURNING id"
++                ),
++                {"t": env["teacher_id"], "at": datetime(day.year, day.month, day.day, 10, tzinfo=timezone(timedelta(hours=3)))},
++            )
++        ).scalar()
++        await db.execute(
++            text(
++                "INSERT INTO lesson_occurrence_participant (occurrence_id, student_id, status) "
++                "VALUES (:o, :s, 'scheduled')"
++            ),
++            {"o": occ_id, "s": student_id},
++        )
++    await db.commit()
++    await charge_service.recalculate_month(db, period=past, allow_past=True)
++    await charge_service.freeze_finished_months(db)
++    before = await _charge(client, env["token"], student_id, past)
++    assert before["total_minor"] == 550000
++
++    token = (await _new_user(db, role="methodist", name="me-retro"))[1]
++    resp = await client.post(
++        "/api/v1/methodist/breaks",
++        json={
++            "student_id": student_id,
++            "starts_on": past_mondays[-2].isoformat(),
++            "ends_on": (charge_service.next_month(past) - timedelta(days=1)).isoformat(),
++        },
++        headers=_auth(token),
++    )
++    assert resp.status_code == 201, resp.text
++
++    after = await _charge(client, env["token"], student_id, past)
++    assert after["break_lessons"] == 2
++    expected = 550000 * (len(past_mondays) - 2) // len(past_mondays)
++    assert after["total_minor"] == expected, "долг за погашенные занятия обязан уйти"
++    shifted = await charge_service.find_shifted_past_months(db)
++    assert all(s["student_id"] != student_id for s in shifted), (
++        "решение человека — не сдвиг: снимок итога догоняет новую сумму"
++    )
++
++
++async def test_retro_break_leaves_paid_past_month_alone(db, client):
++    """tsk-1194: прошедший месяц с оплатой перерыв молча не переписывает,
++    а кнопка «Пересчитать» называет такую строку пропущенной."""
++    env = await _setup(db, "retro-paid", weekdays=(0,), price=550000)
++    student_id = env["student_id"]
++    past = charge_service.month_start(date.today() - timedelta(days=40))
++    await charge_service.recalculate_month(db, period=past, allow_past=True)
++    before = await _charge(client, env["token"], student_id, past)
++    await db.execute(
++        text(
++            "INSERT INTO student_payment "
++            "(student_id, group_id, period, amount_minor, method, status, reviewed_at, purpose) "
++            "VALUES (:s, :g, :p, 100000, 'manual', 'confirmed', now(), 'monthly')"
++        ),
++        {"s": student_id, "g": env["group_id"], "p": past},
++    )
++    await db.commit()
++
++    token = (await _new_user(db, role="methodist", name="me-retro-paid"))[1]
++    resp = await client.post(
++        "/api/v1/methodist/breaks",
++        json={
++            "student_id": student_id,
++            "starts_on": past.isoformat(),
++            "ends_on": (charge_service.next_month(past) - timedelta(days=1)).isoformat(),
++        },
++        headers=_auth(token),
++    )
++    assert resp.status_code == 201, resp.text
++    after = await _charge(client, env["token"], student_id, past)
++    assert after["total_minor"] == before["total_minor"], "оплаченное прошлое не трогаем"
++
++    resp = await client.post(
++        f"/api/v1/marketer/charges/recalculate?period={past.isoformat()}&allow_past=true",
++        headers=_auth(env["token"]),
++    )
++    assert resp.status_code == 200, resp.text
++    assert resp.json()["skipped_locked"] >= 1
+diff --git a/tests/test_tsk673_graduation.py b/tests/test_tsk673_graduation.py
+index 5837197..fda0d49 100644
+--- a/tests/test_tsk673_graduation.py
++++ b/tests/test_tsk673_graduation.py
+@@ -372,6 +372,17 @@ async def test_debt_survives_recalculation(db) -> None:
+     assert after["calculated_minor"] == before["calculated_minor"], (
+         "заморозка переставляет статус и НЕ трогает сумму"
+     )
++    # tsk-1194: политика школы — неоплаченный уход принят сам при выпуске.
++    written_off = (
++        await db.execute(
++            text(
++                "SELECT written_off_at FROM student_monthly_charge "
++                " WHERE student_id = :s AND period = :p"
++            ),
++            {"s": env["student_id"], "p": PERIOD},
++        )
++    ).scalar_one()
++    assert written_off is not None, "выпуск с долгом ставит исход «уход без оплаты»"
+ 
+ 
+ async def test_graduation_without_debt_leaves_money_alone(db) -> None:

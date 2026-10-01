@@ -112,6 +112,14 @@ class StudentMonthlyCharge(Base):
     closed_by: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
+    #: tsk-1194: принят уход без оплаты — остаток не долг, а история. Оплата,
+    #: пришедшая позже, закрывает остаток и снимает исход сама собой.
+    written_off_at: Mapped[DateTime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    written_off_by: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
     created_at: Mapped[DateTime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

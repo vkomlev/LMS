@@ -544,6 +544,34 @@ def is_past_period(period: date, *, today: Optional[date] = None) -> bool:
     return period < month_start(today or date.today())
 
 
+async def past_month_locked(
+    db: AsyncSession, *, student_id: int, group_id: int, period: date
+) -> bool:
+    """Прошедший месяц нельзя переписывать даже по явной команде (tsk-1194).
+
+    Решение оператора 01.10: перерыв и кнопка «Пересчитать» пересчитывают
+    прошедший НЕОПЛАЧЕННЫЙ месяц, а закрытый или с деньгами (подтверждёнными
+    либо чеком на проверке) не трогают молча — сумму, за которую уже платили,
+    тихо менять нельзя. Такая строка пропускается и называется в ответе.
+    """
+    row = (
+        await db.execute(
+            text(
+                "SELECT ch.status = 'closed' "
+                "       OR EXISTS (SELECT 1 FROM student_payment p "
+                "                   WHERE p.student_id = ch.student_id "
+                "                     AND p.group_id = ch.group_id "
+                "                     AND p.period = ch.period "
+                "                     AND p.status IN ('confirmed', 'pending')) AS locked "
+                "  FROM student_monthly_charge ch "
+                " WHERE ch.student_id = :s AND ch.group_id = :g AND ch.period = :p"
+            ),
+            {"s": student_id, "g": group_id, "p": month_start(period)},
+        )
+    ).first()
+    return bool(row and row.locked)
+
+
 async def recalculate_student_group(
     db: AsyncSession,
     *,
@@ -590,6 +618,17 @@ async def recalculate_student_group(
     if not allow_past and is_past_period(period, today=today):
         logger.info(
             "tsk-756: месяц %s ученика %s/%s не пересчитан — он уже прошёл",
+            period,
+            student_id,
+            group_id,
+        )
+        return None
+    if is_past_period(period, today=today) and await past_month_locked(
+        db, student_id=student_id, group_id=group_id, period=period
+    ):
+        logger.warning(
+            "tsk-1194: прошедший месяц %s ученика %s/%s не пересчитан — он закрыт "
+            "или по нему уже платили",
             period,
             student_id,
             group_id,
@@ -994,11 +1033,22 @@ async def recalculate_open_months_for_group(
 
 
 async def recalculate_for_student(
-    db: AsyncSession, *, student_id: int, period: Optional[date] = None
+    db: AsyncSession,
+    *,
+    student_id: int,
+    period: Optional[date] = None,
+    allow_past: bool = False,
 ) -> None:
     """Пересчитать все группы одного ученика за месяц (по умолчанию текущий).
 
     Точка входа для автопересчёта: её зовут смена расписания и правка перерыва.
+
+    `allow_past` (tsk-1194) — пересчитать ПРОШЕДШИЙ открытый месяц. Ставит его
+    только правка перерыва: перерыв — явное решение человека о датах именно
+    этого месяца, как «Пересчитать месяц» на экране, а не сдвиг сетки. Без
+    флага перерыв, заведённый 01.10 на конец сентября, сентябрь не трогал, и
+    долг за погашенные занятия оставался. Снимок итога догоняет новую сумму —
+    иначе страж tsk-756 принял бы решение человека за сдвиг.
     """
     period = month_start(period or date.today())
     # tsk-301: группа берётся из подписки, если она есть, иначе из проданных
@@ -1033,7 +1083,11 @@ async def recalculate_for_student(
         try:
             async with db.begin_nested():
                 await recalculate_student_group(
-                    db, student_id=student_id, group_id=group_id, period=period
+                    db,
+                    student_id=student_id,
+                    group_id=group_id,
+                    period=period,
+                    allow_past=allow_past,
                 )
         except IntegrityError:
             logger.warning(
@@ -1044,10 +1098,26 @@ async def recalculate_for_student(
                 exc_info=True,
             )
     await db.commit()
+    if allow_past and is_past_period(period):
+        charge_ids = (
+            await db.execute(
+                text(
+                    "SELECT id FROM student_monthly_charge "
+                    " WHERE student_id = :s AND period = :p AND status = 'open'"
+                ),
+                {"s": student_id, "p": period},
+            )
+        ).scalars().all()
+        for charge_id in charge_ids:
+            await refresh_frozen_total(db, charge_id=int(charge_id))
 
 
 async def recalculate_month(
-    db: AsyncSession, *, period: date, allow_past: bool = False
+    db: AsyncSession,
+    *,
+    period: date,
+    allow_past: bool = False,
+    skipped: Optional[list[tuple[int, int]]] = None,
 ) -> int:
     """Пересчитать месяц по всем ученикам. Возвращает число затронутых строк.
 
@@ -1089,7 +1159,16 @@ async def recalculate_month(
             targets.append(pair)
 
     touched = 0
+    past = allow_past and is_past_period(period)
     for student_id, group_id in targets:
+        # tsk-1194: оплаченное и закрытое прошлое не переписывается молча —
+        # пропуск называется вызывающему, чтобы экран мог сказать о нём.
+        if past and await past_month_locked(
+            db, student_id=student_id, group_id=group_id, period=period
+        ):
+            if skipped is not None:
+                skipped.append((student_id, group_id))
+            continue
         # Каждая пара — в своей вложенной транзакции: платёж, пришедший ровно
         # между проверкой «нет оплат» и удалением строки месяца (tsk-010),
         # уронил бы иначе пересчёт ВСЕГО месяца, а не одну строку.
@@ -1146,6 +1225,7 @@ async def list_charges(db: AsyncSession, *, period: date) -> list[dict]:
                        ch.after_leave_lessons,
                        ch.status,
                        ch.closed_at,
+                       ch.written_off_at,
                        COALESCE(adj.total, 0) AS adjustments_minor,
                        adj.details            AS adjustment_details,
                        (ovr.price_minor IS NOT NULL) AS has_price_override,
@@ -1205,6 +1285,7 @@ async def list_charges(db: AsyncSession, *, period: date) -> list[dict]:
                 "after_leave_lessons": r.after_leave_lessons,
                 "status": r.status,
                 "closed_at": r.closed_at,
+                "written_off_at": r.written_off_at,
                 "has_price_override": bool(r.has_price_override),
                 "override_minor": r.override_minor,
             }

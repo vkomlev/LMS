@@ -136,6 +136,10 @@ async def _recalc(
 
     Перерыв может лежать поперёк границы месяцев — пересчёт только текущего
     оставил бы соседний со старой суммой.
+
+    tsk-1194: прошедший месяц тоже — перерыв задним числом (заведён 01.10 на
+    конец сентября) иначе гасил занятия, но не долг. Закрытый месяц и так не
+    переписывается: разница уходит поправкой вперёд.
     """
     seen: set[date] = set()
     cursor = charge_service.month_start(starts_on)
@@ -143,7 +147,10 @@ async def _recalc(
     while cursor <= last and cursor not in seen:
         seen.add(cursor)
         await charge_service.recalculate_for_student(
-            db, student_id=student_id, period=cursor
+            db,
+            student_id=student_id,
+            period=cursor,
+            allow_past=charge_service.is_past_period(cursor),
         )
         cursor = charge_service.next_month(cursor)
 

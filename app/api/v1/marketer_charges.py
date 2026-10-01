@@ -25,6 +25,7 @@ from app.schemas.charge import (
 from app.services import (
     break_service,
     charge_service,
+    charge_writeoff_service,
     payment_block_hold_service,
     payment_service,
 )
@@ -83,7 +84,9 @@ async def list_charges(
         "уходит поправкой в следующий открытый месяц. Месяц, который уже "
         "прошёл, пересчитывается только по явной команде (`allow_past=true`): "
         "автоматика прошлое не трогает, потому что расписание помнит лишь своё "
-        "сегодняшнее состояние (tsk-756)."
+        "сегодняшнее состояние (tsk-756). Прошедший месяц, закрытый или с "
+        "оплатой, не переписывается и в этом случае — он считается в "
+        "`skipped_locked` (tsk-1194)."
     ),
 )
 async def recalculate(
@@ -99,10 +102,13 @@ async def recalculate(
     current_user: CurrentUser = Depends(_charges_gate),
 ) -> RecalculateResult:
     target = _resolve_period(period)
+    skipped: list[tuple[int, int]] = []
     touched = await charge_service.recalculate_month(
-        db, period=target, allow_past=allow_past
+        db, period=target, allow_past=allow_past, skipped=skipped
     )
-    return RecalculateResult(period=target, touched=touched)
+    return RecalculateResult(
+        period=target, touched=touched, skipped_locked=len(skipped)
+    )
 
 
 @router.put(
@@ -141,6 +147,44 @@ async def clear_manual(
             status.HTTP_404_NOT_FOUND,
             "Начисление не найдено или месяц уже закрыт",
         )
+    return await _reload_charge(db, charge_id)
+
+
+@router.post(
+    "/charges/{charge_id}/write-off",
+    response_model=ChargeRead,
+    summary="Принять уход без оплаты",
+    description=(
+        "tsk-1194, политика школы: остаток месяца перестаёт быть долгом — "
+        "не входит в итоги, напоминания, рассылки и блокировку. Строка и сумма "
+        "остаются в истории; оплата, пришедшая позже, закрывает остаток штатно. "
+        "При выпуске ученика отметка ставится сама."
+    ),
+)
+async def write_off(
+    charge_id: int,
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(_charges_gate),
+) -> ChargeRead:
+    if not await charge_writeoff_service.write_off_charge(
+        db, charge_id=charge_id, written_off_by=current_user.id
+    ):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Начисление не найдено")
+    return await _reload_charge(db, charge_id)
+
+
+@router.delete(
+    "/charges/{charge_id}/write-off",
+    response_model=ChargeRead,
+    summary="Вернуть в долги",
+)
+async def restore_write_off(
+    charge_id: int,
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(_charges_gate),
+) -> ChargeRead:
+    if not await charge_writeoff_service.restore_charge(db, charge_id=charge_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Начисление не найдено")
     return await _reload_charge(db, charge_id)
 
 

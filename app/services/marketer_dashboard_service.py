@@ -35,7 +35,7 @@ from app.schemas.marketer_dashboard import (
     MarketerDashboardKpi,
     MonthlyPoint,
 )
-from app.services import charge_service, payment_reminder_service
+from app.services import charge_service, payment_reminder_service, payment_service
 
 __all__ = [
     "get_dashboard",
@@ -287,7 +287,10 @@ async def _charges_total_for_month(db: AsyncSession, period: date) -> int:
     `charge_total_minor()`, единственное место формулы (tsk-010).
     """
     rows = await charge_service.list_charges(db, period=period)
-    return sum(r["total_minor"] for r in rows)
+    # tsk-1194: принятый уход без оплаты в итоги не входит — вычитается его
+    # неоплаченный остаток, то же правило, что на экране начислений.
+    rows = await payment_service.attach_payment_state(db, rows, period=period)
+    return sum(r["total_minor"] - r["written_off_minor"] for r in rows)
 
 
 async def _unprocessed_leads_count(db: AsyncSession, threshold_days: int) -> int:

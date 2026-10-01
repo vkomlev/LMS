@@ -39566,7 +39566,7 @@
           "marketer_charges"
         ],
         "summary": "Пересчитать месяц",
-        "description": "Открытые месяцы переписываются. Закрытые не трогаются — расхождение уходит поправкой в следующий открытый месяц. Месяц, который уже прошёл, пересчитывается только по явной команде (`allow_past=true`): автоматика прошлое не трогает, потому что расписание помнит лишь своё сегодняшнее состояние (tsk-756).",
+        "description": "Открытые месяцы переписываются. Закрытые не трогаются — расхождение уходит поправкой в следующий открытый месяц. Месяц, который уже прошёл, пересчитывается только по явной команде (`allow_past=true`): автоматика прошлое не трогает, потому что расписание помнит лишь своё сегодняшнее состояние (tsk-756). Прошедший месяц, закрытый или с оплатой, не переписывается и в этом случае — он считается в `skipped_locked` (tsk-1194).",
         "operationId": "recalculate_api_v1_marketer_charges_recalculate_post",
         "security": [
           {
@@ -39792,6 +39792,201 @@
         ],
         "summary": "Вернуть месяц к расчёту",
         "operationId": "clear_manual_api_v1_marketer_charges__charge_id__manual_delete",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "charge_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Charge Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChargeRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/marketer/charges/{charge_id}/write-off": {
+      "post": {
+        "tags": [
+          "marketer_charges"
+        ],
+        "summary": "Принять уход без оплаты",
+        "description": "tsk-1194, политика школы: остаток месяца перестаёт быть долгом — не входит в итоги, напоминания, рассылки и блокировку. Строка и сумма остаются в истории; оплата, пришедшая позже, закрывает остаток штатно. При выпуске ученика отметка ставится сама.",
+        "operationId": "write_off_api_v1_marketer_charges__charge_id__write_off_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "charge_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Charge Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChargeRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "marketer_charges"
+        ],
+        "summary": "Вернуть в долги",
+        "operationId": "restore_write_off_api_v1_marketer_charges__charge_id__write_off_delete",
         "security": [
           {
             "APIKeyHeader": []
@@ -50950,6 +51145,23 @@
             "type": "boolean",
             "title": "Has Manual Payment",
             "default": false
+          },
+          "written_off_minor": {
+            "type": "integer",
+            "title": "Written Off Minor",
+            "default": 0
+          },
+          "written_off_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Written Off At"
           }
         },
         "type": "object",
@@ -67755,6 +67967,11 @@
           "touched": {
             "type": "integer",
             "title": "Touched"
+          },
+          "skipped_locked": {
+            "type": "integer",
+            "title": "Skipped Locked",
+            "default": 0
           }
         },
         "type": "object",

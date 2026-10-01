@@ -43,7 +43,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services import charge_service, inbox_service, payment_service
+from app.services import charge_service, charge_writeoff_service, inbox_service, payment_service
 from app.utils.exceptions import DomainError
 
 logger = logging.getLogger(__name__)
@@ -223,6 +223,8 @@ async def settlement(
                   ) pay ON TRUE
                  WHERE ch.student_id = :s
                    AND ch.status = 'open'
+                   -- tsk-1194: уже принятый уход без оплаты долгом не считается.
+                   AND ch.written_off_at IS NULL
                  ORDER BY ch.period, ch.group_id
                 """
             ),
@@ -632,6 +634,17 @@ async def apply(
     )
 
     slots, lessons = await _detach_from_schedule(db, student_id)
+
+    # tsk-1194: политика школы — ушёл без оплаты, значит не заплатит. Остаток
+    # уходит из долгов в историю; оплата, пришедшая позже, закроет его штатно.
+    # Эскалация ниже остаётся: маркетолог узнаёт, сколько школа не получила.
+    if debt.has_debt:
+        await charge_writeoff_service.write_off_lines(
+            db,
+            student_id=student_id,
+            lines=[(ln.group_id, ln.period) for ln in debt.lines if ln.due_minor > 0],
+            written_off_by=changed_by,
+        )
 
     escalated: list[int] = []
     if debt.has_debt:

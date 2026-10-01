@@ -372,6 +372,17 @@ async def test_debt_survives_recalculation(db) -> None:
     assert after["calculated_minor"] == before["calculated_minor"], (
         "заморозка переставляет статус и НЕ трогает сумму"
     )
+    # tsk-1194: политика школы — неоплаченный уход принят сам при выпуске.
+    written_off = (
+        await db.execute(
+            text(
+                "SELECT written_off_at FROM student_monthly_charge "
+                " WHERE student_id = :s AND period = :p"
+            ),
+            {"s": env["student_id"], "p": PERIOD},
+        )
+    ).scalar_one()
+    assert written_off is not None, "выпуск с долгом ставит исход «уход без оплаты»"
 
 
 async def test_graduation_without_debt_leaves_money_alone(db) -> None:

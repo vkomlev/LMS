@@ -155,6 +155,8 @@ async def blocking_debt(
                   ) pay ON TRUE
                  WHERE ch.student_id = :s
                    AND ch.status = 'open'
+                   -- tsk-1194: принятый уход без оплаты занятия не закрывает.
+                   AND ch.written_off_at IS NULL
                 """
             ),
             {"s": student_id},

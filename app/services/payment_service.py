@@ -257,6 +257,8 @@ async def due_soon_notice(
                   ) pay ON TRUE
                  WHERE ch.student_id = :s
                    AND ch.status = 'open'
+                   -- tsk-1194: принятый уход без оплаты плашкой не напоминает.
+                   AND ch.written_off_at IS NULL
                 """
             ),
             {"s": student_id},
@@ -362,10 +364,19 @@ async def attach_payment_state(
         )
         row["paid_minor"] = state.paid_minor
         row["pending_minor"] = state.pending_minor
-        row["due_minor"] = state.due_minor
         row["overpaid_minor"] = state.overpaid_minor
-        row["is_overdue"] = state.is_overdue
         row["has_manual_payment"] = has_manual
+        # tsk-1194: принят уход без оплаты — остаток уходит из долга в отдельное
+        # число. Оплата, пришедшая позже, гасит остаток, и строка сама
+        # становится оплаченной: отметку снимать не нужно.
+        if row.get("written_off_at") is not None and state.due_minor > 0:
+            row["written_off_minor"] = state.due_minor
+            row["due_minor"] = 0
+            row["is_overdue"] = False
+        else:
+            row["written_off_minor"] = 0
+            row["due_minor"] = state.due_minor
+            row["is_overdue"] = state.is_overdue
     return charges
 
 

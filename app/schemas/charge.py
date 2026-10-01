@@ -87,6 +87,10 @@ class ChargeRead(BaseModel):
     #: маркетолог поставил деньги сам, не через чек/шлюз — на такое стоит
     #: смотреть внимательнее (сумма, ученик не перепутаны).
     has_manual_payment: bool = False
+    #: tsk-1194: остаток, принятый как уход без оплаты. Не долг: в итоги,
+    #: напоминания и рассылки не входит. 0 — исхода нет либо остаток оплачен.
+    written_off_minor: int = 0
+    written_off_at: Optional[datetime] = None
 
 
 class ManualAmountRequest(BaseModel):
@@ -139,6 +143,9 @@ class ClosePeriodRequest(BaseModel):
 class RecalculateResult(BaseModel):
     period: date
     touched: int
+    #: tsk-1194: строки прошедшего месяца, которые не пересчитаны, потому что
+    #: месяц закрыт или по нему уже платили. Решает человек, а не пересчёт.
+    skipped_locked: int = 0
 
 
 class BlockHoldRead(BaseModel):
