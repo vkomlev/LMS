@@ -153,3 +153,15 @@ def test_answers_from_abandoned_branch_do_not_leak():
     again = eng.evaluate(spec, answers, {"branch": "ege", "role": "parent"})
     assert "T1" not in again.ctx.answers
     assert not eng.eval_condition(spec["registration_closed_if"], again.ctx)
+
+
+def test_contact_url_carries_branch_label_tsk1197() -> None:
+    """Личка с итога несёт метку «Я с квиза <ветка>» — по ней обращение вносят в учёт."""
+    from urllib.parse import unquote
+
+    from app.services.quiz_funnel_service import contact_url
+
+    message = unquote(contact_url("Твоя стартовая точка", "ege").split("?text=", 1)[1])
+    assert "Я с квиза ЕГЭ" in message
+    assert "«Твоя стартовая точка»" in message
+    assert "Я с квиза," in unquote(contact_url("Итог", None).split("?text=", 1)[1])

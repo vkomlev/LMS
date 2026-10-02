@@ -408,10 +408,22 @@ def registration_open(
     return registration_mode(spec, branch, ctx) == "open"
 
 
-def contact_url(title: str) -> str:
-    """Переписка с заполненным сообщением от лица человека."""
+#: Как ветка звучит в метке лички «я с квиза <ветка>» (tsk-1197): по ней оператор
+#: вносит обращение мимо учёта в кабинет маркетолога с верным источником.
+BRANCH_LABELS = {
+    "parent": "для родителей",
+    "ege": "ЕГЭ",
+    "teen": "для школьников",
+    "adult": "для взрослых",
+}
+
+
+def contact_url(title: str, branch: Optional[str] = None) -> str:
+    """Переписка с заполненным сообщением от лица человека и меткой квиза-ветки."""
+    label = BRANCH_LABELS.get(branch or "")
+    source = f"Я с квиза {label}" if label else "Я с квиза"
     message = (
-        f"Здравствуйте! Прошёл квиз, итог — «{title}». Хочу записаться на пробное занятие."
+        f"Здравствуйте! {source}, итог — «{title}». Хочу записаться на пробное занятие."
     )
     return f"https://t.me/{_settings.quiz_contact_tg}?text={quote(message)}"
 
@@ -478,7 +490,7 @@ async def get_result(
     if pdf_url(funnel.spec, branch):
         bot_url = bot_start_url(await ensure_bot_token(db, guest_session_id, funnel.course.id))
     title = _by_role(outcome, "title", role) or ""
-    contact = contact_url(title)
+    contact = contact_url(title, branch)
     return {
         "quiz_uid": funnel.course.course_uid,
         "is_complete": True,
