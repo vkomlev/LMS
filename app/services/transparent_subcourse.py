@@ -23,9 +23,14 @@ logger = logging.getLogger(__name__)
 
 _CACHE_KEY = "tsk1198_transparent_links"
 
-# Ключ сортировки задания внутри списка курса. Четыре поля: (нет позиции,
-# позиция, 0 — задание прозрачного подкурса / 1 — своё, id).
-TaskKey = Tuple[int, int, int, int]
+# Ключ сортировки задания внутри списка курса: (нет позиции, позиция,
+# 0 — задание прозрачного подкурса / 1 — своё, ранг внутри места, id).
+TaskKey = Tuple[int, int, int, int, int]
+
+# `host_order_position` = место * HOST_SLOT_SCALE + ранг: несколько заданий
+# подборки стоят перед одним и тем же заданием хозяина, и между собой они идут
+# по рангу (прежний порядок), а не по id.
+HOST_SLOT_SCALE = 100
 
 
 async def transparent_links(db: AsyncSession) -> dict[int, int]:
@@ -79,9 +84,13 @@ def task_key(
     """Ключ задания в списке курса; паритет с SQL `order_position NULLS LAST, id`.
 
     Задание прозрачного подкурса (`absorbed`) сортируется по месту в хозяине
-    и встаёт перед заданием хозяина с той же позицией.
+    (`host_order_position // HOST_SLOT_SCALE`) и встаёт перед заданием хозяина
+    с той же позицией; задания на одном месте — по рангу (остаток).
     """
     if absorbed:
-        pos = host_order_position
-        return (0 if pos is not None else 1, pos or 0, 0, task_id)
-    return (0 if order_position is not None else 1, order_position or 0, 1, task_id)
+        pos = host_order_position or 0
+        return (
+            0 if host_order_position is not None else 1,
+            pos // HOST_SLOT_SCALE, 0, pos % HOST_SLOT_SCALE, task_id,
+        )
+    return (0 if order_position is not None else 1, order_position or 0, 1, 0, task_id)

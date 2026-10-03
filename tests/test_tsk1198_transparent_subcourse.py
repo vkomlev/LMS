@@ -88,7 +88,7 @@ async def graph(db):
     )
     for name in ("T1", "T2", "T3"):
         ids[name] = await _new_task(db, course_id=ids["bank"], difficulty_id=difficulty_id)
-    for name, host_pos in (("X1", 2), ("X2", 4)):
+    for name, host_pos in (("X1", 200), ("X2", 400)):
         ids[name] = await _new_task(db, course_id=ids["sub"], difficulty_id=difficulty_id)
         await db.execute(
             text("UPDATE tasks SET host_order_position = :p WHERE id = :t"),
@@ -177,3 +177,19 @@ async def test_tasks_by_course_with_transparent(db, graph):
         db, course_id=graph["bank"], with_transparent=True
     )
     assert [t.id for t in merged] == _order(graph, "T1 X1 T2 T3 X2") and total == 5
+
+
+@pytest.mark.asyncio
+async def test_same_slot_ordered_by_rank_not_id(db, graph):
+    """Несколько заданий подборки перед одним заданием хозяина — по рангу (прежний
+    порядок), а не по id: X2 (ранг 0) раньше X1 (ранг 1), хотя id у X1 меньше."""
+    await db.execute(
+        text("UPDATE tasks SET host_order_position = CASE id WHEN :x1 THEN 401 ELSE 400 END "
+             "WHERE id IN (:x1, :x2)"),
+        {"x1": graph["X1"], "x2": graph["X2"]},
+    )
+    await db.commit()
+    merged, _ = await TasksService().get_by_course(
+        db, course_id=graph["bank"], with_transparent=True
+    )
+    assert [t.id for t in merged] == _order(graph, "T1 T2 T3 X2 X1")

@@ -38,6 +38,9 @@ import psycopg2.extras
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from tsk1132_move_foreign_tasks import prod_dsn  # noqa: E402
 
+sys.path.insert(0, str(HERE_ROOT := Path(__file__).resolve().parent.parent))
+from app.services.transparent_subcourse import HOST_SLOT_SCALE  # noqa: E402
+
 logging.basicConfig(level=logging.INFO, format="%(message)s", stream=sys.stdout)
 logger = logging.getLogger("tsk1198")
 
@@ -92,6 +95,18 @@ def plan_slots(cur: Any, node: int, bank: int) -> Dict[int, int]:
     return slots
 
 
+def rank_slots(slots: Dict[int, int], bank: int) -> Dict[int, int]:
+    """Место*100 + ранг по прежней позиции — по ВСЕМ подборкам банка сразу:
+    на одном месте бывают задания нескольких подборок (курс 158)."""
+    old = {int(t): p for t, p in SNAPSHOT.get(str(bank), []) if p is not None}
+    ranked: Dict[int, int] = {}
+    for slot in set(slots.values()):
+        same = sorted((old[t], t) for t in slots if slots[t] == slot)
+        for rank, (_, t) in enumerate(same):
+            ranked[t] = slot * HOST_SLOT_SCALE + rank
+    return ranked
+
+
 def fingerprint(cur: Any, nodes: List[int], banks: List[int]) -> Dict[str, Any]:
     """Что меняться не должно: позиции, сдачи, связи с практикумами."""
     ids = nodes + banks
@@ -114,6 +129,15 @@ def fingerprint(cur: Any, nodes: List[int], banks: List[int]) -> Dict[str, Any]:
         (nodes, banks),
     )
     return {"positions": positions, "results": results, "praktikum_links": cur.fetchone()["h"]}
+
+
+def unchanged(before: Dict[str, Any], after: Dict[str, Any]) -> bool:
+    """Позиции и связи с практикумами те же; сдач не меньше (ученики сдают во время прогона)."""
+    return (
+        before["positions"] == after["positions"]
+        and before["praktikum_links"] == after["praktikum_links"]
+        and after["results"] >= before["results"]
+    )
 
 
 def main() -> int:
@@ -146,7 +170,13 @@ def main() -> int:
                 conn.rollback()
                 return 1
             plan[node] = plan_slots(cur, node, bank)
-            logger.info("%-26s %s → %s: %s", uid, node, bank,
+        for bank in bank_ids:
+            mine = [n for n, b, _ in nodes if b == bank]
+            ranked = rank_slots({t: s for n in mine for t, s in plan[n].items()}, bank)
+            for n in mine:
+                plan[n] = {t: ranked[t] for t in plan[n]}
+        for node, bank, uid in nodes:
+            logger.info("%-26s %s -> %s: %s", uid, node, bank,
                         ", ".join(f"{t}@{s}" for t, s in plan[node].items()))
 
         for node, bank, _ in nodes:
@@ -173,9 +203,10 @@ def main() -> int:
             (node_ids,),
         )
         unslotted = cur.fetchone()["n"]
-        ok = before == after and links == 32 and unslotted == 0
+        same = unchanged(before, after)
+        ok = same and links == 32 and unslotted == 0
         logger.info("Проверка: неизменное %s, прозрачных связей %s, заданий без места %s",
-                    before == after, links, unslotted)
+                    same, links, unslotted)
         if not ok:
             logger.error("Проверка не прошла — откат (до %s, после %s)", before, after)
             conn.rollback()
