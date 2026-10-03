@@ -115,6 +115,13 @@ t_course_parents = Table(
             "См. docs/database-triggers-contract.md"
         )
     ),
+    Column(
+        "is_transparent",
+        Boolean,
+        server_default=text("false"),
+        nullable=False,
+        comment="tsk-1198: подкурс прозрачен для этого родителя (задания в его списке)",
+    ),
     ForeignKeyConstraint(
         ["course_id"], ["courses.id"],
         ondelete="CASCADE", name="course_parents_course_id_fkey"

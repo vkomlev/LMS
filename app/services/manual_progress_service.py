@@ -69,6 +69,7 @@ from app.schemas.task_content import (
 from app.services import audit_service
 from app.services.checking_service import CheckingService
 from app.services.learning_engine_service import LearningEngineService
+from app.services.transparent_subcourse import absorbed_in_tree, task_key
 from app.services.teacher_queue_service import teacher_course_acl
 from app.schemas.code_review import build_code_review_badge
 from app.utils.task_title import HINT_MAX_LEN, humanize_task_title
@@ -390,7 +391,7 @@ async def _tree_task_rows(db: AsyncSession, course_ids: list[int]) -> list[dict[
     rows = (
         await db.execute(
             text(
-                "SELECT id, course_id, external_uid, "
+                "SELECT id, course_id, external_uid, order_position, host_order_position, "
                 "       task_content->>'type' AS task_type, "
                 "       task_content->>'title' AS tc_title, task_content->>'stem' AS tc_stem, "
                 "       COALESCE((solution_rules->>'manual_review_required')::boolean, false) "
@@ -1127,6 +1128,25 @@ async def get_student_progress(
     tree_ids = await _subtree_course_ids(db, course_id)
     tasks = await _tree_task_rows(db, tree_ids)
     materials = await _tree_material_rows(db, tree_ids)
+
+    # tsk-1198: прозрачный подкурс, чей хозяин в этом дереве, отдельным узлом не
+    # показывается — его задания (и материалы, если есть) идут в списке хозяина
+    # на свои места. Множество заданий то же, поэтому счёт не меняется.
+    absorbed = await absorbed_in_tree(db, tree_ids)
+    if absorbed:
+        for row in (*tasks, *materials):
+            src = int(row["course_id"])
+            if src in absorbed:
+                row["course_id"] = absorbed[src]
+                row["_absorbed"] = True
+        tasks.sort(
+            key=lambda t: task_key(
+                t["order_position"], int(t["id"]),
+                host_order_position=t["host_order_position"],
+                absorbed=bool(t.get("_absorbed")),
+            )
+        )
+        tree_ids = [c for c in tree_ids if c not in absorbed]
 
     task_ids = [int(t["id"]) for t in tasks]
     material_ids = [int(m["id"]) for m in materials]

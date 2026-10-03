@@ -908,6 +908,13 @@ async def get_tasks_by_course(
     ),
     limit: int = Query(100, ge=1, le=1000, description="Максимум записей на странице"),
     offset: int = Query(0, ge=0, description="Смещение"),
+    with_transparent: bool = Query(
+        False,
+        description=(
+            "tsk-1198: вместе с заданиями подкурсов, прозрачных для этого курса, "
+            "на их местах в списке. Для экранов ученика."
+        ),
+    ),
 ) -> List[TaskRead]:
     """
     Получить список задач курса с пагинацией.
@@ -951,6 +958,7 @@ async def get_tasks_by_course(
         ),
         limit=limit,
         offset=offset,
+        with_transparent=with_transparent,
     )
     return [_task_read_for(task, privileged=privileged) for task in tasks]
 

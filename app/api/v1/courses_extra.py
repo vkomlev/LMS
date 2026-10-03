@@ -235,6 +235,14 @@ async def get_course_children_endpoint(
     course_id: int,
     db: AsyncSession = Depends(get_bare_db),
     current_user: CurrentUser = Depends(_COURSE_TREE_GATE),
+    hide_transparent: bool = Query(
+        False,
+        description=(
+            "tsk-1198: не отдавать подкурсы, прозрачные для этого курса "
+            "(их задания — в `GET /tasks/by-course/{id}?with_transparent=true`). "
+            "Для экранов ученика; редактор иерархии зовёт без флага."
+        ),
+    ),
 ) -> List[CourseWithOrderNumber]:
     """
     Получить прямых детей курса (потомки первого уровня).
@@ -242,7 +250,9 @@ async def get_course_children_endpoint(
     Возвращает список курсов, у которых указанный course_id является родителем.
     Каждый курс включает порядковый номер (order_number) внутри родительского курса.
     """
-    children_with_order = await courses_service.get_children(db, course_id)
+    children_with_order = await courses_service.get_children(
+        db, course_id, hide_transparent=hide_transparent
+    )
     result = []
     for course, order_number in children_with_order:
         course_data = CourseRead.model_validate(course).model_dump()

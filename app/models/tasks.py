@@ -107,6 +107,12 @@ class Tasks(Base):
         nullable=True,
         comment="Позиция в курсе (NULL = автоматически в конец)",
     )
+    # tsk-1198: место задания прозрачного подкурса в списке курса-хозяина.
+    host_order_position: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        nullable=True,
+        comment="Место в списке заданий курса, для которого подкурс прозрачен",
+    )
 
     is_active: Mapped[bool] = mapped_column(
         Boolean,

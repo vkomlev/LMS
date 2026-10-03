@@ -33,6 +33,8 @@ def course_tree_cache(db: AsyncSession) -> Dict[int, List[int]]:
 def invalidate_course_tree_cache(db: AsyncSession) -> None:
     """Сбросить кеш дерева: иерархия в этой сессии изменилась."""
     db.info.pop(_TREE_CACHE_KEY, None)
+    # tsk-1198: связи «прозрачен для родителя» — часть той же иерархии.
+    db.info.pop("tsk1198_transparent_links", None)
 
 
 class CoursesRepository(BaseRepository[Courses]):
@@ -46,7 +48,8 @@ class CoursesRepository(BaseRepository[Courses]):
     async def get_children(
         self,
         db: AsyncSession,
-        course_id: int
+        course_id: int,
+        hide_transparent: bool = False,
     ) -> List[tuple[Courses, Optional[int]]]:
         """
         Получить прямых детей курса (потомки первого уровня).
@@ -69,6 +72,9 @@ class CoursesRepository(BaseRepository[Courses]):
             )
             .options(selectinload(Courses.parent_courses))
         )
+        if hide_transparent:
+            # tsk-1198: прозрачный для этого родителя подкурс — не раздел.
+            stmt = stmt.where(t_course_parents.c.is_transparent.is_(False))
         result = await db.execute(stmt)
         return [(row[0], row[1]) for row in result.all()]
 

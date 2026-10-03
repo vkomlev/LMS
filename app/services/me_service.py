@@ -18,6 +18,7 @@ from app.schemas.task_content import QUIZ_TASK_TYPES
 # — общая функция для движка и кабинета, чтобы карточка курса, программа курса
 # и «следующий шаг» считали долг одинаково.
 from app.services.content_grace_service import compute_graced_items
+from app.services.transparent_subcourse import absorbed_in_tree, task_key
 # Y-3.2 (S3-A4): единая точка правды — учебный движок.
 from app.services.learning_engine_service import PASS_THRESHOLD_RATIO, is_mentor_reviewed
 # tsk-656: единственное место, где живёт правило «это реальная сдача ученика»,
@@ -875,6 +876,8 @@ open_course_attempt AS (
 SELECT
     t.id AS task_id,
     t.course_id,
+    t.order_position,
+    t.host_order_position,
     t.is_active,
     t.requirement_level,
     t.task_content->>'type' AS task_type,
@@ -1264,13 +1267,35 @@ async def get_syllabus_states(
     # что считать долгом.
     graced = await compute_graced_items(db, user_id, attempts_root_id)
 
+    # tsk-1198: прозрачный подкурс, чей хозяин в этом дереве, — не раздел: его
+    # элементы отдаются с course_id хозяина (SPW группирует по нему) и встают в
+    # список хозяина на свои места; из sections он уходит.
+    absorbed = await absorbed_in_tree(db, tree_ids)
+
     # Группировка по course_id для depth-first emit
     materials_by_course: dict[int, list[dict]] = {}
     for r in material_rows:
-        materials_by_course.setdefault(r["course_id"], []).append(dict(r))
+        m = dict(r)
+        m["course_id"] = absorbed.get(int(m["course_id"]), m["course_id"])
+        materials_by_course.setdefault(m["course_id"], []).append(m)
     tasks_by_course: dict[int, list[dict]] = {}
     for r in task_rows:
-        tasks_by_course.setdefault(r["course_id"], []).append(dict(r))
+        t = dict(r)
+        src = int(t["course_id"])
+        t["_absorbed"] = src in absorbed
+        t["course_id"] = absorbed.get(src, src)
+        tasks_by_course.setdefault(t["course_id"], []).append(t)
+    if absorbed:
+        for host in set(absorbed.values()):
+            tasks_by_course.get(host, []).sort(
+                key=lambda t: task_key(
+                    t["order_position"], int(t["task_id"]),
+                    host_order_position=t["host_order_position"],
+                    absorbed=t["_absorbed"],
+                )
+            )
+        section_meta = [m for m in section_meta if m["course_id"] not in absorbed]
+        tree_ids = [c for c in tree_ids if c not in absorbed]
 
     items: list[dict] = []
     for cid in tree_ids:

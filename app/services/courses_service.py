@@ -136,15 +136,18 @@ class CoursesService(BaseService[Courses]):
         self,
         db: AsyncSession,
         course_id: int,
+        hide_transparent: bool = False,
     ) -> List[tuple[Courses, Optional[int]]]:
         """
         Получить прямых детей курса (потомки первого уровня).
 
         :param db: асинхронная сессия БД.
         :param course_id: ID курса.
+        :param hide_transparent: не отдавать подкурсы, прозрачные для этого
+            курса (tsk-1198: их задания идут в списке самого курса).
         :return: Список кортежей (course, order_number) для прямых детей курса.
         """
-        return await self.repo.get_children(db, course_id)
+        return await self.repo.get_children(db, course_id, hide_transparent=hide_transparent)
 
     async def get_course_tree(
         self,

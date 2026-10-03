@@ -2145,6 +2145,18 @@
             }
           },
           {
+            "name": "hide_transparent",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "tsk-1198: не отдавать подкурсы, прозрачные для этого курса (их задания — в `GET /tasks/by-course/{id}?with_transparent=true`). Для экранов ученика; редактор иерархии зовёт без флага.",
+              "default": false,
+              "title": "Hide Transparent"
+            },
+            "description": "tsk-1198: не отдавать подкурсы, прозрачные для этого курса (их задания — в `GET /tasks/by-course/{id}?with_transparent=true`). Для экранов ученика; редактор иерархии зовёт без флага."
+          },
+          {
             "name": "token",
             "in": "query",
             "required": false,
@@ -9788,6 +9800,18 @@
               "title": "Offset"
             },
             "description": "Смещение"
+          },
+          {
+            "name": "with_transparent",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "tsk-1198: вместе с заданиями подкурсов, прозрачных для этого курса, на их местах в списке. Для экранов ученика.",
+              "default": false,
+              "title": "With Transparent"
+            },
+            "description": "tsk-1198: вместе с заданиями подкурсов, прозрачных для этого курса, на их местах в списке. Для экранов ученика."
           },
           {
             "name": "token",

@@ -1,0 +1,1094 @@
+diff --git a/app/api/v1/courses_extra.py b/app/api/v1/courses_extra.py
+index 0ee944f..8039126 100644
+--- a/app/api/v1/courses_extra.py
++++ b/app/api/v1/courses_extra.py
+@@ -235,6 +235,14 @@ async def get_course_children_endpoint(
+     course_id: int,
+     db: AsyncSession = Depends(get_bare_db),
+     current_user: CurrentUser = Depends(_COURSE_TREE_GATE),
++    hide_transparent: bool = Query(
++        False,
++        description=(
++            "tsk-1198: не отдавать подкурсы, прозрачные для этого курса "
++            "(их задания — в `GET /tasks/by-course/{id}?with_transparent=true`). "
++            "Для экранов ученика; редактор иерархии зовёт без флага."
++        ),
++    ),
+ ) -> List[CourseWithOrderNumber]:
+     """
+     Получить прямых детей курса (потомки первого уровня).
+@@ -242,7 +250,9 @@ async def get_course_children_endpoint(
+     Возвращает список курсов, у которых указанный course_id является родителем.
+     Каждый курс включает порядковый номер (order_number) внутри родительского курса.
+     """
+-    children_with_order = await courses_service.get_children(db, course_id)
++    children_with_order = await courses_service.get_children(
++        db, course_id, hide_transparent=hide_transparent
++    )
+     result = []
+     for course, order_number in children_with_order:
+         course_data = CourseRead.model_validate(course).model_dump()
+diff --git a/app/api/v1/tasks_extra.py b/app/api/v1/tasks_extra.py
+index df006fd..9edc0cb 100644
+--- a/app/api/v1/tasks_extra.py
++++ b/app/api/v1/tasks_extra.py
+@@ -908,6 +908,13 @@ async def get_tasks_by_course(
+     ),
+     limit: int = Query(100, ge=1, le=1000, description="Максимум записей на странице"),
+     offset: int = Query(0, ge=0, description="Смещение"),
++    with_transparent: bool = Query(
++        False,
++        description=(
++            "tsk-1198: вместе с заданиями подкурсов, прозрачных для этого курса, "
++            "на их местах в списке. Для экранов ученика."
++        ),
++    ),
+ ) -> List[TaskRead]:
+     """
+     Получить список задач курса с пагинацией.
+@@ -951,6 +958,7 @@ async def get_tasks_by_course(
+         ),
+         limit=limit,
+         offset=offset,
++        with_transparent=with_transparent,
+     )
+     return [_task_read_for(task, privileged=privileged) for task in tasks]
+ 
+diff --git a/app/db/migrations/versions/2026_10_03_tsk1198_transparent_subcourse.py b/app/db/migrations/versions/2026_10_03_tsk1198_transparent_subcourse.py
+new file mode 100644
+index 0000000..82d0cb7
+--- /dev/null
++++ b/app/db/migrations/versions/2026_10_03_tsk1198_transparent_subcourse.py
+@@ -0,0 +1,66 @@
++"""tsk-1198: «прозрачный» подкурс — признак у связи с родителем + позиция в хозяине.
++
++Подборки практикумов (tsk-1161/1163) — подкурсы внутри курсов банка «Задание N»,
++подвешенные вторым родителем к «Практикум ЕГЭ/ОГЭ». В практикуме подборка —
++отдельный раздел, а в курсе банка (решение оператора 03.10) её задания должны
++идти обычным списком вместе с остальными, после теории, на прежних местах.
++
++Признак живёт у СВЯЗИ (`course_parents.is_transparent`), а не у курса: один и тот
++же узел прозрачен для курса банка и остаётся разделом в практикуме.
++
++`tasks.host_order_position` — место задания прозрачного подкурса в списке
++заданий курса-хозяина: задание встаёт ПЕРЕД заданием хозяина с тем же
++`order_position`. Собственный `order_position` задания остаётся порядком внутри
++подборки (практикум не меняется). Триггер позиций колонку не трогает.
++
++Без заполнения: разметку делает `scripts/tsk1198_mark_transparent.py`.
++
++Rollback: `alembic downgrade tsk1194_charge_written_off` — колонки снимаются,
++подборки снова идут в курсе банка отдельным разделом.
++
++Revision ID: tsk1198_transparent_subcourse
++Revises: tsk1194_charge_written_off
++Create Date: 2026-10-03
++"""
++from typing import Sequence, Union
++
++import sqlalchemy as sa
++from alembic import op
++
++revision: str = "tsk1198_transparent_subcourse"
++down_revision: Union[str, None] = "tsk1194_charge_written_off"
++branch_labels: Union[str, Sequence[str], None] = None
++depends_on: Union[str, Sequence[str], None] = None
++
++
++def upgrade() -> None:
++    op.add_column(
++        "course_parents",
++        sa.Column(
++            "is_transparent",
++            sa.Boolean(),
++            server_default=sa.text("false"),
++            nullable=False,
++            comment=(
++                "tsk-1198: подкурс прозрачен для ЭТОГО родителя — его задания "
++                "показываются в списке родителя, отдельного раздела нет"
++            ),
++        ),
++    )
++    op.add_column(
++        "tasks",
++        sa.Column(
++            "host_order_position",
++            sa.Integer(),
++            nullable=True,
++            comment=(
++                "tsk-1198: место в списке заданий курса, для которого подкурс "
++                "задания прозрачен (перед заданием хозяина с этим order_position)"
++            ),
++        ),
++    )
++
++
++def downgrade() -> None:
++    op.drop_column("tasks", "host_order_position")
++    op.drop_column("course_parents", "is_transparent")
+diff --git a/app/models/association_tables.py b/app/models/association_tables.py
+index 6a24d89..84b92d1 100644
+--- a/app/models/association_tables.py
++++ b/app/models/association_tables.py
+@@ -115,6 +115,13 @@ t_course_parents = Table(
+             "См. docs/database-triggers-contract.md"
+         )
+     ),
++    Column(
++        "is_transparent",
++        Boolean,
++        server_default=text("false"),
++        nullable=False,
++        comment="tsk-1198: подкурс прозрачен для этого родителя (задания в его списке)",
++    ),
+     ForeignKeyConstraint(
+         ["course_id"], ["courses.id"],
+         ondelete="CASCADE", name="course_parents_course_id_fkey"
+diff --git a/app/models/tasks.py b/app/models/tasks.py
+index cdd445c..03d3494 100644
+--- a/app/models/tasks.py
++++ b/app/models/tasks.py
+@@ -107,6 +107,12 @@ class Tasks(Base):
+         nullable=True,
+         comment="Позиция в курсе (NULL = автоматически в конец)",
+     )
++    # tsk-1198: место задания прозрачного подкурса в списке курса-хозяина.
++    host_order_position: Mapped[Optional[int]] = mapped_column(
++        Integer,
++        nullable=True,
++        comment="Место в списке заданий курса, для которого подкурс прозрачен",
++    )
+ 
+     is_active: Mapped[bool] = mapped_column(
+         Boolean,
+diff --git a/app/repos/courses_repo.py b/app/repos/courses_repo.py
+index 4bd95fa..7789dd4 100644
+--- a/app/repos/courses_repo.py
++++ b/app/repos/courses_repo.py
+@@ -33,6 +33,8 @@ def course_tree_cache(db: AsyncSession) -> Dict[int, List[int]]:
+ def invalidate_course_tree_cache(db: AsyncSession) -> None:
+     """Сбросить кеш дерева: иерархия в этой сессии изменилась."""
+     db.info.pop(_TREE_CACHE_KEY, None)
++    # tsk-1198: связи «прозрачен для родителя» — часть той же иерархии.
++    db.info.pop("tsk1198_transparent_links", None)
+ 
+ 
+ class CoursesRepository(BaseRepository[Courses]):
+@@ -46,7 +48,8 @@ class CoursesRepository(BaseRepository[Courses]):
+     async def get_children(
+         self,
+         db: AsyncSession,
+-        course_id: int
++        course_id: int,
++        hide_transparent: bool = False,
+     ) -> List[tuple[Courses, Optional[int]]]:
+         """
+         Получить прямых детей курса (потомки первого уровня).
+@@ -69,6 +72,9 @@ class CoursesRepository(BaseRepository[Courses]):
+             )
+             .options(selectinload(Courses.parent_courses))
+         )
++        if hide_transparent:
++            # tsk-1198: прозрачный для этого родителя подкурс — не раздел.
++            stmt = stmt.where(t_course_parents.c.is_transparent.is_(False))
+         result = await db.execute(stmt)
+         return [(row[0], row[1]) for row in result.all()]
+ 
+diff --git a/app/services/courses_service.py b/app/services/courses_service.py
+index cddd103..6e3e5a3 100644
+--- a/app/services/courses_service.py
++++ b/app/services/courses_service.py
+@@ -136,15 +136,18 @@ class CoursesService(BaseService[Courses]):
+         self,
+         db: AsyncSession,
+         course_id: int,
++        hide_transparent: bool = False,
+     ) -> List[tuple[Courses, Optional[int]]]:
+         """
+         Получить прямых детей курса (потомки первого уровня).
+ 
+         :param db: асинхронная сессия БД.
+         :param course_id: ID курса.
++        :param hide_transparent: не отдавать подкурсы, прозрачные для этого
++            курса (tsk-1198: их задания идут в списке самого курса).
+         :return: Список кортежей (course, order_number) для прямых детей курса.
+         """
+-        return await self.repo.get_children(db, course_id)
++        return await self.repo.get_children(db, course_id, hide_transparent=hide_transparent)
+ 
+     async def get_course_tree(
+         self,
+diff --git a/app/services/learning_engine_service.py b/app/services/learning_engine_service.py
+index cb76267..666dd73 100644
+--- a/app/services/learning_engine_service.py
++++ b/app/services/learning_engine_service.py
+@@ -38,6 +38,7 @@ from app.services.attempt_attachments import (
+     mark_missing_one,
+ )
+ from app.services.task_sampling import sample_task_ids
++from app.services.transparent_subcourse import TaskKey, task_key, transparent_links
+ # tsk-798: персональный объём программы. Порог выборки зависит от срока и темпа
+ # КОНКРЕТНОГО ученика, и знать это может только его план — общая настройка
+ # подкурса не различает ноябрьского новичка и того, кто идёт с сентября.
+@@ -1048,17 +1049,21 @@ class LearningEngineService:
+         *,
+         after_material_id: Optional[int],
+         after_task_id: Optional[int],
+-    ) -> Optional[Tuple[int, str, int, Optional[int]]]:
++    ) -> Optional[Tuple[int, str, int, tuple, Optional[Tuple[int, tuple]]]]:
+         """Курс и порядковый ключ элемента текущей позиции.
+ 
+         Фильтры `is_active`/`requirement_level` здесь НЕ применяются намеренно:
+         ученик может стоять на `recommended`-элементе (на проде таких 994 задачи
+         и 44 материала), которого нет в списке обхода. Позиция всё равно должна
+-        работать — обход режется по `order_position`, а не по вхождению в список.
++        работать — обход режется по порядковому ключу, а не по вхождению в список.
++
++        tsk-1198: у задания прозрачного подкурса два прочтения позиции — в дереве
++        хозяина оно стоит в списке хозяина (`host_alt`), в остальных деревьях
++        (практикум) — в своём подкурсе. Какое брать, решает обход по корню.
+ 
+         Returns:
+-            (course_id, kind, item_id, order_position) либо None, если позиция не
+-            задана / элемент не найден.
++            (course_id, kind, item_id, ключ, host_alt) либо None, если позиция не
++            задана / элемент не найден. `host_alt` — (хозяин, ключ в хозяине) или None.
+         """
+         if after_material_id is not None:
+             r = await db.execute(
+@@ -1068,14 +1073,28 @@ class LearningEngineService:
+             )
+             row = r.fetchone()
+             if row is not None:
+-                return (int(row[0]), "material", after_material_id, row[1])
++                return (
++                    int(row[0]), "material", after_material_id,
++                    self._order_key(row[1], after_material_id), None,
++                )
+         if after_task_id is not None:
+             r = await db.execute(
+-                select(Tasks.course_id, Tasks.order_position).where(Tasks.id == after_task_id)
++                select(Tasks.course_id, Tasks.order_position, Tasks.host_order_position)
++                .where(Tasks.id == after_task_id)
+             )
+             row = r.fetchone()
+             if row is not None:
+-                return (int(row[0]), "task", after_task_id, row[1])
++                host = (await transparent_links(db)).get(int(row[0]))
++                host_alt = None
++                if host is not None:
++                    host_alt = (
++                        host,
++                        task_key(None, after_task_id, host_order_position=row[2], absorbed=True),
++                    )
++                return (
++                    int(row[0]), "task", after_task_id,
++                    task_key(row[1], after_task_id), host_alt,
++                )
+         return None
+ 
+     async def resolve_next_item(
+@@ -1238,8 +1257,18 @@ class LearningEngineService:
+             # Позиция резолвится одним запросом (material/task → course_id), поэтому
+             # курсы ДО неё не опрашиваются вовсе — ленивость обхода сохраняется.
+             # flat_courses дедуплицирован, поэтому index() однозначен.
++            # tsk-1198: прозрачный подкурс, чей хозяин в этом дереве, отдельным
++            # шагом не обходится — его задания идут в списке хозяина.
++            links = await transparent_links(db)
++            flat_set = set(flat_courses)
++            absorbed_here = {c for c, h in links.items() if c in flat_set and h in flat_set}
++
+             start_index = 0
+             position = located
++            if position is not None and position[0] in absorbed_here and position[4]:
++                # Задание подборки — позиция в списке хозяина.
++                host, host_key = position[4]
++                position = (host, position[1], position[2], host_key, None)
+             if position is not None and position[0] in flat_courses:
+                 start_index = flat_courses.index(position[0])
+             else:
+@@ -1248,6 +1277,8 @@ class LearningEngineService:
+                 position = None
+ 
+             for offset, cid in enumerate(flat_courses[start_index:]):
++                if cid in absorbed_here:
++                    continue
+                 material_ids: Optional[List[int]] = None
+                 task_ids: Optional[List[int]] = None
+ 
+@@ -1257,8 +1288,7 @@ class LearningEngineService:
+                 # которого в списке обхода нет вовсе — тогда index() не нашёл бы
+                 # его и молча вернул к началу курса, то есть назад.
+                 if position is not None and offset == 0:
+-                    _, kind, item_id, item_order = position
+-                    pos_key = self._order_key(item_order, item_id)
++                    _, kind, item_id, pos_key, _ = position
+                     if kind == "material":
+                         material_ids = [
+                             i
+@@ -1280,10 +1310,10 @@ class LearningEngineService:
+                             # tsk-314: тот же список, что видит студент в обходе
+                             # ниже (_first_incomplete_task) — иначе позиция
+                             # могла бы указывать на задание, вырезанное выборкой.
+-                            for i, op in await self._effective_task_rows(
++                            for i, key in await self._effective_task_rows(
+                                 db, cid, student_id, root_course_id=current_root_id
+                             )
+-                            if self._order_key(op, i) > pos_key
++                            if key > pos_key
+                         ]
+ 
+                 # Первый незавершённый материал
+@@ -1404,19 +1434,38 @@ class LearningEngineService:
+ 
+     async def _ordered_task_rows(
+         self, db: AsyncSession, course_id: int
+-    ) -> List[Tuple[int, Optional[int]]]:
+-        """(id, order_position) заданий курса в порядке обхода."""
++    ) -> List[Tuple[int, TaskKey]]:
++        """(id, ключ порядка) заданий курса в порядке обхода.
++
++        tsk-1198: у курса-хозяина сюда же вливаются задания его прозрачных
++        подкурсов — на свои места (`host_order_position`). Второй элемент —
++        ключ `transparent_subcourse.task_key`, а не сырой `order_position`:
++        сравнивать позиции хозяина и подборки можно только по нему.
++        """
++        links = await transparent_links(db)
++        absorbed = [c for c, h in links.items() if h == course_id]
+         tasks_stmt = (
+-            select(Tasks.id, Tasks.order_position)
++            select(Tasks.id, Tasks.order_position, Tasks.host_order_position, Tasks.course_id)
+             .where(
+-                Tasks.course_id == course_id,
++                Tasks.course_id.in_([course_id, *absorbed]),
+                 Tasks.is_active.is_(True),
+                 Tasks.requirement_level.in_(("required", "skippable")),
+             )
+-            .order_by(Tasks.order_position.asc().nulls_last(), Tasks.id.asc())
+         )
+         r = await db.execute(tasks_stmt)
+-        return [(row[0], row[1]) for row in r.fetchall()]
++        rows = [
++            (
++                int(row[0]),
++                task_key(
++                    row[1], int(row[0]),
++                    host_order_position=row[2],
++                    absorbed=int(row[3]) != course_id,
++                ),
++            )
++            for row in r.fetchall()
++        ]
++        rows.sort(key=lambda x: x[1])
++        return rows
+ 
+     async def _ordered_material_ids(self, db: AsyncSession, course_id: int) -> List[int]:
+         """ID материалов курса в порядке обхода (order_position ASC NULLS LAST, id)."""
+@@ -1575,8 +1624,8 @@ class LearningEngineService:
+         course_id: int,
+         student_id: int,
+         root_course_id: Optional[int] = None,
+-    ) -> List[Tuple[int, Optional[int]]]:
+-        """(id, order_position) заданий курса, которые студент реально видит.
++    ) -> List[Tuple[int, TaskKey]]:
++        """(id, ключ порядка) заданий курса, которые студент реально видит.
+ 
+         С учётом выборки по сложности (tsk-314): если на курсе включена
+         выборка, исключает НЕ отобранные EASY/NORMAL задания. THEORY и любая
+diff --git a/app/services/manual_progress_service.py b/app/services/manual_progress_service.py
+index 2c23e06..1361c93 100644
+--- a/app/services/manual_progress_service.py
++++ b/app/services/manual_progress_service.py
+@@ -69,6 +69,7 @@ from app.schemas.task_content import (
+ from app.services import audit_service
+ from app.services.checking_service import CheckingService
+ from app.services.learning_engine_service import LearningEngineService
++from app.services.transparent_subcourse import absorbed_in_tree, task_key
+ from app.services.teacher_queue_service import teacher_course_acl
+ from app.schemas.code_review import build_code_review_badge
+ from app.utils.task_title import HINT_MAX_LEN, humanize_task_title
+@@ -390,7 +391,7 @@ async def _tree_task_rows(db: AsyncSession, course_ids: list[int]) -> list[dict[
+     rows = (
+         await db.execute(
+             text(
+-                "SELECT id, course_id, external_uid, "
++                "SELECT id, course_id, external_uid, order_position, host_order_position, "
+                 "       task_content->>'type' AS task_type, "
+                 "       task_content->>'title' AS tc_title, task_content->>'stem' AS tc_stem, "
+                 "       COALESCE((solution_rules->>'manual_review_required')::boolean, false) "
+@@ -1128,6 +1129,25 @@ async def get_student_progress(
+     tasks = await _tree_task_rows(db, tree_ids)
+     materials = await _tree_material_rows(db, tree_ids)
+ 
++    # tsk-1198: прозрачный подкурс, чей хозяин в этом дереве, отдельным узлом не
++    # показывается — его задания (и материалы, если есть) идут в списке хозяина
++    # на свои места. Множество заданий то же, поэтому счёт не меняется.
++    absorbed = await absorbed_in_tree(db, tree_ids)
++    if absorbed:
++        for row in (*tasks, *materials):
++            src = int(row["course_id"])
++            if src in absorbed:
++                row["course_id"] = absorbed[src]
++                row["_absorbed"] = True
++        tasks.sort(
++            key=lambda t: task_key(
++                t["order_position"], int(t["id"]),
++                host_order_position=t["host_order_position"],
++                absorbed=bool(t.get("_absorbed")),
++            )
++        )
++        tree_ids = [c for c in tree_ids if c not in absorbed]
++
+     task_ids = [int(t["id"]) for t in tasks]
+     material_ids = [int(m["id"]) for m in materials]
+ 
+diff --git a/app/services/me_service.py b/app/services/me_service.py
+index b297b30..3f814cc 100644
+--- a/app/services/me_service.py
++++ b/app/services/me_service.py
+@@ -18,6 +18,7 @@ from app.schemas.task_content import QUIZ_TASK_TYPES
+ # — общая функция для движка и кабинета, чтобы карточка курса, программа курса
+ # и «следующий шаг» считали долг одинаково.
+ from app.services.content_grace_service import compute_graced_items
++from app.services.transparent_subcourse import absorbed_in_tree, task_key
+ # Y-3.2 (S3-A4): единая точка правды — учебный движок.
+ from app.services.learning_engine_service import PASS_THRESHOLD_RATIO, is_mentor_reviewed
+ # tsk-656: единственное место, где живёт правило «это реальная сдача ученика»,
+@@ -875,6 +876,8 @@ open_course_attempt AS (
+ SELECT
+     t.id AS task_id,
+     t.course_id,
++    t.order_position,
++    t.host_order_position,
+     t.is_active,
+     t.requirement_level,
+     t.task_content->>'type' AS task_type,
+@@ -1264,13 +1267,35 @@ async def get_syllabus_states(
+     # что считать долгом.
+     graced = await compute_graced_items(db, user_id, attempts_root_id)
+ 
++    # tsk-1198: прозрачный подкурс, чей хозяин в этом дереве, — не раздел: его
++    # элементы отдаются с course_id хозяина (SPW группирует по нему) и встают в
++    # список хозяина на свои места; из sections он уходит.
++    absorbed = await absorbed_in_tree(db, tree_ids)
++
+     # Группировка по course_id для depth-first emit
+     materials_by_course: dict[int, list[dict]] = {}
+     for r in material_rows:
+-        materials_by_course.setdefault(r["course_id"], []).append(dict(r))
++        m = dict(r)
++        m["course_id"] = absorbed.get(int(m["course_id"]), m["course_id"])
++        materials_by_course.setdefault(m["course_id"], []).append(m)
+     tasks_by_course: dict[int, list[dict]] = {}
+     for r in task_rows:
+-        tasks_by_course.setdefault(r["course_id"], []).append(dict(r))
++        t = dict(r)
++        src = int(t["course_id"])
++        t["_absorbed"] = src in absorbed
++        t["course_id"] = absorbed.get(src, src)
++        tasks_by_course.setdefault(t["course_id"], []).append(t)
++    if absorbed:
++        for host in set(absorbed.values()):
++            tasks_by_course.get(host, []).sort(
++                key=lambda t: task_key(
++                    t["order_position"], int(t["task_id"]),
++                    host_order_position=t["host_order_position"],
++                    absorbed=t["_absorbed"],
++                )
++            )
++        section_meta = [m for m in section_meta if m["course_id"] not in absorbed]
++        tree_ids = [c for c in tree_ids if c not in absorbed]
+ 
+     items: list[dict] = []
+     for cid in tree_ids:
+diff --git a/app/services/tasks_service.py b/app/services/tasks_service.py
+index 9bb171b..adc6b82 100644
+--- a/app/services/tasks_service.py
++++ b/app/services/tasks_service.py
+@@ -835,10 +835,14 @@ class TasksService(BaseService[Tasks]):
+         is_active: bool | None = None,
+         limit: int = 100,
+         offset: int = 0,
++        with_transparent: bool = False,
+     ) -> Tuple[List[Tasks], int]:
+         """
+         Получить задачи курса с пагинацией.
+ 
++        tsk-1198: ``with_transparent`` — вместе с заданиями подкурсов, прозрачных
++        для этого курса, на их местах в списке (порядок, как у учебного движка).
++
+         Порядок результата детерминирован:
+         ``ORDER BY order_position NULLS LAST, id`` — совпадает с порядком,
+         который использует Learning Engine ``next-item picker`` и
+@@ -860,7 +864,12 @@ class TasksService(BaseService[Tasks]):
+         """
+         from sqlalchemy import func, select
+ 
+-        filters = [self.repo.model.course_id == course_id]
++        absorbed: list[int] = []
++        if with_transparent:
++            from app.services.transparent_subcourse import transparent_links
++
++            absorbed = [c for c, h in (await transparent_links(db)).items() if h == course_id]
++        filters = [self.repo.model.course_id.in_([course_id, *absorbed])]
+         if difficulty_id is not None:
+             filters.append(self.repo.model.difficulty_id == difficulty_id)
+         if is_active is not None:
+@@ -878,6 +887,24 @@ class TasksService(BaseService[Tasks]):
+         )
+         count_stmt = select(func.count()).select_from(self.repo.model).where(*filters)
+ 
++        if absorbed:
++            # Порядок с подборкой считается в Python (ключ движка), поэтому и
++            # страница режется здесь: заданий у курса банка — десятки.
++            from app.services.transparent_subcourse import task_key
++
++            rows = (
++                await db.execute(select(self.repo.model).where(*filters))
++            ).scalars().all()
++            rows = sorted(
++                rows,
++                key=lambda t: task_key(
++                    t.order_position, t.id,
++                    host_order_position=t.host_order_position,
++                    absorbed=t.course_id != course_id,
++                ),
++            )
++            return list(rows[offset:offset + limit]), len(rows)
++
+         items = (await db.execute(list_stmt)).scalars().all()
+         total = (await db.execute(count_stmt)).scalar() or 0
+         return list(items), int(total)
+diff --git a/app/services/transparent_subcourse.py b/app/services/transparent_subcourse.py
+new file mode 100644
+index 0000000..18e8b3f
+--- /dev/null
++++ b/app/services/transparent_subcourse.py
+@@ -0,0 +1,87 @@
++"""Прозрачные подкурсы (tsk-1198): одно правило для всех обходов дерева.
++
++Подкурс, прозрачный для родителя (`course_parents.is_transparent`), в дереве,
++где этот родитель есть, отдельным разделом не показывается: его задания
++считаются заданиями родителя-«хозяина» и встают в список хозяина на место
++`tasks.host_order_position` (перед заданием хозяина с тем же `order_position`).
++В другом дереве (практикум) тот же узел — обычный раздел.
++
++Членство не меняется: подкурс остаётся в множестве курсов дерева, задание
++по-прежнему принадлежит одному курсу (`tasks.course_id`), поэтому счёт по
++множеству (`compute_course_state`, «N из M», ДЗ) двойного счёта не даёт.
++Меняются только порядок и группировка — их и делают обходы через этот модуль.
++"""
++from __future__ import annotations
++
++import logging
++from typing import Iterable, Optional, Tuple
++
++from sqlalchemy import text
++from sqlalchemy.ext.asyncio import AsyncSession
++
++logger = logging.getLogger(__name__)
++
++_CACHE_KEY = "tsk1198_transparent_links"
++
++# Ключ сортировки задания внутри списка курса. Четыре поля: (нет позиции,
++# позиция, 0 — задание прозрачного подкурса / 1 — своё, id).
++TaskKey = Tuple[int, int, int, int]
++
++
++async def transparent_links(db: AsyncSession) -> dict[int, int]:
++    """Все прозрачные связи `{подкурс: хозяин}`; кешируются на сессию БД.
++
++    Связей десятки, поэтому один запрос на сессию дешевле точечных по узлам
++    (обход дерева в next-item идёт по каждому узлу, tsk-662).
++    """
++    cached = db.info.get(_CACHE_KEY)
++    if cached is not None:
++        return cached
++    rows = (
++        await db.execute(
++            text(
++                "SELECT course_id, parent_course_id FROM course_parents "
++                "WHERE is_transparent ORDER BY order_number ASC NULLS LAST, parent_course_id"
++            )
++        )
++    ).fetchall()
++    links: dict[int, int] = {}
++    for child, host in rows:
++        # Прозрачен узел может быть только для одного хозяина; при ошибке
++        # разметки берём первого и пишем в лог, а не роняем обход.
++        if int(child) in links:
++            logger.warning("tsk-1198: подкурс %s прозрачен для нескольких родителей", child)
++            continue
++        links[int(child)] = int(host)
++    db.info[_CACHE_KEY] = links
++    return links
++
++
++def reset_transparent_cache(db: AsyncSession) -> None:
++    """Сбросить кеш связей (после правки иерархии в той же сессии)."""
++    db.info.pop(_CACHE_KEY, None)
++
++
++async def absorbed_in_tree(db: AsyncSession, tree_ids: Iterable[int]) -> dict[int, int]:
++    """`{подкурс: хозяин}` для прозрачных подкурсов, чей хозяин есть в этом дереве."""
++    ids = set(int(i) for i in tree_ids)
++    links = await transparent_links(db)
++    return {c: h for c, h in links.items() if c in ids and h in ids}
++
++
++def task_key(
++    order_position: Optional[int],
++    task_id: int,
++    *,
++    host_order_position: Optional[int] = None,
++    absorbed: bool = False,
++) -> TaskKey:
++    """Ключ задания в списке курса; паритет с SQL `order_position NULLS LAST, id`.
++
++    Задание прозрачного подкурса (`absorbed`) сортируется по месту в хозяине
++    и встаёт перед заданием хозяина с той же позицией.
++    """
++    if absorbed:
++        pos = host_order_position
++        return (0 if pos is not None else 1, pos or 0, 0, task_id)
++    return (0 if order_position is not None else 1, order_position or 0, 1, task_id)
+diff --git a/docs/openapi.json b/docs/openapi.json
+index 066f6cd..01b0b02 100644
+--- a/docs/openapi.json
++++ b/docs/openapi.json
+@@ -2144,6 +2144,18 @@
+               "title": "Course Id"
+             }
+           },
++          {
++            "name": "hide_transparent",
++            "in": "query",
++            "required": false,
++            "schema": {
++              "type": "boolean",
++              "description": "tsk-1198: не отдавать подкурсы, прозрачные для этого курса (их задания — в `GET /tasks/by-course/{id}?with_transparent=true`). Для экранов ученика; редактор иерархии зовёт без флага.",
++              "default": false,
++              "title": "Hide Transparent"
++            },
++            "description": "tsk-1198: не отдавать подкурсы, прозрачные для этого курса (их задания — в `GET /tasks/by-course/{id}?with_transparent=true`). Для экранов ученика; редактор иерархии зовёт без флага."
++          },
+           {
+             "name": "token",
+             "in": "query",
+@@ -9789,6 +9801,18 @@
+             },
+             "description": "Смещение"
+           },
++          {
++            "name": "with_transparent",
++            "in": "query",
++            "required": false,
++            "schema": {
++              "type": "boolean",
++              "description": "tsk-1198: вместе с заданиями подкурсов, прозрачных для этого курса, на их местах в списке. Для экранов ученика.",
++              "default": false,
++              "title": "With Transparent"
++            },
++            "description": "tsk-1198: вместе с заданиями подкурсов, прозрачных для этого курса, на их местах в списке. Для экранов ученика."
++          },
+           {
+             "name": "token",
+             "in": "query",
+diff --git a/scripts/tsk1198_mark_transparent.py b/scripts/tsk1198_mark_transparent.py
+new file mode 100644
+index 0000000..0458dda
+--- /dev/null
++++ b/scripts/tsk1198_mark_transparent.py
+@@ -0,0 +1,199 @@
++"""tsk-1198: подборки практикумов прозрачны в курсах банка «Задание N».
++
++Решение оператора (03.10): в курсе банка задания подборки идут обычным списком
++вместе с остальными, после теории и на ПРЕЖНИХ местах; разделом подборка видна
++только в практикуме 7–11 класса. Практикумы и сдачи не трогаем.
++
++Что делает (одна транзакция, по умолчанию dry-run с откатом):
++1. `course_parents.is_transparent = true` у связи «подборка → курс банка» —
++   32 подборки (`lms:tsk1161:bank:*`, `lms:tsk1163:bank:*`, выборки
++   `tsk1161_selection.json` / `tsk1163_selection.json`); связи с практикумами
++   не меняются.
++2. `tasks.host_order_position` у заданий подборки — место в списке курса банка:
++   текущая позиция первого задания банка, стоявшего ПОСЛЕ этого задания до
++   переноса (если такого нет — в конец). Позиции до переноса —
++   `tsk1198_positions_0929.json`, выжимка из копии прода от 29.09 03:15 UTC
++   (перенос tsk-1161 — 29.09 14:46, tsk-1163 — позже). `order_position`
++   заданий не меняется: это порядок внутри подборки (практикум).
++
++Проверки до записи и после: число связей и заданий, неизменность
++`order_position`, сдач и связей с практикумами.
++
++Запуск (из корня LMS):
++  python scripts/tsk1198_mark_transparent.py            # dry-run: план + откат
++  DBCHECK_OK=1 python scripts/tsk1198_mark_transparent.py --apply
++"""
++from __future__ import annotations
++
++import argparse
++import json
++import logging
++import sys
++from pathlib import Path
++from typing import Any, Dict, List, Tuple
++
++import psycopg2
++import psycopg2.extras
++
++sys.path.insert(0, str(Path(__file__).resolve().parent))
++from tsk1132_move_foreign_tasks import prod_dsn  # noqa: E402
++
++logging.basicConfig(level=logging.INFO, format="%(message)s", stream=sys.stdout)
++logger = logging.getLogger("tsk1198")
++
++HERE = Path(__file__).resolve().parent
++SNAPSHOT: Dict[str, List[List[Any]]] = json.loads(
++    (HERE / "tsk1198_positions_0929.json").read_text(encoding="utf-8")
++)["banks"]
++
++
++def selection() -> List[Tuple[str, int]]:
++    """(course_uid подборки, курс банка) по обеим выборкам."""
++    pairs: List[Tuple[str, int]] = []
++    for name in ("tsk1161", "tsk1163"):
++        for g in json.loads((HERE / f"{name}_selection.json").read_text(encoding="utf-8")):
++            # Подборки tsk-1163 переиспользуют узлы tsk-1161, если ключ уже был.
++            pairs.append((g["key"], int(g["bank"])))
++    return pairs
++
++
++def resolve_nodes(cur: Any, pairs: List[Tuple[str, int]]) -> List[Tuple[int, int, str]]:
++    """(подборка, банк, uid): ищем узел по ключу среди обоих префиксов."""
++    out: List[Tuple[int, int, str]] = []
++    for key, bank in pairs:
++        cur.execute(
++            "SELECT id, course_uid FROM courses WHERE course_uid = ANY(%s)",
++            ([f"lms:tsk1161:bank:{key}", f"lms:tsk1163:bank:{key}"],),
++        )
++        rows = cur.fetchall()
++        if len(rows) != 1:
++            raise RuntimeError(f"Подборка {key}: найдено узлов {len(rows)}")
++        out.append((int(rows[0]["id"]), bank, rows[0]["course_uid"]))
++    return out
++
++
++def plan_slots(cur: Any, node: int, bank: int) -> Dict[int, int]:
++    """Место каждого задания подборки в списке банка (см. docstring модуля)."""
++    old = {int(t): p for t, p in SNAPSHOT.get(str(bank), []) if p is not None}
++    cur.execute("SELECT id, order_position FROM tasks WHERE course_id = %s", (bank,))
++    current = {int(r["id"]): r["order_position"] for r in cur.fetchall()}
++    cur.execute("SELECT id FROM tasks WHERE course_id = %s ORDER BY order_position, id", (node,))
++    sub_tasks = [int(r["id"]) for r in cur.fetchall()]
++    tail = max((p for p in current.values() if p is not None), default=0) + 1
++    slots: Dict[int, int] = {}
++    for tid in sub_tasks:
++        if tid not in old:
++            raise RuntimeError(f"Задание {tid} подборки {node}: нет в копии банка {bank}")
++        after = [
++            (old[y], current[y]) for y in current
++            if y in old and old[y] > old[tid] and current[y] is not None
++        ]
++        slots[tid] = min(after)[1] if after else tail
++    return slots
++
++
++def fingerprint(cur: Any, nodes: List[int], banks: List[int]) -> Dict[str, Any]:
++    """Что меняться не должно: позиции, сдачи, связи с практикумами."""
++    ids = nodes + banks
++    cur.execute(
++        "SELECT md5(string_agg(id || ':' || course_id || ':' || COALESCE(order_position, -1), ',' "
++        "ORDER BY id)) AS h FROM tasks WHERE course_id = ANY(%s)",
++        (ids,),
++    )
++    positions = cur.fetchone()["h"]
++    cur.execute(
++        "SELECT count(*) AS n FROM task_results tr JOIN tasks t ON t.id = tr.task_id "
++        "WHERE t.course_id = ANY(%s)",
++        (ids,),
++    )
++    results = cur.fetchone()["n"]
++    cur.execute(
++        "SELECT md5(string_agg(course_id || '>' || parent_course_id || ':' || "
++        "COALESCE(order_number, -1) || ':' || is_transparent, ',' ORDER BY course_id, parent_course_id)) AS h "
++        "FROM course_parents WHERE course_id = ANY(%s) AND NOT (parent_course_id = ANY(%s))",
++        (nodes, banks),
++    )
++    return {"positions": positions, "results": results, "praktikum_links": cur.fetchone()["h"]}
++
++
++def main() -> int:
++    """Разметить 32 подборки в одной транзакции с проверкой до и после."""
++    parser = argparse.ArgumentParser(description="tsk-1198")
++    parser.add_argument("--apply", action="store_true")
++    args = parser.parse_args()
++
++    conn = psycopg2.connect(**prod_dsn())
++    conn.autocommit = False
++    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
++    try:
++        nodes = resolve_nodes(cur, selection())
++        if len(nodes) != 32 or len({n for n, _, _ in nodes}) != 32:
++            logger.error("Ожидалось 32 разные подборки, получено %s — останов", len(nodes))
++            conn.rollback()
++            return 1
++        node_ids = [n for n, _, _ in nodes]
++        bank_ids = sorted({b for _, b, _ in nodes})
++        before = fingerprint(cur, node_ids, bank_ids)
++
++        plan: Dict[int, Dict[int, int]] = {}
++        for node, bank, uid in nodes:
++            cur.execute(
++                "SELECT 1 FROM course_parents WHERE course_id = %s AND parent_course_id = %s",
++                (node, bank),
++            )
++            if cur.fetchone() is None:
++                logger.error("Нет связи %s → банк %s — останов", node, bank)
++                conn.rollback()
++                return 1
++            plan[node] = plan_slots(cur, node, bank)
++            logger.info("%-26s %s → %s: %s", uid, node, bank,
++                        ", ".join(f"{t}@{s}" for t, s in plan[node].items()))
++
++        for node, bank, _ in nodes:
++            cur.execute(
++                "UPDATE course_parents SET is_transparent = true "
++                "WHERE course_id = %s AND parent_course_id = %s",
++                (node, bank),
++            )
++            if cur.rowcount != 1:
++                raise RuntimeError(f"Связь {node} → {bank}: обновлено {cur.rowcount}")
++            for tid, slot in plan[node].items():
++                cur.execute(
++                    "UPDATE tasks SET host_order_position = %s WHERE id = %s AND course_id = %s",
++                    (slot, tid, node),
++                )
++                if cur.rowcount != 1:
++                    raise RuntimeError(f"Задание {tid}: обновлено {cur.rowcount}")
++
++        after = fingerprint(cur, node_ids, bank_ids)
++        cur.execute("SELECT count(*) AS n FROM course_parents WHERE is_transparent")
++        links = cur.fetchone()["n"]
++        cur.execute(
++            "SELECT count(*) AS n FROM tasks WHERE course_id = ANY(%s) AND host_order_position IS NULL",
++            (node_ids,),
++        )
++        unslotted = cur.fetchone()["n"]
++        ok = before == after and links == 32 and unslotted == 0
++        logger.info("Проверка: неизменное %s, прозрачных связей %s, заданий без места %s",
++                    before == after, links, unslotted)
++        if not ok:
++            logger.error("Проверка не прошла — откат (до %s, после %s)", before, after)
++            conn.rollback()
++            return 1
++        if args.apply:
++            conn.commit()
++            logger.info("ЗАПИСАНО: 32 связи, %s заданий", sum(len(p) for p in plan.values()))
++        else:
++            conn.rollback()
++            logger.info("dry-run: откат (для записи --apply)")
++        return 0
++    except Exception:
++        conn.rollback()
++        logger.exception("Ошибка — откат")
++        return 1
++    finally:
++        conn.close()
++
++
++if __name__ == "__main__":
++    sys.exit(main())
+diff --git a/scripts/tsk1198_positions_0929.json b/scripts/tsk1198_positions_0929.json
+new file mode 100644
+index 0000000..a40c933
+--- /dev/null
++++ b/scripts/tsk1198_positions_0929.json
+@@ -0,0 +1 @@
++{"source": "pg-learn.dump от 2026-09-29 03:15 UTC (до tsk-1161/1163); [task_id, order_position]", "banks": {"138": [[4780, 1], [4782, 2], [2131, 3], [2132, 4], [2331, 5], [2453, 6], [2416, 7], [2480, 8], [2389, 9], [2760, 10], [2784, 11], [2806, 12], [2599, 13], [2625, 14], [2674, 15], [2696, 16], [2577, 17], [2738, 18], [2831, 19], [2849, 20], [2855, 21], [2865, 22], [3038, 23], [3119, 24], [3122, 25], [3275, 26], [3320, 27], [3323, 28], [4553, 29], [4554, 30], [4781, 31], [2556, 32], [2649, 33], [2137, 34], [2335, 35], [2332, 36], [4784, 37], [2718, 38], [2333, 39], [2336, 40], [2133, 41], [2134, 42], [2058, 43], [2136, 44], [2135, 45], [2138, 46], [2334, 47], [2337, 48], [3194, 49], [3203, 50], [3219, 51], [4783, 52], [4785, 53], [4786, 54], [4787, 55], [4788, 56], [4789, 57], [3186, 58], [3469, 59], [9500, 60], [9524, 61], [2938, 62]], "141": [[2396, 1], [2421, 2], [2460, 3], [2505, 4], [2523, 5], [2561, 6], [2583, 7], [2606, 8], [2656, 9], [2766, 10], [2838, 11], [2810, 12], [2872, 13], [2888, 14], [2893, 15], [2898, 16], [2905, 17], [2911, 18], [2920, 19], [3084, 20], [4110, 21], [4070, 22], [4277, 23], [4063, 24], [4266, 25], [9482, 26], [9561, 27], [2345, 28], [2346, 29], [9516, 30], [2484, 31], [2348, 32], [2347, 33], [2349, 34], [9503, 35], [3474, 36]], "160": [[2198, 1], [2199, 2], [2420, 3], [2459, 4], [2504, 5], [2560, 6], [2582, 7], [2631, 8], [2395, 9], [2655, 10], [2680, 11], [2743, 12], [2765, 13], [2788, 14], [2809, 15], [2846, 16], [2861, 17], [2871, 18], [2904, 19], [3348, 20], [3156, 21], [3940, 22], [2702, 23], [3925, 24], [9552, 25], [2200, 26], [2201, 27], [2233, 28], [2214, 29], [2216, 30], [2217, 31], [2223, 32], [2224, 33], [2229, 34], [2225, 35], [2227, 36], [2976, 37], [2231, 38], [2212, 39], [2215, 40], [2978, 41], [2980, 42], [2979, 43], [2984, 44], [3306, 45], [2083, 46], [2605, 47], [2994, 48], [2230, 49], [2837, 50], [2211, 51], [2219, 52], [2213, 53], [2218, 54], [2221, 55], [2220, 56], [2228, 57], [2232, 58], [2222, 59], [2977, 60], [2226, 61], [2983, 62], [3478, 63], [2981, 64], [3288, 65], [2985, 66], [2982, 67], [3105, 68], [3294, 69], [3058, 70], [3121, 71], [3363, 72], [4560, 73], [9481, 74], [9560, 75]], "158": [[4877, 1], [4882, 2], [4887, 3], [4888, 4], [4892, 5], [4894, 6], [4898, 7], [4901, 8], [4881, 9], [4890, 10], [4886, 11], [4900, 12], [4872, 13], [4873, 14], [4874, 15], [4876, 16], [4875, 17], [4879, 18], [4884, 19], [4885, 20], [4889, 21], [4893, 22], [4878, 23], [4880, 24], [4883, 25], [4891, 26], [4896, 27], [4899, 28], [4895, 29], [4897, 30], [2629, 31], [2099, 32], [2100, 33], [2252, 34], [2101, 35], [2105, 36], [2581, 37], [2102, 38], [2742, 39], [2103, 40], [2104, 41], [2603, 42], [2393, 43], [2457, 44], [2502, 45], [2653, 46], [2678, 47], [2721, 48], [2700, 49], [2764, 50], [3023, 51], [2808, 52], [2844, 53], [2828, 54], [2835, 55], [2859, 56], [2869, 57], [2876, 58], [2919, 59], [3110, 60], [3234, 61], [3328, 62], [4133, 63], [3371, 64], [3870, 65], [3880, 66], [3924, 67], [3980, 68], [3984, 69], [4045, 70], [9514, 71], [3759, 72], [9480, 73], [9527, 74], [9550, 75], [2106, 76], [2107, 77], [2108, 78], [2263, 79], [2257, 80], [2253, 81], [2258, 82], [2254, 83], [3921, 84], [2256, 85], [2259, 86], [2255, 87], [2267, 88], [2266, 89], [2265, 90], [2260, 91], [2082, 92], [2261, 93], [2109, 94], [3229, 95], [2264, 96], [3230, 97], [2110, 98]], "139": [[4995, 1], [4996, 2], [4997, 3], [4999, 4], [5000, 5], [5002, 6], [5009, 7], [5008, 8], [5011, 9], [5017, 10], [5018, 11], [4998, 12], [5001, 13], [5004, 14], [5003, 15], [5005, 16], [5006, 17], [5007, 18], [5010, 19], [5015, 20], [5012, 21], [5013, 22], [5014, 23], [5016, 24], [5019, 25], [5020, 26], [5021, 27], [2487, 28], [2508, 29], [2463, 30], [2424, 31], [2563, 32], [2633, 33], [2526, 34], [2541, 35], [2659, 36], [2725, 37], [2682, 38], [2704, 39], [2917, 40], [4564, 41], [2746, 42], [2840, 43], [3056, 44], [3083, 45], [3298, 46], [3304, 47], [2399, 48], [2585, 49], [2608, 50], [2791, 51], [2813, 52], [9485, 53], [2111, 54], [2112, 55], [2113, 56], [2114, 57], [2073, 58], [2237, 59], [2236, 60], [2238, 61], [2234, 62], [2239, 63], [2241, 64], [2244, 65], [2243, 66], [2990, 67], [2249, 68], [2242, 69], [2247, 70], [2248, 71], [2240, 72], [2246, 73], [2074, 74], [2115, 75], [2235, 76], [2250, 77], [2117, 78], [2118, 79], [2119, 80], [2120, 81], [2121, 82], [2251, 83], [2245, 84], [2991, 85], [3107, 86], [3108, 87], [3268, 88], [3114, 89], [3248, 90], [3447, 91], [3272, 92], [3274, 93], [3378, 94], [4565, 95], [4566, 96]], "1179": [[6934, 1], [6935, 2], [6946, 3], [6947, 4], [6949, 5], [6950, 6], [6948, 7], [6936, 8], [6952, 9], [6955, 10], [6956, 11], [6957, 12], [6958, 13], [6954, 14], [6951, 15], [7151, 16], [6953, 17], [6963, 18], [7153, 19], [6962, 20], [7154, 21], [6961, 22], [7155, 23], [6960, 24], [7156, 25], [7157, 26], [6968, 27], [7158, 28], [6959, 29], [7159, 30], [6967, 31], [7160, 32], [7161, 33], [6966, 34], [7162, 35], [6973, 36], [7163, 37], [6974, 38], [7164, 39], [7165, 40], [6965, 41], [7166, 42], [6972, 43], [7167, 44], [7168, 45], [6979, 46], [7169, 47], [6980, 48], [6981, 49], [7171, 50], [6978, 51], [7172, 52], [7173, 53], [6971, 54], [7174, 55], [6964, 56], [7175, 57], [6986, 58], [7176, 59], [6987, 60], [6988, 61], [6985, 62], [6984, 63], [6977, 64], [6983, 65], [6993, 66], [6992, 67], [6991, 68], [6990, 69], [6970, 70], [6989, 71], [6976, 72], [6995, 73], [6982, 74], [6994, 75], [6969, 76], [6975, 77], [7170, 78]], "142": [[5033, 1], [5034, 2], [5035, 3], [5039, 4], [5036, 5], [5037, 6], [5040, 7], [5041, 8], [5042, 9], [5043, 10], [5038, 11], [2085, 12], [2086, 13], [2425, 14], [2464, 15], [2488, 16], [2527, 17], [2542, 18], [2564, 19], [2586, 20], [2609, 21], [2634, 22], [2660, 23], [2683, 24], [2705, 25], [2726, 26], [2747, 27], [2768, 28], [2792, 29], [2814, 30], [2841, 31], [3081, 32], [3171, 33], [3313, 34], [3314, 35], [3315, 36], [3335, 37], [3337, 38], [3358, 39], [3351, 40], [3987, 41], [3379, 42], [3989, 43], [4567, 44], [4568, 45], [2084, 46], [2400, 47], [2509, 48], [2947, 49], [2955, 50], [9486, 51], [2088, 52], [2089, 53], [2090, 54], [2091, 55], [2093, 56], [2094, 57], [2949, 58], [2948, 59], [2954, 60], [2951, 61], [2952, 62], [2953, 63], [2273, 64], [2274, 65], [2277, 66], [2270, 67], [2280, 68], [2279, 69], [2275, 70], [2278, 71], [2076, 72], [2087, 73], [2092, 74], [2095, 75], [2096, 76], [2098, 77], [2269, 78], [2268, 79], [2276, 80], [2950, 81], [4569, 82], [3283, 83], [3310, 84], [3317, 85], [2097, 86], [2271, 87], [2272, 88], [2956, 89]], "148": [[4759, 1], [4760, 2], [4761, 3], [4763, 4], [4764, 5], [4762, 6], [4765, 7], [4767, 8], [4766, 9], [2205, 10], [2206, 11], [2415, 12], [2479, 13], [2555, 14], [2576, 15], [2648, 16], [2805, 17], [2695, 18], [2783, 19], [2624, 20], [2737, 21], [2362, 22], [2759, 23], [2830, 24], [2843, 25], [2848, 26], [2854, 27], [2864, 28], [2886, 29], [2892, 30], [3014, 31], [3025, 32], [3265, 33], [3278, 34], [4224, 35], [3330, 36], [4233, 37], [2717, 38], [9556, 39], [2366, 40], [2363, 41], [2388, 42], [9499, 43], [4768, 44], [2364, 45], [2365, 46], [4552, 47], [4551, 48], [3312, 49]], "1128": [[6520, 1], [6521, 3], [6522, 4], [6523, 5], [6525, 6], [6526, 7], [6524, 8], [6544, 9], [6545, 10], [6546, 11], [6548, 15], [6551, 16], [6550, 17], [6547, 18], [6549, 19], [6556, 21], [6557, 22], [6527, 23], [6559, 24], [6555, 25], [6553, 26], [6563, 28], [6562, 29], [6564, 30], [6561, 31], [6568, 33], [6554, 34], [6560, 35], [6569, 36], [6567, 37], [6573, 38], [6552, 39], [6566, 40], [6558, 41], [6572, 43], [6565, 45], [6571, 46], [6570, 51]], "156": [[3240, 1], [4818, 2], [4819, 3], [4820, 4], [4821, 5], [3451, 6], [3450, 7], [2149, 8], [2150, 9], [2151, 10], [2391, 11], [2417, 12], [2455, 13], [2482, 14], [2558, 15], [2579, 16], [2601, 17], [2627, 18], [2651, 19], [2676, 20], [2807, 21], [2698, 22], [2740, 23], [2762, 24], [2833, 25], [2851, 26], [2857, 27], [3104, 28], [3157, 29], [2867, 30], [2903, 31], [3124, 32], [3245, 33], [4129, 34], [3276, 35], [3279, 36], [3303, 37], [4555, 38], [2786, 39], [9502, 40], [9559, 41], [2152, 42], [2154, 43], [2069, 44], [2070, 45], [2282, 46], [2281, 47], [2283, 48], [2289, 49], [2288, 50], [2285, 51], [2286, 52], [2068, 53], [2155, 54], [2156, 55], [2284, 56], [4556, 57], [2287, 58], [3036, 59], [3106, 60], [3189, 61], [3289, 62], [3311, 63], [2153, 64]], "1112": [[6396, 42], [6397, 44], [6400, 46], [6401, 47], [6398, 48], [6399, 49], [6405, 52], [6402, 53], [6403, 54], [6404, 55], [6410, 57], [6406, 58], [6407, 59], [6408, 60], [6409, 61], [6411, 63], [6412, 64], [6413, 65], [6420, 66], [6414, 67], [6415, 68], [6416, 69], [6418, 70], [6417, 71], [6419, 73], [6422, 75], [6421, 76], [6423, 78], [6424, 79], [6425, 80], [6426, 81], [6427, 84], [6428, 85], [6431, 86], [6429, 87], [6433, 88], [6430, 89], [6432, 90]], "1111": [[6306, 1], [6307, 3], [6308, 4], [6309, 5], [6311, 6], [6312, 7], [6310, 8], [6344, 9], [6313, 12], [6347, 13], [6345, 15], [6346, 16], [6352, 18], [6348, 19], [6349, 20], [6350, 21], [6351, 22], [6357, 23], [6353, 25], [6354, 26], [6355, 27], [6356, 28], [6358, 30], [6361, 31], [6359, 32], [6360, 33], [6362, 35], [6366, 36], [6363, 37], [6373, 38], [6364, 39], [6365, 40], [6371, 42], [6367, 43], [6368, 44], [6369, 45], [6370, 46], [6372, 48], [6374, 50], [6375, 51], [6376, 52]], "1163": [[6851, 1], [6809, 2], [6852, 3], [6810, 4], [6854, 5], [6811, 6], [6853, 7], [6857, 8], [6812, 9], [6859, 10], [6856, 11], [6855, 12], [6864, 13], [6862, 14], [6861, 15], [6858, 16], [6869, 17], [6860, 18], [6871, 19], [6867, 20], [6873, 21], [6874, 22], [6877, 23], [6876, 24], [6878, 25], [6880, 26], [6866, 27], [6872, 28], [6879, 29], [6865, 30], [6863, 31], [6870, 32], [6868, 33], [6875, 34]], "162": [[4948, 1], [4951, 2], [4953, 3], [4954, 4], [4955, 5], [4956, 6], [4957, 7], [4949, 8], [4950, 9], [4952, 10], [4958, 11], [4959, 12], [4963, 13], [4960, 14], [4962, 15], [4961, 16], [4967, 17], [4964, 18], [4965, 19], [4966, 20], [2524, 21], [2461, 22], [2397, 23], [2422, 24], [2584, 25], [2485, 26], [2723, 27], [2506, 28], [2744, 29], [2657, 30], [2789, 31], [2811, 32], [2873, 33], [2878, 34], [2899, 35], [2887, 36], [2889, 37], [2894, 38], [3343, 39], [2916, 40], [3292, 41], [3803, 42], [3835, 43], [3838, 44], [4161, 45], [4561, 46], [3833, 47], [9529, 48], [9557, 49], [2158, 50], [2066, 51], [2937, 52], [2065, 53], [2367, 54], [2935, 55], [2839, 56], [2159, 57], [2161, 58], [2369, 59], [3034, 60], [3057, 61], [3112, 62], [2370, 63], [9483, 64]], "145": [[5089, 1], [5090, 2], [5091, 3], [5092, 4], [5093, 5], [5094, 6], [5095, 7], [2403, 8], [2428, 9], [2442, 10], [2467, 11], [2491, 12], [2512, 13], [2530, 14], [2567, 15], [2589, 16], [2612, 17], [2637, 18], [2663, 19], [2708, 20], [2729, 21], [2750, 22], [2771, 23], [2794, 24], [2816, 25], [2874, 26], [2895, 27], [3296, 28], [2992, 29], [3042, 30], [3926, 31], [3929, 32], [3930, 33], [3935, 34], [3937, 35], [4576, 36], [4578, 37], [2209, 38], [9488, 39], [2378, 40], [3285, 41], [3471, 42], [3332, 43], [2377, 44], [2375, 45], [2376, 46], [2077, 47], [3301, 48], [4577, 49]], "155": [[4800, 1], [4801, 2], [4802, 3], [4803, 4], [4804, 5], [4805, 6], [4806, 7], [4807, 8], [2390, 9], [2454, 10], [2481, 11], [2557, 12], [2578, 13], [2600, 14], [2626, 15], [2650, 16], [2719, 17], [2675, 18], [2697, 19], [2739, 20], [2761, 21], [2850, 22], [2785, 23], [2827, 24], [2832, 25], [2856, 26], [2866, 27], [3814, 28], [2923, 29], [3201, 30], [3321, 31], [3812, 32], [3822, 33], [4021, 34], [4118, 35], [9478, 36], [9513, 37], [9525, 38], [4808, 39], [4809, 40], [3760, 41], [3794, 42], [9501, 43]], "144": [[2140, 1], [2402, 2], [2427, 3], [2441, 4], [2466, 5], [2511, 6], [2529, 7], [2544, 8], [2566, 9], [2588, 10], [2636, 11], [2662, 12], [2707, 13], [2728, 14], [2749, 15], [2793, 16], [2815, 17], [3055, 18], [3817, 19], [3874, 20], [4196, 21], [4291, 22], [4573, 23], [4574, 24], [2611, 25], [2685, 26], [2770, 27], [2144, 28], [2143, 29], [2145, 30], [2146, 31], [2147, 32], [2142, 33], [2490, 34], [2351, 35], [2353, 36], [2354, 37], [2141, 38], [2148, 39], [2350, 40], [3241, 41], [3282, 42], [3012, 43], [3032, 44], [3270, 45], [3287, 46], [3300, 47], [4575, 48], [9553, 49]], "1178": [[6931, 1], [6932, 2], [6933, 3], [7152, 4], [7177, 5], [7178, 6], [7179, 7], [7180, 8], [7181, 9], [7182, 10], [7183, 11], [7184, 12], [7185, 13], [7186, 14], [7187, 15], [7188, 16], [7189, 17], [7190, 18], [7191, 19], [7192, 20], [7193, 21], [7194, 22], [7195, 23], [7196, 24], [7197, 25], [7198, 26], [7199, 27], [7200, 28]], "140": [[4739, 1], [4740, 2], [4742, 3], [4743, 4], [4741, 5], [4744, 6], [4747, 7], [4748, 8], [2186, 9], [2187, 10], [2188, 11], [2189, 12], [2387, 13], [2452, 14], [2414, 15], [2478, 16], [2501, 17], [2554, 18], [2673, 19], [2623, 20], [2647, 21], [2694, 22], [2736, 23], [2782, 24], [2804, 25], [2829, 26], [2853, 27], [2863, 28], [2881, 29], [2885, 30], [3324, 31], [2902, 32], [2914, 33], [3325, 34], [3339, 35], [3341, 36], [3992, 37], [9498, 38], [4550, 39], [2338, 40], [4745, 41], [4746, 42], [9555, 43], [2339, 44], [2342, 45], [2344, 46], [9558, 47], [2341, 48], [2340, 49], [2075, 50], [2343, 51], [3136, 52], [3198, 53]], "1120": [[6466, 1], [6467, 2], [6468, 3], [6471, 6], [6469, 7], [6474, 9], [6473, 10], [6472, 11], [6475, 12], [6479, 14], [6478, 15], [6481, 16], [6482, 17], [6470, 18], [6485, 20], [6484, 22], [6487, 23], [6486, 24], [6490, 25], [6480, 26], [6483, 27], [6492, 29], [6495, 30], [6476, 31], [6491, 32], [6489, 33], [6500, 35], [6497, 36], [6503, 38], [6488, 39], [6496, 40], [6502, 42], [6494, 43], [6477, 44], [6501, 46], [6493, 48], [6499, 49], [6498, 54]], "143": [[2122, 1], [2371, 2], [2426, 3], [2465, 4], [2489, 5], [2510, 6], [2528, 7], [2543, 8], [2565, 9], [2587, 10], [2610, 11], [2635, 12], [2661, 13], [2684, 14], [2706, 15], [2727, 16], [2748, 17], [2769, 18], [2921, 19], [2926, 20], [3123, 21], [3098, 22], [3218, 23], [3360, 24], [3864, 25], [4064, 26], [4103, 27], [4570, 28], [4571, 29], [2440, 30], [2123, 31], [2124, 32], [2125, 33], [2126, 34], [2127, 35], [2128, 36], [2373, 37], [2372, 38], [2401, 39], [2374, 40], [2129, 41], [2130, 42], [3011, 43], [3169, 44], [3210, 45], [3443, 46], [3286, 47], [3359, 48], [4572, 49], [9487, 50]], "1152": [[6680, 1], [6681, 2], [6683, 4], [6684, 5], [6682, 7], [6702, 8], [6703, 9], [6704, 10], [6705, 11], [6686, 13], [6685, 14], [6710, 16], [6709, 17], [6708, 18], [6707, 19], [6715, 21], [6716, 22], [6706, 23], [6714, 24], [6713, 26], [6721, 27], [6720, 28], [6712, 30], [6719, 31], [6726, 32], [6725, 34], [6718, 36], [6731, 37], [6711, 38], [6724, 39], [6730, 40], [6717, 42], [6723, 44], [6729, 45], [6722, 49], [6728, 50], [6727, 55]], "1154": [[6695, 1], [6696, 2], [6697, 4], [6698, 5], [6701, 7], [6762, 8], [6763, 10], [6765, 11], [6766, 12], [6764, 14], [6769, 15], [6767, 16], [6700, 17], [6771, 18], [6770, 19], [6774, 20], [6699, 21], [6768, 22], [6776, 24], [6779, 25], [6772, 26], [6775, 27], [6783, 29], [6784, 31], [6786, 32], [6787, 33], [6781, 34], [6789, 35], [6790, 36], [6788, 38], [6773, 39], [6780, 40], [6777, 41], [6785, 45], [6782, 47], [6778, 48]], "1162": [[6802, 1], [6803, 2], [6804, 3], [6805, 4], [6807, 6], [6822, 9], [6823, 10], [6808, 12], [6826, 13], [6824, 14], [6821, 15], [6828, 16], [6827, 17], [6831, 18], [6825, 19], [6806, 20], [6833, 22], [6836, 23], [6829, 24], [6832, 25], [6841, 28], [6838, 29], [6830, 30], [6845, 32], [6837, 33], [6847, 34], [6848, 35], [6846, 36], [6834, 37], [6843, 38], [6850, 39], [6842, 43], [6835, 44], [6839, 45], [6844, 50], [6840, 51], [6849, 55]], "163": [[2181, 1], [2182, 2], [2184, 3], [2183, 4], [2439, 5], [2398, 6], [2423, 7], [2462, 8], [2486, 9], [2507, 10], [2525, 11], [2540, 12], [2562, 13], [2607, 14], [2632, 15], [2658, 16], [2681, 17], [2703, 18], [2724, 19], [2767, 20], [2745, 21], [2790, 22], [2812, 23], [3022, 24], [3368, 25], [4562, 26], [4563, 27], [2883, 28], [2185, 29], [3033, 30], [3120, 31], [3318, 32], [3418, 33], [9484, 34], [9530, 35]], "149": [[2163, 1], [2164, 2], [2433, 3], [2408, 4], [2472, 5], [2517, 6], [2496, 7], [2535, 8], [2617, 9], [2642, 10], [2689, 11], [2667, 12], [2447, 13], [2712, 14], [2732, 15], [2799, 16], [2776, 17], [2875, 18], [2821, 19], [2879, 20], [2912, 21], [3021, 22], [3408, 23], [3409, 24], [3410, 25], [3411, 26], [4112, 27], [4113, 28], [4116, 29], [2594, 30], [9508, 31], [2166, 32], [2316, 33], [2168, 34], [2167, 35], [2320, 36], [2318, 37], [2317, 38], [2315, 39], [2321, 40], [2319, 41], [3080, 42], [3087, 43], [3177, 44], [2165, 45], [3467, 46], [9521, 47], [9492, 48], [9532, 49]], "1164": [[6881, 1], [6882, 2], [6883, 3], [6887, 4], [6816, 5], [6885, 6], [6884, 7], [6888, 8], [6886, 9], [6813, 10], [6892, 11], [6814, 12], [6815, 13], [6890, 14], [6893, 15], [6897, 16], [6891, 17], [6901, 18], [6889, 19], [6902, 20], [6904, 21], [6898, 22], [6895, 23], [6906, 24], [6909, 25], [6907, 26], [6903, 27], [6896, 28], [6900, 29], [6894, 30], [6908, 31], [6905, 32], [6899, 33], [6910, 34]], "1181": [[6941, 1], [7226, 2], [7227, 3], [7228, 4], [7229, 5], [7230, 6], [7231, 7], [7232, 8], [7233, 9], [7234, 10], [7235, 11], [7236, 12], [7237, 13], [7238, 14], [7239, 15], [7240, 16], [7249, 17], [7252, 18], [7253, 19], [7254, 20], [7255, 21], [6942, 22], [6943, 23], [7241, 24], [7242, 25], [7243, 26], [7244, 27], [7245, 28], [7246, 29], [7247, 30], [7248, 31], [7250, 32], [7251, 33], [6945, 34], [6944, 35]], "1130": [[6536, 1], [6537, 3], [6538, 5], [6541, 6], [6539, 7], [6540, 8], [6602, 9], [6603, 10], [6604, 11], [6542, 12], [6605, 15], [6609, 16], [6608, 17], [6607, 18], [6606, 19], [6614, 21], [6615, 22], [6613, 24], [6543, 25], [6612, 26], [6620, 27], [6619, 28], [6622, 29], [6611, 31], [6618, 32], [6626, 33], [6625, 34], [6627, 35], [6610, 36], [6624, 37], [6631, 38], [6617, 40], [6630, 41], [6623, 43], [6629, 44], [6616, 46], [6628, 49], [6621, 52]], "1129": [[6528, 1], [6529, 3], [6530, 4], [6531, 5], [6533, 6], [6532, 7], [6535, 8], [6574, 9], [6575, 10], [6576, 13], [6577, 14], [6580, 15], [6579, 16], [6578, 18], [6585, 20], [6586, 21], [6534, 22], [6584, 23], [6582, 24], [6591, 26], [6592, 27], [6593, 28], [6590, 29], [6581, 30], [6583, 31], [6589, 32], [6598, 33], [6597, 34], [6596, 35], [6595, 37], [6587, 38], [6601, 40], [6594, 42], [6600, 43], [6588, 45], [6599, 48]], "1153": [[6687, 1], [6688, 2], [6689, 4], [6690, 5], [6693, 7], [6732, 9], [6733, 10], [6734, 11], [6736, 13], [6692, 14], [6694, 15], [6735, 16], [6739, 17], [6741, 18], [6738, 19], [6737, 20], [6691, 21], [6745, 22], [6746, 24], [6744, 25], [6750, 27], [6743, 28], [6751, 30], [6742, 31], [6755, 32], [6749, 33], [6740, 34], [6759, 36], [6756, 37], [6760, 38], [6748, 39], [6754, 41], [6761, 43], [6747, 44], [6753, 46], [6752, 50], [6758, 51], [6757, 56]]}}
+\ No newline at end of file
+diff --git a/tests/test_tsk1198_transparent_subcourse.py b/tests/test_tsk1198_transparent_subcourse.py
+new file mode 100644
+index 0000000..4ed4b93
+--- /dev/null
++++ b/tests/test_tsk1198_transparent_subcourse.py
+@@ -0,0 +1,179 @@
++"""tsk-1198: прозрачный подкурс — в курсе-хозяине его задания идут общим списком.
++
++Граф как у подборок практикумов (tsk-1161/1163):
++
++    bank (корень, курс банка «Задание N»)
++      ├─ T1, T2, T3            — свои задания, позиции 1..3
++      └─ sub (прозрачен для bank): X1, X2
++    prak (корень, «Практикум»)
++      └─ sub (обычный раздел)
++
++X1 стоял до переноса между T1 и T2 (host_order_position=2), X2 — после T3
++(host_order_position=4). В bank порядок обязан быть T1, X1, T2, T3, X2 — во
++всех трёх обходах (движок, сводка прогресса, оглавление SPW), без раздела sub
++и без двойного счёта; в prak sub остаётся разделом со своим порядком X1, X2.
++"""
++from __future__ import annotations
++
++from uuid import uuid4
++
++import pytest
++import pytest_asyncio
++from sqlalchemy import text
++
++from app.services import manual_progress_service, me_service
++from app.services.learning_engine_service import LearningEngineService
++from app.services.tasks_service import TasksService
++
++
++async def _new_course(db, title: str) -> int:
++    res = await db.execute(
++        text("INSERT INTO courses (title, access_level) VALUES (:t, 'self_guided') RETURNING id"),
++        {"t": title},
++    )
++    return int(res.scalar_one())
++
++
++async def _new_task(db, *, course_id: int, difficulty_id: int) -> int:
++    res = await db.execute(
++        text(
++            "INSERT INTO tasks (task_content, course_id, difficulty_id, external_uid) "
++            "VALUES (CAST(:tc AS jsonb), :cid, :did, :uid) RETURNING id"
++        ),
++        {
++            "tc": '{"type": "SA", "stem": "tsk1198"}',
++            "cid": course_id,
++            "did": difficulty_id,
++            "uid": f"tsk1198-{uuid4().hex[:12]}",
++        },
++    )
++    return int(res.scalar_one())
++
++
++async def _new_student(db, course_id: int) -> int:
++    uid = int(
++        (
++            await db.execute(
++                text("INSERT INTO users (full_name) VALUES ('tsk1198 student') RETURNING id")
++            )
++        ).scalar_one()
++    )
++    await db.execute(
++        text("INSERT INTO user_courses (user_id, course_id, is_active) VALUES (:u, :c, true)"),
++        {"u": uid, "c": course_id},
++    )
++    return uid
++
++
++@pytest_asyncio.fixture
++async def graph(db):
++    """bank + прозрачная подборка sub + практикум prak (см. docstring модуля)."""
++    difficulty_id = (
++        await db.execute(text("SELECT id FROM difficulties ORDER BY id LIMIT 1"))
++    ).scalar()
++    if difficulty_id is None:
++        pytest.skip("Нет ни одной difficulty — граф не собрать")
++
++    ids: dict[str, int] = {
++        "bank": await _new_course(db, "tsk1198 bank"),
++        "sub": await _new_course(db, "tsk1198 sub"),
++        "prak": await _new_course(db, "tsk1198 prak"),
++    }
++    await db.execute(
++        text(
++            "INSERT INTO course_parents (course_id, parent_course_id, is_transparent) "
++            "VALUES (:s, :b, true), (:s, :p, false)"
++        ),
++        {"s": ids["sub"], "b": ids["bank"], "p": ids["prak"]},
++    )
++    for name in ("T1", "T2", "T3"):
++        ids[name] = await _new_task(db, course_id=ids["bank"], difficulty_id=difficulty_id)
++    for name, host_pos in (("X1", 2), ("X2", 4)):
++        ids[name] = await _new_task(db, course_id=ids["sub"], difficulty_id=difficulty_id)
++        await db.execute(
++            text("UPDATE tasks SET host_order_position = :p WHERE id = :t"),
++            {"p": host_pos, "t": ids[name]},
++        )
++    await db.commit()
++    return ids
++
++
++def _order(ids: dict[str, int], names: str) -> list[int]:
++    return [ids[n] for n in names.split()]
++
++
++@pytest.mark.asyncio
++async def test_syllabus_bank_is_one_list_practicum_keeps_section(db, graph):
++    student = await _new_student(db, graph["bank"])
++    await db.commit()
++
++    bank = await me_service.get_syllabus_states(db, user_id=student, root_course_id=graph["bank"])
++    assert [s["course_id"] for s in bank["sections"]] == [graph["bank"]]
++    tasks = [i for i in bank["items"] if i["kind"] == "task"]
++    assert [i["task_id"] for i in tasks] == _order(graph, "T1 X1 T2 T3 X2")
++    assert {i["course_id"] for i in tasks} == {graph["bank"]}
++
++    prak = await me_service.get_syllabus_states(db, user_id=student, root_course_id=graph["prak"])
++    assert graph["sub"] in [s["course_id"] for s in prak["sections"]]
++    sub_tasks = [i["task_id"] for i in prak["items"] if i["course_id"] == graph["sub"]]
++    assert sub_tasks == _order(graph, "X1 X2")
++
++
++@pytest.mark.asyncio
++async def test_next_item_walks_bank_in_restored_order(db, graph):
++    student = await _new_student(db, graph["bank"])
++    await db.commit()
++    engine = LearningEngineService()
++
++    first = await engine.resolve_next_item(db, student, root_course_id=graph["bank"])
++    assert first.task_id == graph["T1"]
++    walk = [first.task_id]
++    for _ in range(4):
++        nxt = await engine.resolve_next_item(
++            db, student, root_course_id=graph["bank"], after_task_id=walk[-1]
++        )
++        walk.append(nxt.task_id)
++    assert walk == _order(graph, "T1 X1 T2 T3 X2")
++
++
++@pytest.mark.asyncio
++async def test_next_item_in_practicum_keeps_subcourse_order(db, graph):
++    student = await _new_student(db, graph["prak"])
++    await db.commit()
++    engine = LearningEngineService()
++
++    first = await engine.resolve_next_item(db, student, root_course_id=graph["prak"])
++    assert (first.course_id, first.task_id) == (graph["sub"], graph["X1"])
++    nxt = await engine.resolve_next_item(
++        db, student, root_course_id=graph["prak"], after_task_id=graph["X1"]
++    )
++    assert nxt.task_id == graph["X2"]
++
++
++@pytest.mark.asyncio
++async def test_progress_has_no_subcourse_node_and_no_double_count(db, graph):
++    student = await _new_student(db, graph["bank"])
++    await db.commit()
++
++    progress = await manual_progress_service.get_student_progress(
++        db, student_id=student, course_id=graph["bank"]
++    )
++    nodes = [i["item_id"] for i in progress["items"] if i["item_type"] == "course"]
++    assert nodes == [graph["bank"]]
++    tasks = [i["item_id"] for i in progress["items"] if i["item_type"] == "task"]
++    assert tasks == _order(graph, "T1 X1 T2 T3 X2")
++
++    # Пять заданий — ровно по разу: подборка не задвоилась ни узлом, ни списком.
++    assert len(tasks) == len(set(tasks)) == 5
++
++
++@pytest.mark.asyncio
++async def test_tasks_by_course_with_transparent(db, graph):
++    service = TasksService()
++    plain, plain_total = await service.get_by_course(db, course_id=graph["bank"])
++    assert [t.id for t in plain] == _order(graph, "T1 T2 T3") and plain_total == 3
++
++    merged, total = await service.get_by_course(
++        db, course_id=graph["bank"], with_transparent=True
++    )
++    assert [t.id for t in merged] == _order(graph, "T1 X1 T2 T3 X2") and total == 5

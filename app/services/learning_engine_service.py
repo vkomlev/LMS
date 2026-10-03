@@ -38,6 +38,7 @@ from app.services.attempt_attachments import (
     mark_missing_one,
 )
 from app.services.task_sampling import sample_task_ids
+from app.services.transparent_subcourse import TaskKey, task_key, transparent_links
 # tsk-798: персональный объём программы. Порог выборки зависит от срока и темпа
 # КОНКРЕТНОГО ученика, и знать это может только его план — общая настройка
 # подкурса не различает ноябрьского новичка и того, кто идёт с сентября.
@@ -1048,17 +1049,21 @@ class LearningEngineService:
         *,
         after_material_id: Optional[int],
         after_task_id: Optional[int],
-    ) -> Optional[Tuple[int, str, int, Optional[int]]]:
+    ) -> Optional[Tuple[int, str, int, tuple, Optional[Tuple[int, tuple]]]]:
         """Курс и порядковый ключ элемента текущей позиции.
 
         Фильтры `is_active`/`requirement_level` здесь НЕ применяются намеренно:
         ученик может стоять на `recommended`-элементе (на проде таких 994 задачи
         и 44 материала), которого нет в списке обхода. Позиция всё равно должна
-        работать — обход режется по `order_position`, а не по вхождению в список.
+        работать — обход режется по порядковому ключу, а не по вхождению в список.
+
+        tsk-1198: у задания прозрачного подкурса два прочтения позиции — в дереве
+        хозяина оно стоит в списке хозяина (`host_alt`), в остальных деревьях
+        (практикум) — в своём подкурсе. Какое брать, решает обход по корню.
 
         Returns:
-            (course_id, kind, item_id, order_position) либо None, если позиция не
-            задана / элемент не найден.
+            (course_id, kind, item_id, ключ, host_alt) либо None, если позиция не
+            задана / элемент не найден. `host_alt` — (хозяин, ключ в хозяине) или None.
         """
         if after_material_id is not None:
             r = await db.execute(
@@ -1068,14 +1073,28 @@ class LearningEngineService:
             )
             row = r.fetchone()
             if row is not None:
-                return (int(row[0]), "material", after_material_id, row[1])
+                return (
+                    int(row[0]), "material", after_material_id,
+                    self._order_key(row[1], after_material_id), None,
+                )
         if after_task_id is not None:
             r = await db.execute(
-                select(Tasks.course_id, Tasks.order_position).where(Tasks.id == after_task_id)
+                select(Tasks.course_id, Tasks.order_position, Tasks.host_order_position)
+                .where(Tasks.id == after_task_id)
             )
             row = r.fetchone()
             if row is not None:
-                return (int(row[0]), "task", after_task_id, row[1])
+                host = (await transparent_links(db)).get(int(row[0]))
+                host_alt = None
+                if host is not None:
+                    host_alt = (
+                        host,
+                        task_key(None, after_task_id, host_order_position=row[2], absorbed=True),
+                    )
+                return (
+                    int(row[0]), "task", after_task_id,
+                    task_key(row[1], after_task_id), host_alt,
+                )
         return None
 
     async def resolve_next_item(
@@ -1238,8 +1257,18 @@ class LearningEngineService:
             # Позиция резолвится одним запросом (material/task → course_id), поэтому
             # курсы ДО неё не опрашиваются вовсе — ленивость обхода сохраняется.
             # flat_courses дедуплицирован, поэтому index() однозначен.
+            # tsk-1198: прозрачный подкурс, чей хозяин в этом дереве, отдельным
+            # шагом не обходится — его задания идут в списке хозяина.
+            links = await transparent_links(db)
+            flat_set = set(flat_courses)
+            absorbed_here = {c for c, h in links.items() if c in flat_set and h in flat_set}
+
             start_index = 0
             position = located
+            if position is not None and position[0] in absorbed_here and position[4]:
+                # Задание подборки — позиция в списке хозяина.
+                host, host_key = position[4]
+                position = (host, position[1], position[2], host_key, None)
             if position is not None and position[0] in flat_courses:
                 start_index = flat_courses.index(position[0])
             else:
@@ -1248,6 +1277,8 @@ class LearningEngineService:
                 position = None
 
             for offset, cid in enumerate(flat_courses[start_index:]):
+                if cid in absorbed_here:
+                    continue
                 material_ids: Optional[List[int]] = None
                 task_ids: Optional[List[int]] = None
 
@@ -1257,8 +1288,7 @@ class LearningEngineService:
                 # которого в списке обхода нет вовсе — тогда index() не нашёл бы
                 # его и молча вернул к началу курса, то есть назад.
                 if position is not None and offset == 0:
-                    _, kind, item_id, item_order = position
-                    pos_key = self._order_key(item_order, item_id)
+                    _, kind, item_id, pos_key, _ = position
                     if kind == "material":
                         material_ids = [
                             i
@@ -1280,10 +1310,10 @@ class LearningEngineService:
                             # tsk-314: тот же список, что видит студент в обходе
                             # ниже (_first_incomplete_task) — иначе позиция
                             # могла бы указывать на задание, вырезанное выборкой.
-                            for i, op in await self._effective_task_rows(
+                            for i, key in await self._effective_task_rows(
                                 db, cid, student_id, root_course_id=current_root_id
                             )
-                            if self._order_key(op, i) > pos_key
+                            if key > pos_key
                         ]
 
                 # Первый незавершённый материал
@@ -1404,19 +1434,38 @@ class LearningEngineService:
 
     async def _ordered_task_rows(
         self, db: AsyncSession, course_id: int
-    ) -> List[Tuple[int, Optional[int]]]:
-        """(id, order_position) заданий курса в порядке обхода."""
+    ) -> List[Tuple[int, TaskKey]]:
+        """(id, ключ порядка) заданий курса в порядке обхода.
+
+        tsk-1198: у курса-хозяина сюда же вливаются задания его прозрачных
+        подкурсов — на свои места (`host_order_position`). Второй элемент —
+        ключ `transparent_subcourse.task_key`, а не сырой `order_position`:
+        сравнивать позиции хозяина и подборки можно только по нему.
+        """
+        links = await transparent_links(db)
+        absorbed = [c for c, h in links.items() if h == course_id]
         tasks_stmt = (
-            select(Tasks.id, Tasks.order_position)
+            select(Tasks.id, Tasks.order_position, Tasks.host_order_position, Tasks.course_id)
             .where(
-                Tasks.course_id == course_id,
+                Tasks.course_id.in_([course_id, *absorbed]),
                 Tasks.is_active.is_(True),
                 Tasks.requirement_level.in_(("required", "skippable")),
             )
-            .order_by(Tasks.order_position.asc().nulls_last(), Tasks.id.asc())
         )
         r = await db.execute(tasks_stmt)
-        return [(row[0], row[1]) for row in r.fetchall()]
+        rows = [
+            (
+                int(row[0]),
+                task_key(
+                    row[1], int(row[0]),
+                    host_order_position=row[2],
+                    absorbed=int(row[3]) != course_id,
+                ),
+            )
+            for row in r.fetchall()
+        ]
+        rows.sort(key=lambda x: x[1])
+        return rows
 
     async def _ordered_material_ids(self, db: AsyncSession, course_id: int) -> List[int]:
         """ID материалов курса в порядке обхода (order_position ASC NULLS LAST, id)."""
@@ -1575,8 +1624,8 @@ class LearningEngineService:
         course_id: int,
         student_id: int,
         root_course_id: Optional[int] = None,
-    ) -> List[Tuple[int, Optional[int]]]:
-        """(id, order_position) заданий курса, которые студент реально видит.
+    ) -> List[Tuple[int, TaskKey]]:
+        """(id, ключ порядка) заданий курса, которые студент реально видит.
 
         С учётом выборки по сложности (tsk-314): если на курсе включена
         выборка, исключает НЕ отобранные EASY/NORMAL задания. THEORY и любая

@@ -835,9 +835,13 @@ class TasksService(BaseService[Tasks]):
         is_active: bool | None = None,
         limit: int = 100,
         offset: int = 0,
+        with_transparent: bool = False,
     ) -> Tuple[List[Tasks], int]:
         """
         Получить задачи курса с пагинацией.
+
+        tsk-1198: ``with_transparent`` — вместе с заданиями подкурсов, прозрачных
+        для этого курса, на их местах в списке (порядок, как у учебного движка).
 
         Порядок результата детерминирован:
         ``ORDER BY order_position NULLS LAST, id`` — совпадает с порядком,
@@ -860,7 +864,12 @@ class TasksService(BaseService[Tasks]):
         """
         from sqlalchemy import func, select
 
-        filters = [self.repo.model.course_id == course_id]
+        absorbed: list[int] = []
+        if with_transparent:
+            from app.services.transparent_subcourse import transparent_links
+
+            absorbed = [c for c, h in (await transparent_links(db)).items() if h == course_id]
+        filters = [self.repo.model.course_id.in_([course_id, *absorbed])]
         if difficulty_id is not None:
             filters.append(self.repo.model.difficulty_id == difficulty_id)
         if is_active is not None:
@@ -877,6 +886,24 @@ class TasksService(BaseService[Tasks]):
             .offset(offset)
         )
         count_stmt = select(func.count()).select_from(self.repo.model).where(*filters)
+
+        if absorbed:
+            # Порядок с подборкой считается в Python (ключ движка), поэтому и
+            # страница режется здесь: заданий у курса банка — десятки.
+            from app.services.transparent_subcourse import task_key
+
+            rows = (
+                await db.execute(select(self.repo.model).where(*filters))
+            ).scalars().all()
+            rows = sorted(
+                rows,
+                key=lambda t: task_key(
+                    t.order_position, t.id,
+                    host_order_position=t.host_order_position,
+                    absorbed=t.course_id != course_id,
+                ),
+            )
+            return list(rows[offset:offset + limit]), len(rows)
 
         items = (await db.execute(list_stmt)).scalars().all()
         total = (await db.execute(count_stmt)).scalar() or 0
