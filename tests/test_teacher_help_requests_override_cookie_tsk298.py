@@ -80,6 +80,46 @@ async def _cleanup(db, *, user_ids, task_ids=()):
     await db.commit()
 
 
+@pytest.mark.asyncio
+async def test_help_request_detail_task_stem_with_curated_title(db, client):
+    """tsk-1223: у задания есть curated title — `task_stem` всё равно отдаёт
+    сырое условие, а не название."""
+    mid, token = await _user_with_session(db, "methodist")
+    sid = await _student(db)
+    tid = await _task(db)
+    stem = "<p>Напишите программу, которая запрашивает 4 целых числа.</p>"
+    await db.execute(
+        text(
+            "UPDATE tasks SET task_content = task_content || "
+            "jsonb_build_object('title', CAST(:ti AS text), 'stem', CAST(:s AS text)) WHERE id = :t"
+        ),
+        {"ti": "Время окончания рабочего дня", "s": stem, "t": tid},
+    )
+    r = await db.execute(
+        text(
+            "INSERT INTO help_requests (status, student_id, task_id, request_type, "
+            "auto_created, context_json, priority, created_at, updated_at) "
+            "VALUES ('open', :s, :t, 'manual_help', false, '{}'::jsonb, 100, now(), now()) RETURNING id"
+        ),
+        {"s": sid, "t": tid},
+    )
+    hr_id = r.scalar_one()
+    await db.commit()
+    try:
+        resp = await client.get(
+            f"/api/v1/teacher/help-requests/{hr_id}?teacher_id={mid}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["task_stem"] == stem
+        assert body["task_full_title"] != stem
+    finally:
+        await db.execute(text("DELETE FROM help_requests WHERE id=:h"), {"h": hr_id})
+        await db.commit()
+        await _cleanup(db, user_ids=[mid, sid], task_ids=[tid])
+
+
 # ── help-requests list ───────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
