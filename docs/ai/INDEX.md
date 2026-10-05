@@ -18,6 +18,7 @@
 - [adr/0001-auth-passwordless-multi-identity.md](adr/0001-auth-passwordless-multi-identity.md) — ADR: auth-стратегия Phase Y-1
 - [design/teacher-queue-states.md](design/teacher-queue-states.md) — FSM очереди ручной проверки SA_COM
 - [audit-events-contract.md](audit-events-contract.md) — журнал `audit_event` (событийный, emit из кода)
+- [individual-courses.md](individual-courses.md) — индивидуальный курс ученику с замком на основные курсы (правило оператора, tsk-1245)
 - [task-audit.md](task-audit.md) — журнал `task_audit` (триггерный, `tasks.course_id`/`is_active`) — как расследовать «куда делось задание» (tsk-113/114)
 - [task-result-audit.md](task-result-audit.md) — журнал `task_result_audit` (триггерный, `task_results.score`/`is_correct`) — как проследить и откатить правку оценки (tsk-803)
 
