@@ -17,6 +17,7 @@ from app.api.v1.user_courses import router as user_courses_router
 from app.api.v1.user_roles import router as user_roles_router
 from app.api.v1.user_roles import catalog_router as roles_catalog_router
 from app.api.v1.course_dependencies import router as course_dependencies_router
+from app.api.v1.individual_courses import router as individual_courses_router
 from app.api.v1.access_requests import router as access_requests_router
 from app.api.v1.student_teacher_links import router as student_teacher_links_router
 from app.api.v1.messages_extra import router as messages_extra_router  
@@ -355,6 +356,8 @@ app.include_router(teacher_courses_router, prefix=API_PREFIX)
 
 # Зависимости и заявки на доступ к ролям
 app.include_router(course_dependencies_router, prefix=API_PREFIX)
+# tsk-1249: индивидуальный курс ученику с замком на основные курсы.
+app.include_router(individual_courses_router, prefix=API_PREFIX)
 
 app.include_router(access_requests_router, prefix=API_PREFIX)
 

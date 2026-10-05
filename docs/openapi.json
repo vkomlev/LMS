@@ -16381,6 +16381,326 @@
         }
       }
     },
+    "/api/v1/users/{user_id}/individual-courses": {
+      "get": {
+        "tags": [
+          "individual_courses"
+        ],
+        "summary": "Индивидуальные курсы ученика",
+        "description": "Курсы ученика, которые точечно закрывают его основные курсы (tsk-231 фаза 6).",
+        "operationId": "list_individual_courses_api_v1_users__user_id__individual_courses_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "User Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/IndividualCourseRead"
+                  },
+                  "title": "Response List Individual Courses Api V1 Users  User Id  Individual Courses Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "individual_courses"
+        ],
+        "summary": "Выдать индивидуальный курс с замком на основные",
+        "description": "Одна транзакция: курс (готовый или собранный) → запись ученика → замки.",
+        "operationId": "issue_individual_course_api_v1_users__user_id__individual_courses_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "User Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IndividualCourseIssue"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IndividualCourseRead"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Не указан ни курс, ни темы (или указано и то, и то)"
+          },
+          "404": {
+            "description": "Нет ученика или темы"
+          },
+          "409": {
+            "description": "Курс вложенный, выключен, ученик выпускник или нечего закрывать"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/users/{user_id}/individual-courses/{course_id}": {
+      "delete": {
+        "tags": [
+          "individual_courses"
+        ],
+        "summary": "Снять индивидуальный курс (замки перестают действовать)",
+        "description": "Отключить выдачу; прогресс ученика сохраняется, повторная выдача вернёт замки.",
+        "operationId": "withdraw_individual_course_api_v1_users__user_id__individual_courses__course_id__delete",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "User Id"
+            }
+          },
+          {
+            "name": "course_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Course Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/access_requests/": {
       "post": {
         "tags": [
@@ -61514,6 +61834,145 @@
           "items"
         ],
         "title": "InboxResponse"
+      },
+      "IndividualCourseIssue": {
+        "properties": {
+          "course_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Course Id",
+            "description": "Готовый корневой курс"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 255
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title",
+            "description": "Название нового курса"
+          },
+          "topic_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array",
+                "maxItems": 30
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Topic Ids",
+            "description": "Темы банка по порядку — станут подкурсами нового курса"
+          },
+          "lock_root_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array",
+                "maxItems": 30
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lock Root Ids",
+            "description": "Какие основные курсы ученика закрыть; не указано — все его активные курсы"
+          }
+        },
+        "type": "object",
+        "title": "IndividualCourseIssue",
+        "description": "Выдать готовый курс (`course_id`) ИЛИ собрать новый (`title` + `topic_ids`)."
+      },
+      "IndividualCourseRead": {
+        "properties": {
+          "course_id": {
+            "type": "integer",
+            "title": "Course Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "course_uid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Course Uid"
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active",
+            "description": "Выдача действует (false — снят методистом)"
+          },
+          "state": {
+            "type": "string",
+            "title": "State",
+            "description": "NOT_STARTED | IN_PROGRESS | COMPLETED"
+          },
+          "locked_root_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Locked Root Ids"
+          },
+          "locked_root_titles": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Locked Root Titles"
+          },
+          "topic_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Topic Ids"
+          },
+          "topic_titles": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Topic Titles"
+          }
+        },
+        "type": "object",
+        "required": [
+          "course_id",
+          "title",
+          "course_uid",
+          "is_active",
+          "state",
+          "locked_root_ids",
+          "locked_root_titles",
+          "topic_ids",
+          "topic_titles"
+        ],
+        "title": "IndividualCourseRead",
+        "description": "Индивидуальный курс ученика и закрытые им курсы."
       },
       "IndividualReviewResponse": {
         "properties": {
