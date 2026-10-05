@@ -148,3 +148,23 @@ async def test_service_key_unchanged(db, client):
         assert bad.status_code == 403
     finally:
         await _cleanup(db, [sid, tid, oid])
+
+
+async def test_image_inline_other_download(db, client):
+    """Картинка открывается во вкладке, svg и прочие файлы — скачиваются."""
+    (sid, stok), (tid, ttok), (oid, _) = await _pair(db)
+    try:
+        cases = [("shot.png", b"\x89PNG\r\n\x1a\nx", "image/png", "inline"),
+                 ("evil.svg", b"<svg onload=alert(1)/>", "image/svg+xml", "attachment"),
+                 ("code.py", b"print(1)", "text/x-python", "attachment")]
+        for name, data, ctype, kind in cases:
+            msg = await _send(client, stok, tid)
+            up = await client.post(f"/api/v1/messages/{msg['id']}/attachment", headers=_h(stok),
+                                   files={"file": (name, data, ctype)})
+            assert up.status_code == 201, up.text
+            r = await client.get(f"/api/v1/messages/{msg['id']}/attachment", headers=_h(ttok))
+            assert r.status_code == 200
+            assert r.headers["content-disposition"].startswith(kind), (name, r.headers)
+            assert r.headers["x-content-type-options"] == "nosniff"
+    finally:
+        await _cleanup(db, [sid, tid, oid])

@@ -593,16 +593,27 @@ async def download_message_attachment(
         )
 
     stream, media_type = opened
-    # filename: можно отдать исходное имя, но у нас оно в конце safe_name (с префиксом)
+    # tsk-1216: растровая картинка открывается во вкладке, остальное скачивается.
+    # SVG и HTML — только скачиванием: открытые на домене кабинета, они
+    # выполнили бы скрипт от имени пользователя. nosniff — чтобы браузер не
+    # «угадал» исполняемый тип по содержимому вопреки заголовку.
+    inline = media_type.split(";")[0].strip().lower() in _INLINE_IMAGE_TYPES
     return StreamingResponse(
         stream,
         media_type=media_type,
         headers={
             "Content-Disposition": attachment_storage.content_disposition(
-                os.path.basename(msg.attachment_id)
-            )
+                os.path.basename(msg.attachment_id), inline=inline
+            ),
+            "X-Content-Type-Options": "nosniff",
         },
     )
+
+#: Типы, которые безопасно показывать во вкладке (растр, без скриптов).
+_INLINE_IMAGE_TYPES = frozenset(
+    {"image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp"}
+)
+
 
 class UnreadCountResponse(BaseModel):
     user_id: int
