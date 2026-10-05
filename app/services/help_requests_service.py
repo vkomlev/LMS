@@ -942,6 +942,9 @@ async def get_help_request_detail(
             row[23] if len(row) > 23 else None,
             max_len=HINT_MAX_LEN,
         ),
+        # tsk-1223: сырое условие (колонка 23) — показать учителю текст задачи,
+        # а не curated-название, которое берёт task_full_title.
+        "task_stem": row[23] if len(row) > 23 and row[3] is not None else None,
         "course_title": row[21] if len(row) > 21 else None,
         # tsk-943: вложение — колонки 33-36.
         "attachment_id": attachment_id,

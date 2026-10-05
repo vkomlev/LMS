@@ -121,6 +121,14 @@ class HelpRequestDetailResponse(HelpRequestListItem):
             "чтобы ответить на заявку помощи."
         ),
     )
+    task_stem: Optional[str] = Field(
+        default=None,
+        description=(
+            "Сырое условие задания (`task_content->>'stem'`, HTML/markdown) — "
+            "учитель видит текст задачи, а не только название (tsk-1223). "
+            "Для заявки по материалу — null."
+        ),
+    )
     message: Optional[str] = None
     # closed_at теперь в HelpRequestListItem (tsk-924) — наследуется отсюда.
     closed_by: Optional[int] = None
