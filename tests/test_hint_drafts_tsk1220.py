@@ -227,6 +227,66 @@ async def test_store_refuses_draft_with_lint_flags(db):
     assert row.status == "blocked"
 
 
+async def _drafts(db, task_id: int) -> list:
+    return (
+        await db.execute(
+            text(
+                "SELECT id, status, text, source_reply_ids FROM task_hint_drafts "
+                "WHERE task_id=:t ORDER BY id"
+            ),
+            {"t": task_id},
+        )
+    ).all()
+
+
+async def test_new_draft_updates_pending_one(db):
+    """Задание 2938: второй прогон не ставит рядом второй черновик."""
+    task_id = await _task(db)
+    first = await svc.store(db, task_id=task_id, status="draft", text_="Старый приём.",
+                            source_reply_ids=[1], model="m1", note=None, lint_flags=[])
+    second = await svc.store(db, task_id=task_id, status="draft", text_="Новый приём.",
+                             source_reply_ids=[1, 2], model="m2", note=None, lint_flags=[])
+    assert second.id == first.id
+    rows = await _drafts(db, task_id)
+    assert [(r.status, r.text, list(r.source_reply_ids)) for r in rows] == [
+        ("draft", "Новый приём.", [1, 2])
+    ]
+
+
+async def test_skip_keeps_pending_text_and_adds_replies(db):
+    task_id = await _task(db)
+    await svc.store(db, task_id=task_id, status="draft", text_="Приём.",
+                    source_reply_ids=[1], model="m", note=None, lint_flags=[])
+    await svc.store(db, task_id=task_id, status="skipped", text_=None,
+                    source_reply_ids=[1, 3], model="m", note="только код", lint_flags=[])
+    rows = await _drafts(db, task_id)
+    assert [(r.status, r.text, list(r.source_reply_ids)) for r in rows] == [("draft", "Приём.", [1, 3])]
+
+
+async def test_blocked_does_not_touch_pending(db):
+    task_id = await _task(db)
+    await svc.store(db, task_id=task_id, status="draft", text_="Приём.",
+                    source_reply_ids=[1], model="m", note=None, lint_flags=[])
+    await svc.store(db, task_id=task_id, status="blocked", text_="Ответ 1099",
+                    source_reply_ids=[1, 4], model="m", note="утечка", lint_flags=["answer-in-hint"])
+    rows = await _drafts(db, task_id)
+    assert [(r.status, r.text) for r in rows] == [("draft", "Приём."), ("blocked", "Ответ 1099")]
+
+
+async def test_human_edit_is_not_overwritten(db):
+    mid, _ = await _user(db, "methodist")
+    task_id = await _task(db)
+    row = await svc.store(db, task_id=task_id, status="draft", text_="Черновик модели.",
+                          source_reply_ids=[1], model="m", note=None, lint_flags=[])
+    await svc.review(db, draft_id=row.id, reviewer_id=mid, action="save", text_="Правка методиста.")
+    await svc.store(db, task_id=task_id, status="draft", text_="Новая генерация.",
+                    source_reply_ids=[1, 2], model="m", note=None, lint_flags=[])
+    rows = await _drafts(db, task_id)
+    assert [(r.status, r.text, list(r.source_reply_ids)) for r in rows] == [
+        ("draft", "Правка методиста.", [1, 2])
+    ]
+
+
 # ── (г) вычитка через API ─────────────────────────────────────────────────
 
 

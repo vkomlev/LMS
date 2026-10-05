@@ -357,6 +357,15 @@ async def store(
 ) -> TaskHintDrafts:
     """Записать итог генерации: черновик в очередь, пропуск или блокировку.
 
+    **Один невычитанный черновик на задание.** Если черновик уже ждёт вычитки,
+    новый результат обновляет его, а не встаёт рядом: иначе после новых ответов
+    в очереди копятся похожие черновики одного задания, и подтверждение обоих
+    дописывает ученику две одинаковые подсказки (задание 2938, первая же неделя).
+    Генерация и так видит ВСЕ подходящие ответы задания, поэтому новый текст
+    заменяет старый, а `source_reply_ids` объединяются. Пропуск модели оставляет
+    текст ожидающего черновика и только добавляет ему ответы. Блокировка
+    линтером пишется отдельной строкой: ожидающий черновик она не портит.
+
     :raises HintDraftError: статус вне `draft|skipped|blocked`, пустой текст у
         черновика.
     """
@@ -368,6 +377,27 @@ async def store(
     if status == "draft" and lint_flags:
         # Обязательный фильтр до очереди: с метками утечки черновик в очередь не идёт.
         raise HintDraftError(f"черновик с метками линтера в очередь не ставится: {lint_flags}")
+
+    if status in ("draft", "skipped"):
+        pending = await db.scalar(
+            select(TaskHintDrafts)
+            .where(TaskHintDrafts.task_id == task_id, TaskHintDrafts.status == "draft")
+            .order_by(TaskHintDrafts.id)
+            .limit(1)
+            .with_for_update()
+        )
+        if pending is not None:
+            pending.source_reply_ids = sorted(set(pending.source_reply_ids) | set(source_reply_ids))
+            # Правку человека («Сохранить правку» ставит reviewed_by) модель не затирает.
+            if status == "draft" and pending.reviewed_by is None:
+                pending.text = clean
+                pending.model = model
+                pending.note = note
+            await db.commit()
+            await db.refresh(pending)
+            logger.info("tsk-1220: черновик %s задания %s обновлён (%s)", pending.id, task_id, status)
+            return pending
+
     row = TaskHintDrafts(
         task_id=task_id,
         text=clean,
@@ -432,9 +462,9 @@ async def review(
         draft.status = "rejected"
     elif action != "save":
         raise HintDraftError("действие должно быть save, approve или reject")
-    if action != "save":
-        draft.reviewed_by = reviewer_id
-        draft.reviewed_at = now
+    # И при «save»: по reviewed_by `store` узнаёт ручную правку и не затирает её.
+    draft.reviewed_by = reviewer_id
+    draft.reviewed_at = now
     await db.commit()
     await db.refresh(draft)
     logger.info(
