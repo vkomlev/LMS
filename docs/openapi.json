@@ -10896,6 +10896,578 @@
         }
       }
     },
+    "/api/v1/tasks/hint-drafts/candidates": {
+      "get": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Задания с новыми ответами преподавателей для подсказок (tsk-1220)",
+        "description": "Задания, где есть текстовые ответы, не вошедшие ни в один черновик.",
+        "operationId": "hint_candidates_api_v1_tasks_hint_drafts_candidates_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HintCandidatesResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tasks/hint-drafts/queue": {
+      "get": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Очередь вычитки черновиков подсказок (tsk-1220)",
+        "description": "Черновики по статусу, старые первыми.",
+        "operationId": "hint_queue_api_v1_tasks_hint_drafts_queue_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "draft",
+                "approved",
+                "rejected",
+                "skipped",
+                "blocked"
+              ],
+              "type": "string",
+              "default": "draft",
+              "title": "State"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 20,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HintQueueResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tasks/hint-drafts/{draft_id}/review": {
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Правка, подтверждение или отклонение черновика (tsk-1220)",
+        "description": "Только человек: черновик модели подтверждает тот, кто его прочитал.",
+        "operationId": "hint_review_api_v1_tasks_hint_drafts__draft_id__review_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "draft_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "title": "Draft Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HintReviewRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HintReviewResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Сервисный ключ не вычитывает"
+          },
+          "409": {
+            "description": "Уже обработан"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tasks/{task_id}/hint-drafts/generate": {
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Черновик подсказки моделью, без записи (tsk-1220)",
+        "description": "Составить черновик. Ничего не пишет — решение о записи за линтером.",
+        "operationId": "hint_generate_api_v1_tasks__task_id__hint_drafts_generate_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "title": "Task Id"
+            }
+          },
+          {
+            "name": "model",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Явная модель вместо цепочки LLM_JUDGE_MODELS.",
+              "title": "Model"
+            },
+            "description": "Явная модель вместо цепочки LLM_JUDGE_MODELS."
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GeneratedHintResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Нет подходящих ответов"
+          },
+          "502": {
+            "description": "Сбой модели"
+          }
+        }
+      }
+    },
+    "/api/v1/tasks/{task_id}/hint-drafts": {
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Записать итог генерации: в очередь, пропуск или блок (tsk-1220)",
+        "description": "Записать строку черновика. Черновик с метками линтера не принимается.",
+        "operationId": "hint_store_api_v1_tasks__task_id__hint_drafts_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "title": "Task Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HintDraftStoreRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HintDraftView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/tasks/": {
       "post": {
         "tags": [
@@ -56773,6 +57345,74 @@
         "title": "GatewayPaymentStart",
         "description": "Куда отправить плательщика вводить данные карты."
       },
+      "GeneratedHintResponse": {
+        "properties": {
+          "task_id": {
+            "type": "integer",
+            "title": "Task Id"
+          },
+          "source_reply_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Source Reply Ids"
+          },
+          "skip": {
+            "type": "boolean",
+            "title": "Skip"
+          },
+          "text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "model": {
+            "type": "string",
+            "title": "Model"
+          },
+          "lint_flags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Lint Flags"
+          },
+          "accepted_answers": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Accepted Answers"
+          }
+        },
+        "type": "object",
+        "required": [
+          "task_id",
+          "source_reply_ids",
+          "skip",
+          "model"
+        ],
+        "title": "GeneratedHintResponse",
+        "description": "Черновик модели до записи — для линтера и решения скрипта."
+      },
       "GradingCriteria": {
         "properties": {
           "must": {
@@ -58984,6 +59624,213 @@
         "title": "HelpRequestReplyResponse",
         "description": "Ответ на заявку (reply)."
       },
+      "HintCandidate": {
+        "properties": {
+          "task_id": {
+            "type": "integer",
+            "title": "Task Id"
+          },
+          "new_reply_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "New Reply Ids"
+          },
+          "replies_total": {
+            "type": "integer",
+            "title": "Replies Total"
+          }
+        },
+        "type": "object",
+        "required": [
+          "task_id",
+          "new_reply_ids",
+          "replies_total"
+        ],
+        "title": "HintCandidate",
+        "description": "Задание с ответами преподавателей, ещё не вошедшими в черновики."
+      },
+      "HintCandidatesResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/HintCandidate"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "HintCandidatesResponse",
+        "description": "Кандидаты на генерацию."
+      },
+      "HintDraftStoreRequest": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "skipped",
+              "blocked"
+            ],
+            "title": "Status"
+          },
+          "text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text"
+          },
+          "source_reply_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Source Reply Ids"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note",
+            "description": "Причина пропуска или блокировки."
+          },
+          "lint_flags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Lint Flags"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "source_reply_ids"
+        ],
+        "title": "HintDraftStoreRequest",
+        "description": "Итог генерации по заданию."
+      },
+      "HintDraftView": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "task_id": {
+            "type": "integer",
+            "title": "Task Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "lint_flags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Lint Flags"
+          },
+          "source_reply_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Source Reply Ids"
+          },
+          "reviewed_by": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewed By"
+          },
+          "reviewed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewed At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "task_id",
+          "status"
+        ],
+        "title": "HintDraftView",
+        "description": "Строка черновика."
+      },
       "HintEventRequest": {
         "properties": {
           "student_id": {
@@ -59057,6 +59904,246 @@
           "event_id"
         ],
         "title": "HintEventResponse"
+      },
+      "HintQueueItem": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "task_id": {
+            "type": "integer",
+            "title": "Task Id"
+          },
+          "course_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Course Id"
+          },
+          "course_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Course Title"
+          },
+          "task_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Type"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "stem": {
+            "type": "string",
+            "title": "Stem"
+          },
+          "existing_hints": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Existing Hints"
+          },
+          "accepted_answers": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Accepted Answers"
+          },
+          "text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/HintSource"
+            },
+            "type": "array",
+            "title": "Sources"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "task_id",
+          "stem",
+          "existing_hints",
+          "accepted_answers",
+          "status",
+          "created_at",
+          "sources"
+        ],
+        "title": "HintQueueItem",
+        "description": "Карточка вычитки: черновик рядом со всем, что нужно для решения."
+      },
+      "HintQueueResponse": {
+        "properties": {
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/HintQueueItem"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "total",
+          "items"
+        ],
+        "title": "HintQueueResponse",
+        "description": "Очередь вычитки."
+      },
+      "HintReviewRequest": {
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "save",
+              "approve",
+              "reject"
+            ],
+            "title": "Action"
+          },
+          "text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text",
+            "description": "Исправленный текст; `null` — не менять."
+          }
+        },
+        "type": "object",
+        "required": [
+          "action"
+        ],
+        "title": "HintReviewRequest",
+        "description": "Решение методиста по черновику."
+      },
+      "HintReviewResponse": {
+        "properties": {
+          "draft": {
+            "$ref": "#/components/schemas/HintDraftView"
+          },
+          "hints_text": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Hints Text"
+          }
+        },
+        "type": "object",
+        "required": [
+          "draft",
+          "hints_text"
+        ],
+        "title": "HintReviewResponse",
+        "description": "Итог вычитки и текущие подсказки задания."
+      },
+      "HintSource": {
+        "properties": {
+          "reply_id": {
+            "type": "integer",
+            "title": "Reply Id"
+          },
+          "question": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Question"
+          },
+          "body": {
+            "type": "string",
+            "title": "Body"
+          }
+        },
+        "type": "object",
+        "required": [
+          "reply_id",
+          "body"
+        ],
+        "title": "HintSource",
+        "description": "Исходный ответ преподавателя."
       },
       "HistoryItem": {
         "properties": {
