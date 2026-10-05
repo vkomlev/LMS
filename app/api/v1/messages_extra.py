@@ -126,6 +126,11 @@ async def send_message_endpoint(
         payload.sender_id = current_user.id
         if not await service.can_message(db, current_user.id, payload.recipient_id):
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Нельзя писать этому пользователю")
+        # tsk-1216: вложение от браузера прикрепляется только загрузкой
+        # (`POST /messages/{id}/attachment`). Ключ, присланный в теле, мог бы
+        # указать на чужой файл в хранилище и открыть его через скачивание.
+        payload.attachment_url = None
+        payload.attachment_id = None
     msg = await service.send_message(
         db,
         message_type=payload.message_type,
@@ -483,10 +488,16 @@ async def get_senders_for_user_endpoint(
 async def attach_file_to_message_endpoint(
     message_id: int,
     file: UploadFile = File(..., description="Файл для прикрепления к сообщению"),
-    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_bare_db),
 ) -> MessageRead:
     """
     Загружает файл и привязывает к сообщению.
+
+    tsk-1216: открыт cookie. Не сервисный вызов может прикрепить файл только к
+    СВОЕМУ сообщению (sender_id == current_user) и только один раз — замена
+    вложения задним числом подменила бы файл, который получатель уже видел.
+    Сервисный ключ (TG-бот) — как раньше, без проверки.
 
     - Лимит размера: Settings.max_attachment_size_bytes
     - Файл уходит в объектное хранилище, пространство `messages` (tsk-593).
@@ -498,6 +509,14 @@ async def attach_file_to_message_endpoint(
     # Имя файла приходит от клиента и становится частью ключа в хранилище:
     # чистим его тем же правилом, что и вложения ответов (пути, пробелы,
     # кириллица). Раньше `file.filename` подставлялся в путь как есть.
+    if not current_user.is_service:
+        own = await service.get_by_id(db, message_id)
+        if own is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Message not found")
+        if own.sender_id != current_user.id:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
+        if own.attachment_id:
+            raise HTTPException(status.HTTP_409_CONFLICT, "К сообщению уже приложен файл")
     safe_name = f"{message_id}_{uuid4().hex}_{attachment_storage.safe_name(file.filename)}"
 
     try:
@@ -525,13 +544,23 @@ async def attach_file_to_message_endpoint(
 )
 async def download_message_attachment(
     message_id: int,
-    user_id: int = Query(..., description="Кто скачивает (для проверки прав)"),
-    db: AsyncSession = Depends(get_db),
+    user_id: Optional[int] = Query(
+        None,
+        description="Кто скачивает — только для сервисного ключа (бот); браузер берётся из сессии",
+    ),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_bare_db),
 ):
     """
     Стриминговая отдача вложения.
     Доступ: только sender_id или recipient_id сообщения.
+
+    tsk-1216: открыт cookie — проверяется пользователь сессии, `user_id` из
+    адреса для него игнорируется (раньше права держались на этом параметре и
+    сервисном ключе). Сервисный ключ без `user_id` — без проверки участника.
     """
+    if not current_user.is_service:
+        user_id = current_user.id
     msg = await service.get_by_id(db, message_id)  # BaseService method
     if msg is None:
         raise HTTPException(status_code=404, detail="Message not found")
@@ -540,7 +569,7 @@ async def download_message_attachment(
         raise HTTPException(status_code=404, detail="Attachment not found")
 
     # ✅ Проверка прав
-    if user_id not in {msg.sender_id, msg.recipient_id}:
+    if user_id is not None and user_id not in {msg.sender_id, msg.recipient_id}:
         raise HTTPException(status_code=403, detail="No access to this attachment")
 
     # tsk-593: содержимое приходит из объектного хранилища и отдаётся потоком
@@ -564,16 +593,27 @@ async def download_message_attachment(
         )
 
     stream, media_type = opened
-    # filename: можно отдать исходное имя, но у нас оно в конце safe_name (с префиксом)
+    # tsk-1216: растровая картинка открывается во вкладке, остальное скачивается.
+    # SVG и HTML — только скачиванием: открытые на домене кабинета, они
+    # выполнили бы скрипт от имени пользователя. nosniff — чтобы браузер не
+    # «угадал» исполняемый тип по содержимому вопреки заголовку.
+    inline = media_type.split(";")[0].strip().lower() in _INLINE_IMAGE_TYPES
     return StreamingResponse(
         stream,
         media_type=media_type,
         headers={
             "Content-Disposition": attachment_storage.content_disposition(
-                os.path.basename(msg.attachment_id)
-            )
+                os.path.basename(msg.attachment_id), inline=inline
+            ),
+            "X-Content-Type-Options": "nosniff",
         },
     )
+
+#: Типы, которые безопасно показывать во вкладке (растр, без скриптов).
+_INLINE_IMAGE_TYPES = frozenset(
+    {"image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp"}
+)
+
 
 class UnreadCountResponse(BaseModel):
     user_id: int
