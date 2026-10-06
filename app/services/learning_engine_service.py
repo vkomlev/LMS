@@ -1390,33 +1390,8 @@ class LearningEngineService:
         645-1597. Кеш сбрасывается при правке иерархии в той же сессии
         (`set_parent_courses`, `update_course_parent_order`).
         """
-        cache = course_tree_cache(db)
-        cached = cache.get(root_id)
-        if cached is not None:
-            return list(cached)
-
-        result: List[int] = []
-        seen: set[int] = set()
-
-        async def walk(course_id: int) -> None:
-            if course_id in seen:
-                return
-            seen.add(course_id)
-            # tsk-662: `get_child_rows`, а не `get_children` — обходу нужны
-            # только id и порядок, а подгрузка родителей узла добавляла
-            # ВТОРОЙ запрос на каждый узел дерева.
-            children = await self._courses_repo.get_child_rows(db, course_id)
-            # order_number ASC NULLS LAST, затем id — тот же ключ, что у
-            # элементов курса (`_order_key`), а не его копия: правило одно,
-            # и меняться оно должно в одном месте.
-            for _cid, _ord, _title in sorted(children, key=lambda x: self._order_key(x[1], x[0])):
-                await walk(_cid)
-            # Материалы/задания самого курса — после всех его подкурсов (post-order).
-            result.append(course_id)
-
-        await walk(root_id)
-        cache[root_id] = list(result)
-        return result
+        courses, _steps = await self._walk_tree(db, root_id)
+        return list(courses)
 
     async def _collect_steps_in_order(
         self, db: AsyncSession, root_id: int
@@ -1429,6 +1404,26 @@ class LearningEngineService:
         теории в подразделах (решение оператора 06.10). Порядок курсов тот же,
         что у `_collect_courses_in_order` (дедупликация по первому вхождению).
         """
+        _courses, steps = await self._walk_tree(db, root_id)
+        return list(steps)
+
+    async def _walk_tree(
+        self, db: AsyncSession, root_id: int
+    ) -> Tuple[List[int], List[Tuple[int, str]]]:
+        """Один обход дерева на корень за сессию: курсы (post-order) и шаги.
+
+        Инцидент 06.10 (tsk-1250): `_collect_steps_in_order` обходил дерево
+        вторым проходом МИМО кеша tsk-662 — запрос на каждый узел при каждом
+        next-item и экране зачётов; на занятии пул соединений исчерпался.
+        Теперь оба списка строятся одним проходом и кешируются вместе.
+        """
+        cache: dict[Any, Any] = course_tree_cache(db)
+        key = ("walk", root_id)
+        cached = cache.get(key)
+        if cached is not None:
+            return cached
+
+        courses: List[int] = []
         steps: List[Tuple[int, str]] = []
         seen: set[int] = set()
 
@@ -1437,13 +1432,21 @@ class LearningEngineService:
                 return
             seen.add(course_id)
             steps.append((course_id, "materials"))
+            # tsk-662: `get_child_rows`, а не `get_children` — обходу нужны
+            # только id и порядок, а подгрузка родителей узла добавляла
+            # ВТОРОЙ запрос на каждый узел дерева.
             children = await self._courses_repo.get_child_rows(db, course_id)
+            # order_number ASC NULLS LAST, затем id — тот же ключ, что у
+            # элементов курса (`_order_key`).
             for _cid, _ord, _title in sorted(children, key=lambda x: self._order_key(x[1], x[0])):
                 await walk(_cid)
             steps.append((course_id, "tasks"))
+            # Сам курс — после всех его подкурсов (post-order).
+            courses.append(course_id)
 
         await walk(root_id)
-        return steps
+        cache[key] = (courses, steps)
+        return courses, steps
 
     @staticmethod
     def _order_key(order_position: Optional[int], item_id: int) -> Tuple[int, int, int]:
