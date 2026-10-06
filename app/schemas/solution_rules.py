@@ -723,6 +723,19 @@ class SolutionRules(BaseModel):
         ),
         examples=[False, True],
     )
+    diagnostic: bool = Field(
+        default=False,
+        description=(
+            "Диагностическое задание (tsk-1252): фиксирует, что ученик знает, — например "
+            "пре-тест до и после урока. Неверный ответ — это результат, а не затруднение: "
+            "по исчерпанию попыток заявка помощи преподавателю НЕ создаётся, а клиент "
+            "показывает «ответ принят» вместо «превышен лимит». Лимит попыток задаётся "
+            "как обычно (`tasks.max_attempts`, для пре-теста — 1). Ставить вместе с "
+            "requirement_level=recommended: «Обязательно» и «Можно пропустить» движок "
+            "держит до зачёта, и неверный ответ остановил бы ученика. Default false."
+        ),
+        examples=[False, True],
+    )
     requires_attachment: bool = Field(
         default=False,
         description=(

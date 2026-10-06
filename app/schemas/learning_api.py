@@ -174,6 +174,14 @@ class TaskStateResponse(BaseModel):
     # tsk-953: задание проверяется прогоном программы на тестах ввода/вывода.
     # Тот же класс сигнала, что и has_reference_answer: клиент показывает
     # редактор кода как основное поле и кладёт программу в response.value.
+    diagnostic: bool = Field(
+        default=False,
+        description=(
+            "Диагностическое задание (solution_rules.diagnostic, tsk-1252): при "
+            "исчерпанных попытках клиент пишет «ответ принят», а не «превышен лимит "
+            "попыток» — заявка помощи по такому заданию не создаётся."
+        ),
+    )
     has_io_tests: bool = Field(
         default=False,
         description=(

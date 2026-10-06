@@ -658,6 +658,7 @@ async def get_task_state(
         partial_auto_check=partial_auto_check,
         has_reference_answer=has_reference_answer,
         has_io_tests=has_io_tests,
+        diagnostic=form_flags.diagnostic,
     )
 
 

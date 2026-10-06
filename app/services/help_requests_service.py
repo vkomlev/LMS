@@ -351,7 +351,27 @@ async def get_or_create_blocked_limit_help_request(
     Получить или создать open заявку типа blocked_limit для пары (student_id, task_id).
     Идемпотентно: одна open заявка blocked_limit на пару; повтор — обновление updated_at/context.
     Returns: (request_id, created, deduplicated).
+
+    tsk-1252: по диагностическому заданию (solution_rules.diagnostic) заявка не
+    создаётся — неверный ответ там результат замера, а не затруднение. Тогда
+    возвращается (0, False, False); оба вызывающих результат не используют.
     """
+    diag = await db.execute(
+        text(
+            # Строковое сравнение, а не ::boolean: правила попадают в базу и мимо
+            # схемы, и мусорное значение уронило бы транзакцию открытия задания.
+            "SELECT solution_rules->>'diagnostic' = 'true' "
+            "FROM tasks WHERE id = :task_id"
+        ),
+        {"task_id": task_id},
+    )
+    if diag.scalar():
+        logger.info(
+            "blocked_limit: задание %s диагностическое — заявка не создаётся (student=%s)",
+            task_id,
+            student_id,
+        )
+        return 0, False, False
     await db.execute(
         text("SELECT pg_advisory_xact_lock(:k1, :k2)"),
         {"k1": student_id, "k2": task_id},

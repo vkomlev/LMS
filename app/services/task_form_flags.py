@@ -24,6 +24,7 @@ class TaskFormFlags:
     partial_auto_check: bool = False
     has_reference_answer: bool = True
     has_io_tests: bool = False
+    diagnostic: bool = False
 
 
 def compute_task_form_flags(solution_rules: Any, task_content: Any) -> TaskFormFlags:
@@ -44,6 +45,7 @@ def compute_task_form_flags(solution_rules: Any, task_content: Any) -> TaskFormF
                 rules.has_reference_answer() if task_type in SHORT_ANSWER_TASK_TYPES else True
             ),
             has_io_tests=rules.io_tests is not None,
+            diagnostic=bool(rules.diagnostic),
         )
     except Exception:
         # Как и до выноса: битые правила не должны ронять выдачу состояния задания.
