@@ -52,6 +52,17 @@
 засчитанных элементов узла (`T` не определён), либо среди незакрытых есть старые
 — в обоих случаях правило молчит и новое содержимое остаётся обязательным.
 
+# Второй критерий: «ушёл вперёд» по порядку обхода (tsk-1261)
+
+Правило узла молчит в двух живых случаях: новый подкурс подвешен прямо к
+корню (в корне у всех есть старое незакрытое — 2104 «Дотренировка», 05.10) и
+вставка в середину темы у ученика, однажды пропустившего старое задание. Поэтому
+элемент прощается ещё и тогда, когда к моменту его появления ученик уже закрыл
+хоть один элемент, стоящий ПОСЛЕ него в порядке обхода (`_graced_by_position`).
+Порядок тот же, что у движка (tsk-1250), строится из уже загруженных данных —
+запросов не добавляется. Пропущенное до вставки остаётся долгом. Замер на проде
+06.10: прощение добавилось у 11 учеников, ни у кого не убавилось.
+
 # Чего правило НЕ делает
 
 Оно ничего не пересчитывает задним числом и ничего не закрывает за ученика:
@@ -107,6 +118,7 @@ class _Item:
     kind: str  # "task" | "material"
     item_id: int
     course_id: int
+    order_position: Optional[int]
     created_at: Optional[datetime]  # None — «существовало всегда»
     done: bool  # ученик элемент закрыл
     done_at: Optional[datetime]  # когда закрыл; None при done=True — неизвестно
@@ -118,6 +130,8 @@ class _Node:
 
     own: List[_Item] = field(default_factory=list)
     children: List[int] = field(default_factory=list)
+    # (order_number, child_id) — порядок подкурсов для обхода (tsk-1261).
+    child_order: List[Tuple[Optional[int], int]] = field(default_factory=list)
 
 
 def grace_cache(db: AsyncSession) -> Dict[Tuple[int, int], GracedItems]:
@@ -153,7 +167,8 @@ WITH RECURSIVE tree AS (
     JOIN course_parents cp ON cp.parent_course_id = t.node_id
     WHERE NOT cp.course_id = ANY(t.path)
 )
-SELECT DISTINCT cp.parent_course_id AS parent_id, cp.course_id AS child_id
+SELECT DISTINCT cp.parent_course_id AS parent_id, cp.course_id AS child_id,
+       cp.order_number
 FROM course_parents cp
 WHERE cp.parent_course_id IN (SELECT node_id FROM tree)
   AND cp.course_id IN (SELECT node_id FROM tree)
@@ -208,6 +223,7 @@ SELECT
     'task' AS kind,
     t.id AS item_id,
     t.course_id,
+    t.order_position,
     t.created_at,
     (
         stp.status = 'skipped'
@@ -234,6 +250,7 @@ SELECT
     'material' AS kind,
     m.id,
     m.course_id,
+    m.order_position,
     m.created_at,
     (smp.status IN ('completed', 'skipped')) AS done,
     CASE
@@ -357,12 +374,13 @@ async def _compute(
         return EMPTY_GRACE
 
     nodes: Dict[int, _Node] = {cid: _Node() for cid in tree_ids}
-    for parent_id, child_id in edge_rows:
+    for parent_id, child_id, order_number in edge_rows:
         parent = nodes.get(int(parent_id))
         if parent is not None and int(child_id) in nodes:
             parent.children.append(int(child_id))
+            parent.child_order.append((order_number, int(child_id)))
 
-    for kind, item_id, course_id, created_at, done, done_at in item_rows:
+    for kind, item_id, course_id, order_position, created_at, done, done_at in item_rows:
         node = nodes.get(int(course_id))
         if node is None:
             continue
@@ -371,6 +389,7 @@ async def _compute(
                 kind=str(kind),
                 item_id=int(item_id),
                 course_id=int(course_id),
+                order_position=order_position,
                 created_at=created_at,
                 done=bool(done),
                 done_at=done_at,
@@ -387,6 +406,12 @@ async def _compute(
                 graced_tasks.add(item.item_id)
             else:
                 graced_materials.add(item.item_id)
+
+    for item in _graced_by_position(nodes, root_course_id):
+        if item.kind == "task":
+            graced_tasks.add(item.item_id)
+        else:
+            graced_materials.add(item.item_id)
 
     if graced_tasks or graced_materials:
         logger.info(
@@ -453,3 +478,87 @@ def _graced_in_node(items: Sequence[_Item]) -> Iterable[_Item]:
             # зачёта, — значит узел не был пройден. Не прощаем ничего.
             return ()
     return tuple(undone)
+
+
+def _order_key(order_position: Optional[int], item_id: int) -> Tuple[int, int, int]:
+    """Паритет с SQL `order_position ASC NULLS LAST, id ASC` (как `_order_key` движка)."""
+    return (0 if order_position is not None else 1, order_position or 0, item_id)
+
+
+def _walk_sequence(nodes: Dict[int, _Node], root_id: int) -> List[_Item]:
+    """Все обязательные элементы дерева в порядке учебного обхода.
+
+    Порядок тот же, что у `LearningEngineService._walk_tree` (tsk-1250):
+    материалы узла, затем его подкурсы по `order_number`, затем задания узла.
+    Узел, висящий под несколькими родителями, учитывается по первому
+    вхождению. Обход итеративный: глубина дерева на проде небольшая, но
+    рекурсия здесь ничего не даёт, а цикл в иерархии отсекается `seen`.
+    """
+    sequence: List[_Item] = []
+    seen: Set[int] = set()
+    # Стек «что сделать»: ("node", id) — раскрыть узел, ("tasks", id) — выдать задания.
+    stack: List[Tuple[str, int]] = [("node", root_id)]
+    while stack:
+        action, course_id = stack.pop()
+        node = nodes.get(course_id)
+        if node is None:
+            continue
+        if action == "tasks":
+            sequence.extend(
+                sorted(
+                    (i for i in node.own if i.kind == "task"),
+                    key=lambda i: _order_key(i.order_position, i.item_id),
+                )
+            )
+            continue
+        if course_id in seen:
+            continue
+        seen.add(course_id)
+        sequence.extend(
+            sorted(
+                (i for i in node.own if i.kind == "material"),
+                key=lambda i: _order_key(i.order_position, i.item_id),
+            )
+        )
+        stack.append(("tasks", course_id))
+        children = sorted(node.child_order, key=lambda c: _order_key(c[0], c[1]))
+        for _order, child_id in reversed(children):
+            stack.append(("node", child_id))
+    return sequence
+
+
+def _graced_by_position(nodes: Dict[int, _Node], root_id: int) -> List[_Item]:
+    """tsk-1261: элементы, появившиеся ПОЗАДИ ученика, — не долг.
+
+    Критерий «ушёл вперёд»: к моменту появления элемента X ученик уже закрыл
+    хоть один элемент, стоящий ПОСЛЕ X в порядке обхода курса. Закрывает два
+    живых случая, мимо которых проходит правило узла (`_graced_in_node`):
+
+    * новый подкурс подвешен прямо к корню (2104 «Дотренировка», 05.10) —
+      судить по корню бесполезно, в нём у любого есть незакрытое старое; а
+      по порядку видно, что ученик уже решал темы после позиции подкурса;
+    * задания вставлены в середину пройденной темы (10363–10382, 07.09) —
+      правило узла отключалось от одного пропущенного старого задания.
+
+    Пропущенное ДО вставки при этом остаётся долгом: прощается только
+    появившееся позже, чем ученик ушёл дальше. Элементы без даты появления
+    (`created_at IS NULL`) не прощаются, зачёт без времени не считается
+    доказательством «ушёл вперёд».
+    """
+    sequence = _walk_sequence(nodes, root_id)
+    graced: List[_Item] = []
+    # Идём с конца: для каждой позиции знаем самый РАННИЙ зачёт среди
+    # элементов правее. X прощён, если этот зачёт раньше появления X.
+    earliest_after: Optional[datetime] = None
+    for item in reversed(sequence):
+        if (
+            not item.done
+            and item.created_at is not None
+            and earliest_after is not None
+            and earliest_after < item.created_at
+        ):
+            graced.append(item)
+        if item.done and item.done_at is not None:
+            if earliest_after is None or item.done_at < earliest_after:
+                earliest_after = item.done_at
+    return graced

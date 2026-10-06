@@ -28,7 +28,13 @@ import pytest
 import pytest_asyncio
 from sqlalchemy import text
 
-from app.services.content_grace_service import compute_graced_items
+from app.services.content_grace_service import (
+    _graced_by_position,
+    _graced_in_node,
+    _Item,
+    _Node,
+    compute_graced_items,
+)
 from app.services.learning_engine_service import LearningEngineService
 
 # Опорные моменты: «давно» — когда тема заводилась и проходилась, «позже» —
@@ -321,8 +327,7 @@ async def test_task_without_created_at_is_never_graced(db):
     )
 
 
-@pytest.mark.asyncio
-async def test_completion_without_timestamp_cancels_grace(db, passed_topic):
+def test_completion_without_timestamp_cancels_grace():
     """Зачёт без отметки времени отменяет прощение, а не сдвигает границу в 1970.
 
     «Закрыл, но неизвестно когда» — это отсутствие ответа на главный вопрос
@@ -330,31 +335,25 @@ async def test_completion_without_timestamp_cancels_grace(db, passed_topic):
     любой элемент курса оказался бы «новее последнего зачёта», а правило сняло
     бы обязательность со всего узла разом. На боевой базе таких строк сегодня
     нет, но появиться они могут — например ручным зачётом мимо сервиса.
-    """
-    murky = await _new_student(db, "зачёт без времени")
-    await _enroll(db, murky, passed_topic["course_id"])
-    await db.execute(
-        text(
-            "INSERT INTO student_material_progress "
-            "(student_id, material_id, status, completed_at, source) "
-            "VALUES (:u, :m, 'completed', NULL, 'manual_teacher')"
-        ),
-        {"u": murky, "m": passed_topic["old_material"]},
-    )
-    await _pass_task(
-        db,
-        user_id=murky,
-        task_id=passed_topic["old_task"],
-        course_id=passed_topic["course_id"],
-        root_course_id=passed_topic["course_id"],
-        at=LONG_AGO + timedelta(days=2),
-    )
-    await db.commit()
 
-    graced = await compute_graced_items(db, murky, passed_topic["course_id"])
-    assert not graced.materials and not graced.tasks, (
-        "Зачёт с неизвестным временем обязан отменять прощение узла, снято: "
-        f"{sorted(graced.materials)} материалов, {sorted(graced.tasks)} заданий"
+    tsk-1261: проверяется на функциях правила напрямую. Сценарий через базу
+    («материал без времени + задание со временем») больше не годится: задание
+    стоит после нового материала и решено раньше его появления — это честное
+    доказательство «ушёл вперёд», и критерий по порядку обхода прощает по нему.
+    Здесь же единственный зачёт после нового элемента — без времени, и
+    доказательством он не служит ни для одного из двух правил.
+    """
+    old = _Item("material", 1, 10, 1, LONG_AGO, done=True, done_at=None)
+    fresh = _Item("material", 2, 10, 2, LATER, done=False, done_at=None)
+    tail = _Item("task", 3, 10, 1, LONG_AGO, done=True, done_at=None)
+
+    assert not tuple(_graced_in_node([old, fresh, tail])), (
+        "Зачёт с неизвестным временем обязан отменять прощение узла"
+    )
+    nodes = {10: _Node(own=[old, fresh, tail])}
+    assert not _graced_by_position(nodes, 10), (
+        "Зачёт без времени после нового элемента — не доказательство, что ученик "
+        "ушёл вперёд до его появления"
     )
 
 
