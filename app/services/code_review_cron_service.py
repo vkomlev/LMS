@@ -44,7 +44,7 @@ from app.services.code_review_service import (
     pick_code_for_review,
     review_student_code,
 )
-from app.services import rubric_review_service
+from app.services import feedback_draft_service, rubric_review_service
 from app.services import text_authorship_service as text_authorship
 from app.services import unseen_constructs_service
 
@@ -419,6 +419,15 @@ async def _process_text_row(
     rubric = await rubric_review_service.review_against_rubric(
         body, solution_rules=solution_rules, task_stem=stem, student_id=student_id,
     )
+    # tsk-990: черновик отзыва — заранее, чтобы преподаватель открыл работу с
+    # готовым текстом. Только за рубильником: постоянный расход на модель.
+    if rubric.get("rubric_review", {}).get("items") and settings_store.get_bool(
+        "feedback_draft_llm_enabled"
+    ):
+        rubric = {**rubric, **await feedback_draft_service.write_llm_draft(
+            answer_text=body, rubric=rubric["rubric_review"], task_stem=stem,
+            solution_rules=solution_rules, student_id=student_id,
+        )}
 
     if not error:
         await _write(

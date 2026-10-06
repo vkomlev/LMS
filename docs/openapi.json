@@ -56809,6 +56809,43 @@
         "title": "ExternalLeadStatusList",
         "description": "Ответ служебного чтения: обращения источника за окно."
       },
+      "FeedbackDraft": {
+        "properties": {
+          "strengths": {
+            "type": "string",
+            "title": "Strengths",
+            "description": "Что получилось",
+            "default": ""
+          },
+          "improve": {
+            "type": "string",
+            "title": "Improve",
+            "description": "Что улучшить — в будущем времени; пусто, если нечего",
+            "default": ""
+          },
+          "next_step": {
+            "type": "string",
+            "title": "Next Step",
+            "description": "Следующий шаг и ободрение",
+            "default": ""
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "rubric",
+              "llm"
+            ],
+            "title": "Source",
+            "description": "Откуда черновик"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source"
+        ],
+        "title": "FeedbackDraft",
+        "description": "Черновик развивающего отзыва для карточки проверки (tsk-990).\n\n`source`: `rubric` — собран из пунктов рубрики без модели; `llm` — написан\nмоделью заранее (рубильник `feedback_draft_llm_enabled`). Ученику не уходит,\nпока преподаватель не отправил оценку."
+      },
       "FeedbackReportCloseRequest": {
         "properties": {
           "resolution_comment": {
@@ -70313,6 +70350,16 @@
               }
             ],
             "description": "Машинная оценка работы: секции `code_quality`, далее `ai_authorship` и `timing`. Null — оценки нет (не код, старая работа, сбой анализа)."
+          },
+          "feedback_draft": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FeedbackDraft"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",
@@ -70512,6 +70559,17 @@
             ],
             "title": "Comment",
             "description": "Комментарий преподавателя (опционально)"
+          },
+          "feedback": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TeacherFeedback"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "tsk-990: структура развивающего отзыва (опционально)"
           }
         },
         "type": "object",
@@ -79688,6 +79746,59 @@
         ],
         "title": "TeacherDashboardSide",
         "description": "Половина строки дашборда: заявки на занятии или вне его (tsk-1147)."
+      },
+      "TeacherFeedback": {
+        "properties": {
+          "strengths": {
+            "type": "string",
+            "maxLength": 2000,
+            "title": "Strengths",
+            "default": ""
+          },
+          "improve": {
+            "type": "string",
+            "maxLength": 2000,
+            "title": "Improve",
+            "default": ""
+          },
+          "next_step": {
+            "type": "string",
+            "maxLength": 2000,
+            "title": "Next Step",
+            "default": ""
+          },
+          "draft_source": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "rubric",
+                  "llm"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Draft Source",
+            "description": "Из какого черновика начинали; null — писали с нуля"
+          },
+          "draft_edited": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Draft Edited",
+            "description": "Преподаватель менял черновик перед отправкой"
+          }
+        },
+        "type": "object",
+        "title": "TeacherFeedback",
+        "description": "Структура отзыва, отправленного преподавателем (tsk-990) — в `metrics.feedback`.\n\nУченику уходит собранный текст в `comment`; структура хранится для замера\nэффекта черновика (правил ли его человек)."
       },
       "TeacherLessonOccurrenceRead": {
         "properties": {

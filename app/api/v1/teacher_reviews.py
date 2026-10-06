@@ -224,6 +224,7 @@ async def review_grade(
             lock_token=body.lock_token,
             score=body.score,
             comment=body.comment,
+            feedback=body.feedback.model_dump() if body.feedback else None,
         )
     except GradeNotFoundError:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "task_result не найден")

@@ -118,6 +118,36 @@ class ReviewClaimNextRequest(BaseModel):
     user_id: Optional[int] = Field(None, description="Фильтр по ученику")
 
 
+class FeedbackDraft(BaseModel):
+    """Черновик развивающего отзыва для карточки проверки (tsk-990).
+
+    `source`: `rubric` — собран из пунктов рубрики без модели; `llm` — написан
+    моделью заранее (рубильник `feedback_draft_llm_enabled`). Ученику не уходит,
+    пока преподаватель не отправил оценку.
+    """
+    strengths: str = Field("", description="Что получилось")
+    improve: str = Field("", description="Что улучшить — в будущем времени; пусто, если нечего")
+    next_step: str = Field("", description="Следующий шаг и ободрение")
+    source: Literal["rubric", "llm"] = Field(..., description="Откуда черновик")
+
+
+class TeacherFeedback(BaseModel):
+    """Структура отзыва, отправленного преподавателем (tsk-990) — в `metrics.feedback`.
+
+    Ученику уходит собранный текст в `comment`; структура хранится для замера
+    эффекта черновика (правил ли его человек).
+    """
+    strengths: str = Field("", max_length=2000)
+    improve: str = Field("", max_length=2000)
+    next_step: str = Field("", max_length=2000)
+    draft_source: Optional[Literal["rubric", "llm"]] = Field(
+        None, description="Из какого черновика начинали; null — писали с нуля"
+    )
+    draft_edited: Optional[bool] = Field(
+        None, description="Преподаватель менял черновик перед отправкой"
+    )
+
+
 class ReviewClaimItem(BaseModel):
     """Элемент результата в ответе claim-next для проверок (TaskResult + минимальный контекст)."""
     id: int
@@ -149,6 +179,8 @@ class ReviewClaimItem(BaseModel):
             "`timing`. Null — оценки нет (не код, старая работа, сбой анализа)."
         ),
     )
+    # tsk-990: черновик отзыва — по разбору рубрики; null — разбора нет.
+    feedback_draft: Optional[FeedbackDraft] = None
 
 
 # ----- Review pending list (tsk-298 Фаза 2, teacher-scoped очередь для веб-портала) -----
@@ -276,6 +308,9 @@ class ReviewGradeRequest(BaseModel):
     score: int = Field(..., ge=0, description="Балл (0..max_score), max_score проверяется в сервисе")
     comment: Optional[str] = Field(
         None, max_length=4096, description="Комментарий преподавателя (опционально)"
+    )
+    feedback: Optional[TeacherFeedback] = Field(
+        None, description="tsk-990: структура развивающего отзыва (опционально)"
     )
 
 

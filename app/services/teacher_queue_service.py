@@ -26,7 +26,7 @@ from app.utils.name_search import name_match_sql
 from app.schemas.task_content import MANUAL_REVIEW_TASK_TYPES
 # tsk-575: файл вложения мог быть утрачен дефектом хранения — преподавателю
 # отдаём работу с пометкой, а не с рабочей на вид ссылкой в никуда.
-from app.services import inbox_service
+from app.services import feedback_draft_service, inbox_service
 from app.services.attempt_attachments import mark_missing_one
 from app.utils.task_title import humanize_task_title
 
@@ -753,6 +753,8 @@ async def claim_next_review(
         # tsk-302 этап 0: машинная оценка работы для экрана проверки. Без неё
         # преподаватель не видел отчёт вовсе — он писался в БД и никуда не отдавался.
         "code_review": code_review,
+        # tsk-990: черновик развивающего отзыва — по открытию, без сети.
+        "feedback_draft": feedback_draft_service.draft_for_review(code_review),
     }
     if idempotency_key:
         cache_until = expires_at + timedelta(seconds=_IDEM_SUCCESS_BUFFER_SEC)
@@ -987,6 +989,8 @@ async def claim_review_by_id(
         "attempt_id": attempt_id_val,
         # tsk-302 этап 0: см. комментарий в claim_next — тот же контракт.
         "code_review": code_review,
+        # tsk-990: черновик развивающего отзыва — по открытию, без сети.
+        "feedback_draft": feedback_draft_service.draft_for_review(code_review),
     }
     return (item, token, expires_at)
 
@@ -999,6 +1003,7 @@ async def grade_review(
     lock_token: str,
     score: int,
     comment: Optional[str],
+    feedback: Optional[dict] = None,
 ) -> dict:
     """Атомарно оценить task_result (Phase Y-4 → Y-6 derived).
 
@@ -1113,6 +1118,9 @@ async def grade_review(
     elif "comment" in metrics_dict:
         # Явно стираем старый comment если новый — None
         metrics_dict.pop("comment", None)
+    # tsk-990: структура отзыва — для замера эффекта черновика.
+    if feedback is not None:
+        metrics_dict["feedback"] = feedback
 
     await db.execute(
         text(
