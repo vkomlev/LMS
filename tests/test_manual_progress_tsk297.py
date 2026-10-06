@@ -956,10 +956,18 @@ async def test_progress_tree_has_course_nodes_and_parents(graph):
         if item["item_type"] in ("task", "material"):
             assert item["parent_course_id"] == item["course_id"]
 
-    # Учебный порядок: post-order — подкурс идёт раньше курса-контейнера,
-    # содержимое узла — сразу после его заголовка.
+    # Учебный порядок (tsk-1250): узел и его материалы — вступление ДО
+    # подразделов, задания узла — ПОСЛЕ подразделов.
     order = [(i["item_type"], i["item_id"]) for i in items]
-    assert order.index(("course", ids["child"])) < order.index(("course", ids["root"]))
+    assert order[:2] == [("course", ids["root"]), ("material", ids["material_root"])], (
+        "собственный материал узла идёт первым, до подразделов"
+    )
+    assert order.index(("material", ids["material_root"])) < order.index(
+        ("course", ids["child"])
+    )
+    assert order.index(("task", ids["task_child"])) < order.index(
+        ("task", ids["task_root_a"])
+    ), "задания узла — после его подразделов"
     assert order.index(("course", ids["child"])) < order.index(("task", ids["task_child"]))
     assert order.index(("material", ids["material_child"])) < order.index(
         ("task", ids["task_child"])

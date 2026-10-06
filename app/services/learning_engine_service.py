@@ -1263,27 +1263,32 @@ class LearningEngineService:
             flat_set = set(flat_courses)
             absorbed_here = {c for c, h in links.items() if c in flat_set and h in flat_set}
 
+            # tsk-1250: обход идёт шагами (курс, материалы|задания): материалы узла
+            # раньше его подразделов, задания — позже (`_collect_steps_in_order`).
+            steps = await self._collect_steps_in_order(db, current_root_id)
+
             start_index = 0
             position = located
             if position is not None and position[0] in absorbed_here and position[4]:
                 # Задание подборки — позиция в списке хозяина.
                 host, host_key = position[4]
                 position = (host, position[1], position[2], host_key, None)
-            if position is not None and position[0] in flat_courses:
-                start_index = flat_courses.index(position[0])
+            if position is not None and position[0] in flat_set:
+                pos_step = (position[0], "materials" if position[1] == "material" else "tasks")
+                start_index = steps.index(pos_step)
             else:
                 # Позиция в другом дереве (или элемент удалён) — прежнее поведение:
                 # первый незавершённый с начала этого корня.
                 position = None
 
-            for offset, cid in enumerate(flat_courses[start_index:]):
+            for offset, (cid, step_kind) in enumerate(steps[start_index:]):
                 if cid in absorbed_here:
                     continue
                 material_ids: Optional[List[int]] = None
                 task_ids: Optional[List[int]] = None
 
-                # Сужаем списки только в курсе самой позиции; дальше по обходу —
-                # курсы целиком. Режем по порядковому ключу элемента, а НЕ по его
+                # Сужаем списки только в шаге самой позиции; дальше по обходу —
+                # шаги целиком. Режем по порядковому ключу элемента, а НЕ по его
                 # индексу в списке: позиция может быть на `recommended`-элементе,
                 # которого в списке обхода нет вовсе — тогда index() не нашёл бы
                 # его и молча вернул к началу курса, то есть назад.
@@ -1316,14 +1321,15 @@ class LearningEngineService:
                             if key > pos_key
                         ]
 
-                # Первый незавершённый материал
-                mat = await self._first_incomplete_material(
-                    db, student_id, cid, material_ids=material_ids,
-                    root_course_id=current_root_id,
-                )
-                if mat is not None:
-                    logger.info("resolve_next_item: student_id=%s next=material course_id=%s material_id=%s", student_id, cid, mat)
-                    return NextItemResult(type="material", course_id=cid, root_course_id=current_root_id, material_id=mat, reason="Следующий материал")
+                if step_kind == "materials":
+                    mat = await self._first_incomplete_material(
+                        db, student_id, cid, material_ids=material_ids,
+                        root_course_id=current_root_id,
+                    )
+                    if mat is not None:
+                        logger.info("resolve_next_item: student_id=%s next=material course_id=%s material_id=%s", student_id, cid, mat)
+                        return NextItemResult(type="material", course_id=cid, root_course_id=current_root_id, material_id=mat, reason="Следующий материал")
+                    continue
                 # Первое задание не PASSED и не BLOCKED_LIMIT.
                 # tsk-264: лимит считаем в границах корня, которым идёт обход —
                 # иначе исчерпанные в другом курсе попытки блокировали бы
@@ -1361,8 +1367,9 @@ class LearningEngineService:
         самого курса-контейнера отдаём в ПОСЛЕДНЮЮ очередь.
 
         Порядок между детьми — course_parents.order_number ASC NULLS LAST, id.
-        Используется resolve_next_item (порядок важен) и compute_course_state
-        (там дерево берётся как множество — порядок безразличен).
+        tsk-1250: учебный порядок (next-item, экран зачётов) теперь задаёт
+        `_collect_steps_in_order` — материалы узла ДО подразделов, задания
+        ПОСЛЕ. Здесь дерево нужно как множество/для поиска позиции.
 
         tsk-261: результат ДЕДУПЛИЦИРОВАН (остаётся первое вхождение).
         `course_parents` — many-to-many, узел может висеть под несколькими
@@ -1410,6 +1417,33 @@ class LearningEngineService:
         await walk(root_id)
         cache[root_id] = list(result)
         return result
+
+    async def _collect_steps_in_order(
+        self, db: AsyncSession, root_id: int
+    ) -> List[Tuple[int, str]]:
+        """Шаги учебного обхода: (course_id, "materials" | "tasks").
+
+        tsk-1250: материалы узла — вступление и идут ДО его подразделов, задания
+        узла — после них. Так у раздела флагмана вводный материал (2620 в 1165)
+        встаёт первым, а банк задач ОГЭ/ЕГЭ (1111, 1162 …) — по-прежнему после
+        теории в подразделах (решение оператора 06.10). Порядок курсов тот же,
+        что у `_collect_courses_in_order` (дедупликация по первому вхождению).
+        """
+        steps: List[Tuple[int, str]] = []
+        seen: set[int] = set()
+
+        async def walk(course_id: int) -> None:
+            if course_id in seen:
+                return
+            seen.add(course_id)
+            steps.append((course_id, "materials"))
+            children = await self._courses_repo.get_child_rows(db, course_id)
+            for _cid, _ord, _title in sorted(children, key=lambda x: self._order_key(x[1], x[0])):
+                await walk(_cid)
+            steps.append((course_id, "tasks"))
+
+        await walk(root_id)
+        return steps
 
     @staticmethod
     def _order_key(order_position: Optional[int], item_id: int) -> Tuple[int, int, int]:

@@ -10,7 +10,8 @@
 ПЕРВЫЙ незавершённый элемент по всему дереву курса.
 
 Строим дерево: root → [child1(2 материала, 1 задание), child2(2 материала)].
-Порядок обхода post-order: child1(мат) → child1(зад) → child2(мат) → root(мат).
+Порядок обхода (tsk-1250: материалы узла до подразделов, задания после):
+child1(мат) → child1(зад) → child2(мат) → root(зад).
 """
 from __future__ import annotations
 
@@ -124,7 +125,7 @@ async def _complete_material(db, *, student_id: int, material_id: int) -> None:
 
 @pytest.fixture
 async def tree(db):
-    """root → [child1(m1,m2,t1), child2(m3,m4)] + собственный материал root(m5)."""
+    """root → [child1(m1,m2,t1), child2(m3,m4)] + собственное задание root(t5) — последний шаг обхода."""
     user_id = await _student(db)
     root = await _course(db, "tsk261 root")
     child1 = await _course(db, "tsk261 child1")
@@ -137,12 +138,12 @@ async def tree(db):
     t1 = await _task(db, course_id=child1, order_position=1)
     m3 = await _material(db, course_id=child2, order_position=1, title="c2-m3")
     m4 = await _material(db, course_id=child2, order_position=2, title="c2-m4")
-    m5 = await _material(db, course_id=root, order_position=1, title="root-m5")
+    t5 = await _task(db, course_id=root, order_position=1)
 
     await _enroll(db, user_id, root)
     data = {
         "user_id": user_id, "root": root, "child1": child1, "child2": child2,
-        "m1": m1, "m2": m2, "t1": t1, "m3": m3, "m4": m4, "m5": m5,
+        "m1": m1, "m2": m2, "t1": t1, "m3": m3, "m4": m4, "t5": t5,
     }
     yield data
 
@@ -192,17 +193,17 @@ async def test_a5_no_jump_back_to_earlier_incomplete(db, tree):
 
 @pytest.mark.asyncio
 async def test_a4_end_of_course_returns_none(db, tree):
-    """A4: позиция — последний элемент обхода (материал корня) → впереди пусто.
+    """A4: позиция — последний элемент обхода (задание корня) → впереди пусто.
 
     SPW на type=none возвращает ученика в список разделов — ожидаемый QA результат.
     """
     svc = LearningEngineService()
     uid, root = tree["user_id"], tree["root"]
-    for m in ("m1", "m2", "m3", "m4", "m5"):
+    for m in ("m1", "m2", "m3", "m4"):
         await _complete_material(db, student_id=uid, material_id=tree[m])
 
     res = await svc.resolve_next_item(
-        db, uid, root_course_id=root, after_material_id=tree["m5"]
+        db, uid, root_course_id=root, after_task_id=tree["t5"]
     )
     assert res.type == "none", f"после последнего элемента впереди ничего нет: {res}"
 

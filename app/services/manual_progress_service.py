@@ -1091,9 +1091,10 @@ async def get_student_progress(
     Плоский список ``items`` трёх типов, в УЧЕБНОМ порядке — фронт на него
     опирается и не пересортировывает:
 
-    * ``course`` — узел темы/подкурса; идёт непосредственно перед своим
-      содержимым, сами узлы следуют порядку обхода движка (post-order:
-      подкурсы раньше курса-контейнера, см. `_collect_courses_in_order`);
+    * ``course`` — узел темы/подкурса; идёт непосредственно перед своими
+      материалами, затем его подразделы, затем ЗАДАНИЯ узла — порядок шагов
+      движка (`_collect_steps_in_order`, tsk-1250). Задания узла поэтому могут
+      стоять не сразу за строкой узла: группировать по ``parent_course_id``;
     * ``material`` — материалы узла по ``order_position``;
     * ``task`` — задания узла по ``order_position``.
 
@@ -1290,6 +1291,8 @@ async def get_student_progress(
     # Элементы каждого узла собираем отдельно, чтобы сначала свернуть статусы
     # узлов, а потом выложить всё в учебном порядке.
     per_course_items: dict[int, list[dict[str, Any]]] = {cid: [] for cid in tree_ids}
+    # tsk-1250: задания узла идут ПОСЛЕ его подразделов, материалы — до.
+    per_course_tasks: dict[int, list[dict[str, Any]]] = {cid: [] for cid in tree_ids}
     own_total: dict[int, int] = {cid: 0 for cid in tree_ids}
     own_done: dict[int, int] = {cid: 0 for cid in tree_ids}
     own_attention: dict[int, bool] = {cid: False for cid in tree_ids}
@@ -1361,7 +1364,7 @@ async def get_student_progress(
             )
             own_attention[cid] = own_attention.get(cid, False) or needs_attention
 
-            per_course_items[cid].append({
+            per_course_tasks[cid].append({
                 "item_type": "task",
                 "item_id": tid,
                 "course_id": cid,
@@ -1450,8 +1453,19 @@ async def get_student_progress(
             return True
         return any(_rollup_attention(c, seen) for c in children_of.get(node, []))
 
+    # tsk-1250: тот же порядок шагов, что у next-item — узел со своими
+    # материалами, затем подразделы, затем задания узла.
+    tree_set = set(tree_ids)
+    steps = [
+        st for st in await _engine._collect_steps_in_order(db, course_id)  # noqa: SLF001
+        if st[0] in tree_set
+    ] or [(course_id, "materials"), (course_id, "tasks")]
+
     items: list[dict[str, Any]] = []
-    for cid in tree_ids:
+    for cid, step_kind in steps:
+        if step_kind == "tasks":
+            items.extend(per_course_tasks[cid])
+            continue
         items.append({
             "item_type": "course",
             "item_id": cid,
