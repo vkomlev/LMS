@@ -236,19 +236,31 @@ async def get_or_create_user_by_email(
     if user is not None:
         return user, False
 
-    # S2 hotfix per handoff 2026-04-28 §2: orphan email
-    # (users.email exists без identity_link kind='email').
-    # Без проверки INSERT users(email=X) упадёт на partial unique
-    # внутри savepoint, dispatcher вернул бы 500.
-    # ADR-0021 §2 → 409 identity_conflict.
+    # Осиротевшая почта: users.email заполнен (сотрудник вписал её в карточку
+    # через PATCH /users/{id} или импорт), а identity_link kind='email' нет.
+    # Раньше здесь был 409 (ADR-0021 §2), и ученик, заведённый через ВК без
+    # почты, не мог войти по ссылке (tsk-1258). Теперь привязываем: переход по
+    # ссылке из письма доказывает владение ящиком, а адрес в карточку поставил
+    # сотрудник. Та же логика уже действует при входе через ВК (tsk-755,
+    # match_source="users_email_orphan"). Каждая такая привязка — в журнал.
     orphan = (await db.execute(
         select(Users).where(func.lower(Users.email) == email.lower())
     )).scalar_one_or_none()
     if orphan is not None:
-        raise IdentityConflictError(
-            conflict_kind="email_already_linked_to_orphan_user",
-            existing_kinds=[],
+        # link_existing_user: INSERT в savepoint и разбор гонки двух переходов.
+        await identity_link_service.link_existing_user(db, orphan.id, "email", email)
+        await log_event(
+            db,
+            "auth.magic_link.orphan_linked",
+            user_id=orphan.id,
+            ip=ip,
+            user_agent=user_agent,
+            details={"identity_kind": "email", "value_masked": mask_email(email)},
         )
+        logger.info(
+            "auth.magic_link.orphan_linked user_id=%d email=%s", orphan.id, mask_email(email)
+        )
+        return orphan, False
 
     new_user = Users(email=email, password_hash=None, full_name=None, tg_id=None)
     try:

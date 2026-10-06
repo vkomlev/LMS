@@ -131,32 +131,40 @@ async def test_concurrent_verify_same_email_creates_one_user(client: AsyncClient
 
 
 @pytest.mark.asyncio
-async def test_orphan_email_returns_409(client: AsyncClient, db):
-    """S2 regression (handoff 2026-04-28 §2): users.email exists без identity_link
-    kind='email' → magic-link verify возвращает 409 identity_conflict, не 500.
-
-    Сценарий: после manual DELETE FROM identity_link WHERE id=K (или race
-    с orphan email-в-users) — auto-create раньше падал с UniqueViolationError
-    в savepoint, не имея identity_link для recovery.
+async def test_orphan_email_links_and_logs_in(client: AsyncClient, db):
+    """tsk-1258: ученик заведён через ВК без почты, почту потом вписали в карточку
+    (users.email без identity_link kind='email'). Вход по ссылке из письма
+    достраивает email-привязку к ЭТОЙ карточке и пускает — не 409 и не второй аккаунт.
     """
     rand = os.urandom(4).hex()
     email = f"orphan-{rand}@example.com"
 
-    # Подготовка orphan: users.email присутствует, identity_link отсутствует.
     orphan_user = Users(email=email, password_hash=None, full_name="Orphan")
     db.add(orphan_user)
     await db.flush()
+    db.add(IdentityLink(user_id=orphan_user.id, kind="vk", value=f"vk-{rand}"))
     await db.commit()
+    orphan_id = orphan_user.id
 
     token = await _issue_magic_link(db, email)
-    resp = await client.post(
-        "/api/v1/auth/magic-link/verify",
-        json={"token": token},
-    )
-    assert resp.status_code == 409, resp.text
-    body = resp.json()
-    assert body["detail"]["error"] == "identity_conflict"
-    assert body["detail"]["conflict_kind"] == "email_already_linked_to_orphan_user"
+    resp = await client.post("/api/v1/auth/magic-link/verify", json={"token": token})
+    assert resp.status_code == 200, resp.text
+
+    kinds = (await db.execute(
+        select(IdentityLink.kind).where(IdentityLink.user_id == orphan_id)
+    )).scalars().all()
+    assert sorted(kinds) == ["email", "vk"]
+    user_ids = (await db.execute(
+        select(Users.id).where(Users.email == email)
+    )).scalars().all()
+    assert user_ids == [orphan_id], "второй аккаунт заводиться не должен"
+    events = (await db.execute(
+        select(AuditEvent).where(
+            AuditEvent.user_id == orphan_id,
+            AuditEvent.event_type == "auth.magic_link.orphan_linked",
+        )
+    )).scalars().all()
+    assert len(events) == 1
 
 
 @pytest.mark.asyncio
