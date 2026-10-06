@@ -26,7 +26,7 @@ from app.utils.name_search import name_match_sql
 from app.schemas.task_content import MANUAL_REVIEW_TASK_TYPES
 # tsk-575: файл вложения мог быть утрачен дефектом хранения — преподавателю
 # отдаём работу с пометкой, а не с рабочей на вид ссылкой в никуда.
-from app.services import feedback_draft_service, inbox_service
+from app.services import feedback_draft_service, inbox_service, review_sla
 from app.services.attempt_attachments import mark_missing_one
 from app.utils.task_title import humanize_task_title
 
@@ -1556,7 +1556,10 @@ async def list_pending_reviews(
                    -- мест, откуда преподаватель пишет ученику «давай созвонимся
                    -- в …», поэтому разница поясов нужна здесь, а не только в
                    -- карточке человека.
-                   u.timezone AS student_timezone
+                   u.timezone AS student_timezone,
+                   -- tsk-1176: срок проверки — только у обязательной очереди;
+                   -- опциональные (review_kind=optional/all) срока не имеют.
+                   {mandatory_review_sql('t')} AS is_mandatory
             FROM task_results tr
             JOIN tasks t ON t.id = tr.task_id
             LEFT JOIN users u ON u.id = tr.user_id
@@ -1586,6 +1589,10 @@ async def list_pending_reviews(
             "auto_checked_part_matched": bool(row[15]),
             # tsk-588: пояс ученика (None — не заполнен).
             "user_timezone": row[16],
+            # tsk-1176: сколько работа ждёт; срок и просрочка — только у обязательных.
+            "age_hours": review_sla.review_age_hours(row[7], now),
+            "review_due_at": review_sla.review_due_at(row[7]) if row[17] else None,
+            "is_overdue": bool(row[17]) and review_sla.is_review_overdue(row[7], now),
         }
         for row in r.fetchall()
     ]

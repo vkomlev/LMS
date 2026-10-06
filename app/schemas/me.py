@@ -396,6 +396,13 @@ class HistoryItem(BaseModel):
     received_at: datetime
     submitted_at: datetime
     checked_at: datetime | None
+    review_due_at: datetime | None = Field(
+        default=None,
+        description=(
+            "tsk-1176: срок ручной проверки (submitted_at + REVIEW_SLA_HOURS), если работа "
+            "ждёт преподавателя; null — проверять вручную нечего или уже проверено"
+        ),
+    )
 
 
 # ── Phase Y-6.2: /me/courses/{course_id}/syllabus-states ─────────────────────

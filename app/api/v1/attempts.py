@@ -82,8 +82,10 @@ from app.services import (
     assignment_rules_service,
     help_requests_service,
     lesson_attendance_service,
+    review_sla,
     teacher_queue_service,
 )
+from app.services.teacher_queue_service import mandatory_review_sql
 from app.core.config import Settings
 
 from app.utils.exceptions import DomainError
@@ -1390,6 +1392,38 @@ async def submit_attempt_answers(
                 await db.rollback()
             except Exception:
                 pass
+
+        # 2.4e tsk-1176: «проверим до …». Решаем по ЗАПИСАННОЙ строке тем же
+        # предикатом, что у очереди преподавателя, — клиент не угадывает по типу
+        # задания (TA получает оптимистичный зачёт и выглядит «Правильно ✓»).
+        # Soft-fail: подпись под результатом не должна ломать сдачу.
+        # Точка сохранения, а не db.rollback(): полный откат экспайрит attempt/task,
+        # и следующее обращение к ним дёрнет ленивую загрузку → MissingGreenlet.
+        tr_id = getattr(task_result, "id", None)
+        if tr_id is not None:
+            try:
+                async with db.begin_nested():
+                    due_row = (await db.execute(
+                    text(
+                        f"""
+                        SELECT tr.submitted_at
+                        FROM task_results tr JOIN tasks t ON t.id = tr.task_id
+                        WHERE tr.id = :rid AND tr.checked_at IS NULL
+                          AND {mandatory_review_sql('t')}
+                        """  # nosec B608 — фрагмент из закрытого набора литералов
+                    ),
+                    {"rid": tr_id},
+                )).first()
+                if due_row is not None:
+                    check_result = check_result.model_copy(
+                        update={"manual_check_due_at": review_sla.review_due_at(due_row[0])}
+                    )
+            except Exception:
+                # Точка сохранения уже откатилась сама; attempt/task не тронуты.
+                logger.warning(
+                    "tsk-1176: срок проверки не посчитан: task_result=%s",
+                    tr_id, exc_info=True,
+                )
 
         # 2.5 Накопление для ответа
         results.append(

@@ -33,6 +33,19 @@ class TeacherAttentionSummaryResponse(BaseModel):
     lesson_missed_unread: int = Field(
         ..., description="Непрочитанные notifications.kind='lesson_missed', адресованные этому преподавателю"
     )
+    reviews_stale: int = Field(
+        0,
+        description=(
+            "tsk-1176: работы обязательной ручной проверки в зоне преподавателя, "
+            "ждущие дольше REVIEW_REMINDER_HOURS (36 ч), без действующего захвата"
+        ),
+    )
+    reviews_stale_oldest_at: Optional[datetime] = Field(
+        None, description="tsk-1176: момент сдачи самой старой из reviews_stale"
+    )
+    review_reminder_hours: int = Field(
+        36, description="tsk-1176: порог «залежалась» в часах — для текста напоминания"
+    )
     oldest_created_at: Optional[datetime] = Field(
         None, description="Самый старый непрочитанный/неразобранный элемент из трёх счётчиков выше"
     )

@@ -230,6 +230,13 @@ class PendingReviewItem(BaseModel):
             "флаг здесь всегда означает «числа верны»."
         ),
     )
+    age_hours: Optional[float] = Field(
+        None, description="tsk-1176: сколько часов работа ждёт проверки (от submitted_at)"
+    )
+    review_due_at: Optional[datetime] = Field(
+        None, description="tsk-1176: срок проверки — submitted_at + REVIEW_SLA_HOURS (48 ч)"
+    )
+    is_overdue: bool = Field(False, description="tsk-1176: срок проверки уже прошёл")
 
 
 class PendingReviewListResponse(BaseModel):
