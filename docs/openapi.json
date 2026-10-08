@@ -52343,6 +52343,19 @@
               },
               null
             ]
+          },
+          "manual_check_due_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Manual Check Due At",
+            "description": "tsk-1176: работа ушла на ручную проверку, преподаватель проверит до этого момента (submitted_at + REVIEW_SLA_HOURS). Заполняется только в ответе сдачи (`POST /attempts/{id}/answers`); null — ручной проверки не будет."
           }
         },
         "type": "object",
@@ -60756,6 +60769,19 @@
               }
             ],
             "title": "Checked At"
+          },
+          "review_due_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Due At",
+            "description": "tsk-1176: срок ручной проверки (submitted_at + REVIEW_SLA_HOURS), если работа ждёт преподавателя; null — проверять вручную нечего или уже проверено"
           }
         },
         "type": "object",
@@ -67286,6 +67312,37 @@
             "type": "boolean",
             "title": "Auto Checked Part Matched",
             "description": "tsk-396: задание в гибридном режиме (partial_auto_check), и формализуемая часть ответа УЖЕ сверена авто-чеком и совпала с эталоном — проверять надо только ручную часть (например, построение диаграммы в ОГЭ-14). Работы с несошедшейся числовой частью в обязательную очередь не попадают, поэтому флаг здесь всегда означает «числа верны».",
+            "default": false
+          },
+          "age_hours": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Age Hours",
+            "description": "tsk-1176: сколько часов работа ждёт проверки (от submitted_at)"
+          },
+          "review_due_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Due At",
+            "description": "tsk-1176: срок проверки — submitted_at + REVIEW_SLA_HOURS (48 ч)"
+          },
+          "is_overdue": {
+            "type": "boolean",
+            "title": "Is Overdue",
+            "description": "tsk-1176: срок проверки уже прошёл",
             "default": false
           }
         },
@@ -79453,6 +79510,31 @@
             "type": "integer",
             "title": "Lesson Missed Unread",
             "description": "Непрочитанные notifications.kind='lesson_missed', адресованные этому преподавателю"
+          },
+          "reviews_stale": {
+            "type": "integer",
+            "title": "Reviews Stale",
+            "description": "tsk-1176: работы обязательной ручной проверки в зоне преподавателя, ждущие дольше REVIEW_REMINDER_HOURS (36 ч), без действующего захвата",
+            "default": 0
+          },
+          "reviews_stale_oldest_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviews Stale Oldest At",
+            "description": "tsk-1176: момент сдачи самой старой из reviews_stale"
+          },
+          "review_reminder_hours": {
+            "type": "integer",
+            "title": "Review Reminder Hours",
+            "description": "tsk-1176: порог «залежалась» в часах — для текста напоминания",
+            "default": 36
           },
           "oldest_created_at": {
             "anyOf": [

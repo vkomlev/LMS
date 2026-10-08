@@ -573,6 +573,12 @@ class Settings:
         self.escalation_timeout_hours: int = int(
             os.getenv("ESCALATION_TIMEOUT_HOURS", "48")
         )
+        # tsk-1176: срок ручной проверки, который видят ученик («проверим до …»)
+        # и преподаватель (флаг просрочки в очереди). REVIEW_REMINDER_HOURS —
+        # с какого возраста работа считается «залежавшейся» в сводке внимания
+        # бота: напоминание раньше срока, чтобы успеть до просрочки.
+        self.review_sla_hours: int = int(os.getenv("REVIEW_SLA_HOURS", "48"))
+        self.review_reminder_hours: int = int(os.getenv("REVIEW_REMINDER_HOURS", "36"))
         # ESCALATION_CRON_INTERVAL_MIN — интервал тика APScheduler.
         self.escalation_cron_interval_min: int = int(
             os.getenv("ESCALATION_CRON_INTERVAL_MIN", "5")

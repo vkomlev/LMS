@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import Annotated, Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, Field, model_validator
@@ -227,6 +228,14 @@ class CheckResult(BaseModel):
             "None для обычных типов задач."
         ),
         examples=[{"информатика": 2, "python": 0}, None],
+    )
+    manual_check_due_at: Optional[datetime] = Field(
+        default=None,
+        description=(
+            "tsk-1176: работа ушла на ручную проверку, преподаватель проверит до этого "
+            "момента (submitted_at + REVIEW_SLA_HOURS). Заполняется только в ответе сдачи "
+            "(`POST /attempts/{id}/answers`); null — ручной проверки не будет."
+        ),
     )
 
 

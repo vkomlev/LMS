@@ -28,6 +28,8 @@ from app.services.learning_gaps_service import (
     real_student_results_filter,
 )
 from app.utils.task_title import clean_stem_text, humanize_task_title
+from app.services import review_sla
+from app.services.teacher_queue_service import mandatory_review_sql
 
 logger = logging.getLogger(__name__)
 
@@ -769,7 +771,7 @@ async def get_streak(db: AsyncSession, user_id: int) -> dict:
 HistoryFilter = Literal["all", "pending_review", "passed", "failed"]
 
 
-_HISTORY_SQL = """
+_HISTORY_SQL = f"""
 SELECT
     tr.id AS task_result_id,
     tr.task_id,
@@ -791,7 +793,9 @@ SELECT
     tr.metrics->>'comment' AS comment,
     tr.received_at,
     tr.submitted_at,
-    tr.checked_at
+    tr.checked_at,
+    -- tsk-1176: работа ждёт преподавателя — тот же предикат, что у очереди.
+    (tr.checked_at IS NULL AND {mandatory_review_sql('t')}) AS awaits_teacher
 FROM task_results tr
 JOIN tasks t ON t.id = tr.task_id
 LEFT JOIN courses c ON c.id = t.course_id
@@ -1395,5 +1399,10 @@ async def get_history(
             row.pop("task_title_raw"),
             row.pop("task_stem"),
             row["task_external_uid"],
+        )
+        # tsk-1176: «проверим до …» — только у работ, которые реально ждут
+        # преподавателя (у TA статус уже passed: оптимистичный зачёт).
+        row["review_due_at"] = (
+            review_sla.review_due_at(row["submitted_at"]) if row.pop("awaits_teacher") else None
         )
     return rows

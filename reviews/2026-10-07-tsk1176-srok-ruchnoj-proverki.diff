@@ -1,0 +1,788 @@
+diff --git a/app/api/v1/attempts.py b/app/api/v1/attempts.py
+index 2c80543..3a0f536 100644
+--- a/app/api/v1/attempts.py
++++ b/app/api/v1/attempts.py
+@@ -82,8 +82,10 @@ from app.services import (
+     assignment_rules_service,
+     help_requests_service,
+     lesson_attendance_service,
++    review_sla,
+     teacher_queue_service,
+ )
++from app.services.teacher_queue_service import mandatory_review_sql
+ from app.core.config import Settings
+ 
+ from app.utils.exceptions import DomainError
+@@ -1391,6 +1393,38 @@ async def submit_attempt_answers(
+             except Exception:
+                 pass
+ 
++        # 2.4e tsk-1176: «проверим до …». Решаем по ЗАПИСАННОЙ строке тем же
++        # предикатом, что у очереди преподавателя, — клиент не угадывает по типу
++        # задания (TA получает оптимистичный зачёт и выглядит «Правильно ✓»).
++        # Soft-fail: подпись под результатом не должна ломать сдачу.
++        # Точка сохранения, а не db.rollback(): полный откат экспайрит attempt/task,
++        # и следующее обращение к ним дёрнет ленивую загрузку → MissingGreenlet.
++        tr_id = getattr(task_result, "id", None)
++        if tr_id is not None:
++            try:
++                async with db.begin_nested():
++                    due_row = (await db.execute(
++                    text(
++                        f"""
++                        SELECT tr.submitted_at
++                        FROM task_results tr JOIN tasks t ON t.id = tr.task_id
++                        WHERE tr.id = :rid AND tr.checked_at IS NULL
++                          AND {mandatory_review_sql('t')}
++                        """  # nosec B608 — фрагмент из закрытого набора литералов
++                    ),
++                    {"rid": tr_id},
++                )).first()
++                if due_row is not None:
++                    check_result = check_result.model_copy(
++                        update={"manual_check_due_at": review_sla.review_due_at(due_row[0])}
++                    )
++            except Exception:
++                # Точка сохранения уже откатилась сама; attempt/task не тронуты.
++                logger.warning(
++                    "tsk-1176: срок проверки не посчитан: task_result=%s",
++                    tr_id, exc_info=True,
++                )
++
+         # 2.5 Накопление для ответа
+         results.append(
+             AttemptAnswerResult(
+diff --git a/app/core/config.py b/app/core/config.py
+index 8e51dd6..9f8fc04 100644
+--- a/app/core/config.py
++++ b/app/core/config.py
+@@ -573,6 +573,12 @@ class Settings:
+         self.escalation_timeout_hours: int = int(
+             os.getenv("ESCALATION_TIMEOUT_HOURS", "48")
+         )
++        # tsk-1176: срок ручной проверки, который видят ученик («проверим до …»)
++        # и преподаватель (флаг просрочки в очереди). REVIEW_REMINDER_HOURS —
++        # с какого возраста работа считается «залежавшейся» в сводке внимания
++        # бота: напоминание раньше срока, чтобы успеть до просрочки.
++        self.review_sla_hours: int = int(os.getenv("REVIEW_SLA_HOURS", "48"))
++        self.review_reminder_hours: int = int(os.getenv("REVIEW_REMINDER_HOURS", "36"))
+         # ESCALATION_CRON_INTERVAL_MIN — интервал тика APScheduler.
+         self.escalation_cron_interval_min: int = int(
+             os.getenv("ESCALATION_CRON_INTERVAL_MIN", "5")
+diff --git a/app/schemas/checking.py b/app/schemas/checking.py
+index 8216ac1..7fb1fc1 100644
+--- a/app/schemas/checking.py
++++ b/app/schemas/checking.py
+@@ -1,6 +1,7 @@
+ from __future__ import annotations
+ 
+ import logging
++from datetime import datetime
+ from typing import Annotated, Any, Dict, List, Literal, Optional, Union
+ 
+ from pydantic import BaseModel, Field, model_validator
+@@ -228,6 +229,14 @@ class CheckResult(BaseModel):
+         ),
+         examples=[{"информатика": 2, "python": 0}, None],
+     )
++    manual_check_due_at: Optional[datetime] = Field(
++        default=None,
++        description=(
++            "tsk-1176: работа ушла на ручную проверку, преподаватель проверит до этого "
++            "момента (submitted_at + REVIEW_SLA_HOURS). Заполняется только в ответе сдачи "
++            "(`POST /attempts/{id}/answers`); null — ручной проверки не будет."
++        ),
++    )
+ 
+ 
+ # ---------- Stateless-проверка ----------
+diff --git a/app/schemas/me.py b/app/schemas/me.py
+index 50cc0cb..760598a 100644
+--- a/app/schemas/me.py
++++ b/app/schemas/me.py
+@@ -396,6 +396,13 @@ class HistoryItem(BaseModel):
+     received_at: datetime
+     submitted_at: datetime
+     checked_at: datetime | None
++    review_due_at: datetime | None = Field(
++        default=None,
++        description=(
++            "tsk-1176: срок ручной проверки (submitted_at + REVIEW_SLA_HOURS), если работа "
++            "ждёт преподавателя; null — проверять вручную нечего или уже проверено"
++        ),
++    )
+ 
+ 
+ # ── Phase Y-6.2: /me/courses/{course_id}/syllabus-states ─────────────────────
+diff --git a/app/schemas/teacher_attention.py b/app/schemas/teacher_attention.py
+index 4ed82b7..2412b08 100644
+--- a/app/schemas/teacher_attention.py
++++ b/app/schemas/teacher_attention.py
+@@ -33,6 +33,19 @@ class TeacherAttentionSummaryResponse(BaseModel):
+     lesson_missed_unread: int = Field(
+         ..., description="Непрочитанные notifications.kind='lesson_missed', адресованные этому преподавателю"
+     )
++    reviews_stale: int = Field(
++        0,
++        description=(
++            "tsk-1176: работы обязательной ручной проверки в зоне преподавателя, "
++            "ждущие дольше REVIEW_REMINDER_HOURS (36 ч), без действующего захвата"
++        ),
++    )
++    reviews_stale_oldest_at: Optional[datetime] = Field(
++        None, description="tsk-1176: момент сдачи самой старой из reviews_stale"
++    )
++    review_reminder_hours: int = Field(
++        36, description="tsk-1176: порог «залежалась» в часах — для текста напоминания"
++    )
+     oldest_created_at: Optional[datetime] = Field(
+         None, description="Самый старый непрочитанный/неразобранный элемент из трёх счётчиков выше"
+     )
+diff --git a/app/schemas/teacher_next_modes.py b/app/schemas/teacher_next_modes.py
+index 4b452a4..fe3d2ca 100644
+--- a/app/schemas/teacher_next_modes.py
++++ b/app/schemas/teacher_next_modes.py
+@@ -198,6 +198,13 @@ class PendingReviewItem(BaseModel):
+             "флаг здесь всегда означает «числа верны»."
+         ),
+     )
++    age_hours: Optional[float] = Field(
++        None, description="tsk-1176: сколько часов работа ждёт проверки (от submitted_at)"
++    )
++    review_due_at: Optional[datetime] = Field(
++        None, description="tsk-1176: срок проверки — submitted_at + REVIEW_SLA_HOURS (48 ч)"
++    )
++    is_overdue: bool = Field(False, description="tsk-1176: срок проверки уже прошёл")
+ 
+ 
+ class PendingReviewListResponse(BaseModel):
+diff --git a/app/services/me_service.py b/app/services/me_service.py
+index 3f814cc..554ddff 100644
+--- a/app/services/me_service.py
++++ b/app/services/me_service.py
+@@ -28,6 +28,8 @@ from app.services.learning_gaps_service import (
+     real_student_results_filter,
+ )
+ from app.utils.task_title import clean_stem_text, humanize_task_title
++from app.services import review_sla
++from app.services.teacher_queue_service import mandatory_review_sql
+ 
+ logger = logging.getLogger(__name__)
+ 
+@@ -769,7 +771,7 @@ async def get_streak(db: AsyncSession, user_id: int) -> dict:
+ HistoryFilter = Literal["all", "pending_review", "passed", "failed"]
+ 
+ 
+-_HISTORY_SQL = """
++_HISTORY_SQL = f"""
+ SELECT
+     tr.id AS task_result_id,
+     tr.task_id,
+@@ -791,7 +793,9 @@ SELECT
+     tr.metrics->>'comment' AS comment,
+     tr.received_at,
+     tr.submitted_at,
+-    tr.checked_at
++    tr.checked_at,
++    -- tsk-1176: работа ждёт преподавателя — тот же предикат, что у очереди.
++    (tr.checked_at IS NULL AND {mandatory_review_sql('t')}) AS awaits_teacher
+ FROM task_results tr
+ JOIN tasks t ON t.id = tr.task_id
+ LEFT JOIN courses c ON c.id = t.course_id
+@@ -1396,4 +1400,9 @@ async def get_history(
+             row.pop("task_stem"),
+             row["task_external_uid"],
+         )
++        # tsk-1176: «проверим до …» — только у работ, которые реально ждут
++        # преподавателя (у TA статус уже passed: оптимистичный зачёт).
++        row["review_due_at"] = (
++            review_sla.review_due_at(row["submitted_at"]) if row.pop("awaits_teacher") else None
++        )
+     return rows
+diff --git a/app/services/review_sla.py b/app/services/review_sla.py
+new file mode 100644
+index 0000000..ef459fd
+--- /dev/null
++++ b/app/services/review_sla.py
+@@ -0,0 +1,71 @@
++"""Срок ручной проверки работы (tsk-1176).
++
++Одно место, где из момента сдачи выводятся срок, возраст и просрочка. Им
++пользуются очередь преподавателя (`list_pending_reviews`), сводка внимания
++бота (`teacher_attention_service`), ответ сдачи и история ученика — чтобы
++ученик и преподаватель видели один и тот же срок, а не две разные арифметики.
++
++Срок не хранится в БД: он выводится из `submitted_at` и настройки
++`REVIEW_SLA_HOURS`. Смена настройки сразу меняет срок у всех ожидающих работ.
++"""
++from __future__ import annotations
++
++import logging
++from datetime import datetime, timedelta, timezone
++from typing import Optional
++
++from app.core.config import Settings
++
++logger = logging.getLogger(__name__)
++
++
++def _aware(moment: Optional[datetime], *, what: str) -> Optional[datetime]:
++    """Привести момент к aware-UTC; `None` и не-datetime → `None`.
++
++    Колонки `timestamptz` приходят aware. Naive datetime — признак ошибки
++    вызывающего: трактуем как UTC (так пишет весь проект) и пишем WARNING,
++    а не роняем ответ ученику из-за подписи под результатом.
++    """
++    if moment is None:
++        return None
++    if not isinstance(moment, datetime):
++        logger.warning("review_sla: %s не datetime (%r) — срок не считаем", what, type(moment))
++        return None
++    if moment.tzinfo is None:
++        logger.warning("review_sla: naive %s=%s — трактуем как UTC", what, moment)
++        return moment.replace(tzinfo=timezone.utc)
++    return moment
++
++
++def sla_hours() -> int:
++    """Срок проверки в часах из настроек."""
++    return int(Settings().review_sla_hours)
++
++
++def reminder_hours() -> int:
++    """Возраст работы (ч), с которого бот напоминает преподавателю."""
++    return int(Settings().review_reminder_hours)
++
++
++def review_due_at(submitted_at: Optional[datetime]) -> Optional[datetime]:
++    """Срок проверки: момент сдачи + `REVIEW_SLA_HOURS`."""
++    sub = _aware(submitted_at, what="submitted_at")
++    return None if sub is None else sub + timedelta(hours=sla_hours())
++
++
++def review_age_hours(submitted_at: Optional[datetime], now: Optional[datetime] = None) -> Optional[float]:
++    """Сколько часов работа ждёт проверки (не меньше 0, округлено до 0,1)."""
++    sub = _aware(submitted_at, what="submitted_at")
++    if sub is None:
++        return None
++    current = _aware(now, what="now") or datetime.now(timezone.utc)
++    return round(max((current - sub).total_seconds(), 0.0) / 3600, 1)
++
++
++def is_review_overdue(submitted_at: Optional[datetime], now: Optional[datetime] = None) -> bool:
++    """Просрочена ли проверка: срок уже прошёл."""
++    due = review_due_at(submitted_at)
++    if due is None:
++        return False
++    current = _aware(now, what="now") or datetime.now(timezone.utc)
++    return due < current
+diff --git a/app/services/teacher_attention_service.py b/app/services/teacher_attention_service.py
+index c85c3f2..c1ff391 100644
+--- a/app/services/teacher_attention_service.py
++++ b/app/services/teacher_attention_service.py
+@@ -11,12 +11,15 @@ teacher-бот (background-поллер, см. `docs/qa/` разбор tsk-652):
+ from __future__ import annotations
+ 
+ import logging
+-from datetime import datetime
++from datetime import datetime, timedelta, timezone
+ from typing import Optional
+ 
+ from sqlalchemy import text
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
++from app.services import review_sla
++from app.services.teacher_queue_service import REVIEW_ACL_SQL, mandatory_review_sql
++
+ logger = logging.getLogger(__name__)
+ 
+ 
+@@ -51,6 +54,28 @@ async def get_summary(db: AsyncSession, *, teacher_id: int) -> dict:
+     student_idle = by_kind.get("student_idle")
+     lesson_missed = by_kind.get("lesson_missed")
+ 
++    # tsk-1176: работы в обязательной очереди этого преподавателя, которые ждут
++    # дольше REVIEW_REMINDER_HOURS. Предикат и ACL те же, что у pending-count и
++    # claim-next: напоминание обязано говорить ровно о тех работах, которые
++    # преподаватель может взять. Захваченные кем-то не считаем — их уже проверяют.
++    now = datetime.now(timezone.utc)
++    stale_row = (await db.execute(text(
++        f"""
++        SELECT count(*) AS cnt, min(tr.submitted_at) AS oldest
++        FROM task_results tr
++        JOIN tasks t ON t.id = tr.task_id
++        WHERE tr.checked_at IS NULL
++          AND tr.submitted_at < :stale_before
++          AND {mandatory_review_sql('t')}
++          AND (tr.review_claim_expires_at IS NULL OR tr.review_claim_expires_at < :now_ts)
++          AND {REVIEW_ACL_SQL}
++        """  # nosec B608 — фрагменты из закрытого набора литералов модуля очереди
++    ), {
++        "teacher_id": teacher_id,
++        "now_ts": now,
++        "stale_before": now - timedelta(hours=review_sla.reminder_hours()),
++    })).mappings().one()
++
+     oldest_candidates: list[datetime] = [
+         r["oldest"] for r in (gap_row, student_idle, lesson_missed)
+         if r is not None and r["oldest"] is not None
+@@ -60,5 +85,8 @@ async def get_summary(db: AsyncSession, *, teacher_id: int) -> dict:
+         "gap_signals_new": int(gap_row["cnt"] or 0),
+         "student_idle_unread": int(student_idle["cnt"]) if student_idle else 0,
+         "lesson_missed_unread": int(lesson_missed["cnt"]) if lesson_missed else 0,
++        "reviews_stale": int(stale_row["cnt"] or 0),
++        "reviews_stale_oldest_at": stale_row["oldest"],
++        "review_reminder_hours": review_sla.reminder_hours(),
+         "oldest_created_at": min(oldest_candidates) if oldest_candidates else None,
+     }
+diff --git a/app/services/teacher_queue_service.py b/app/services/teacher_queue_service.py
+index f5a8d7e..7e52a32 100644
+--- a/app/services/teacher_queue_service.py
++++ b/app/services/teacher_queue_service.py
+@@ -26,7 +26,7 @@ from app.utils.name_search import name_match_sql
+ from app.schemas.task_content import MANUAL_REVIEW_TASK_TYPES
+ # tsk-575: файл вложения мог быть утрачен дефектом хранения — преподавателю
+ # отдаём работу с пометкой, а не с рабочей на вид ссылкой в никуда.
+-from app.services import inbox_service
++from app.services import inbox_service, review_sla
+ from app.services.attempt_attachments import mark_missing_one
+ from app.utils.task_title import humanize_task_title
+ 
+@@ -1548,7 +1548,10 @@ async def list_pending_reviews(
+                    -- мест, откуда преподаватель пишет ученику «давай созвонимся
+                    -- в …», поэтому разница поясов нужна здесь, а не только в
+                    -- карточке человека.
+-                   u.timezone AS student_timezone
++                   u.timezone AS student_timezone,
++                   -- tsk-1176: срок проверки — только у обязательной очереди;
++                   -- опциональные (review_kind=optional/all) срока не имеют.
++                   {mandatory_review_sql('t')} AS is_mandatory
+             FROM task_results tr
+             JOIN tasks t ON t.id = tr.task_id
+             LEFT JOIN users u ON u.id = tr.user_id
+@@ -1578,6 +1581,10 @@ async def list_pending_reviews(
+             "auto_checked_part_matched": bool(row[15]),
+             # tsk-588: пояс ученика (None — не заполнен).
+             "user_timezone": row[16],
++            # tsk-1176: сколько работа ждёт; срок и просрочка — только у обязательных.
++            "age_hours": review_sla.review_age_hours(row[7], now),
++            "review_due_at": review_sla.review_due_at(row[7]) if row[17] else None,
++            "is_overdue": bool(row[17]) and review_sla.is_review_overdue(row[7], now),
+         }
+         for row in r.fetchall()
+     ]
+diff --git a/docs/openapi.json b/docs/openapi.json
+index 4e06b54..7b96d01 100644
+--- a/docs/openapi.json
++++ b/docs/openapi.json
+@@ -52343,6 +52343,19 @@
+               },
+               null
+             ]
++          },
++          "manual_check_due_at": {
++            "anyOf": [
++              {
++                "type": "string",
++                "format": "date-time"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Manual Check Due At",
++            "description": "tsk-1176: работа ушла на ручную проверку, преподаватель проверит до этого момента (submitted_at + REVIEW_SLA_HOURS). Заполняется только в ответе сдачи (`POST /attempts/{id}/answers`); null — ручной проверки не будет."
+           }
+         },
+         "type": "object",
+@@ -60719,6 +60732,19 @@
+               }
+             ],
+             "title": "Checked At"
++          },
++          "review_due_at": {
++            "anyOf": [
++              {
++                "type": "string",
++                "format": "date-time"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Review Due At",
++            "description": "tsk-1176: срок ручной проверки (submitted_at + REVIEW_SLA_HOURS), если работа ждёт преподавателя; null — проверять вручную нечего или уже проверено"
+           }
+         },
+         "type": "object",
+@@ -67250,6 +67276,37 @@
+             "title": "Auto Checked Part Matched",
+             "description": "tsk-396: задание в гибридном режиме (partial_auto_check), и формализуемая часть ответа УЖЕ сверена авто-чеком и совпала с эталоном — проверять надо только ручную часть (например, построение диаграммы в ОГЭ-14). Работы с несошедшейся числовой частью в обязательную очередь не попадают, поэтому флаг здесь всегда означает «числа верны».",
+             "default": false
++          },
++          "age_hours": {
++            "anyOf": [
++              {
++                "type": "number"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Age Hours",
++            "description": "tsk-1176: сколько часов работа ждёт проверки (от submitted_at)"
++          },
++          "review_due_at": {
++            "anyOf": [
++              {
++                "type": "string",
++                "format": "date-time"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Review Due At",
++            "description": "tsk-1176: срок проверки — submitted_at + REVIEW_SLA_HOURS (48 ч)"
++          },
++          "is_overdue": {
++            "type": "boolean",
++            "title": "Is Overdue",
++            "description": "tsk-1176: срок проверки уже прошёл",
++            "default": false
+           }
+         },
+         "type": "object",
+@@ -79396,6 +79453,31 @@
+             "title": "Lesson Missed Unread",
+             "description": "Непрочитанные notifications.kind='lesson_missed', адресованные этому преподавателю"
+           },
++          "reviews_stale": {
++            "type": "integer",
++            "title": "Reviews Stale",
++            "description": "tsk-1176: работы обязательной ручной проверки в зоне преподавателя, ждущие дольше REVIEW_REMINDER_HOURS (36 ч), без действующего захвата",
++            "default": 0
++          },
++          "reviews_stale_oldest_at": {
++            "anyOf": [
++              {
++                "type": "string",
++                "format": "date-time"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Reviews Stale Oldest At",
++            "description": "tsk-1176: момент сдачи самой старой из reviews_stale"
++          },
++          "review_reminder_hours": {
++            "type": "integer",
++            "title": "Review Reminder Hours",
++            "description": "tsk-1176: порог «залежалась» в часах — для текста напоминания",
++            "default": 36
++          },
+           "oldest_created_at": {
+             "anyOf": [
+               {
+diff --git a/tests/test_review_sla_tsk1176.py b/tests/test_review_sla_tsk1176.py
+new file mode 100644
+index 0000000..e78ed23
+--- /dev/null
++++ b/tests/test_review_sla_tsk1176.py
+@@ -0,0 +1,295 @@
++"""tsk-1176: срок ручной проверки 48 ч — возраст и просрочка в очереди,
++счётчик залежавшихся работ для напоминания в боте, срок ученику.
++
++Покрывает:
++- функции срока: aware/naive/None/не-datetime (обязательные негативные кейсы);
++- `GET /teacher/reviews/pending`: age_hours / review_due_at / is_overdue;
++- сводка внимания: reviews_stale растёт только от работ старше порога,
++  захваченная работа не считается;
++- `POST /attempts/{id}/answers`: у TA review_due_at заполнен, у SA — нет;
++- `/me/history`-выборка: review_due_at у ждущей работы и null после проверки.
++"""
++from __future__ import annotations
++
++import json
++import random
++import uuid
++from datetime import datetime, timedelta, timezone
++
++import pytest
++from sqlalchemy import text
++
++from app.core.config import Settings
++from app.services import me_service, review_sla, teacher_attention_service
++from app.services.auth.session_service import create_session
++
++_settings = Settings()
++
++
++# ── функции срока ────────────────────────────────────────────────────────────
++
++def test_due_at_is_submitted_plus_sla() -> None:
++    sub = datetime(2026, 10, 1, 10, 0, tzinfo=timezone.utc)
++    assert review_sla.review_due_at(sub) == sub + timedelta(hours=_settings.review_sla_hours)
++
++
++def test_none_and_wrong_type_give_no_deadline() -> None:
++    assert review_sla.review_due_at(None) is None
++    assert review_sla.review_age_hours(None) is None
++    assert review_sla.is_review_overdue(None) is False
++    assert review_sla.review_due_at("2026-10-01T10:00:00Z") is None  # type: ignore[arg-type]
++    assert review_sla.is_review_overdue("2026-10-01") is False  # type: ignore[arg-type]
++
++
++def test_naive_is_treated_as_utc() -> None:
++    naive = datetime(2026, 10, 1, 10, 0)
++    aware = naive.replace(tzinfo=timezone.utc)
++    assert review_sla.review_due_at(naive) == review_sla.review_due_at(aware)
++    now_naive = datetime(2026, 10, 1, 13, 0)
++    assert review_sla.review_age_hours(aware, now_naive) == 3.0
++
++
++def test_overdue_boundary_and_future_submit() -> None:
++    now = datetime(2026, 10, 7, 12, 0, tzinfo=timezone.utc)
++    h = _settings.review_sla_hours
++    assert review_sla.is_review_overdue(now - timedelta(hours=h + 1), now) is True
++    assert review_sla.is_review_overdue(now - timedelta(hours=h - 1), now) is False
++    # Часы клиента впереди — возраст не уходит в минус.
++    assert review_sla.review_age_hours(now + timedelta(hours=1), now) == 0.0
++
++
++# ── фикстуры ─────────────────────────────────────────────────────────────────
++
++async def _user(db, tag: str, *, methodist: bool = False) -> tuple[int, str]:
++    r = await db.execute(
++        text("INSERT INTO users (email, full_name) VALUES (:e, :n) RETURNING id"),
++        {"e": f"t1176-{tag}-{uuid.uuid4().hex[:8]}@example.com", "n": f"t1176 {tag}"},
++    )
++    uid = int(r.scalar())
++    if methodist:
++        await db.execute(
++            text(
++                "INSERT INTO user_roles (user_id, role_id) "
++                "SELECT :u, r.id FROM roles r WHERE r.name = 'methodist' ON CONFLICT DO NOTHING"
++            ),
++            {"u": uid},
++        )
++    token, _, _ = await create_session(db, user_id=uid)
++    await db.commit()
++    return uid, token
++
++
++async def _course(db) -> int:
++    r = await db.execute(
++        text("INSERT INTO courses (title, access_level) VALUES (:t, 'auto_check') RETURNING id"),
++        {"t": f"t1176 {uuid.uuid4().hex[:8]}"},
++    )
++    cid = int(r.scalar())
++    await db.commit()
++    return cid
++
++
++async def _task(db, course_id: int, type_: str) -> int:
++    diff = (await db.execute(text("SELECT id FROM difficulties LIMIT 1"))).scalar()
++    if type_ == "TA":
++        sr = {"max_score": 6, "penalties": {"missing_answer": 0}}
++    else:
++        sr = {
++            "max_score": 6,
++            "short_answer": {"normalization": ["trim"], "accepted_answers": [{"value": "42", "score": 6}]},
++        }
++    r = await db.execute(
++        text(
++            "INSERT INTO tasks (external_uid, course_id, difficulty_id, task_content, solution_rules) "
++            "VALUES (:ext, :cid, :did, CAST(:tc AS jsonb), CAST(:sr AS jsonb)) RETURNING id"
++        ),
++        {
++            "ext": f"t1176-{random.randint(10**8, 10**10)}",
++            "cid": course_id, "did": diff,
++            "tc": json.dumps({"type": type_, "stem": "Вопрос"}),
++            "sr": json.dumps(sr),
++        },
++    )
++    tid = int(r.scalar())
++    await db.commit()
++    return tid
++
++
++async def _result(db, *, user_id: int, task_id: int, age_hours: float, claimed: bool = False) -> int:
++    sub = datetime.now(timezone.utc) - timedelta(hours=age_hours)
++    claim = datetime.now(timezone.utc) + timedelta(minutes=10) if claimed else None
++    r = await db.execute(
++        text(
++            "INSERT INTO task_results (score, user_id, task_id, submitted_at, count_retry, "
++            "received_at, max_score, source_system, is_correct, review_claim_expires_at) "
++            "VALUES (6, :u, :t, :sub, 0, :sub, 6, 'spw_web', TRUE, :claim) RETURNING id"
++        ),
++        {"u": user_id, "t": task_id, "sub": sub, "claim": claim},
++    )
++    rid = int(r.scalar())
++    await db.commit()
++    return rid
++
++
++async def _cleanup(db, *, course_id: int, user_ids: list[int]) -> None:
++    await db.execute(
++        text("DELETE FROM task_results WHERE task_id IN (SELECT id FROM tasks WHERE course_id = :c)"),
++        {"c": course_id},
++    )
++    await db.execute(text("DELETE FROM attempts WHERE course_id = :c"), {"c": course_id})
++    await db.execute(text("DELETE FROM tasks WHERE course_id = :c"), {"c": course_id})
++    await db.execute(text("DELETE FROM courses WHERE id = :c"), {"c": course_id})
++    for uid in user_ids:
++        await db.execute(text("DELETE FROM user_session WHERE user_id = :u"), {"u": uid})
++        await db.execute(text("DELETE FROM user_roles WHERE user_id = :u"), {"u": uid})
++        await db.execute(text("DELETE FROM users WHERE id = :u"), {"u": uid})
++    await db.commit()
++
++
++# ── очередь преподавателя ────────────────────────────────────────────────────
++
++@pytest.mark.asyncio
++async def test_pending_list_has_age_and_overdue(db, client) -> None:
++    met_id, token = await _user(db, "met", methodist=True)
++    stud_id, _ = await _user(db, "stud")
++    cid = await _course(db)
++    tid = await _task(db, cid, "TA")
++    fresh = await _result(db, user_id=stud_id, task_id=tid, age_hours=2)
++    old = await _result(db, user_id=stud_id, task_id=tid, age_hours=50)
++    try:
++        resp = await client.get(
++            f"/api/v1/teacher/reviews/pending?teacher_id={met_id}&course_id={cid}",
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp.status_code == 200, resp.text
++        items = {it["id"]: it for it in resp.json()["items"]}
++        assert items[fresh]["is_overdue"] is False
++        assert 1.9 <= items[fresh]["age_hours"] <= 2.2
++        assert items[old]["is_overdue"] is True
++        assert items[old]["age_hours"] >= 49.9
++        due = datetime.fromisoformat(items[old]["review_due_at"].replace("Z", "+00:00"))
++        assert due < datetime.now(timezone.utc)
++    finally:
++        await _cleanup(db, course_id=cid, user_ids=[met_id, stud_id])
++
++
++@pytest.mark.asyncio
++async def test_optional_review_has_no_deadline(db, client) -> None:
++    """Авто-проверенный SA в очереди review_kind=all срока не получает."""
++    met_id, token = await _user(db, "met-opt", methodist=True)
++    stud_id, _ = await _user(db, "stud-opt")
++    cid = await _course(db)
++    sa = await _task(db, cid, "SA")  # manual_review_required не задан → опциональная
++    rid = await _result(db, user_id=stud_id, task_id=sa, age_hours=60)
++    try:
++        resp = await client.get(
++            f"/api/v1/teacher/reviews/pending?teacher_id={met_id}&course_id={cid}&review_kind=all",
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp.status_code == 200, resp.text
++        item = next(it for it in resp.json()["items"] if it["id"] == rid)
++        assert item["review_due_at"] is None
++        assert item["is_overdue"] is False
++        assert item["age_hours"] >= 59.9
++    finally:
++        await _cleanup(db, course_id=cid, user_ids=[met_id, stud_id])
++
++
++# ── сводка внимания (напоминание в боте) ─────────────────────────────────────
++
++@pytest.mark.asyncio
++async def test_attention_counts_only_stale_unclaimed(db) -> None:
++    met_id, _ = await _user(db, "met2", methodist=True)
++    stud_id, _ = await _user(db, "stud2")
++    cid = await _course(db)
++    tid = await _task(db, cid, "TA")
++    try:
++        before = await teacher_attention_service.get_summary(db, teacher_id=met_id)
++        assert before["review_reminder_hours"] == _settings.review_reminder_hours
++        await _result(db, user_id=stud_id, task_id=tid, age_hours=2)  # свежая
++        await _result(db, user_id=stud_id, task_id=tid, age_hours=40, claimed=True)  # уже проверяют
++        await _result(db, user_id=stud_id, task_id=tid, age_hours=40)  # залежалась
++        after = await teacher_attention_service.get_summary(db, teacher_id=met_id)
++        assert after["reviews_stale"] - before["reviews_stale"] == 1
++        assert after["reviews_stale_oldest_at"] is not None
++    finally:
++        await _cleanup(db, course_id=cid, user_ids=[met_id, stud_id])
++
++
++@pytest.mark.asyncio
++async def test_attention_ignores_courses_outside_acl(db) -> None:
++    """Обычный преподаватель без привязки к курсу не видит чужую залежавшуюся работу."""
++    teacher_id, _ = await _user(db, "teacher")
++    stud_id, _ = await _user(db, "stud3")
++    cid = await _course(db)
++    tid = await _task(db, cid, "TA")
++    try:
++        await _result(db, user_id=stud_id, task_id=tid, age_hours=40)
++        summary = await teacher_attention_service.get_summary(db, teacher_id=teacher_id)
++        assert summary["reviews_stale"] == 0
++    finally:
++        await _cleanup(db, course_id=cid, user_ids=[teacher_id, stud_id])
++
++
++# ── ученик: ответ сдачи и история ────────────────────────────────────────────
++
++def _api_headers() -> dict[str, str]:
++    return {"X-API-Key": next(iter(_settings.valid_api_keys))}
++
++
++@pytest.mark.asyncio
++async def test_submit_ta_returns_deadline_sa_does_not(db, client) -> None:
++    stud_id, _ = await _user(db, "stud4")
++    cid = await _course(db)
++    ta = await _task(db, cid, "TA")
++    sa = await _task(db, cid, "SA")
++    try:
++        resp = await client.post(
++            "/api/v1/attempts",
++            json={"user_id": stud_id, "course_id": cid, "source_system": "test"},
++            headers=_api_headers(),
++        )
++        assert resp.status_code == 201, resp.text
++        aid = int(resp.json()["id"])
++
++        r_ta = await client.post(
++            f"/api/v1/attempts/{aid}/answers",
++            json={"items": [{"task_id": ta, "answer": {"type": "TA", "response": {"text": "Мой ответ"}}}]},
++            headers=_api_headers(),
++        )
++        assert r_ta.status_code == 200, r_ta.text
++        cr = r_ta.json()["results"][0]["check_result"]
++        assert cr["is_correct"] is True  # оптимистичный зачёт TA
++        due = datetime.fromisoformat(cr["manual_check_due_at"].replace("Z", "+00:00"))
++        expected = datetime.now(timezone.utc) + timedelta(hours=_settings.review_sla_hours)
++        assert abs((due - expected).total_seconds()) < 120
++
++        r_sa = await client.post(
++            f"/api/v1/attempts/{aid}/answers",
++            json={"items": [{"task_id": sa, "answer": {"type": "SA", "response": {"value": "42"}}}]},
++            headers=_api_headers(),
++        )
++        assert r_sa.status_code == 200, r_sa.text
++        assert r_sa.json()["results"][0]["check_result"]["manual_check_due_at"] is None
++    finally:
++        await _cleanup(db, course_id=cid, user_ids=[stud_id])
++
++
++@pytest.mark.asyncio
++async def test_history_deadline_until_checked(db) -> None:
++    stud_id, _ = await _user(db, "stud5")
++    cid = await _course(db)
++    tid = await _task(db, cid, "TA")
++    rid = await _result(db, user_id=stud_id, task_id=tid, age_hours=5)
++    try:
++        rows = await me_service.get_history(db, user_id=stud_id, filter_="all", limit=10, offset=0)
++        row = next(r for r in rows if r["task_result_id"] == rid)
++        assert row["review_due_at"] is not None
++        assert "awaits_teacher" not in row
++
++        await db.execute(text("UPDATE task_results SET checked_at = now() WHERE id = :r"), {"r": rid})
++        await db.commit()
++        rows = await me_service.get_history(db, user_id=stud_id, filter_="all", limit=10, offset=0)
++        assert next(r for r in rows if r["task_result_id"] == rid)["review_due_at"] is None
++    finally:
++        await _cleanup(db, course_id=cid, user_ids=[stud_id])
