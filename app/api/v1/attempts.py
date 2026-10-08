@@ -74,6 +74,7 @@ from app.services.attempt_attachments import (
     safe_upload_filename,
 )
 from app.services.learning_engine_service import LearningEngineService
+from app.services import dependency_lock_service
 from app.services.tasks_acl_service import (
     assert_task_access,
     assert_task_active_for_student,
@@ -601,6 +602,14 @@ async def submit_attempt_answers(
             student_id=attempt.user_id,
             task_id=task.id,
             is_active=task.is_active,
+        )
+
+        # 2.1.0d tsk-1276: замок зависимости держит и ПРИЁМ ответа, а не только
+        # кнопку «Продолжить» — иначе задание закрытого курса сдаётся по прямому
+        # адресу (прод, 07.10: ученик под замком сдал 12 заданий закрытого курса).
+        await dependency_lock_service.assert_course_not_locked(
+            db, student_id=attempt.user_id, course_id=task.course_id,
+            task_id=task.id,
         )
 
         # 2.1.1 tsk-264: результат обязан лечь в тот же контекст, в котором потом

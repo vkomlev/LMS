@@ -259,6 +259,25 @@ async def _next_items(
     inactive_courses = await course_activity_service.load_inactive_course_ids(db)
     roots = [c for c in roots if int(c) not in inactive_courses]
 
+    # tsk-1276: закрытый замком корень домой не задаём — вместо него идёт курс,
+    # который надо пройти раньше (обычно индивидуальный курс повторения). Он
+    # стоит первым: пока замок висит, вся работа — там. Без этого программа
+    # ученика (88, 112) не видела курса повторения вовсе, и 07.10 ученику под
+    # замком автоматически выдали задания закрытого курса.
+    from app.services import dependency_lock_service
+
+    locks = await dependency_lock_service.locked_roots(db, student_id)
+    if locks:
+        # По цепочке до первого открытого курса («112 -> 88 -> 2106» даёт 2106):
+        # промежуточный курс сам закрыт, задавать из него нельзя. Выведенный
+        # из работы пререквизит тоже не задаём.
+        required = list(dict.fromkeys(
+            dependency_lock_service.first_open(locks, int(c))
+            for c in roots if int(c) in locks
+        ))
+        required = [c for c in required if c not in locks and c not in inactive_courses]
+        roots = required + [c for c in roots if int(c) not in locks and c not in required]
+
     # tsk-882: собираем НЕ ТОЛЬКО набор, но и хвост за ним — что идёт следом
     # по учебному порядку. Без хвоста не ответить на вопрос «закрывает ли эта
     # выдача тему» и нечем взять теорию следующей.

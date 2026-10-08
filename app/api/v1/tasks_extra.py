@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 
 from app.api.deps import get_db, get_async_db, get_current_user, require_role
 from app.auth.current_user import CurrentUser
+from app.services import dependency_lock_service
 from app.services.tasks_acl_service import assert_task_access
 
 # tsk-433 Волна 2.3: порядок заданий переведён с legacy `get_db` на cookie +
@@ -225,6 +226,13 @@ async def get_task_by_external_uid(
     _deny_if_inactive_for_student(
         task, privileged=privileged, current_user=current_user,
     )
+    if not privileged:
+        # tsk-1276: задание курса под замком зависимости ученику не открывается
+        # (403 `blocked_dependency` с курсом, который надо пройти раньше).
+        await dependency_lock_service.assert_course_not_locked(
+            db, student_id=current_user.id, course_id=task.course_id,
+            task_id=task.id,
+        )
     return _task_read_for(task, privileged=privileged)
 
 
@@ -578,6 +586,13 @@ async def get_task_by_id(
     _deny_if_inactive_for_student(
         task, privileged=privileged, current_user=current_user,
     )
+    if not privileged:
+        # tsk-1276: задание курса под замком зависимости ученику не открывается
+        # (403 `blocked_dependency` с курсом, который надо пройти раньше).
+        await dependency_lock_service.assert_course_not_locked(
+            db, student_id=current_user.id, course_id=task.course_id,
+            task_id=task.id,
+        )
     return _task_read_for(task, privileged=privileged)
 
 @router.post(
