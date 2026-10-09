@@ -27,6 +27,20 @@ def test_word_answer_absent_kept() -> None:
     assert _valid_title("Кратчайший путь от А до Е") == "Кратчайший путь от А до Е"
 
 
+def test_8082_adjective_and_root_rejected() -> None:
+    # tsk-1285: 8082 «Признаки толстого клиента» при ответе «толстый»; однокоренное слово
+    assert _valid_title("Признаки толстого клиента", "толстый") is None
+    assert _valid_title("Рекурсивное вычисление", "рекурсия") is None
+    assert _valid_title("Где работает логика клиента", "толстый") == "Где работает логика клиента"
+
+
+def test_every_accepted_answer_checked() -> None:
+    # tsk-1285: слив через НЕ первый принятый ответ
+    assert _valid_title("Признаки толстого клиента", ["тонкий", "толстого"]) is None
+    payload = json.dumps({"titles": [{"id": 8082, "title": "Признаки толстого клиента"}]})
+    assert _match_batch(payload, [{"id": 8082, "answers": ["тонкий", "толстого"]}]) == {}
+
+
 def test_match_batch_uses_item_answer() -> None:
     payload = json.dumps({"titles": [
         {"id": 1, "title": "Кратчайший путь между A и E 9 км"},

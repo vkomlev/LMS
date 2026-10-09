@@ -54,7 +54,7 @@ import os
 import re
 import sys
 from pathlib import Path
-from typing import Any, Optional, Sequence
+from typing import Any, Optional, Sequence, Union
 
 import asyncpg
 
@@ -153,7 +153,11 @@ SELECT t.id,
        c.title AS course_title,
        t.task_content->>'stem' AS stem,
        t.task_content->>'type' AS task_type,
-       t.solution_rules->'short_answer'->'accepted_answers'->0->>'value' AS answer
+       (SELECT array_agg(a->>'value')
+          FROM jsonb_array_elements(
+                 CASE WHEN jsonb_typeof(t.solution_rules->'short_answer'->'accepted_answers') = 'array'
+                      THEN t.solution_rules->'short_answer'->'accepted_answers' ELSE '[]'::jsonb END) a
+       ) AS answers
 FROM tasks t
 JOIN courses c ON c.id = t.course_id
 WHERE t.is_active IS TRUE
@@ -241,8 +245,14 @@ def _title_names_word_answer(title: str, answer: str) -> bool:
     return True
 
 
-def _valid_title(raw: Any, answer: Optional[str] = None) -> Optional[str]:
-    """Отсеять отписки, пересказы и слив ответа. Возвращает название или None."""
+def _valid_title(raw: Any, answers: Union[str, Sequence[Optional[str]], None] = None) -> Optional[str]:
+    """Отсеять отписки, пересказы и слив ответа. Возвращает название или None.
+
+    Проверяются ВСЕ принятые ответы (tsk-1285): у 8082 первым шёл «толстый»,
+    а в названии стояло «толстого» — ещё один принятый ответ.
+    """
+    if isinstance(answers, str) or answers is None:
+        answers = [answers]
     if not isinstance(raw, str):
         return None
     title = " ".join(raw.split()).strip().strip('"').rstrip(".")
@@ -254,7 +264,7 @@ def _valid_title(raw: Any, answer: Optional[str] = None) -> Optional[str]:
         return None
     if "#" in title:
         return None
-    if _title_leaks_answer(title, answer):
+    if any(_title_leaks_answer(title, ans) for ans in answers):
         return None
     return title
 
@@ -274,7 +284,7 @@ def _match_batch(payload_text: str, items: Sequence[dict[str, Any]]) -> dict[int
     if not isinstance(rows, list):
         return {}
     asked = {int(it["id"]) for it in items}
-    answers = {int(it["id"]): it.get("answer") for it in items}
+    answers = {int(it["id"]): it.get("answers") or [it.get("answer")] for it in items}
     out: dict[int, str] = {}
     for row in rows:
         if not isinstance(row, dict):

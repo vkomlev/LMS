@@ -1,0 +1,510 @@
+[
+ {
+  "id": 5532,
+  "title": "Интерактивный режим мультимедиа",
+  "content_provenance": {
+   "fields": [
+    "task_content",
+    "solution_rules"
+   ],
+   "reason": "правка подтверждена журналом LMS (updated_at и task_audit после 01.09; последняя публикация CB 18.08), снимок за отправленную версию не ручается — tsk-849",
+   "source": "manual_script",
+   "edited_at": "2026-09-09T05:59:58.265888Z",
+   "edited_by": "tsk-760"
+  }
+ },
+ {
+  "id": 5899,
+  "title": "Название разветвляющегося алгоритма",
+  "content_provenance": {
+   "fields": [
+    "task_content",
+    "solution_rules"
+   ],
+   "reason": "правка подтверждена журналом LMS (updated_at и task_audit после 01.09; последняя публикация CB 18.08), снимок за отправленную версию не ручается — tsk-849",
+   "source": "manual_script",
+   "edited_at": "2026-09-09T05:59:58.265888Z",
+   "edited_by": "tsk-760"
+  }
+ },
+ {
+  "id": 5992,
+  "title": "Знаковая модель",
+  "content_provenance": {
+   "fields": [
+    "task_content",
+    "solution_rules"
+   ],
+   "reason": "правка подтверждена журналом LMS (updated_at и task_audit после 01.09; последняя публикация CB 18.08), снимок за отправленную версию не ручается — tsk-849",
+   "source": "manual_script",
+   "edited_at": "2026-09-09T05:59:58.265888Z",
+   "edited_by": "tsk-760"
+  }
+ },
+ {
+  "id": 5995,
+  "title": "Схематическая модель объекта",
+  "content_provenance": {
+   "fields": [
+    "task_content",
+    "solution_rules"
+   ],
+   "reason": "правка подтверждена журналом LMS (updated_at и task_audit после 01.09; последняя публикация CB 18.08), снимок за отправленную версию не ручается — tsk-849",
+   "source": "manual_script",
+   "edited_at": "2026-09-09T05:59:58.265888Z",
+   "edited_by": "tsk-760"
+  }
+ },
+ {
+  "id": 6025,
+  "title": "Определение понятия информации",
+  "content_provenance": {
+   "fields": [
+    "task_content",
+    "solution_rules"
+   ],
+   "reason": "правка подтверждена журналом LMS (updated_at и task_audit после 01.09; последняя публикация CB 18.08), снимок за отправленную версию не ручается — tsk-849",
+   "source": "manual_script",
+   "edited_at": "2026-09-09T05:59:58.265888Z",
+   "edited_by": "tsk-760"
+  }
+ },
+ {
+  "id": 6097,
+  "title": "Титульный слайд презентации",
+  "content_provenance": {
+   "fields": [
+    "task_content",
+    "solution_rules"
+   ],
+   "reason": "правка подтверждена журналом LMS (updated_at и task_audit после 01.09; последняя публикация CB 18.08), снимок за отправленную версию не ручается — tsk-849",
+   "source": "manual_script",
+   "edited_at": "2026-09-09T05:59:58.265888Z",
+   "edited_by": "tsk-760"
+  }
+ },
+ {
+  "id": 6150,
+  "title": "Авторское право на тексты и музыку",
+  "content_provenance": {
+   "fields": [
+    "task_content",
+    "solution_rules"
+   ],
+   "reason": "правка подтверждена журналом LMS (updated_at и task_audit после 01.09; последняя публикация CB 18.08), снимок за отправленную версию не ручается — tsk-849",
+   "source": "manual_script",
+   "edited_at": "2026-09-09T05:59:58.265888Z",
+   "edited_by": "tsk-760"
+  }
+ },
+ {
+  "id": 7278,
+  "title": "Обонятельный вид информации",
+  "content_provenance": {
+   "fields": [
+    "task_content",
+    "solution_rules"
+   ],
+   "reason": "правка подтверждена журналом LMS (updated_at и task_audit после 01.09; последняя публикация CB 18.08), снимок за отправленную версию не ручается — tsk-849",
+   "source": "manual_script",
+   "edited_at": "2026-09-09T05:59:58.265888Z",
+   "edited_by": "tsk-760"
+  }
+ },
+ {
+  "id": 7279,
+  "title": "Вкусовой вид информации",
+  "content_provenance": {
+   "fields": [
+    "task_content",
+    "solution_rules"
+   ],
+   "reason": "правка подтверждена журналом LMS (updated_at и task_audit после 01.09; последняя публикация CB 18.08), снимок за отправленную версию не ручается — tsk-849",
+   "source": "manual_script",
+   "edited_at": "2026-09-09T05:59:58.265888Z",
+   "edited_by": "tsk-760"
+  }
+ },
+ {
+  "id": 7468,
+  "title": "Класс прикладного ПО",
+  "content_provenance": {
+   "fields": [
+    "task_content",
+    "solution_rules"
+   ],
+   "reason": "содержимое в LMS разошлось со снимком отправленного (сверка tsk-849: задания уроков вошли в сверку, полный прогон 09.09.2026)",
+   "source": "manual_script",
+   "edited_at": "2026-09-09T05:56:37.151780Z",
+   "edited_by": "tsk-760"
+  }
+ },
+ {
+  "id": 7473,
+  "title": "Класс системного ПО",
+  "content_provenance": {
+   "fields": [
+    "task_content",
+    "solution_rules"
+   ],
+   "reason": "содержимое в LMS разошлось со снимком отправленного (сверка tsk-849: задания уроков вошли в сверку, полный прогон 09.09.2026)",
+   "source": "manual_script",
+   "edited_at": "2026-09-09T05:56:37.151780Z",
+   "edited_by": "tsk-760"
+  }
+ },
+ {
+  "id": 7571,
+  "title": "Табельный номер как текст",
+  "content_provenance": {
+   "fields": [
+    "task_content",
+    "solution_rules"
+   ],
+   "reason": "содержимое в LMS разошлось со снимком отправленного (сверка tsk-849: задания уроков вошли в сверку, полный прогон 09.09.2026)",
+   "source": "manual_script",
+   "edited_at": "2026-09-09T05:56:37.151780Z",
+   "edited_by": "tsk-760"
+  }
+ },
+ {
+  "id": 7574,
+  "title": "Почтовый индекс как текст",
+  "content_provenance": {
+   "fields": [
+    "task_content",
+    "solution_rules"
+   ],
+   "reason": "содержимое в LMS разошлось со снимком отправленного (сверка tsk-849: задания уроков вошли в сверку, полный прогон 09.09.2026)",
+   "source": "manual_script",
+   "edited_at": "2026-09-09T05:56:37.151780Z",
+   "edited_by": "tsk-760"
+  }
+ },
+ {
+  "id": 7654,
+  "title": "Вырезание выделенного фрагмента",
+  "content_provenance": null
+ },
+ {
+  "id": 7900,
+  "title": "Свободное программное обеспечение",
+  "content_provenance": null
+ },
+ {
+  "id": 8012,
+  "title": "Недооценка репутации дефекта",
+  "content_provenance": null
+ },
+ {
+  "id": 8020,
+  "title": "Ошибочное понимание требования",
+  "content_provenance": {
+   "fields": [
+    "task_content",
+    "solution_rules"
+   ],
+   "reason": "содержимое в LMS разошлось со снимком отправленного (сверка tsk-849: задания уроков вошли в сверку, полный прогон 09.09.2026)",
+   "source": "manual_script",
+   "edited_at": "2026-09-09T05:56:37.151780Z",
+   "edited_by": "tsk-760"
+  }
+ },
+ {
+  "id": 8053,
+  "title": "Приоритет тестирования платежного модуля",
+  "content_provenance": null
+ },
+ {
+  "id": 8082,
+  "title": "Признаки толстого клиента",
+  "content_provenance": {
+   "fields": [
+    "task_content",
+    "solution_rules"
+   ],
+   "reason": "содержимое в LMS разошлось со снимком отправленного (сверка tsk-849: задания уроков вошли в сверку, полный прогон 09.09.2026)",
+   "source": "manual_script",
+   "edited_at": "2026-09-09T05:56:37.151780Z",
+   "edited_by": "tsk-760"
+  }
+ },
+ {
+  "id": 8143,
+  "title": "Логический тип в JSON",
+  "content_provenance": {
+   "fields": [
+    "task_content",
+    "solution_rules"
+   ],
+   "reason": "содержимое в LMS разошлось со снимком отправленного (сверка tsk-849: задания уроков вошли в сверку, полный прогон 09.09.2026)",
+   "source": "manual_script",
+   "edited_at": "2026-09-09T05:56:37.151780Z",
+   "edited_by": "tsk-760"
+  }
+ },
+ {
+  "id": 8170,
+  "title": "Критерии приемки",
+  "content_provenance": null
+ },
+ {
+  "id": 8249,
+  "title": "Название класса эквивалентности",
+  "content_provenance": null
+ },
+ {
+  "id": 8317,
+  "title": "Определение метрики покрытия требований",
+  "content_provenance": {
+   "fields": [
+    "task_content",
+    "solution_rules"
+   ],
+   "reason": "содержимое в LMS разошлось со снимком отправленного (сверка tsk-849: задания уроков вошли в сверку, полный прогон 09.09.2026)",
+   "source": "manual_script",
+   "edited_at": "2026-09-09T05:56:37.151780Z",
+   "edited_by": "tsk-760"
+  }
+ },
+ {
+  "id": 8342,
+  "title": "Анализ граничных значений скидки",
+  "content_provenance": null
+ },
+ {
+  "id": 8356,
+  "title": "Анализ граничных значений",
+  "content_provenance": null
+ },
+ {
+  "id": 8434,
+  "title": "Вкладка Network для запроса",
+  "content_provenance": null
+ },
+ {
+  "id": 8455,
+  "title": "Клиентская валидация",
+  "content_provenance": {
+   "fields": [
+    "task_content",
+    "solution_rules"
+   ],
+   "reason": "содержимое в LMS разошлось со снимком отправленного (сверка tsk-849: задания уроков вошли в сверку, полный прогон 09.09.2026)",
+   "source": "manual_script",
+   "edited_at": "2026-09-09T05:56:37.151780Z",
+   "edited_by": "tsk-760"
+  }
+ },
+ {
+  "id": 8464,
+  "title": "Тупиковая страница",
+  "content_provenance": {
+   "fields": [
+    "task_content",
+    "solution_rules"
+   ],
+   "reason": "содержимое в LMS разошлось со снимком отправленного (сверка tsk-849: задания уроков вошли в сверку, полный прогон 09.09.2026)",
+   "source": "manual_script",
+   "edited_at": "2026-09-09T05:56:37.151780Z",
+   "edited_by": "tsk-760"
+  }
+ },
+ {
+  "id": 8479,
+  "title": "Нарушение доступности клавиатурной навигации",
+  "content_provenance": {
+   "fields": [
+    "task_content",
+    "solution_rules"
+   ],
+   "reason": "содержимое в LMS разошлось со снимком отправленного (сверка tsk-849: задания уроков вошли в сверку, полный прогон 09.09.2026)",
+   "source": "manual_script",
+   "edited_at": "2026-09-09T05:56:37.151780Z",
+   "edited_by": "tsk-760"
+  }
+ },
+ {
+  "id": 8737,
+  "title": "Реляционная база данных",
+  "content_provenance": {
+   "fields": [
+    "task_content",
+    "solution_rules"
+   ],
+   "reason": "правка подтверждена журналом LMS (updated_at и task_audit после 01.09; последняя публикация CB 18.08), снимок за отправленную версию не ручается — tsk-849",
+   "source": "manual_script",
+   "edited_at": "2026-09-09T05:59:58.265888Z",
+   "edited_by": "tsk-760"
+  }
+ },
+ {
+  "id": 8796,
+  "title": "Нарушение авторского права",
+  "content_provenance": {
+   "fields": [
+    "task_content",
+    "solution_rules"
+   ],
+   "reason": "содержимое в LMS разошлось со снимком отправленного (сверка tsk-849: задания уроков вошли в сверку, полный прогон 09.09.2026)",
+   "source": "manual_script",
+   "edited_at": "2026-09-09T05:56:37.151780Z",
+   "edited_by": "tsk-760"
+  }
+ },
+ {
+  "id": 8817,
+  "title": "Прямая связь управления",
+  "content_provenance": {
+   "fields": [
+    "task_content",
+    "solution_rules"
+   ],
+   "reason": "правка подтверждена журналом LMS (updated_at и task_audit после 01.09; последняя публикация CB 18.08), снимок за отправленную версию не ручается — tsk-849",
+   "source": "manual_script",
+   "edited_at": "2026-09-09T05:59:58.265888Z",
+   "edited_by": "tsk-760"
+  }
+ },
+ {
+  "id": 8838,
+  "title": "Информационные революции в истории",
+  "content_provenance": {
+   "fields": [
+    "task_content",
+    "solution_rules"
+   ],
+   "reason": "правка подтверждена журналом LMS (updated_at и task_audit после 01.09; последняя публикация CB 18.08), снимок за отправленную версию не ручается — tsk-849",
+   "source": "manual_script",
+   "edited_at": "2026-09-09T05:59:58.265888Z",
+   "edited_by": "tsk-760"
+  }
+ },
+ {
+  "id": 8971,
+  "title": "Анимационный эффект на слайде",
+  "content_provenance": {
+   "fields": [
+    "task_content",
+    "solution_rules"
+   ],
+   "reason": "правка подтверждена журналом LMS (updated_at и task_audit после 01.09; последняя публикация CB 18.08), снимок за отправленную версию не ручается — tsk-849",
+   "source": "manual_script",
+   "edited_at": "2026-09-09T05:59:58.265888Z",
+   "edited_by": "tsk-760"
+  }
+ },
+ {
+  "id": 9013,
+  "title": "Расхождение ответа по времени",
+  "content_provenance": {
+   "fields": [
+    "task_content",
+    "solution_rules"
+   ],
+   "reason": "содержимое в LMS разошлось со снимком отправленного (сверка tsk-849: задания уроков вошли в сверку, полный прогон 09.09.2026)",
+   "source": "manual_script",
+   "edited_at": "2026-09-09T05:56:37.151780Z",
+   "edited_by": "tsk-760"
+  }
+ },
+ {
+  "id": 9073,
+  "title": "Рекурсивное вычисление",
+  "content_provenance": {
+   "fields": [
+    "task_content",
+    "solution_rules"
+   ],
+   "reason": "правка подтверждена журналом LMS (updated_at и task_audit после 01.09; последняя публикация CB 18.08), снимок за отправленную версию не ручается — tsk-849",
+   "source": "manual_script",
+   "edited_at": "2026-09-09T05:59:58.265888Z",
+   "edited_by": "tsk-760"
+  }
+ },
+ {
+  "id": 9109,
+  "title": "Связь таблиц для устранения дублирования",
+  "content_provenance": null
+ },
+ {
+  "id": 9151,
+  "title": "Преобразование информации в шифр",
+  "content_provenance": {
+   "fields": [
+    "task_content",
+    "solution_rules"
+   ],
+   "reason": "правка подтверждена журналом LMS (updated_at и task_audit после 01.09; последняя публикация CB 18.08), снимок за отправленную версию не ручается — tsk-849",
+   "source": "manual_script",
+   "edited_at": "2026-09-09T05:59:58.265888Z",
+   "edited_by": "tsk-760"
+  }
+ },
+ {
+  "id": 9193,
+  "title": "JOIN по внешнему ключу",
+  "content_provenance": null
+ },
+ {
+  "id": 9242,
+  "title": "Тур для денежных функций",
+  "content_provenance": {
+   "fields": [
+    "task_content",
+    "solution_rules"
+   ],
+   "reason": "содержимое в LMS разошлось со снимком отправленного (сверка tsk-849: задания уроков вошли в сверку, полный прогон 09.09.2026)",
+   "source": "manual_script",
+   "edited_at": "2026-09-09T05:56:37.151780Z",
+   "edited_by": "tsk-760"
+  }
+ },
+ {
+  "id": 9373,
+  "title": "Раздел статистики дефектов",
+  "content_provenance": {
+   "fields": [
+    "task_content",
+    "solution_rules"
+   ],
+   "reason": "содержимое в LMS разошлось со снимком отправленного (сверка tsk-849: задания уроков вошли в сверку, полный прогон 09.09.2026)",
+   "source": "manual_script",
+   "edited_at": "2026-09-09T05:56:37.151780Z",
+   "edited_by": "tsk-760"
+  }
+ },
+ {
+  "id": 9374,
+  "title": "Раздел критериев выхода",
+  "content_provenance": {
+   "fields": [
+    "task_content",
+    "solution_rules"
+   ],
+   "reason": "содержимое в LMS разошлось со снимком отправленного (сверка tsk-849: задания уроков вошли в сверку, полный прогон 09.09.2026)",
+   "source": "manual_script",
+   "edited_at": "2026-09-09T05:56:37.151780Z",
+   "edited_by": "tsk-760"
+  }
+ },
+ {
+  "id": 9393,
+  "title": "Обезличивание личных данных",
+  "content_provenance": null
+ },
+ {
+  "id": 9755,
+  "title": "Запрос обратной связи после отказа",
+  "content_provenance": {
+   "fields": [
+    "task_content",
+    "solution_rules"
+   ],
+   "reason": "содержимое в LMS разошлось со снимком отправленного (сверка tsk-849: задания уроков вошли в сверку, полный прогон 09.09.2026)",
+   "source": "manual_script",
+   "edited_at": "2026-09-09T05:56:37.151780Z",
+   "edited_by": "tsk-760"
+  }
+ }
+]
