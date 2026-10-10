@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import List, Optional
 from fastapi import APIRouter, Depends, Body, HTTPException, status, Query
 from sqlalchemy.exc import SQLAlchemyError
@@ -13,6 +14,7 @@ from app.schemas.user_courses import (
     UserCourseListResponse,
     UserCourseReorderRequest,
     UserCourseRead,
+    UserCourseSwitchDirection,
     UserCourseWithCourse,
 )
 from app.services.user_courses_service import UserCoursesService
@@ -24,6 +26,7 @@ from sqlalchemy import select
 from app.schemas.courses import CourseRead
 
 router = APIRouter(tags=["user_courses"])
+logger = logging.getLogger(__name__)
 
 user_courses_service = UserCoursesService()
 teacher_courses_service = TeacherCoursesService()
@@ -128,6 +131,7 @@ async def _get_student_courses(
             course_id=uc.course_id,
             added_at=uc.added_at,
             order_number=uc.order_number,
+            is_active=bool(uc.is_active),
             course=course_read,
         )
         courses_list.append(course_data)
@@ -327,6 +331,63 @@ async def bulk_assign_courses_endpoint(
         raise
 
     return [UserCourseRead.model_validate(uc) for uc in created_user_courses]
+
+
+@router.post(
+    "/users/{user_id}/courses/switch-direction",
+    response_model=UserCourseListResponse,
+    summary="Сменить направление ученика: новые курсы включить, старые выключить",
+    responses={
+        200: {"description": "Список курсов ученика после смены (с `is_active`)."},
+        400: {"description": "Пустая операция или курс в обоих списках."},
+        404: {"description": "Ученик не найден или не записан на курс к выключению."},
+        409: {"description": "Новый курс вложен в другой или выведен из работы — не изменено ничего."},
+    },
+)
+async def switch_direction_endpoint(
+    user_id: int,
+    payload: UserCourseSwitchDirection = Body(...),
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(_PEOPLE_WRITE_GATE),
+) -> UserCourseListResponse:
+    """Смена направления одним действием (tsk-1291).
+
+    Старые курсы выключаются, а не удаляются: прогресс сохраняется, курс
+    можно включить обратно этой же ручкой (передать его в `enroll_course_ids`).
+    Операция атомарна — при любом отказе не меняется ничего.
+    """
+    if await db.get(Users, user_id) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"Пользователь с ID {user_id} не найден")
+    try:
+        await user_courses_service.switch_direction(
+            db,
+            user_id,
+            payload.enroll_course_ids,
+            payload.deactivate_course_ids,
+        )
+    except SQLAlchemyError as exc:
+        await db.rollback()
+        if "has parents" in str(exc).lower():
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                detail=(
+                    "Зачислять можно только на курс верхнего уровня. "
+                    "Выбранный курс вложен в другой — ничего не изменено."
+                ),
+            ) from exc
+        raise
+    except Exception:
+        await db.rollback()
+        raise
+    logger.info(
+        "tsk-1291: смена направления ученика %s: +%s −%s (кто: %s)",
+        user_id, payload.enroll_course_ids, payload.deactivate_course_ids,
+        current_user.id,
+    )
+    return UserCourseListResponse(
+        user_id=user_id,
+        courses=await _get_student_courses(db, user_id),
+    )
 
 
 @router.patch(

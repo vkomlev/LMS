@@ -12796,6 +12796,124 @@
         }
       }
     },
+    "/api/v1/users/{user_id}/courses/switch-direction": {
+      "post": {
+        "tags": [
+          "user_courses"
+        ],
+        "summary": "Сменить направление ученика: новые курсы включить, старые выключить",
+        "description": "Смена направления одним действием (tsk-1291).\n\nСтарые курсы выключаются, а не удаляются: прогресс сохраняется, курс\nможно включить обратно этой же ручкой (передать его в `enroll_course_ids`).\nОперация атомарна — при любом отказе не меняется ничего.",
+        "operationId": "switch_direction_endpoint_api_v1_users__user_id__courses_switch_direction_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "User Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserCourseSwitchDirection"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Список курсов ученика после смены (с `is_active`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserCourseListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Пустая операция или курс в обоих списках."
+          },
+          "404": {
+            "description": "Ученик не найден или не записан на курс к выключению."
+          },
+          "409": {
+            "description": "Новый курс вложен в другой или выведен из работы — не изменено ничего."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/users/{user_id}/courses/reorder": {
       "patch": {
         "tags": [
@@ -81933,6 +82051,11 @@
               }
             ],
             "title": "Order Number"
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active",
+            "default": true
           }
         },
         "type": "object",
@@ -81976,6 +82099,42 @@
             ]
           }
         ]
+      },
+      "UserCourseSwitchDirection": {
+        "properties": {
+          "enroll_course_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Enroll Course Ids",
+            "description": "Корневые курсы нового направления: зачислить или включить.",
+            "examples": [
+              [
+                964,
+                988,
+                1080
+              ]
+            ]
+          },
+          "deactivate_course_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Deactivate Course Ids",
+            "description": "Курсы прежнего направления: выключить, прогресс сохраняется.",
+            "examples": [
+              [
+                88,
+                1455
+              ]
+            ]
+          }
+        },
+        "type": "object",
+        "title": "UserCourseSwitchDirection",
+        "description": "Смена направления ученика одним действием (tsk-1291).\n\nНовые корневые курсы зачисляются (выключенная прежде запись включается\nобратно), старые выключаются (`is_active=false`, прогресс сохраняется).\nВсё — в одной транзакции: ученик не остаётся ни без курсов, ни с обоими\nнаправлениями сразу."
       },
       "UserCourseUpdate": {
         "properties": {
@@ -82031,6 +82190,11 @@
               }
             ],
             "title": "Order Number"
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active",
+            "default": true
           },
           "course": {
             "$ref": "#/components/schemas/CourseRead"

@@ -59,8 +59,30 @@ class UserCourseRead(BaseModel):
     course_id: int
     added_at: datetime
     order_number: Optional[int]
+    # tsk-1291: выключенная запись — курс снят с ученика, прогресс сохранён.
+    is_active: bool = True
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class UserCourseSwitchDirection(BaseModel):
+    """Смена направления ученика одним действием (tsk-1291).
+
+    Новые корневые курсы зачисляются (выключенная прежде запись включается
+    обратно), старые выключаются (`is_active=false`, прогресс сохраняется).
+    Всё — в одной транзакции: ученик не остаётся ни без курсов, ни с обоими
+    направлениями сразу.
+    """
+    enroll_course_ids: List[int] = Field(
+        default_factory=list,
+        description="Корневые курсы нового направления: зачислить или включить.",
+        examples=[[964, 988, 1080]],
+    )
+    deactivate_course_ids: List[int] = Field(
+        default_factory=list,
+        description="Курсы прежнего направления: выключить, прогресс сохраняется.",
+        examples=[[88, 1455]],
+    )
 
 
 class UserCourseBulkCreate(BaseModel):
@@ -87,6 +109,8 @@ class UserCourseWithCourse(BaseModel):
     course_id: int
     added_at: datetime
     order_number: Optional[int]
+    # tsk-1291: без поля кабинет показывал выключенный курс как действующий.
+    is_active: bool = True
     course: "CourseRead"  # type: ignore
 
     model_config = ConfigDict(from_attributes=True)

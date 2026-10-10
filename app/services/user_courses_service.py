@@ -224,6 +224,100 @@ class UserCoursesService(BaseService[UserCourses]):
         )
         return await self.repo.bulk_create_user_courses(db, user_id, course_ids)
 
+    async def switch_direction(
+        self,
+        db: AsyncSession,
+        user_id: int,
+        enroll_course_ids: List[int],
+        deactivate_course_ids: List[int],
+    ) -> List[int]:
+        """Сменить направление ученика одним действием (tsk-1291).
+
+        Старые курсы выключаются (`is_active=false`) — не удаляются: прогресс и
+        место в истории сохраняются, и курс можно включить обратно. Новые
+        курсы зачисляются; если запись уже есть, но выключена — включается.
+
+        Раньше смену делали отчислением (DELETE стирал запись) либо не делали
+        вовсе: Мочалов осенью получил «Информатику 8–9» и ОГЭ, а «Python для
+        ЕГЭ» с лета остался активным и продолжал влиять на выдачу ДЗ.
+
+        Атомарность: выключение и включение идут во flush, коммит делает
+        `bulk_assign_courses` (или этот метод, если зачислять заново нечего).
+        Отказ пачки — 409 и откат всего на вызывающем.
+
+        :return: ID курсов, которые после операции активны у ученика.
+        :raises DomainError: пустая операция, пересечение списков, курс к
+            выключению не назначен ученику.
+        """
+        enroll = list(dict.fromkeys(int(c) for c in enroll_course_ids))
+        deactivate = list(dict.fromkeys(int(c) for c in deactivate_course_ids))
+        if not enroll and not deactivate:
+            raise DomainError("Укажите, что зачислить или что выключить.")
+        both = set(enroll) & set(deactivate)
+        if both:
+            raise DomainError(
+                f"Курс не может быть одновременно новым и старым: {sorted(both)}."
+            )
+
+        rows = dict(
+            (
+                await db.execute(
+                    text(
+                        "SELECT course_id, is_active FROM user_courses "
+                        " WHERE user_id = :uid AND course_id = ANY(:cids)"
+                    ),
+                    {"uid": int(user_id), "cids": enroll + deactivate},
+                )
+            ).all()
+        )
+        missing = [c for c in deactivate if c not in rows]
+        if missing:
+            raise DomainError(
+                f"Ученик не записан на курсы {missing} — выключать нечего.",
+                status_code=404,
+            )
+
+        if deactivate:
+            await db.execute(
+                text(
+                    "UPDATE user_courses SET is_active = false "
+                    " WHERE user_id = :uid AND course_id = ANY(:cids)"
+                ),
+                {"uid": int(user_id), "cids": deactivate},
+            )
+        reactivate = [c for c in enroll if c in rows and not rows[c]]
+        if reactivate:
+            # Выведенный из работы курс обратно не включаем — то же правило,
+            # что у зачисления (tsk-886).
+            await course_activity_service.assert_courses_active(
+                db, reactivate, action="включение курса ученику"
+            )
+            await db.execute(
+                text(
+                    "UPDATE user_courses SET is_active = true "
+                    " WHERE user_id = :uid AND course_id = ANY(:cids)"
+                ),
+                {"uid": int(user_id), "cids": reactivate},
+            )
+        new = [c for c in enroll if c not in rows]
+        if new:
+            await self.bulk_assign_courses(db, user_id, new)
+        else:
+            await db.commit()
+
+        return list(
+            (
+                await db.execute(
+                    text(
+                        "SELECT course_id FROM user_courses "
+                        " WHERE user_id = :uid AND is_active = true "
+                        " ORDER BY order_number NULLS LAST, added_at"
+                    ),
+                    {"uid": int(user_id)},
+                )
+            ).scalars().all()
+        )
+
     async def reorder_courses(
         self,
         db: AsyncSession,
