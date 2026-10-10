@@ -271,6 +271,18 @@ class LLMQuotaExceeded(LLMUpstreamError):
     alert_staff = True
 
 
+class LLMIdentityMismatch(LLMError):
+    """Под запрошенной меткой ответила другая модель (tsk-1259).
+
+    Маршрутизатор подменяет модель молча: 10.10 под `openai/gpt-5.5` ответил
+    Grok. Это отказ КОНКРЕТНОЙ модели — цепочка берёт следующую, а подменённая
+    уходит на остывание, как и при любом другом её отказе.
+    """
+
+    retryable = False
+    try_next_model = True
+
+
 @dataclass
 class UsageRecord:
     """Строка учёта расхода (контракт §8). Пишется вне транзакции потребителя."""

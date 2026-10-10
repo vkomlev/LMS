@@ -15,6 +15,7 @@ from typing import AsyncIterator, Iterable, Optional, Sequence
 import httpx
 
 from app.services.llm import cooldown, providers, usage
+from app.services.llm.identity import OpeningSniffer, check_response_id
 from app.services.llm.contracts import (
     Budget,
     LLMChunk,
@@ -29,6 +30,7 @@ from app.services.llm.contracts import (
     LLMTimeout,
     LLMUnavailable,
     LLMUpstreamUnavailable,
+    LLMIdentityMismatch,
     LLMUpstreamError,
     UsageRecord,
 )
@@ -465,6 +467,10 @@ async def stream(
             text_len = 0
             tokens_in = tokens_out = 0
             sniffer = _StubSniffer()
+            # tsk-1259: подмена модели маршрутизатором — по id ответа и по
+            # самоназванию в первой фразе, до того как кусок уйдёт ученику.
+            opening = OpeningSniffer(candidate)
+            response_id: Optional[str] = None
             remaining = deadline - time.monotonic()
             # Наблюдаемость перебора (tsk-671). Без этих двух строк «ученик ждёт»
             # выглядит одинаково при молчащей модели, при зависшем запросе и при
@@ -537,6 +543,9 @@ async def stream(
                         for payload in _sse_lines_to_payloads(head + "\n\n"):
                             # Ошибка внутри HTTP 200 — главная ловушка провайдера.
                             _check_payload_error(payload)
+                            if response_id is None and payload.get("id"):
+                                response_id = str(payload["id"])
+                                check_response_id(candidate, response_id)
 
                             block = payload.get("usage") or {}
                             if block:
@@ -551,14 +560,14 @@ async def stream(
                                     first_at = time.monotonic()
                                 # Заглушка провайдера текстом (tsk-959) — отсев до
                                 # того, как кусок уйдёт ученику.
-                                delta = sniffer.feed(delta)
+                                delta = opening.feed(sniffer.feed(delta))
                                 if not delta:
                                     continue
                                 got_any = True
                                 text_len += len(delta)
                                 yield LLMChunk(delta=delta, model=candidate)
 
-                tail = sniffer.finish()
+                tail = opening.feed(sniffer.finish()) + opening.finish()
                 if tail:
                     got_any = True
                     text_len += len(tail)
@@ -569,7 +578,8 @@ async def stream(
                     purpose=purpose, student_id=student_id, model=candidate,
                     provider=cfg.name, tokens_in=tokens_in, tokens_out=tokens_out,
                     duration_ms=duration_ms, outcome="ok",
-                    meta=_stream_meta(started, first_at, text_len),
+                    meta={**_stream_meta(started, first_at, text_len),
+                          "response_id": (response_id or "")[:40]},
                 )
                 yield LLMChunk(
                     done=True, model=candidate, tokens_in=tokens_in,
@@ -592,6 +602,19 @@ async def stream(
                 )
             except LLMError as exc:
                 last_error = exc
+
+            # Обрыв во время придержки первой фразы (tsk-1259): придержанное
+            # проверяем и отдаём, как отдали бы без придержки, — иначе обрыв на
+            # первых словах стирал бы уже написанное. Подмену — не отдаём.
+            if not isinstance(last_error, LLMIdentityMismatch):
+                try:
+                    held = opening.finish()
+                except LLMIdentityMismatch as exc:
+                    held, last_error = "", exc
+                if held:
+                    got_any = True
+                    text_len += len(held)
+                    yield LLMChunk(delta=held, model=candidate)
 
             duration_ms = int((time.monotonic() - started) * 1000)
             await _usage_ok(

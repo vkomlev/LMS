@@ -56,6 +56,27 @@ class TutorSession:
         return self.turns >= HARD_TURN_LIMIT
 
 
+async def guard_answers(db: AsyncSession, task_id: int) -> list[str]:
+    """Эталоны задания — ТОЛЬКО для стража ответа (tsk-1259).
+
+    Отдельный запрос, а не поле вида задания: вид задания идёт в инструкцию
+    модели, эталон туда попадать не должен. Здесь он нужен стражу, чтобы узнать
+    итоговый ответ в реплике, как бы модель его ни расписала.
+    """
+    from app.services.hint_drafts_service import accepted_answers
+
+    rules = (await db.execute(
+        text("SELECT solution_rules FROM tasks WHERE id = :tid"), {"tid": task_id}
+    )).scalar()
+    if isinstance(rules, str):
+        try:
+            rules = json.loads(rules)
+        except json.JSONDecodeError:
+            logger.warning("ai_tutor: solution_rules задания %s не разбираются", task_id)
+            return []
+    return accepted_answers(rules)
+
+
 async def _load_task_view(db: AsyncSession, task_id: int) -> tuple[TutorTaskView, int | None]:
     """Достать безопасный вид задания.
 

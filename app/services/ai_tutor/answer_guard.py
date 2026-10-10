@@ -30,7 +30,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Sequence
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +58,95 @@ _CODE_LINE = re.compile(
     r"(?:print|cout|printf|console\.log|System\.out)\s*[\(<]|"
     r"(?:def|for|while|if|else|elif|return|import|from|#include)\b)"
 )
+
+
+# ─────────────────── решение текстом, без кода (tsk-1259) ───────────────────
+#
+# 10.10 запасная модель разобрала задания 58 и 63 «по шагам» до итогового
+# числа: «84.20 × 0.35 = 29.47 … Ответ: 29 47». Кода там не было, и страж,
+# судивший только код, пропустил ответ целиком. Готовый ответ к заданию с
+# числовым выводом — это расчёт на данных задания, а не программа.
+
+_NUM = r"\d+(?:[.,]\d+)?"
+# Строка расчёта: «A оп B … = C». Знаки — и программистские, и школьные.
+_CALC_LINE = re.compile(
+    rf"({_NUM})\s*[×x*·/÷%+\-−:]\s*({_NUM})[^=\n]*=\s*-?\s*\d"
+)
+# Заголовок итогового ответа: «Ответ:», «Правильный ответ:», «## Ответ» —
+# с числом следом или в конце строки (число тогда идёт следующей строкой).
+_ANSWER_HEAD = re.compile(
+    r"^[\s#>\-]*(?:правильный|итоговый|верный|окончательный)?\s*ответ\s*[:：]?\s*(?:\d|$)",
+    re.IGNORECASE,
+)
+_MARKDOWN = re.compile(r"[*_`]")
+
+
+def _plain(line: str) -> str:
+    """Строка без разметки: «**4164 м**» судится так же, как «4164 м»."""
+    return _MARKDOWN.sub("", line)
+
+
+def _norm_num(value: str) -> str:
+    return value.replace(",", ".")
+
+
+def _stem_numbers(stem: str) -> set[str]:
+    """Числа условия, на которых считается ответ.
+
+    Однозначные целые не берём: «2 + 2 = 4» в объяснении законно, даже если в
+    условии где-то есть двойка. Дробные берём все — «84.20» без сомнений данные.
+    """
+    out: set[str] = set()
+    for n in re.findall(_NUM, stem or ""):
+        n = _norm_num(n)
+        if "." in n or len(n) >= 2:
+            out.add(n)
+    return out
+
+
+def _answer_tokens(answers: Sequence[str]) -> list[tuple[str, ...]]:
+    """Отпечатки эталонов: последовательности чисел ответа.
+
+    Сверяем числами, а не строкой: модель пишет «29 рублей 47 копеек» или
+    разносит «10» и «164» по разным строкам разбора — строка эталона целиком в
+    такой реплике не встречается, а числа — встречаются все.
+    """
+    out: list[tuple[str, ...]] = []
+    for ans in answers:
+        nums = tuple(_norm_num(n) for n in re.findall(_NUM, ans or ""))
+        if not nums:
+            continue
+        # Одиночный короткий ответ («5») слишком часто встречается сам по себе
+        # в любом объяснении. Его ловят правила расчёта и заголовка ответа.
+        if len(nums) == 1 and len(nums[0]) < 2:
+            continue
+        out.append(nums)
+    return out
+
+
+def _numbers_in(text: str) -> set[str]:
+    return {_norm_num(n) for n in re.findall(rf"(?<![\d.,]){_NUM}(?!\d)", text)}
+
+
+def judge_text_line(line: str, *, stem_numbers: set[str]) -> Optional[str]:
+    """Причина запретить строку обычного текста, либо `None`."""
+    plain = _plain(line)
+    m = _CALC_LINE.search(plain)
+    if m:
+        operands = {_norm_num(m.group(1)), _norm_num(m.group(2))}
+        if operands & stem_numbers:
+            return "расчёт на данных задания: " + plain.strip()[:80]
+    if _ANSWER_HEAD.match(plain):
+        return "итоговый ответ к заданию"
+    return None
+
+
+def leaks_answer(text: str, answers: list[tuple[str, ...]]) -> bool:
+    """Встречаются ли в тексте все числа какого-либо эталона."""
+    if not answers:
+        return False
+    seen = _numbers_in(_plain(text))
+    return any(all(n in seen for n in nums) for nums in answers)
 
 
 @dataclass(frozen=True)
@@ -132,9 +221,14 @@ class TutorStreamGuard:
     уже разрешено показывать; после блокировки не отдаёт ничего.
     """
 
-    def __init__(self, *, mode: str, stem: str) -> None:
+    def __init__(self, *, mode: str, stem: str, answers: Sequence[str] = ()) -> None:
         self._mode = mode
         self._stem = stem or ""
+        # tsk-1259: эталоны задания. Живут только здесь, в модель не уходят —
+        # по ним страж узнаёт итоговый ответ, как бы модель его ни подала.
+        self._answers = _answer_tokens(answers)
+        self._stem_nums = _stem_numbers(self._stem)
+        self._shown = ""          # всё, что уже ушло ученику
         self._buf = ""            # необработанный хвост куска
         self._in_block = False
         self._block = ""          # тело блока, пока он не закрылся
@@ -153,7 +247,9 @@ class TutorStreamGuard:
         if self.blocked:
             return ""
         self._buf += delta
-        return self._drain()
+        out = self._drain()
+        self._shown += out
+        return out
 
     def finish(self) -> str:
         """Завершить: отдать хвост.
@@ -163,6 +259,11 @@ class TutorStreamGuard:
         """
         if self.blocked:
             return ""
+        out = self._finish()
+        self._shown += out
+        return out
+
+    def _finish(self) -> str:
         out = ""
         if self._in_block and self._block.strip():
             out += self._close_block()
@@ -221,6 +322,8 @@ class TutorStreamGuard:
         reason = judge_block(
             code, mode=self._mode, stem=self._stem, index=self._blocks_passed
         )
+        if reason is None and leaks_answer(self._shown + code, self._answers):
+            reason = "итоговый ответ к заданию в блоке"
         if reason is None:
             self._blocks_passed += 1
             return f"{FENCE}{body}{FENCE}"
@@ -248,6 +351,10 @@ class TutorStreamGuard:
             unsent = self._tail + head        # то, чего ученик ещё не видел
             self._line = ""
             self._tail = ""
+            reason = self._judge_text(line, out)
+            if reason:
+                self._block_now(reason, cut=line)
+                return _join(out) + BLOCKED_NOTICE
             if _CODE_LINE.match(line):
                 if self._held is not None:
                     self._block_now(
@@ -272,8 +379,17 @@ class TutorStreamGuard:
         self._line += rest
         self._tail += rest
         trailing = ""
-        if final or not (self._held is not None or _may_become_code(self._line)):
+        if final or not (
+            self._held is not None
+            or _may_become_code(self._line)
+            or self._may_carry_answer(self._line)
+        ):
             trailing, self._tail = self._tail, ""
+        if final and trailing:
+            reason = self._judge_text(self._line, out)
+            if reason:
+                self._block_now(reason, cut=self._line)
+                return _join(out) + BLOCKED_NOTICE
 
         if final and self._held is not None:
             # Последняя строка ответа тоже может оказаться второй строкой кода:
@@ -287,6 +403,28 @@ class TutorStreamGuard:
             out.append(self._held)
             self._held = self._held_full = None
         return _join(out) + trailing
+
+    def _judge_text(self, line: str, pending: list[str]) -> Optional[str]:
+        """Судить строку текста: расчёт на данных задания или итоговый ответ."""
+        reason = judge_text_line(line, stem_numbers=self._stem_nums)
+        if reason is None and leaks_answer(
+            self._shown + _join(pending) + (self._held_full or "") + "\n" + line,
+            self._answers,
+        ):
+            reason = "итоговый ответ к заданию"
+        return reason
+
+    def _may_carry_answer(self, pending: str) -> bool:
+        """Незавершённая строка с числом может оказаться ответом — придержать.
+
+        Поток режется где попало: «**164 м**» мог бы уйти ученику по частям
+        раньше, чем строка закончится и её можно будет судить целиком.
+        """
+        if not (self._answers or self._stem_nums):
+            return False
+        return bool(re.search(r"\d", pending)) or bool(
+            re.search(r"ответ", pending, re.IGNORECASE)
+        )
 
     def _flush_pending(self) -> str:
         """Отдать всё придержанное и начать строку заново."""

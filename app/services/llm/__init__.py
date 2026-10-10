@@ -27,6 +27,7 @@ from app.services.llm.contracts import (
     LLMUnavailable,
     LLMUpstreamUnavailable,
     LLMUpstreamError,
+    LLMIdentityMismatch,
     UsageRecord,
 )
 
@@ -49,5 +50,6 @@ __all__ = [
     "LLMMalformed",
     "LLMCooldown",
     "LLMUpstreamError",
+    "LLMIdentityMismatch",
     "LLMQuotaExceeded",
 ]

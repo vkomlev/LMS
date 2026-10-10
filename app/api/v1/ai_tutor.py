@@ -254,6 +254,7 @@ async def ask(
     if student_text:
         await session_service.add_message(db, session.id, "student", student_text)
     messages = await session_service.build_llm_messages(db, session, student_text)
+    answers = await session_service.guard_answers(db, task_id)
     await session_service.bump_turn(db, session.id)
     await db.commit()
 
@@ -271,7 +272,10 @@ async def ask(
         # tsk-748: между моделью и учеником теперь стоит страж. Инструкция
         # запрещала готовое решение и раньше — 31.08 модель просто не стала её
         # соблюдать, и запретить это текстом нельзя в принципе.
-        guard = TutorStreamGuard(mode=session.mode, stem=session.task_stem_snapshot)
+        # tsk-1259: и пошаговый расчёт до итогового числа — по эталону задания.
+        guard = TutorStreamGuard(
+            mode=session.mode, stem=session.task_stem_snapshot, answers=answers
+        )
         try:
             async for chunk in stream(
                 messages, purpose="tutor", student_id=owner,
