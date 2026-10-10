@@ -63,6 +63,12 @@
 запросов не добавляется. Пропущенное до вставки остаётся долгом. Замер на проде
 06.10: прощение добавилось у 11 учеников, ни у кого не убавилось.
 
+tsk-1294: «после него» — только в том же узле (курсе, где лежит элемент). По
+всему дереву критерий прощал темы, которые ученик не проходил: зачёт из дальней
+темы (ДЗ вразнобой, массовый зачёт 22.07) читался как «ушёл вперёд». Случай
+подкурса под корнем (2104) снят тем, что 2104 стал рекомендуемым; новый подкурс
+внутри пройденной темы покрывает правило узла.
+
 # Чего правило НЕ делает
 
 Оно ничего не пересчитывает задним числом и ничего не закрывает за ученика:
@@ -548,17 +554,25 @@ def _graced_by_position(nodes: Dict[int, _Node], root_id: int) -> List[_Item]:
     sequence = _walk_sequence(nodes, root_id)
     graced: List[_Item] = []
     # Идём с конца: для каждой позиции знаем самый РАННИЙ зачёт среди
-    # элементов правее. X прощён, если этот зачёт раньше появления X.
-    earliest_after: Optional[datetime] = None
+    # элементов правее В ТОМ ЖЕ УЗЛЕ. X прощён, если этот зачёт раньше
+    # появления X.
+    #
+    # tsk-1294: только свой узел. Зачёт из дальней темы не доказывает, что
+    # ученик проходил тему X: ДЗ и работа на занятиях идут вразнобой, а
+    # 22.07 у учеников ЕГЭ разом зачлись задания всех номеров. По всему
+    # дереву правило прощало целые непройденные темы (4507: подразделы
+    # задания 23 созданы 01.09 → next-item уводил в задание 24).
+    earliest_after: Dict[int, datetime] = {}
     for item in reversed(sequence):
+        node_earliest = earliest_after.get(item.course_id)
         if (
             not item.done
             and item.created_at is not None
-            and earliest_after is not None
-            and earliest_after < item.created_at
+            and node_earliest is not None
+            and node_earliest < item.created_at
         ):
             graced.append(item)
         if item.done and item.done_at is not None:
-            if earliest_after is None or item.done_at < earliest_after:
-                earliest_after = item.done_at
+            if node_earliest is None or item.done_at < node_earliest:
+                earliest_after[item.course_id] = item.done_at
     return graced

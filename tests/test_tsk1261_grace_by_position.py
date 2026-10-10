@@ -10,7 +10,9 @@
      старое задание: «всё или ничего» отключало прощение всей темы.
 
 Критерий «ушёл вперёд»: к моменту появления элемента ученик уже закрыл хоть
-один элемент, стоящий после него в порядке обхода курса.
+один элемент, стоящий после него в порядке обхода ТОГО ЖЕ УЗЛА. Случай 1 по
+tsk-1294 перевёрнут: зачёт в дальней теме тему не прощает (2104 стал
+рекомендуемым, нужда в прощении по корню отпала).
 
 Обратные случаи проверяются отдельно — это та половина, что ломается молча:
   3. Ученик не дошёл до позиции нового элемента — оно остаётся обязательным.
@@ -79,39 +81,38 @@ async def _pass(db, student: int, task_id: int, course_id: int, root_id: int, at
 
 
 @pytest.mark.asyncio
-async def test_new_subcourse_under_root_is_graced_for_who_went_ahead(db):
-    """Случай 1: подкурс у корня перед уже пройденной темой — не долг.
+async def test_far_topic_pass_does_not_grace_unvisited_topic(db):
+    """tsk-1294 (ученик 4507): зачёт в дальней теме не прощает непройденную.
 
-    В корне висит старое незакрытое задание в первой теме: правило узла по
-    корню молчит. Но ученик решал третью тему раньше, чем появился подкурс.
+    Корень → тема 23 (подразделы «Читаем файл», «Кратчайший путь») → тема 24.
+    Ученик давно (массовый зачёт 22.07) имеет решённое в теме 24; подразделы
+    темы 23 созданы позже. Он решил «Читаем файл» — «Кратчайший путь» обязан
+    остаться обязательным, иначе next-item уводит в тему 24.
     """
-    root = await _new_course(db, "tsk1261 корень")
-    topic1 = await _new_course(db, "tsk1261 тема 1")
-    topic3 = await _new_course(db, "tsk1261 тема 3")
-    await _link(db, root, topic1, 1)
-    await _link(db, root, topic3, 3)
-    skipped_old = await _task(db, course_id=topic1, position=1, created_at=LONG_AGO)
-    later_task = await _task(db, course_id=topic3, position=1, created_at=LONG_AGO)
+    root = await _new_course(db, "tsk1294 корень")
+    topic23 = await _new_course(db, "tsk1294 задание 23")
+    topic24 = await _new_course(db, "tsk1294 задание 24")
+    await _link(db, root, topic23, 1)
+    await _link(db, root, topic24, 2)
+    far_task = await _task(db, course_id=topic24, position=1, created_at=LONG_AGO)
 
-    student = await _new_student(db, "ушёл вперёд")
+    student = await _new_student(db, "Селин-сценарий")
     await _enroll(db, student, root)
-    await _pass(db, student, later_task, topic3, root, LONG_AGO + timedelta(days=3))
+    await _pass(db, student, far_task, topic24, root, LONG_AGO + timedelta(days=3))
 
-    # Методист вешает новый подкурс на позицию 2 — между темами.
-    fresh_course = await _new_course(db, "tsk1261 дотренировка")
-    await _link(db, root, fresh_course, 2)
-    fresh_task = await _task(db, course_id=fresh_course, position=1, created_at=INSERTED)
-    fresh_material = await _new_material(
-        db, course_id=fresh_course, created_at=INSERTED, title="Материал дотренировки"
-    )
+    read_file = await _new_course(db, "tsk1294 читаем файл")
+    shortest = await _new_course(db, "tsk1294 кратчайший путь")
+    await _link(db, topic23, read_file, 1)
+    await _link(db, topic23, shortest, 2)
+    rf_task = await _task(db, course_id=read_file, position=1, created_at=INSERTED)
+    sp_task = await _task(db, course_id=shortest, position=1, created_at=INSERTED)
+    await _pass(db, student, rf_task, read_file, root, INSERTED + timedelta(days=30))
     await db.commit()
 
     graced = await compute_graced_items(db, student, root)
-    assert fresh_task in graced.tasks and fresh_material in graced.materials, (
-        "Подкурс, вставленный позади ученика, не должен становиться долгом"
-    )
-    assert skipped_old not in graced.tasks, (
-        "Старое задание, пропущенное до вставки, остаётся долгом"
+    assert sp_task not in graced.tasks, (
+        "Тема, которую ученик не проходил, остаётся обязательной, даже если "
+        "у него есть решения из дальних тем"
     )
 
 
