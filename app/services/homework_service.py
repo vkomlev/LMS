@@ -106,9 +106,28 @@ _SHORT_WINDOW_MIN_MINUTES = 15
 _EXTRA_TIER_MIN_MINUTES = 10
 
 
+def _homework_driven_sql(kind: str, item_id: str, ts: str) -> str:
+    """Работа сделана ДОМА по выданному ДЗ: пункт был в выдаче ученику до
+    момента `ts`, и `ts` не попал в окно занятия (tsk-1291).
+
+    Такая работа не говорит, «над чем ученик работает сейчас»: её выбрала сама
+    выдача. Учитывать её в активности — значит замкнуть кольцо: ДЗ из старого
+    курса → ученик его решает → старый курс снова «последний» → следующее ДЗ
+    опять оттуда. Работа на уроке и самостоятельная — по-прежнему в счёт.
+    """
+    return (
+        "(EXISTS (SELECT 1 FROM homework_item hi "
+        "   JOIN homework_assignment ha ON ha.id = hi.homework_id "
+        "  WHERE ha.student_id = :sid "
+        f"   AND hi.{kind}_id = {item_id} AND ha.issued_at <= {ts}) "
+        f" AND NOT {in_lesson_sql(ts, ':sid')})"
+    )
+
+
 #: Корни ученика вне программы — сначала тот, где он работал последним (tsk-913).
 #: Без активности вовсе — в порядке записи, как раньше: другого ориентира нет.
-_ROOTS_BY_ACTIVITY_SQL = """
+#: Домашняя работа по выданному ДЗ в активность не входит (tsk-1291).
+_ROOTS_BY_ACTIVITY_SQL = f"""
 WITH RECURSIVE roots AS (
     SELECT uc.course_id AS root, uc.course_id, uc.order_number
       FROM user_courses uc
@@ -123,6 +142,7 @@ last_task AS (
       FROM roots r
       JOIN tasks t ON t.course_id = r.course_id
       JOIN task_results tr ON tr.task_id = t.id AND tr.user_id = :sid
+     WHERE NOT {_homework_driven_sql("task", "t.id", "tr.submitted_at")}
      GROUP BY r.root
 ),
 last_material AS (
@@ -131,6 +151,9 @@ last_material AS (
       JOIN materials m ON m.course_id = r.course_id
       JOIN student_material_progress smp
         ON smp.material_id = m.id AND smp.student_id = :sid
+     WHERE NOT {_homework_driven_sql(
+         "material", "m.id", "coalesce(smp.completed_at, smp.skipped_at)"
+     )}
      GROUP BY r.root
 )
 SELECT r.root
@@ -846,6 +869,13 @@ async def auto_issue_after_lesson(
     # сразу идёт на вторую. Выдать здесь значит дать задание со сроком «через
     # перемену» и через час погасить его следующей выдачей (вопрос оператора
     # 02.09). Ждём конца блока.
+    #
+    # tsk-1291: ждём, только пока следующая пара ещё идёт или на ней была явка
+    # (тогда выдаст она сама). Пара, закончившаяся без явки, ждать не должна:
+    # её выдача не случится никогда, и ученик оставался без ДЗ неделями
+    # (Мочалов: был на 07:00 и 08:00 26.09, на 09:00 не пришёл — новой выдачи
+    # не было с 05.09). Повтор после неявки делает обработчик по окончании
+    # урока: он перебирает посещённые занятия за последние часы.
     paired_ahead = (
         await db.execute(
             text(
@@ -861,9 +891,12 @@ async def auto_issue_after_lesson(
                 "   AND nxt.scheduled_at <= cur.scheduled_at "
                 "       + (cur.duration_minutes || ' minutes')::interval "
                 f"       + interval '{PAIRED_LESSON_GAP_MINUTES} minutes' "
+                "   AND (lop.status IN ('confirmed', 'completed') "
+                "        OR nxt.scheduled_at "
+                "           + (nxt.duration_minutes || ' minutes')::interval > :now) "
                 " LIMIT 1"
             ),
-            {"sid": student_id, "oid": occurrence_id},
+            {"sid": student_id, "oid": occurrence_id, "now": moment},
         )
     ).first()
     if paired_ahead is not None:

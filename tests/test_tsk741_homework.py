@@ -1688,6 +1688,48 @@ async def test_homework_after_the_last_lesson_of_the_block(db, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_homework_after_the_block_when_last_pair_was_missed(db, monkeypatch):
+    """Неявка на последнюю пару блока не оставляет без ДЗ (tsk-1291).
+
+    Мочалов 26.09 был на 07:00 и 08:00, на 09:00 не пришёл. Первая пара ждала
+    конца блока, а на неявке выдачи не бывает — ДЗ не выдали вовсе, и до
+    10.10 у ученика висело задание от 05.09.
+    """
+    from app.core import settings_store
+
+    student_id, _ = await _student_with_program(db, materials=0, tasks=12)
+    teacher_id, _ = await _new_user(db, role="teacher", name="teach")
+    monkeypatch.setattr(settings_store, "get_bool", lambda key: True)
+
+    first_at = datetime.now(UTC) - timedelta(minutes=125)
+    first_id = await _create_occurrence(
+        db, student_id=student_id, teacher_id=teacher_id, scheduled_at=first_at,
+    )
+    missed_id = await _create_occurrence(
+        db, student_id=student_id, teacher_id=teacher_id,
+        scheduled_at=first_at + timedelta(minutes=60),
+    )
+    await db.execute(
+        text(
+            "UPDATE lesson_occurrence_participant SET status = 'no_show' "
+            " WHERE occurrence_id = :o"
+        ),
+        {"o": missed_id},
+    )
+    await _create_occurrence(
+        db, student_id=student_id, teacher_id=teacher_id,
+        scheduled_at=first_at + timedelta(days=7),
+    )
+    await db.commit()
+
+    result = await homework_service.auto_issue_after_lesson(
+        db, student_id=student_id, occurrence_id=first_id, occurrence_at=first_at,
+    )
+    await db.commit()
+    assert result is not None, "после неявки на вторую пару ДЗ не выдали вовсе"
+
+
+@pytest.mark.asyncio
 async def test_due_date_skips_the_paired_lesson(db):
     """Срок ручной выдачи тоже перепрыгивает сдвоенную пару.
 
@@ -1857,6 +1899,63 @@ async def test_student_outside_programs_gets_the_course_he_works_on_now(db, monk
     assert [i["item_id"] for i in picked] == autumn_tasks[1:3], (
         "домой ушёл летний курс, а не тот, где ученик работает сейчас"
     )
+
+
+@pytest.mark.asyncio
+async def test_homework_work_does_not_pick_the_next_homework_course(db, monkeypatch):
+    """Решённое дома по выданному ДЗ не делает курс «текущим» (tsk-1291).
+
+    Иначе кольцо: ДЗ из старого курса → ученик его решает → старый курс снова
+    последний по активности → следующее ДЗ опять оттуда.
+    """
+    from app.core import settings_store
+
+    student_id, summer = await _student_with_program(db, materials=0, tasks=3)
+    autumn = await _new_course(db, "осенний")
+    await _enroll(db, student_id=student_id, course_id=autumn)
+    autumn_tasks = [
+        await _new_task(db, course_id=autumn, order_position=i) for i in range(1, 4)
+    ]
+    summer_task = (
+        await db.execute(
+            text("SELECT id FROM tasks WHERE course_id = :c ORDER BY order_position LIMIT 1"),
+            {"c": summer},
+        )
+    ).scalar()
+    now = datetime.now(UTC)
+    # Самостоятельно работал в осеннем три дня назад.
+    await _submit(
+        db, student_id=student_id, task_id=autumn_tasks[0], course_id=autumn,
+        is_correct=True, at=now - timedelta(days=3),
+    )
+    # Позавчера выдали ДЗ из летнего, вчера решил его дома.
+    hw_id = (
+        await db.execute(
+            text(
+                "INSERT INTO homework_assignment "
+                "  (student_id, issued_at, due_at, source, planned_volume) "
+                "VALUES (:s, :i, :d, 'auto', 1) RETURNING id"
+            ),
+            {"s": student_id, "i": now - timedelta(days=2), "d": now + timedelta(days=5)},
+        )
+    ).scalar()
+    await db.execute(
+        text(
+            "INSERT INTO homework_item (homework_id, kind, task_id, position) "
+            "VALUES (:h, 'task', :t, 1)"
+        ),
+        {"h": hw_id, "t": summer_task},
+    )
+    await _submit(
+        db, student_id=student_id, task_id=summer_task, course_id=summer,
+        is_correct=True, at=now - timedelta(days=1),
+    )
+    await db.commit()
+    monkeypatch.setattr(settings_store, "get_str", lambda key: "")
+
+    roots = await homework_service.order_roots_by_activity(db, student_id=student_id)
+
+    assert roots[0] == autumn, "домашняя работа по ДЗ увела источник в старый курс"
 
 
 @pytest.mark.asyncio
