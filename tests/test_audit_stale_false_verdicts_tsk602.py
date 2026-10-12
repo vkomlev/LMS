@@ -22,7 +22,17 @@ project_root = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(project_root))
 sys.path.insert(0, str(project_root / "scripts"))
 
-from audit_stale_false_verdicts_tsk602 import _expected_of, _should_stay_silent  # noqa: E402
+import json  # noqa: E402
+
+import pytest  # noqa: E402
+
+from audit_stale_false_verdicts_tsk602 import (  # noqa: E402
+    REVIEWED_PATH,
+    _expected_of,
+    _load_reviewed,
+    _should_stay_silent,
+    _split_reviewed,
+)
 
 from app.services.checking_service import CheckingService  # noqa: E402
 
@@ -129,3 +139,31 @@ class TestQuietMode:
         assert not _should_stay_silent(
             quiet=True, stale=[], type_changed=[], failed=[(1, "ошибка")]
         )
+
+
+class TestReviewed:
+    """tsk-1300: разобранные работы не повторяются в каждом еженедельном отчёте."""
+
+    def test_разобранные_отброшены_новые_остались_в_порядке(self) -> None:
+        fresh, dropped = _split_reviewed([5, 1, 9, 3], {1, 3, 42})
+        assert fresh == [5, 9]
+        assert dropped == 2
+
+    def test_только_разобранные_дают_молчание(self) -> None:
+        """Неделя без новых находок — тихий режим молчит, а не повторяет старое."""
+        fresh, _ = _split_reviewed([1, 3], {1, 3})
+        assert _should_stay_silent(quiet=True, stale=fresh, type_changed=[], failed=[])
+
+    def test_нет_файла_нет_разобранных(self, tmp_path) -> None:
+        assert _load_reviewed(tmp_path / "нет.json") == set()
+
+    def test_битый_файл_падает_а_не_возвращает_всё(self, tmp_path) -> None:
+        path = tmp_path / "r.json"
+        path.write_text("{битый", encoding="utf-8")
+        with pytest.raises(json.JSONDecodeError):
+            _load_reviewed(path)
+
+    def test_боевой_файл_читается(self) -> None:
+        """Файл в репозитории валиден и ключи — номера работ."""
+        reviewed = _load_reviewed(REVIEWED_PATH)
+        assert reviewed and all(isinstance(r, int) for r in reviewed)

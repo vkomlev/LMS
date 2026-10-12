@@ -110,6 +110,35 @@ def _prod_connection_params() -> dict[str, Any]:
     )
 
 
+#: Разобранные работы (tsk-1300): ``{"<result_id>": {"task": ..., "decision": ...}}``.
+#: Без этого чек каждую неделю повторял одни и те же 89 работ, и новая находка
+#: тонула среди уже решённых.
+REVIEWED_PATH = PROJECT_ROOT / "docs" / "qa" / "stale-verdicts-reviewed.json"
+
+
+def _load_reviewed(path: Path) -> set[int]:
+    """Номера разобранных работ. Нет файла — пустое множество.
+
+    Битый файл — ошибка, а не пустое множество: иначе чек молча вернул бы
+    все старые находки, и это выглядело бы как новая волна.
+    """
+    if not path.exists():
+        return set()
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return {int(k) for k in data}
+
+
+def _split_reviewed(result_ids: list[int], reviewed: set[int]) -> tuple[list[int], int]:
+    """Отделить разобранные работы от новых.
+
+    :param result_ids: номера работ в порядке отчёта.
+    :param reviewed: номера разобранных работ.
+    :returns: новые номера (порядок сохранён) и число отброшенных разобранных.
+    """
+    fresh = [rid for rid in result_ids if rid not in reviewed]
+    return fresh, len(result_ids) - len(fresh)
+
+
 def _should_stay_silent(
     *,
     quiet: bool,
@@ -221,6 +250,12 @@ def main() -> int:
                 }
             )
 
+    reviewed = _load_reviewed(REVIEWED_PATH)
+    fresh_stale, reviewed_stale = _split_reviewed([s["result_id"] for s in stale], reviewed)
+    stale = [s for s in stale if s["result_id"] in set(fresh_stale)]
+    fresh_type, reviewed_type = _split_reviewed([t[0] for t in type_changed], reviewed)
+    type_changed = [t for t in type_changed if t[0] in set(fresh_type)]
+
     if _should_stay_silent(
         quiet=args.quiet, stale=stale, type_changed=type_changed, failed=failed
     ):
@@ -228,6 +263,10 @@ def main() -> int:
 
     print("=== Сверка старых незачётов с нынешними правилами (tsk-602) ===")
     print(f"Проверено работ: {len(rows) - skipped_turtle} (пропущено с песочницей черепахи: {skipped_turtle})")
+    print(
+        f"Уже разобрано и не повторяется: {reviewed_stale + reviewed_type} "
+        f"(см. {REVIEWED_PATH.relative_to(PROJECT_ROOT).as_posix()})"
+    )
     print(f"Расходятся с нынешними правилами: {len(stale)}")
     print(f"Тип задания сменили после сдачи: {len(type_changed)}")
     if failed:
