@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import Literal, Optional
 
-from fastapi import APIRouter, Body, Depends, HTTPException, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,6 +25,7 @@ from app.schemas.checking import (
     BatchCheckItemResult,
 )
 from app.services.checking_service import CheckingService
+from app.services.preview_navigation import preview_next_item
 from app.utils.exceptions import DomainError
 
 logger = logging.getLogger("api.checking")
@@ -331,3 +333,46 @@ async def check_tasks_batch_endpoint(
             raise
 
     return BatchCheckResponse(results=results)
+
+
+class PreviewNextItem(BaseModel):
+    """Следующий элемент курса в предпросмотре (tsk-1334)."""
+
+    root_course_id: int
+    next_kind: Optional[Literal["material", "task"]] = None
+    next_id: Optional[int] = None
+
+
+@router.get(
+    "/preview/next-item",
+    response_model=PreviewNextItem,
+    summary="Предпросмотр: следующий элемент курса по порядку, без прогресса и записи (tsk-1334)",
+    responses={
+        403: {"description": "Только преподаватель, методист или администратор"},
+        404: {"description": "Элемент не найден"},
+    },
+)
+async def preview_next_item_endpoint(
+    kind: Literal["material", "task"] = Query(..., description="Вид текущего элемента"),
+    item_id: int = Query(..., ge=1, description="id текущего элемента"),
+    root_course_id: Optional[int] = Query(None, ge=1, description="Корень, из которого открыт предпросмотр"),
+    current_user: CurrentUser = Depends(_PREVIEW_GATE),
+    db: AsyncSession = Depends(get_bare_db),
+) -> PreviewNextItem:
+    """
+    Следующий элемент по учебному порядку дерева (как next-item после tsk-1250),
+    но без прогресса, зависимостей и замков. Только чтение. `next_kind=null` —
+    курс закончился.
+    """
+    found = await preview_next_item(db, kind, item_id, root_course_id)
+    if found is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Элемент не найден")
+    logger.info(
+        "preview_next_item: user_id=%s %s %s root=%s -> %s %s",
+        current_user.id, kind, item_id, found.root_course_id, found.next_kind, found.next_id,
+    )
+    return PreviewNextItem(
+        root_course_id=found.root_course_id,
+        next_kind=found.next_kind,
+        next_id=found.next_id,
+    )

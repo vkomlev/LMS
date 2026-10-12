@@ -17683,6 +17683,148 @@
         }
       }
     },
+    "/api/v1/check/preview/next-item": {
+      "get": {
+        "tags": [
+          "checking"
+        ],
+        "summary": "Предпросмотр: следующий элемент курса по порядку, без прогресса и записи (tsk-1334)",
+        "description": "Следующий элемент по учебному порядку дерева (как next-item после tsk-1250),\nно без прогресса, зависимостей и замков. Только чтение. `next_kind=null` —\nкурс закончился.",
+        "operationId": "preview_next_item_endpoint_api_v1_check_preview_next_item_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "enum": [
+                "material",
+                "task"
+              ],
+              "type": "string",
+              "description": "Вид текущего элемента",
+              "title": "Kind"
+            },
+            "description": "Вид текущего элемента"
+          },
+          {
+            "name": "item_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "id текущего элемента",
+              "title": "Item Id"
+            },
+            "description": "id текущего элемента"
+          },
+          {
+            "name": "root_course_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Корень, из которого открыт предпросмотр",
+              "title": "Root Course Id"
+            },
+            "description": "Корень, из которого открыт предпросмотр"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PreviewNextItem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Только преподаватель, методист или администратор"
+          },
+          "404": {
+            "description": "Элемент не найден"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/attempts": {
       "post": {
         "tags": [
@@ -68534,6 +68676,46 @@
         ],
         "title": "PresenceResponse",
         "description": "Ответ на пульс — когда прислать следующий."
+      },
+      "PreviewNextItem": {
+        "properties": {
+          "root_course_id": {
+            "type": "integer",
+            "title": "Root Course Id"
+          },
+          "next_kind": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "material",
+                  "task"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Kind"
+          },
+          "next_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "root_course_id"
+        ],
+        "title": "PreviewNextItem",
+        "description": "Следующий элемент курса в предпросмотре (tsk-1334)."
       },
       "PriceOverrideRead": {
         "properties": {
