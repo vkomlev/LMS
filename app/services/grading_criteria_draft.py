@@ -46,6 +46,7 @@ from app.schemas.solution_rules import (
     SolutionRules,
 )
 from app.services.llm import client as llm_client
+from app.utils.task_title import HTML_TAG_RE
 from app.services.llm.contracts import Budget, LLMMessage
 
 logger = logging.getLogger(__name__)
@@ -128,7 +129,7 @@ def clean_stem(raw: Any) -> str:
     if not isinstance(raw, str):
         return ""
     text = re.sub(r"<br\s*/?>|</p>|</div>|</li>", "\n", raw, flags=re.IGNORECASE)
-    text = re.sub(r"<[^>]+>", " ", text)
+    text = HTML_TAG_RE.sub(" ", text)
     text = html.unescape(text)
     text = text.replace("­", "").replace("​", "")
     text = re.sub(r"[ \t]+", " ", text)

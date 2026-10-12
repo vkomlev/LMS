@@ -17,7 +17,10 @@ from typing import Optional
 
 # Снятие HTML-тегов: у ~3000 заданий stem приходит с разметкой
 # (`<html><body>`, `<p>`, `<pre><code>` из sdamgia/wp-импорта).
-_TAG_RE = re.compile(r"<[^>]+>")
+# Только настоящие теги (имя с латинской буквы, комментарии/doctype): шаблоны
+# формата ответа вида `<страна>: <столица>` — часть условия, а не разметка
+# (tsk-1306: прежний `<[^>]+>` выдавал методисту и модели «формата ` : `»).
+HTML_TAG_RE = re.compile(r"</?[a-zA-Z!][^>]*>")
 # Схлопывание любых пробельных последовательностей (включая переносы строк и
 # неразрывный пробел \xa0 из &nbsp;) в один пробел.
 _WS_RE = re.compile(r"\s+")
@@ -42,7 +45,7 @@ def _clean_stem(stem: Optional[str]) -> str:
     """
     if not stem:
         return ""
-    no_tags = _TAG_RE.sub(" ", stem)
+    no_tags = HTML_TAG_RE.sub(" ", stem)
     unescaped = html.unescape(no_tags)
     return _WS_RE.sub(" ", unescaped).strip()
 

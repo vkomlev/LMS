@@ -6,7 +6,6 @@ from sqlalchemy import select, or_
 from typing import Any, List, Literal, Optional, Dict
 from pydantic import BaseModel
 import logging
-import re
 
 from datetime import datetime, timezone
 
@@ -43,6 +42,7 @@ from app.services.sheets_parser_service import SheetsParserService
 from app.services.courses_service import CoursesService
 from app.services.difficulty_levels_service import DifficultyLevelsService
 from app.utils.exceptions import DomainError
+from app.utils.task_title import HTML_TAG_RE
 from fastapi import HTTPException, status
 import logging
 
@@ -427,7 +427,7 @@ def _stem_preview(stem: Any, *, limit: int = 160) -> str:
     """
     if not isinstance(stem, str):
         return ""
-    text_only = re.sub(r"<[^>]+>", " ", stem).replace("­", "")
+    text_only = HTML_TAG_RE.sub(" ", stem).replace("­", "")
     text_only = " ".join(text_only.split())
     return text_only[:limit]
 
