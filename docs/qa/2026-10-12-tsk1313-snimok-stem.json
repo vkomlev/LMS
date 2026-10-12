@@ -1,0 +1,177 @@
+[
+ {
+  "id": 10597,
+  "stem_before": "Допишите строку так, чтобы программа получила страницу <code>http://books.toscrape.com/</code> и сохранила ответ в переменную <code>otvet</code>. Библиотека уже подключена.\n\n``<code>\nimport requests\n\notvet = ...\n</code>``\n\nВпишите только правую часть — то, что должно стоять вместо многоточия.",
+  "stem_after": "<p>Допишите строку так, чтобы программа получила страницу <code>http://books.toscrape.com/</code> и сохранила ответ в переменную <code>otvet</code>. Библиотека уже подключена.</p><pre><code class=\"language-python\">import requests\n\notvet = ...</code></pre><p>Впишите только правую часть — то, что должно стоять вместо многоточия.</p>"
+ },
+ {
+  "id": 10604,
+  "stem_before": "Дана разметка карточки товара:\n\n``<code>\n<article class=\"product_pod\">\n  <h3><a href=\"/catalogue/a-light-in-the-attic_1000/\">A Light in the Attic</a></h3>\n  <p class=\"price_color\">£51.77</p>\n  <p class=\"instock availability\">In stock</p>\n</article>\n</code>``\n\nКаким тегом размечено название товара? Впишите имя тега без скобок.",
+  "stem_after": "<p>Дана разметка карточки товара:</p><pre><code class=\"language-html\">&lt;article class=&quot;product_pod&quot;&gt;\n  &lt;h3&gt;&lt;a href=&quot;/catalogue/a-light-in-the-attic_1000/&quot;&gt;A Light in the Attic&lt;/a&gt;&lt;/h3&gt;\n  &lt;p class=&quot;price_color&quot;&gt;£51.77&lt;/p&gt;\n  &lt;p class=&quot;instock availability&quot;&gt;In stock&lt;/p&gt;\n&lt;/article&gt;</code></pre><p>Каким тегом размечено название товара? Впишите имя тега без скобок.</p>"
+ },
+ {
+  "id": 10610,
+  "stem_before": "Фрагмент реального файла <code>robots.txt</code>:\n\n``<code>\nUser-agent: *\nDisallow: *?\nDisallow: */feed\nDisallow: /wp-admin/\nDisallow: /comments/\n</code>`<code>\n\nВаш скрейпер собирается запросить адрес </code>https://sait.ru/kurs-python/?page=2`. Что говорит файл?",
+  "stem_after": "<p>Фрагмент реального файла <code>robots.txt</code>:</p><pre><code class=\"language-text\">User-agent: *\nDisallow: *?\nDisallow: */feed\nDisallow: /wp-admin/\nDisallow: /comments/</code></pre><p>Ваш скрейпер собирается запросить адрес <code>https://sait.ru/kurs-python/?page=2</code>. Что говорит файл?</p>"
+ },
+ {
+  "id": 10623,
+  "stem_before": "Допишите функцию так, чтобы она возвращала разметку страницы при успешном ответе и <code>None</code> при любом другом коде:\n\n``<code>\nimport requests\n\ndef poluchit(url):\n    otvet = requests.get(url, timeout=10)\n    if ...:\n        return otvet.text\n    return None\n</code>``\n\nВпишите условие вместо многоточия.",
+  "stem_after": "<p>Допишите функцию так, чтобы она возвращала разметку страницы при успешном ответе и <code>None</code> при любом другом коде:</p><pre><code class=\"language-python\">import requests\n\ndef poluchit(url):\n    otvet = requests.get(url, timeout=10)\n    if ...:\n        return otvet.text\n    return None</code></pre><p>Впишите условие вместо многоточия.</p>"
+ },
+ {
+  "id": 10624,
+  "stem_before": "В коде ошибка: при недоступном сайте программа падает, хотя должна печатать сообщение.\n\n``<code>\nimport requests\n\ntry:\n    otvet = requests.get(\"http://books.toscrape.com/\", timeout=5)\nexcept ValueError:\n    print(\"сайт недоступен\")\n</code>`<code>\n\nКакой класс исключений нужно ловить вместо </code>ValueError<code>, чтобы перехватывать ошибки сети библиотеки </code>requests`? Впишите имя класса.",
+  "stem_after": "<p>В коде ошибка: при недоступном сайте программа падает, хотя должна печатать сообщение.</p><pre><code class=\"language-python\">import requests\n\ntry:\n    otvet = requests.get(&quot;http://books.toscrape.com/&quot;, timeout=5)\nexcept ValueError:\n    print(&quot;сайт недоступен&quot;)</code></pre><p>Какой класс исключений нужно ловить вместо <code>ValueError</code>, чтобы перехватывать ошибки сети библиотеки <code>requests</code>? Впишите имя класса.</p>"
+ },
+ {
+  "id": 10628,
+  "stem_before": "Допишите выражение так, чтобы получить текст первого заголовка первого уровня со страницы:\n\n``<code>\nzagolovok = sup.find('h1')...\n</code>``\n\nВпишите то, что должно стоять вместо многоточия.",
+  "stem_after": "<p>Допишите выражение так, чтобы получить текст первого заголовка первого уровня со страницы:</p><pre><code class=\"language-python\">zagolovok = sup.find(&#x27;h1&#x27;)...</code></pre><p>Впишите то, что должно стоять вместо многоточия.</p>"
+ },
+ {
+  "id": 10636,
+  "stem_before": "Название книги на странице каталога лежит так:\n\n``<code>\n<h3><a href=\"catalogue/a-light-in-the-attic_1000/index.html\" title=\"A Light in the Attic\">A Light in the ...</a></h3>\n</code>`<code>\n\nВидимый текст ссылки обрезан многоточием, а полное название — в атрибуте. Напишите выражение, которое из найденного тега </code><a><code> в переменной </code>a` достаёт полное название.",
+  "stem_after": "<p>Название книги на странице каталога лежит так:</p><pre><code class=\"language-html\">&lt;h3&gt;&lt;a href=&quot;catalogue/a-light-in-the-attic_1000/index.html&quot; title=&quot;A Light in the Attic&quot;&gt;A Light in the ...&lt;/a&gt;&lt;/h3&gt;</code></pre><p>Видимый текст ссылки обрезан многоточием, а полное название — в атрибуте. Напишите выражение, которое из найденного тега <code>&lt;a&gt;</code> в переменной <code>a</code> достаёт полное название.</p>"
+ },
+ {
+  "id": 10641,
+  "stem_before": "На странице каталога цена лежит внутри карточки:\n\n``<code>\n<article class=\"product_pod\">\n  <h3><a title=\"A Light in the Attic\">A Light in the ...</a></h3>\n  <div class=\"product_price\">\n    <p class=\"price_color\">£51.77</p>\n  </div>\n</article>\n</code>`<code>\n\nВ переменной </code>cena<code> — найденный тег </code><p class=\"price_color\"><code>. Напишите выражение, которое от цены поднимется до карточки товара целиком (тега </code>article`).",
+  "stem_after": "<p>На странице каталога цена лежит внутри карточки:</p><pre><code class=\"language-html\">&lt;article class=&quot;product_pod&quot;&gt;\n  &lt;h3&gt;&lt;a title=&quot;A Light in the Attic&quot;&gt;A Light in the ...&lt;/a&gt;&lt;/h3&gt;\n  &lt;div class=&quot;product_price&quot;&gt;\n    &lt;p class=&quot;price_color&quot;&gt;£51.77&lt;/p&gt;\n  &lt;/div&gt;\n&lt;/article&gt;</code></pre><p>В переменной <code>cena</code> — найденный тег <code>&lt;p class=\"price_color\"&gt;</code>. Напишите выражение, которое от цены поднимется до карточки товара целиком (тега <code>article</code>).</p>"
+ },
+ {
+  "id": 10642,
+  "stem_before": "Дана схема части страницы:\n\n``<code>\ntr.gift#gift1\n├── td (название)\n├── td (описание)\n│   └── span.excitingNote\n├── td (цена)\n└── td (картинка)\n</code>`<code>\n\nВы нашли </code>span.excitingNote`. Каким путём добраться до ячейки с ценой?",
+  "stem_after": "<p>Дана схема части страницы:</p><pre><code class=\"language-text\">tr.gift#gift1\n├── td (название)\n├── td (описание)\n│   └── span.excitingNote\n├── td (цена)\n└── td (картинка)</code></pre><p>Вы нашли <code>span.excitingNote</code>. Каким путём добраться до ячейки с ценой?</p>"
+ },
+ {
+  "id": 10643,
+  "stem_before": "В коде ошибка: программа хочет получить соседнюю ячейку, но вместо тега получает пустую строку.\n\n``<code>\npervaya = sup.find('tr', class_='gift').td\nvtoraya = pervaya.next_sibling\n</code>``\n\nКак исправить последнюю строку, чтобы получить именно следующую ячейку? Впишите исправленную правую часть.",
+  "stem_after": "<p>В коде ошибка: программа хочет получить соседнюю ячейку, но вместо тега получает пустую строку.</p><pre><code class=\"language-python\">pervaya = sup.find(&#x27;tr&#x27;, class_=&#x27;gift&#x27;).td\nvtoraya = pervaya.next_sibling</code></pre><p>Как исправить последнюю строку, чтобы получить именно следующую ячейку? Впишите исправленную правую часть.</p>"
+ },
+ {
+  "id": 10649,
+  "stem_before": "Текст цены иногда приходит с лишними пробелами и переносами: <code>\"\\n  £51.77 \\n\"</code>. Допишите выражение так, чтобы получить <code>\"£51.77\"</code>:\n\n``<code>\nchistaya = tekst...\n</code>``\n\nВпишите то, что должно стоять вместо многоточия.",
+  "stem_after": "<p>Текст цены иногда приходит с лишними пробелами и переносами: <code>\"\\n  £51.77 \\n\"</code>. Допишите выражение так, чтобы получить <code>\"£51.77\"</code>:</p><pre><code class=\"language-python\">chistaya = tekst...</code></pre><p>Впишите то, что должно стоять вместо многоточия.</p>"
+ },
+ {
+  "id": 10654,
+  "stem_before": "Допишите цикл так, чтобы для каждой карточки в список <code>knigi</code> добавлялся словарь с названием и ценой:\n\n``<code>\nknigi = []\nfor kartochka in sup.find_all('article', class_='product_pod'):\n    nazvanie = kartochka.find('h3').find('a')['title']\n    cena = kartochka.find('p', class_='price_color').get_text()\n    ...\n</code>``\n\nВпишите строку, которая должна стоять вместо многоточия.",
+  "stem_after": "<p>Допишите цикл так, чтобы для каждой карточки в список <code>knigi</code> добавлялся словарь с названием и ценой:</p><pre><code class=\"language-python\">knigi = []\nfor kartochka in sup.find_all(&#x27;article&#x27;, class_=&#x27;product_pod&#x27;):\n    nazvanie = kartochka.find(&#x27;h3&#x27;).find(&#x27;a&#x27;)[&#x27;title&#x27;]\n    cena = kartochka.find(&#x27;p&#x27;, class_=&#x27;price_color&#x27;).get_text()\n    ...</code></pre><p>Впишите строку, которая должна стоять вместо многоточия.</p>"
+ },
+ {
+  "id": 10655,
+  "stem_before": "Сделайте сбор устойчивым: допишите условие так, чтобы карточка без цены пропускалась, а не роняла программу.\n\n``<code>\ncena_tag = kartochka.find('p', class_='price_color')\nif ...:\n    continue\n</code>``\n\nВпишите условие вместо многоточия.",
+  "stem_after": "<p>Сделайте сбор устойчивым: допишите условие так, чтобы карточка без цены пропускалась, а не роняла программу.</p><pre><code class=\"language-python\">cena_tag = kartochka.find(&#x27;p&#x27;, class_=&#x27;price_color&#x27;)\nif ...:\n    continue</code></pre><p>Впишите условие вместо многоточия.</p>"
+ },
+ {
+  "id": 10661,
+  "stem_before": "Форма принимает файл в поле с именем <code>uploadFile</code>. Допишите вызов так, чтобы отправился файл <code>python.png</code> из текущей папки:\n\n``<code>\notvet = requests.post('https://httpbin.org/post', ...)\n</code>``\n\nВпишите то, что должно стоять вместо многоточия.",
+  "stem_after": "<p>Форма принимает файл в поле с именем <code>uploadFile</code>. Допишите вызов так, чтобы отправился файл <code>python.png</code> из текущей папки:</p><pre><code class=\"language-python\">otvet = requests.post(&#x27;https://httpbin.org/post&#x27;, ...)</code></pre><p>Впишите то, что должно стоять вместо многоточия.</p>"
+ },
+ {
+  "id": 10670,
+  "stem_before": "Ответ API разобран в словарь <code>dannye</code>. Его устройство:\n\n``<code>\n{\"page\": 1, \"has_next\": true, \"quotes\": [{\"text\": \"...\", \"author\": {\"name\": \"Albert Einstein\"}}]}\n</code>``\n\nНапишите выражение, которое достаёт имя автора первой цитаты.",
+  "stem_after": "<p>Ответ API разобран в словарь <code>dannye</code>. Его устройство:</p><pre><code class=\"language-json\">{&quot;page&quot;: 1, &quot;has_next&quot;: true, &quot;quotes&quot;: [{&quot;text&quot;: &quot;...&quot;, &quot;author&quot;: {&quot;name&quot;: &quot;Albert Einstein&quot;}}]}</code></pre><p>Напишите выражение, которое достаёт имя автора первой цитаты.</p>"
+ },
+ {
+  "id": 10671,
+  "stem_before": "Допишите вызов так, чтобы к адресу API ушёл параметр <code>page</code> со значением 2 — средствами библиотеки, а не склейкой строк:\n\n``<code>\notvet = requests.get('https://quotes.toscrape.com/api/quotes', ...)\n</code>``\n\nВпишите то, что должно стоять вместо многоточия.",
+  "stem_after": "<p>Допишите вызов так, чтобы к адресу API ушёл параметр <code>page</code> со значением 2 — средствами библиотеки, а не склейкой строк:</p><pre><code class=\"language-python\">otvet = requests.get(&#x27;https://quotes.toscrape.com/api/quotes&#x27;, ...)</code></pre><p>Впишите то, что должно стоять вместо многоточия.</p>"
+ },
+ {
+  "id": 10685,
+  "stem_before": "В переменной <code>html</code> — разметка страницы <code>https://quotes.toscrape.com/js/</code>, где данные записаны так:\n\n``<code>\nvar data = [ { \"text\": \"...\", \"author\": {...}, \"tags\": [...] }, ... ];\n</code>`<code>\n\nНапишите выражение с регулярным выражением, которое найдёт в разметке всё, что стоит между </code>var data = <code> и </code>;` — то есть сам список (результат — объект совпадения).",
+  "stem_after": "<p>В переменной <code>html</code> — разметка страницы <code>https://quotes.toscrape.com/js/</code>, где данные записаны так:</p><pre><code class=\"language-javascript\">var data = [ { &quot;text&quot;: &quot;...&quot;, &quot;author&quot;: {...}, &quot;tags&quot;: [...] }, ... ];</code></pre><p>Напишите выражение с регулярным выражением, которое найдёт в разметке всё, что стоит между <code>var data = </code> и <code>;</code> — то есть сам список (результат — объект совпадения).</p>"
+ },
+ {
+  "id": 10691,
+  "stem_before": "Допишите ожидание так, чтобы программа продолжила работу, когда на странице появится элемент с идентификатором <code>loadedButton</code>:\n\n``<code>\nfrom selenium.webdriver.support.ui import WebDriverWait\nfrom selenium.webdriver.support import expected_conditions as EC\nfrom selenium.webdriver.common.by import By\n\nelement = WebDriverWait(driver, 10).until(\n    ...\n)\n</code>``\n\nВпишите то, что должно стоять вместо многоточия.",
+  "stem_after": "<p>Допишите ожидание так, чтобы программа продолжила работу, когда на странице появится элемент с идентификатором <code>loadedButton</code>:</p><pre><code class=\"language-python\">from selenium.webdriver.support.ui import WebDriverWait\nfrom selenium.webdriver.support import expected_conditions as EC\nfrom selenium.webdriver.common.by import By\n\nelement = WebDriverWait(driver, 10).until(\n    ...\n)</code></pre><p>Впишите то, что должно стоять вместо многоточия.</p>"
+ },
+ {
+  "id": 10696,
+  "stem_before": "Допишите настройку так, чтобы браузер запускался в фоновом режиме:\n\n``<code>\nfrom selenium import webdriver\n\noptions = webdriver.ChromeOptions()\n...\ndriver = webdriver.Chrome(options=options)\n</code>``\n\nВпишите строку вместо многоточия.",
+  "stem_after": "<p>Допишите настройку так, чтобы браузер запускался в фоновом режиме:</p><pre><code class=\"language-python\">from selenium import webdriver\n\noptions = webdriver.ChromeOptions()\n...\ndriver = webdriver.Chrome(options=options)</code></pre><p>Впишите строку вместо многоточия.</p>"
+ },
+ {
+  "id": 10699,
+  "stem_before": "Файл <code>otchet-cp1251.csv</code> записан в кодировке Windows для кириллицы. Допишите вызов, чтобы он открылся правильно:\n\n``<code>\nfh = open('otchet-cp1251.csv', ...)\n</code>``\n\nВпишите то, что должно стоять вместо многоточия.",
+  "stem_after": "<p>Файл <code>otchet-cp1251.csv</code> записан в кодировке Windows для кириллицы. Допишите вызов, чтобы он открылся правильно:</p><pre><code class=\"language-python\">fh = open(&#x27;otchet-cp1251.csv&#x27;, ...)</code></pre><p>Впишите то, что должно стоять вместо многоточия.</p>"
+ },
+ {
+  "id": 10703,
+  "stem_before": "Программа падает на строке чтения файла:\n\n``<code>\nUnicodeDecodeError: 'utf-8' codec can't decode byte 0xca in position 0\n</code>`<code>\n\nФайл скачан с сайта, где в разметке указано </code>charset=windows-1251<code>. Впишите правую часть исправленной строки открытия файла для чтения:\n\n</code>`<code>\nfh = open('otchet.csv', ...)\n</code>``",
+  "stem_after": "<p>Программа падает на строке чтения файла:</p><pre><code class=\"language-text\">UnicodeDecodeError: &#x27;utf-8&#x27; codec can&#x27;t decode byte 0xca in position 0</code></pre><p>Файл скачан с сайта, где в разметке указано <code>charset=windows-1251</code>. Впишите правую часть исправленной строки открытия файла для чтения:</p><pre><code class=\"language-python\">fh = open(&#x27;otchet.csv&#x27;, ...)</code></pre>"
+ },
+ {
+  "id": 10714,
+  "stem_before": "Программа падает с ошибкой:\n\n``<code>\nTesseractNotFoundError: tesseract is not installed or it's not in your PATH\n</code>`<code>\n\nБиблиотека </code>pytesseract<code> при этом установлена. Напишите строку, которая указывает библиотеке путь к самой программе распознавания (путь возьмите свой, для примера — </code>C:\\Program Files\\Tesseract-OCR\\tesseract.exe`).",
+  "stem_after": "<p>Программа падает с ошибкой:</p><pre><code class=\"language-text\">TesseractNotFoundError: tesseract is not installed or it&#x27;s not in your PATH</code></pre><p>Библиотека <code>pytesseract</code> при этом установлена. Напишите строку, которая указывает библиотеке путь к самой программе распознавания (путь возьмите свой, для примера — <code>C:\\Program Files\\Tesseract-OCR\\tesseract.exe</code>).</p>"
+ },
+ {
+  "id": 10726,
+  "stem_before": "В коде ошибка: строки с пустым названием не отбрасываются, хотя условие есть.\n\n``<code>\nchistye = [t for t in tovary if t['Товар'] != '']\n</code>`<code>\n\nВ файле встречаются значения из одних пробелов. Впишите исправленное условие — то, что стоит после </code>if`.",
+  "stem_after": "<p>В коде ошибка: строки с пустым названием не отбрасываются, хотя условие есть.</p><pre><code class=\"language-python\">chistye = [t for t in tovary if t[&#x27;Товар&#x27;] != &#x27;&#x27;]</code></pre><p>В файле встречаются значения из одних пробелов. Впишите исправленное условие — то, что стоит после <code>if</code>.</p>"
+ },
+ {
+  "id": 10734,
+  "stem_before": "Допишите открытие файла для записи CSV так, чтобы в Windows между строками не появлялись пустые строки:\n\n``<code>\nfh = open('tovary.csv', 'w', encoding='utf-8', ...)\n</code>``\n\nВпишите то, что должно стоять вместо многоточия.",
+  "stem_after": "<p>Допишите открытие файла для записи CSV так, чтобы в Windows между строками не появлялись пустые строки:</p><pre><code class=\"language-python\">fh = open(&#x27;tovary.csv&#x27;, &#x27;w&#x27;, encoding=&#x27;utf-8&#x27;, ...)</code></pre><p>Впишите то, что должно стоять вместо многоточия.</p>"
+ },
+ {
+  "id": 10738,
+  "stem_before": "Допишите запись CSV так, чтобы в файл попала строка заголовков до данных:\n\n``<code>\nwriter = csv.DictWriter(fh, fieldnames=['Товар', 'Цена'])\n...\nwriter.writerows(tovary)\n</code>``\n\nВпишите строку вместо многоточия.",
+  "stem_after": "<p>Допишите запись CSV так, чтобы в файл попала строка заголовков до данных:</p><pre><code class=\"language-python\">writer = csv.DictWriter(fh, fieldnames=[&#x27;Товар&#x27;, &#x27;Цена&#x27;])\n...\nwriter.writerows(tovary)</code></pre><p>Впишите строку вместо многоточия.</p>"
+ },
+ {
+  "id": 10744,
+  "stem_before": "Скрейпер запускается каждый день и каждый раз вставляет все товары заново — в базе появляются дубликаты. Впишите слово, которого не хватает в описании таблицы, чтобы база сама не принимала повторные названия:\n\n``<code>\nCREATE TABLE tovary (nazvanie TEXT ..., cena INTEGER)\n</code>``",
+  "stem_after": "<p>Скрейпер запускается каждый день и каждый раз вставляет все товары заново — в базе появляются дубликаты. Впишите слово, которого не хватает в описании таблицы, чтобы база сама не принимала повторные названия:</p><pre><code class=\"language-sql\">CREATE TABLE tovary (nazvanie TEXT ..., cena INTEGER)</code></pre>"
+ },
+ {
+  "id": 10748,
+  "stem_before": "Допишите выполнение запроса так, чтобы выбрать все строки таблицы <code>tovary</code> (соединение — <code>conn</code>, функция <code>text</code> подключена):\n\n``<code>\nresult = conn.execute(...)\n</code>``\n\nВпишите то, что должно стоять вместо многоточия.",
+  "stem_after": "<p>Допишите выполнение запроса так, чтобы выбрать все строки таблицы <code>tovary</code> (соединение — <code>conn</code>, функция <code>text</code> подключена):</p><pre><code class=\"language-python\">result = conn.execute(...)</code></pre><p>Впишите то, что должно стоять вместо многоточия.</p>"
+ },
+ {
+  "id": 10749,
+  "stem_before": "Программа отработала без ошибок, но после перезапуска в базе пусто:\n\n``<code>\nwith engine.connect() as conn:\n    conn.execute(text(\"INSERT INTO tovary VALUES ('Мышь', 1290)\"))\n</code>``\n\nВпишите строку, которую нужно добавить последней внутри блока, чтобы данные сохранились.",
+  "stem_after": "<p>Программа отработала без ошибок, но после перезапуска в базе пусто:</p><pre><code class=\"language-python\">with engine.connect() as conn:\n    conn.execute(text(&quot;INSERT INTO tovary VALUES (&#x27;Мышь&#x27;, 1290)&quot;))</code></pre><p>Впишите строку, которую нужно добавить последней внутри блока, чтобы данные сохранились.</p>"
+ },
+ {
+  "id": 10754,
+  "stem_before": "Допишите условие так, чтобы в очередь попадали только новые адреса:\n\n``<code>\nposesheno = set()\nochered = [start]\nwhile ochered:\n    adres = ochered.pop(0)\n    if ...:\n        continue\n    posesheno.add(adres)\n</code>``\n\nВпишите условие вместо многоточия.",
+  "stem_after": "<p>Допишите условие так, чтобы в очередь попадали только новые адреса:</p><pre><code class=\"language-python\">posesheno = set()\nochered = [start]\nwhile ochered:\n    adres = ochered.pop(0)\n    if ...:\n        continue\n    posesheno.add(adres)</code></pre><p>Впишите условие вместо многоточия.</p>"
+ },
+ {
+  "id": 10760,
+  "stem_before": "Допишите условие так, чтобы в очередь попадали только ссылки того же сайта, что и начальный адрес <code>start</code>:\n\n``<code>\npolnyj = urljoin(adres, ssylka)\nif ...:\n    ochered.append(polnyj)\n</code>``\n\nВпишите условие вместо многоточия.",
+  "stem_after": "<p>Допишите условие так, чтобы в очередь попадали только ссылки того же сайта, что и начальный адрес <code>start</code>:</p><pre><code class=\"language-python\">polnyj = urljoin(adres, ssylka)\nif ...:\n    ochered.append(polnyj)</code></pre><p>Впишите условие вместо многоточия.</p>"
+ },
+ {
+  "id": 10770,
+  "stem_before": "Допишите переход на следующую страницу так, чтобы паук пошёл по ссылке «дальше» и разобрал её тем же методом:\n\n``<code>\ndalshe = response.css('li.next a::attr(href)').get()\nif dalshe:\n    yield ...\n</code>``\n\nВпишите то, что должно стоять вместо многоточия.",
+  "stem_after": "<p>Допишите переход на следующую страницу так, чтобы паук пошёл по ссылке «дальше» и разобрал её тем же методом:</p><pre><code class=\"language-python\">dalshe = response.css(&#x27;li.next a::attr(href)&#x27;).get()\nif dalshe:\n    yield ...</code></pre><p>Впишите то, что должно стоять вместо многоточия.</p>"
+ },
+ {
+  "id": 10780,
+  "stem_before": "Допишите запуск так, чтобы функция <code>skachat</code> применилась ко всем адресам из списка <code>adresa</code> в пуле из пяти потоков:\n\n``<code>\nwith ThreadPoolExecutor(max_workers=5) as pul:\n    rezultaty = list(...)\n</code>``\n\nВпишите то, что должно стоять вместо многоточия.",
+  "stem_after": "<p>Допишите запуск так, чтобы функция <code>skachat</code> применилась ко всем адресам из списка <code>adresa</code> в пуле из пяти потоков:</p><pre><code class=\"language-python\">with ThreadPoolExecutor(max_workers=5) as pul:\n    rezultaty = list(...)</code></pre><p>Впишите то, что должно стоять вместо многоточия.</p>"
+ },
+ {
+  "id": 10787,
+  "stem_before": "Допишите запуск так, чтобы все запросы из списка <code>zaprosy</code> пошли одновременно и программа дождалась всех:\n\n``<code>\nrezultaty = await ...\n</code>`<code>\n\nВпишите то, что должно стоять вместо многоточия (</code>zaprosy` — список вызовов).",
+  "stem_after": "<p>Допишите запуск так, чтобы все запросы из списка <code>zaprosy</code> пошли одновременно и программа дождалась всех:</p><pre><code class=\"language-python\">rezultaty = await ...</code></pre><p>Впишите то, что должно стоять вместо многоточия (<code>zaprosy</code> — список вызовов).</p>"
+ },
+ {
+  "id": 10794,
+  "stem_before": "Допишите вызов так, чтобы запрос ушёл через посредника из словаря <code>posredniki</code>:\n\n``<code>\notvet = requests.get(adres, ...)\n</code>``\n\nВпишите то, что должно стоять вместо многоточия.",
+  "stem_after": "<p>Допишите вызов так, чтобы запрос ушёл через посредника из словаря <code>posredniki</code>:</p><pre><code class=\"language-python\">otvet = requests.get(adres, ...)</code></pre><p>Впишите то, что должно стоять вместо многоточия.</p>"
+ },
+ {
+  "id": 10810,
+  "stem_before": "Допишите настройку разборщика так, чтобы он прочитал правила сайта:\n\n``<code>\nfrom urllib.robotparser import RobotFileParser\n\nrp = RobotFileParser()\nrp.set_url('https://example.ru/robots.txt')\n...\n</code>``\n\nВпишите строку вместо многоточия.",
+  "stem_after": "<p>Допишите настройку разборщика так, чтобы он прочитал правила сайта:</p><pre><code class=\"language-python\">from urllib.robotparser import RobotFileParser\n\nrp = RobotFileParser()\nrp.set_url(&#x27;https://example.ru/robots.txt&#x27;)\n...</code></pre><p>Впишите строку вместо многоточия.</p>"
+ }
+]
