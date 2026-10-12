@@ -209,6 +209,28 @@ async def test_material_added_after_completion_is_not_a_debt(db, passed_topic):
 
 
 @pytest.mark.asyncio
+async def test_individual_course_never_graces(db, passed_topic):
+    """tsk-1330: в индивидуальном курсе (`ind:…`) досыпанное — долг, а не новинка.
+
+    Тот же сценарий, что выше, но курс собран под ученика. Прощение здесь
+    снимало замок с основных курсов (4569, 12.10).
+    """
+    await db.execute(
+        text("UPDATE courses SET course_uid = :u WHERE id = :c"),
+        {"u": f"ind:tsk1330-{uuid4().hex[:8]}", "c": passed_topic["course_id"]},
+    )
+    await db.commit()
+
+    graced = await compute_graced_items(
+        db, passed_topic["student"], passed_topic["course_id"]
+    )
+    assert not graced.materials and not graced.tasks, (
+        "Индивидуальный курс правилом tsk-692 не покрывается: "
+        f"прощено {sorted(graced.materials)} материалов"
+    )
+
+
+@pytest.mark.asyncio
 async def test_student_who_did_not_pass_still_owes_it(db, passed_topic):
     """Сценарий 2 (обратный случай): не проходившему тему новое — обязательно.
 

@@ -30,6 +30,13 @@ class IndividualCourseIssue(BaseModel):
         max_length=30,
         description="Какие основные курсы ученика закрыть; не указано — все его активные курсы",
     )
+    allow_foreign_topics: bool = Field(
+        False,
+        description=(
+            "tsk-1330: подтверждение, что темы вне дерева курсов ученика взяты намеренно. "
+            "Без него такая сборка отвечает 409 с detail.code=foreign_topics"
+        ),
+    )
 
 
 class IndividualCourseRead(BaseModel):
@@ -65,7 +72,13 @@ async def list_individual_courses(
     responses={
         400: {"description": "Не указан ни курс, ни темы (или указано и то, и то)"},
         404: {"description": "Нет ученика или темы"},
-        409: {"description": "Курс вложенный, выключен, ученик выпускник или нечего закрывать"},
+        409: {
+            "description": (
+                "Курс вложенный, выключен, ученик выпускник или нечего закрывать; "
+                "detail.code=foreign_topics — темы не из курсов ученика (tsk-1330), "
+                "повторить с allow_foreign_topics=true"
+            )
+        },
     },
 )
 async def issue_individual_course(
@@ -79,6 +92,7 @@ async def issue_individual_course(
         db, user_id,
         course_id=payload.course_id, title=payload.title,
         topic_ids=payload.topic_ids, lock_root_ids=payload.lock_root_ids,
+        allow_foreign_topics=payload.allow_foreign_topics,
     )
     items = await service.list_for_student(db, user_id)
     issued = next((i for i in items if i.course_id == course_id), None)

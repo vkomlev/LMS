@@ -16703,7 +16703,7 @@
             "description": "Нет ученика или темы"
           },
           "409": {
-            "description": "Курс вложенный, выключен, ученик выпускник или нечего закрывать"
+            "description": "Курс вложенный, выключен, ученик выпускник или нечего закрывать; detail.code=foreign_topics — темы не из курсов ученика (tsk-1330), повторить с allow_foreign_topics=true"
           },
           "422": {
             "description": "Validation Error",
@@ -62543,6 +62543,12 @@
             ],
             "title": "Lock Root Ids",
             "description": "Какие основные курсы ученика закрыть; не указано — все его активные курсы"
+          },
+          "allow_foreign_topics": {
+            "type": "boolean",
+            "title": "Allow Foreign Topics",
+            "description": "tsk-1330: подтверждение, что темы вне дерева курсов ученика взяты намеренно. Без него такая сборка отвечает 409 с detail.code=foreign_topics",
+            "default": false
           }
         },
         "type": "object",

@@ -114,7 +114,7 @@ async def test_build_from_topics_locks_only_addressee(db):
     try:
         cid = await svc.issue(
             db, kirill, course_id=None, title="Повторение", topic_ids=[topic_b, topic_a],
-            lock_root_ids=None,
+            lock_root_ids=None, allow_foreign_topics=True,
         )
         created.append(cid)
         order = (
@@ -166,6 +166,63 @@ async def test_issue_ready_course_and_reissue_after_withdraw(db):
 
 
 @pytest.mark.asyncio
+async def test_foreign_topics_need_confirmation(db):
+    """tsk-1330: тема не из курсов ученика — 409 foreign_topics; своя тема и подтверждённая чужая проходят."""
+    main = await _course(db, "tsk1330 основной")
+    own_topic = await _course(db, "tsk1330 своя тема")
+    other_root = await _course(db, "tsk1330 мехатроника")
+    foreign_topic = await _course(db, "tsk1330 чужая тема")
+    for child, parent in ((own_topic, main), (foreign_topic, other_root)):
+        await db.execute(
+            text("INSERT INTO course_parents (course_id, parent_course_id) VALUES (:c, :p)"),
+            {"c": child, "p": parent},
+        )
+    await db.commit()
+    kirill = await _student(db)
+    await _enroll(db, kirill, main)
+    created: list[int] = []
+    try:
+        with pytest.raises(HTTPException) as exc:
+            await svc.issue(
+                db, kirill, course_id=None, title="Повторение",
+                topic_ids=[own_topic, foreign_topic], lock_root_ids=None,
+            )
+        assert exc.value.status_code == 409
+        assert exc.value.detail["code"] == "foreign_topics"
+        assert [t["id"] for t in exc.value.detail["topics"]] == [foreign_topic]
+        assert exc.value.detail["topics"][0]["source_titles"] == ["tsk1330 мехатроника"]
+        assert await svc.list_for_student(db, kirill) == []
+
+        created.append(await svc.issue(
+            db, kirill, course_id=None, title="Своё", topic_ids=[own_topic], lock_root_ids=None,
+        ))
+        await svc.withdraw(db, kirill, created[-1])
+        # Чужая тема, выданная раньше с подтверждением, «своей» не становится.
+        created.append(await svc.issue(
+            db, kirill, course_id=None, title="Подтверждено", topic_ids=[foreign_topic],
+            lock_root_ids=[main], allow_foreign_topics=True,
+        ))
+        await db.execute(
+            text("UPDATE courses SET course_uid=:u WHERE id=:c"),
+            {"u": f"ind:tsk1330-{random.randint(10**8, 10**10)}", "c": created[-1]},
+        )
+        await db.commit()
+        with pytest.raises(HTTPException) as again:
+            await svc.issue(
+                db, kirill, course_id=None, title="Ещё раз", topic_ids=[foreign_topic],
+                lock_root_ids=[main],
+            )
+        assert again.value.detail["code"] == "foreign_topics"
+        await svc.withdraw(db, kirill, created[-1])
+        created.append(await svc.issue(
+            db, kirill, course_id=None, title="Подтверждено", topic_ids=[foreign_topic],
+            lock_root_ids=[main], allow_foreign_topics=True,
+        ))
+    finally:
+        await _cleanup(db, [kirill], [main, own_topic, other_root, foreign_topic, *created])
+
+
+@pytest.mark.asyncio
 async def test_failure_leaves_nothing_behind(db):
     """Закрыть чужой курс нельзя — и новый курс не должен остаться в базе."""
     main = await _course(db, "tsk1249 основной")
@@ -177,7 +234,7 @@ async def test_failure_leaves_nothing_behind(db):
         with pytest.raises(HTTPException) as exc:
             await svc.issue(
                 db, kirill, course_id=None, title="Повторение", topic_ids=[topic],
-                lock_root_ids=[foreign],
+                lock_root_ids=[foreign], allow_foreign_topics=True,
             )
         assert exc.value.status_code == 409
         left = (

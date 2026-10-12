@@ -71,6 +71,70 @@ async def _assert_student(db: AsyncSession, user_id: int) -> None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"Пользователь {user_id} не найден")
 
 
+_FOREIGN_TOPICS_SQL = """
+WITH RECURSIVE own(id) AS (
+    -- Прошлые индивидуальные курсы ученика направлением не считаются: в них
+    -- может лежать та самая чужая тема, и повтор прошёл бы без вопроса.
+    SELECT id FROM courses
+    WHERE id = ANY(CAST(:roots AS int[])) AND COALESCE(course_uid, '') NOT LIKE 'ind:%'
+    UNION
+    SELECT p.course_id FROM course_parents p JOIN own ON p.parent_course_id = own.id
+),
+up(topic_id, id) AS (
+    SELECT t, t FROM unnest(CAST(:ids AS int[])) AS t
+    UNION
+    SELECT up.topic_id, p.parent_course_id FROM course_parents p JOIN up ON p.course_id = up.id
+)
+SELECT c.id, c.title,
+       COALESCE(array_agg(DISTINCT r.title) FILTER (
+           WHERE r.id IS NOT NULL AND COALESCE(r.course_uid, '') NOT LIKE 'ind:%'
+       ), '{}') AS sources
+FROM courses c
+JOIN unnest(CAST(:ids AS int[])) AS t(id) ON t.id = c.id
+LEFT JOIN up ON up.topic_id = c.id AND up.id <> c.id
+ AND NOT EXISTS (SELECT 1 FROM course_parents x WHERE x.course_id = up.id)
+LEFT JOIN courses r ON r.id = up.id
+WHERE c.id NOT IN (SELECT id FROM own)
+GROUP BY c.id, c.title
+ORDER BY c.id
+"""
+
+
+async def _assert_topics_in_student_direction(
+    db: AsyncSession, topic_ids: list[int], roots: list[int]
+) -> None:
+    """409 `foreign_topics`, если тема не лежит в дереве курсов ученика.
+
+    Правило оператора (tsk-1330): темы индивидуального курса берутся из
+    направления курса ученика. Курс повторения по Python для ЕГЭ собрали из
+    подкурсов «Цифровой старт мехатроника» — с передаточными отношениями
+    шестерён. Запрета нет: удачная тема из соседнего курса (986 из «Начала
+    программирования») проходит повтором запроса с `allow_foreign_topics`.
+    """
+    rows = (
+        await db.execute(text(_FOREIGN_TOPICS_SQL), {"ids": topic_ids, "roots": roots})
+    ).all()
+    if not rows:
+        return
+    raise HTTPException(
+        status.HTTP_409_CONFLICT,
+        {
+            "code": "foreign_topics",
+            "message": (
+                "Темы не из курсов ученика: "
+                + "; ".join(
+                    f"«{r[1]}»" + (f" (из «{'», «'.join(r[2])}»)" if r[2] else "")
+                    for r in rows
+                )
+                + ". Если взяты намеренно — подтвердите выдачу."
+            ),
+            "topics": [
+                {"id": int(r[0]), "title": r[1], "source_titles": list(r[2])} for r in rows
+            ],
+        },
+    )
+
+
 async def _create_from_topics(
     db: AsyncSession, user_id: int, title: str, topic_ids: list[int]
 ) -> int:
@@ -215,6 +279,7 @@ async def issue(
     title: str | None,
     topic_ids: list[int] | None,
     lock_root_ids: list[int] | None,
+    allow_foreign_topics: bool = False,
 ) -> int:
     """Выдать индивидуальный курс ученику и закрыть его основные курсы.
 
@@ -222,6 +287,7 @@ async def issue(
     :param title: название нового курса (при сборке).
     :param topic_ids: темы банка по порядку (при сборке).
     :param lock_root_ids: какие корни закрыть; None — все активные корни ученика.
+    :param allow_foreign_topics: темы вне дерева курсов ученика взяты намеренно (tsk-1330).
     :return: id индивидуального курса.
     """
     await _assert_student(db, user_id)
@@ -235,6 +301,8 @@ async def issue(
     try:
         roots_before = await _student_roots(db, user_id)
         if course_id is None:
+            if not allow_foreign_topics and topic_ids:
+                await _assert_topics_in_student_direction(db, topic_ids, roots_before)
             course_id = await _create_from_topics(db, user_id, title or "", topic_ids or [])
         await _enroll(db, user_id, course_id)
         wanted = [r for r in (lock_root_ids if lock_root_ids is not None else roots_before) if r != course_id]

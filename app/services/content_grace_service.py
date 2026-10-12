@@ -102,6 +102,9 @@ _PASS_THRESHOLD_RATIO = 0.5
 # набор, что в фильтрах learning_engine_service и me_service.
 _REQUIRED_LEVELS = ("required", "skippable")
 
+# tsk-1330: префикс course_uid индивидуальных курсов (individual_courses_service).
+INDIVIDUAL_UID_PREFIX = "ind:"
+
 
 @dataclass(frozen=True)
 class GracedItems:
@@ -353,7 +356,22 @@ async def _compute(
     сразу. Ни один из них не растёт по числу элементов или подкурсов: именно
     рост «запрос на узел» был первопричиной заторов движка (tsk-662), и
     повторять его здесь нельзя.
+
+    tsk-1330: индивидуальный курс (`course_uid` вида `ind:…`) правилом не
+    покрывается. Его собирают под одного ученика, и всё, что преподаватель
+    добавил туда позже, добавлено именно ему — это долг, а не «новинка для
+    прошедших». Иначе досыпанное в пройденный курс повторения прощалось и
+    снимало замок с основных курсов (4569, 12.10).
     """
+    root_uid = (
+        await db.execute(
+            text("SELECT course_uid FROM courses WHERE id = :root_id"),
+            {"root_id": root_course_id},
+        )
+    ).scalar()
+    if root_uid and root_uid.startswith(INDIVIDUAL_UID_PREFIX):
+        return EMPTY_GRACE
+
     node_rows = (
         await db.execute(text(_TREE_NODES_SQL), {"root_id": root_course_id})
     ).fetchall()
