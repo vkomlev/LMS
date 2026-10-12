@@ -1791,9 +1791,22 @@ class CheckingService:
             Канонический текст программы или None, если строка не разбирается
             как самостоятельный Python-код (фрагмент, другой язык, синтаксическая
             ошибка). None — сигнал вызывающему коду откатиться на текстовое сравнение.
+
+        tsk-1331: аргументы вызова `input(...)` заменяются пустой строкой —
+        подсказка ввода не влияет на решение («Введите температуру:» и
+        «Температура: » одна программа). Остальные литералы сравниваются как есть.
         """
         try:
-            return ast.unparse(ast.parse(value.strip()))
+            tree = ast.parse(value.strip())
+            for node in ast.walk(tree):
+                if (
+                    isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Name)
+                    and node.func.id == "input"
+                ):
+                    node.args = [ast.Constant(value="")]
+                    node.keywords = []
+            return ast.unparse(tree)
         except (SyntaxError, ValueError, MemoryError, RecursionError):
             return None
 
