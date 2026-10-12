@@ -34,6 +34,9 @@ MSG_1015 = (
     ("openai/gpt-5.5", "chatcmpl-1791630205200016881"),
     ("openai/gpt-5.6-sol", "resp_04f7634e3a6c0fda016aca1c6ab34c8190a"),
     ("google/gemini-3.7-flash", "chatcmpl-d292757b-a8d8-4555-9584-a1d2eea"),
+    # tsk-1321: вид id Google с 12.10 — 27 цифр и буквы, без дефисов.
+    ("google/gemini-3.7-flash", "chatcmpl-202610121132240770856628268d9d6BZYbOcRk"),
+    ("google/gemini-3.6-flash", "chatcmpl-202610121133146973349968268d9d6AYKnTDdo"),
     ("x-ai/grok-4.5", "d208ce38-9bba-9f2a-9e20-23fedfbeccd5"),  # правила нет — не судим
     ("openai/gpt-5.5", None),
 ])
@@ -47,6 +50,7 @@ def test_genuine_ids_pass(model: str, rid: str | None) -> None:
     ("openai/gpt-5.5", "chatcmpl-d292757b-a8d8-4555-9584-a1d2eea"),   # Gemini
     ("anthropic/claude-sonnet-4.6", "chatcmpl-1791630205200016881"),  # OpenAI
     ("google/gemini-3.7-flash", "msg_PtihgbEr6QZF1sVgGBz1ahmw"),      # Anthropic
+    ("google/gemini-3.7-flash", "chatcmpl-1791630205200016881"),      # OpenAI: цифры без букв
 ])
 def test_foreign_ids_are_mismatch(model: str, rid: str) -> None:
     with pytest.raises(LLMIdentityMismatch):

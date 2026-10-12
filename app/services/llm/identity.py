@@ -11,7 +11,7 @@
    (проба 10.10, обычный и потоковый режим):
      anthropic/*  `msg_…`
      openai/*     `chatcmpl-<цифры>` или `resp_…`
-     google/*     `chatcmpl-<uuid>`
+     google/*     `chatcmpl-<uuid>`; с 12.10 — `chatcmpl-<27 цифр><буквы>` (tsk-1321)
      x-ai/*       голый uuid или 24 hex-символа
    Несовпадение с семейством запрошенной модели = подмена.
 
@@ -40,7 +40,11 @@ _ID_RULES: dict[str, re.Pattern[str]] = {
     # У OpenAI после `chatcmpl-` нет дефисов; у Google там uuid с дефисами —
     # иначе подмена gpt на gemini проходила бы проверку.
     "openai": re.compile(r"^(?:resp_|chatcmpl-[A-Za-z0-9]+$)"),
-    "google": re.compile(r"^chatcmpl-[0-9a-f]{8}-"),
+    # С 12.10 Google отдаёт `chatcmpl-<27 цифр><буквы>` без дефисов (tsk-1321: 20 из
+    # 20 вызовов gemini-3.6/3.7 назвались Gemini/Google; прежний uuid-вид не пришёл
+    # ни разу, и голову наставника задвинули как «подмену»). Отличие от OpenAI —
+    # хвост из букв после длинного числа: у gpt-5.5 там 19 цифр и ничего больше.
+    "google": re.compile(r"^chatcmpl-(?:[0-9a-f]{8}-|\d{20,}[A-Za-z])"),
 }
 
 # Вендор → как модели этого вендора себя называют.
