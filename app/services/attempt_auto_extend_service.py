@@ -36,6 +36,7 @@ from app.services import inbox_service
 from app.services.help_requests_service import resolve_assigned_teacher
 from app.services.learning_engine_service import DEFAULT_MAX_ATTEMPTS
 from app.services.learning_events_service import record_task_limit_override
+from app.utils.task_title import humanize_task_title
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +66,9 @@ async def try_auto_extend(
         await db.execute(
             text(
                 "SELECT task_content->>'type' AS typ, max_attempts, "
-                "       solution_rules->>'diagnostic' = 'true' AS diagnostic "
+                "       solution_rules->>'diagnostic' = 'true' AS diagnostic, "
+                "       external_uid, task_content->>'title' AS title_raw, "
+                "       task_content->>'stem' AS stem "
                 "FROM tasks WHERE id = :task_id"
             ),
             {"task_id": task_id},
@@ -121,6 +124,7 @@ async def try_auto_extend(
         "base_attempts_added": base,
         "new_limit": new_limit,
     }
+    assigned_teacher_id = await resolve_assigned_teacher(db, student_id, course_id)
     await db.execute(
         text("""
             INSERT INTO help_requests
@@ -136,7 +140,7 @@ async def try_auto_extend(
             "t": task_id,
             "course_id": course_id,
             "attempt_id": attempt_id,
-            "assigned": await resolve_assigned_teacher(db, student_id, course_id),
+            "assigned": assigned_teacher_id,
             "reason": reason,
         },
     )
@@ -152,8 +156,64 @@ async def try_auto_extend(
         payload={"task_id": task_id, "max_attempts_override": new_limit, "mode": AUTO_EXTEND_TRIGGER},
         created_by=None,
     )
+    if assigned_teacher_id is not None:
+        await _notify_teacher(
+            db,
+            teacher_id=int(assigned_teacher_id),
+            student_id=student_id,
+            task_id=task_id,
+            task_title=humanize_task_title(
+                task_id, task["title_raw"], task["stem"], task["external_uid"]
+            ),
+            base=base,
+            new_limit=new_limit,
+            course_id=course_id,
+        )
     logger.info(
         "attempt auto-extend: student=%s task=%s limit %s -> %s",
         student_id, task_id, attempts_limit_effective, new_limit,
     )
     return new_limit
+
+
+async def _notify_teacher(
+    db: AsyncSession,
+    *,
+    teacher_id: int,
+    student_id: int,
+    task_id: int,
+    task_title: str,
+    base: int,
+    new_limit: int,
+    course_id: Optional[int],
+) -> None:
+    """Уведомить закреплённого преподавателя об автопродлении (tsk-1333).
+
+    Отметка в ленте есть, но ленту открывают не каждый час: уведомление
+    сразу говорит, кто, какое задание и сколько попыток добавлено.
+    """
+    name = (
+        await db.execute(
+            text("SELECT full_name FROM users WHERE id = :id"), {"id": student_id}
+        )
+    ).scalar()
+    student = name or f"Ученик #{student_id}"
+    await inbox_service.create_for_user(
+        db,
+        user_id=teacher_id,
+        kind="task_limit_auto_extended",
+        title="Попытки продлены автоматически",
+        content=(
+            f"{student}: закончились попытки по заданию «{task_title}». "
+            f"Система добавила {base} (теперь лимит {new_limit})."
+        ),
+        payload={
+            "student_id": student_id,
+            "task_id": task_id,
+            "course_id": course_id,
+            "base_attempts_added": base,
+            "new_limit": new_limit,
+            "role": "teacher",
+        },
+        created_by=None,
+    )

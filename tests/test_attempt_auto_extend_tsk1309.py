@@ -110,3 +110,32 @@ async def test_feed_shows_auto_extension(db):
     assert len(mine) == 1
     assert mine[0]["outcome"] == "auto_extended"
     assert "выданы автоматически (3 шт.)" in mine[0]["summary"]
+
+
+@pytest.mark.asyncio
+async def test_teacher_gets_notification_tsk1333(db, monkeypatch):
+    """tsk-1333: закреплённому преподавателю — уведомление: кто, задание, сколько."""
+    student_id, task_id = await _student(db), await _task(db)
+    teacher_id = await _student(db)
+
+    async def _assigned(*_a, **_k):
+        return teacher_id
+
+    monkeypatch.setattr(svc, "resolve_assigned_teacher", _assigned)
+    await _extend(db, student_id, task_id)
+    row = (await db.execute(text(
+        "SELECT kind, content, payload FROM notifications WHERE user_id = :t"),
+        {"t": teacher_id})).mappings().one()
+    assert row["kind"] == "task_limit_auto_extended"
+    assert "tsk1309-stud" in row["content"] and "добавила 3" in row["content"]
+    assert row["payload"]["task_id"] == task_id and row["payload"]["new_limit"] == 6
+
+
+@pytest.mark.asyncio
+async def test_no_teacher_no_notification_tsk1333(db, monkeypatch):
+    async def _none(*_a, **_k):
+        return None
+
+    monkeypatch.setattr(svc, "resolve_assigned_teacher", _none)
+    student_id, task_id = await _student(db), await _task(db)
+    assert await _extend(db, student_id, task_id) == 6
