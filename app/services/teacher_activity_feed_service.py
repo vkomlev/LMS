@@ -162,7 +162,9 @@ async def _fetch_help_requested(
                        COALESCE(hr.course_id, t.course_id) AS course_id,
                        t.external_uid, t.task_content->>'title' AS title_raw,
                        t.task_content->>'stem' AS stem, hr.status, hr.created_at AS event_at,
-                       hr.material_id, m.title AS material_title
+                       hr.material_id, m.title AS material_title,
+                       hr.context_json->>'trigger' AS trigger,
+                       hr.context_json->>'base_attempts_added' AS added
                 FROM help_requests hr
                 JOIN users u ON u.id = hr.student_id
                 LEFT JOIN tasks t ON t.id = hr.task_id
@@ -184,9 +186,20 @@ async def _fetch_help_requested(
         # заявке (обнаружено при разработке tsk-943, живых записей ещё не было).
         task_id = r["task_id"]
         material_id = r["material_id"]
+        outcome = r["status"]
         if task_id is not None:
             title = humanize_task_title(task_id, r["title_raw"], r["stem"], r["external_uid"])
-            summary = f"{student} — запросил помощь по заданию «{title}»"
+            if r["trigger"] == "auto_extend":
+                # tsk-1309: блокировку сняла система, человеку делать нечего —
+                # строка для осведомлённости «ученик буксует на этом задании».
+                added = f" ({r['added']} шт.)" if r["added"] else ""
+                summary = (
+                    f"{student} — исчерпал попытки по заданию «{title}», "
+                    f"новые выданы автоматически{added}"
+                )
+                outcome = "auto_extended"
+            else:
+                summary = f"{student} — запросил помощь по заданию «{title}»"
         else:
             title = r["material_title"] or f"Материал #{material_id}"
             summary = f"{student} — не понял материал «{title}»"
@@ -199,7 +212,7 @@ async def _fetch_help_requested(
             "course_id": int(r["course_id"]) if r["course_id"] is not None else None,
             "timestamp": r["event_at"],
             "summary": summary,
-            "outcome": r["status"],
+            "outcome": outcome,
         })
     return events
 

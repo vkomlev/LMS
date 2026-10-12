@@ -33,7 +33,7 @@ class ActivityFeedEvent(BaseModel):
         default=None,
         description=(
             "task_solved: correct|incorrect|pending_review; "
-            "help_requested: open|closed; material_studied: всегда null; "
+            "help_requested: open|closed|auto_extended (лимит попыток снят системой, tsk-1309); material_studied: всегда null; "
             "student_idle: ongoing (простой продолжается) | resolved (вернулся)"
         ),
     )

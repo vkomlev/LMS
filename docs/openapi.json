@@ -49558,7 +49558,7 @@
               }
             ],
             "title": "Outcome",
-            "description": "task_solved: correct|incorrect|pending_review; help_requested: open|closed; material_studied: всегда null; student_idle: ongoing (простой продолжается) | resolved (вернулся)"
+            "description": "task_solved: correct|incorrect|pending_review; help_requested: open|closed|auto_extended (лимит попыток снят системой, tsk-1309); material_studied: всегда null; student_idle: ongoing (простой продолжается) | resolved (вернулся)"
           },
           "code_review": {
             "anyOf": [

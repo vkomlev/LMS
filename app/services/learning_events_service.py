@@ -240,7 +240,7 @@ async def record_task_limit_override(
     task_id: int,
     max_attempts_override: int,
     reason: Optional[str],
-    updated_by: int,
+    updated_by: Optional[int],
     *,
     mode: str = "explicit",
     previous_max_attempts_override: Optional[int] = None,
@@ -252,6 +252,7 @@ async def record_task_limit_override(
 
     ``mode``/``previous_max_attempts_override``/``base_attempts_added`` — tsk-335,
     режим «выдать столько же, сколько было» без ручного ввода числа.
+    ``updated_by=None`` — автопродление системой (tsk-1309, mode=auto_extend).
     """
     payload: dict[str, Any] = {
         "task_id": task_id,

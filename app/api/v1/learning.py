@@ -52,6 +52,7 @@ from app.services.learning_events_service import (
     set_material_skipped,
     set_task_skipped,
 )
+from app.services.attempt_auto_extend_service import try_auto_extend
 from app.services.help_requests_service import (
     get_or_create_help_request,
     get_or_create_blocked_limit_help_request,
@@ -203,6 +204,28 @@ async def get_next_item(
         after_material_id=after_material_id,
         after_task_id=after_task_id,
     )
+    if result.type == "blocked_limit" and result.task_id is not None:
+        state = await learning_service.compute_task_state(
+            db, student_id, result.task_id, root_course_id=result.root_course_id
+        )
+        # tsk-1309: первая блокировка снимается сама — ученик сразу получает
+        # задание обратно, заявка человеку уходит только со второй.
+        if await try_auto_extend(
+            db,
+            student_id=student_id,
+            task_id=result.task_id,
+            course_id=result.course_id,
+            attempt_id=state.last_attempt_id,
+            attempts_used=state.attempts_used,
+            attempts_limit_effective=state.attempts_limit_effective,
+        ) is not None:
+            result = await _resolve_next_item_with_retry(
+                db,
+                student_id,
+                root_course_id=root_course_id,
+                after_material_id=after_material_id,
+                after_task_id=after_task_id,
+            )
     if result.type == "blocked_limit" and result.task_id is not None:
         state = await learning_service.compute_task_state(
             db, student_id, result.task_id, root_course_id=result.root_course_id
@@ -628,6 +651,20 @@ async def get_task_state(
     partial_auto_check = form_flags.partial_auto_check
     has_reference_answer = form_flags.has_reference_answer
     has_io_tests = form_flags.has_io_tests
+    # tsk-1309: первая блокировка снимается сама (см. next-item).
+    if state.state == "BLOCKED_LIMIT" and await try_auto_extend(
+        db,
+        student_id=student_id,
+        task_id=task_id,
+        course_id=task.course_id,
+        attempt_id=state.last_attempt_id,
+        attempts_used=state.attempts_used,
+        attempts_limit_effective=state.attempts_limit_effective,
+    ) is not None:
+        await db.commit()
+        state = await learning_service.compute_task_state(
+            db, student_id, task_id, root_course_id=effective_root_id
+        )
     if state.state == "BLOCKED_LIMIT":
         await get_or_create_blocked_limit_help_request(
             db,

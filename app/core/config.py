@@ -579,6 +579,12 @@ class Settings:
         # бота: напоминание раньше срока, чтобы успеть до просрочки.
         self.review_sla_hours: int = int(os.getenv("REVIEW_SLA_HOURS", "48"))
         self.review_reminder_hours: int = int(os.getenv("REVIEW_REMINDER_HOURS", "36"))
+        # tsk-1309: первая блокировка по лимиту попыток снимается автоматически
+        # (+базовый лимит), человеку уходит только вторая. Выключатель — откат
+        # без выката: false возвращает прежнее «каждая блокировка → заявка».
+        self.attempts_auto_extend_enabled: bool = os.getenv(
+            "ATTEMPTS_AUTO_EXTEND_ENABLED", "true"
+        ).lower() in ("true", "1", "yes")
         # ESCALATION_CRON_INTERVAL_MIN — интервал тика APScheduler.
         self.escalation_cron_interval_min: int = int(
             os.getenv("ESCALATION_CRON_INTERVAL_MIN", "5")
