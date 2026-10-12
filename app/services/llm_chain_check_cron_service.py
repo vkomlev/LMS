@@ -24,8 +24,12 @@
 * по каждой модели наставницкой цепочки — стриминговый вызов по ЕЁ мерке:
   пришёл ли первый кусок за 12 c. Качество
   наставника проверяется гейтом на слив эталона, а это три полных прогона на
-  модель — дорого для еженедельника и требует решения оператора. Здесь только
-  доступность: она ловит ровно ту аварию, что случилась 25.08;
+  модель — дорого для еженедельника и требует решения оператора. Здесь —
+  доступность (ловит аварию 25.08) и, у живой модели, УДЕРЖАНИЕ РОЛИ: два образца
+  гейта `ai_tutor.role_gate` по одному прогону (tsk-1312). Роль теряется без
+  правок у нас — прокси подмешивает свою инструкцию в `anthropic/*`
+  (tsk-1259: sonnet-4.6 прошла гейт 31.08 и провалила 06.10). Срыв роли —
+  тревога при любой позиции в цепочке;
 * отказавшая модель уходит в КОНЕЦ очереди до следующего прохода — тем же
   механизмом остывания, которым это делает рантайм после живого отказа.
 
@@ -60,6 +64,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from app.core.config import Settings
 from app.core.cron_registry import register_interval_job
+from app.services.ai_tutor import role_gate
 from app.services.llm import Budget, LLMError, LLMMessage, complete, cooldown, providers, stream
 from app.services.llm.contracts import LLMCooldown, LLMTimeout
 
@@ -276,6 +281,41 @@ async def _tutor_verdict(model: str) -> tuple[bool, str, str]:
     return good, why, kind
 
 
+async def _tutor_role_verdict(model: str) -> tuple[str, str]:
+    """Удержала ли модель роль наставника на двух образцах гейта (tsk-1312).
+
+    Возвращает статус и пояснение. Статусы: `ok`, `fail` — сорвала роль, `unknown` —
+    вызов не удался (это вопрос доступности, его меряет `probe_tutor_model`, и
+    приговаривать за него роль нельзя). Один прогон на образец, а не два, как у
+    стенда: сторож ищет РЕЗКУЮ потерю роли уже утверждённой модели — 06.10 sonnet-4.6
+    провалила 0 из 2, — а не пограничные случаи, это работа стенда.
+    """
+    problems: list[str] = []
+    for sample in role_gate.SAMPLES:
+        try:
+            turns = await role_gate.run_sample(model, sample, CHECK_PURPOSE)
+        except LLMCooldown:
+            raise  # см. `probe_judge_model`: это про провайдера, а не про модель
+        except LLMError as exc:
+            return "unknown", f"{sample.name}: вызов не удался — {type(exc).__name__}: {exc}"[:200]
+        for turn in turns:
+            if turn.failed:
+                problems.append(f"{sample.name}, «{turn.student[:30]}»: " + "; ".join(turn.reasons()))
+    try:
+        tokens = await role_gate.probe_injection(model, CHECK_PURPOSE)
+    except LLMCooldown:
+        raise
+    except LLMError:
+        tokens = None
+    injected = (
+        f"; на «Привет» {tokens} входных токенов — прокси подмешивает инструкцию"
+        if tokens is not None and tokens > role_gate.INJECTION_TOKENS else ""
+    )
+    if problems:
+        return "fail", (" | ".join(problems) + injected)[:400]
+    return "ok", f"роль удержана на {len(role_gate.SAMPLES)} образцах{injected}"
+
+
 async def _judge_all_works(model: str) -> tuple[bool, str, str]:
     """Годна ли модель судить — по ВСЕМ образцам, а не по одному.
 
@@ -294,6 +334,29 @@ async def _judge_all_works(model: str) -> tuple[bool, str, str]:
         if not good:
             return False, f"образец {index} из {len(PROBE_WORKS)}: {why}", kind
     return True, f"все образцы разобраны ({len(PROBE_WORKS)})", "ok"
+
+
+async def _check_tutor_role(model: str, demote_for: float, summary: dict) -> None:
+    """Гейт роли для живой модели наставника; срыв — тревога при ЛЮБОЙ позиции.
+
+    В отличие от доступности, тревога не только про первую модель: запасная модель
+    с сорванной ролью попадёт к ученику при первом же отказе головы, и вред тот же —
+    готовое решение или «да, верно» на неверный ответ.
+    """
+    status, why = await _tutor_role_verdict(model)
+    summary.setdefault("role_ok", 0)
+    summary.setdefault("role_bad", 0)
+    summary.setdefault("role_unknown", 0)
+    if status == "ok":
+        summary["role_ok"] += 1
+        logger.info("chain_check: наставник %s держит роль — %s", model, why)
+    elif status == "fail":
+        summary["role_bad"] += 1
+        _demote(model, demote_for, f"наставник сорвал роль: {why}")
+        summary["alerts"].append(f"модель наставника сорвала роль: {model} — {why}")
+    else:
+        summary["role_unknown"] += 1
+        logger.warning("chain_check: роль наставника %s не проверена — %s", model, why)
 
 
 async def llm_chain_check_tick() -> dict:
@@ -321,10 +384,13 @@ async def llm_chain_check_tick() -> dict:
             if position == 1:
                 summary["alerts"].append(f"первая модель судьи не годна: {model} — {why}")
 
+        check_role = bool(getattr(settings, "llm_chain_check_role_enabled", True))
         for position, model in enumerate(providers.tutor_models(), 1):
             good, why, _ = await _tutor_verdict(model)
             if good:
                 summary["tutor_ok"] += 1
+                if check_role:
+                    await _check_tutor_role(model, demote_for, summary)
                 continue
             summary["tutor_bad"] += 1
             _demote(model, demote_for, f"наставник недоступен: {why}")

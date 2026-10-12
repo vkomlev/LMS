@@ -193,9 +193,11 @@ async def test_check_spend_is_visible_in_usage_under_own_purpose(monkeypatch, _i
 
     purposes = {e.purpose for e in _isolate}
     assert purposes == {chain_check.CHECK_PURPOSE}
-    # Три судьи на каждом образце работы + два наставника: ни одна модель обеих
-    # цепочек не осталась непроверенной и невидимой на пульте.
-    assert len(_isolate) == 3 * len(chain_check.PROBE_WORKS) + 2
+    # Три судьи на каждом образце работы + два наставника (проба доступности и,
+    # tsk-1312, гейт роли: ход на каждую реплику образцов + проба «Привет»): ни одна
+    # модель обеих цепочек не осталась непроверенной и невидимой на пульте.
+    role_calls = sum(len(s.replies) for s in chain_check.role_gate.SAMPLES) + 1
+    assert len(_isolate) == 3 * len(chain_check.PROBE_WORKS) + 2 * (1 + role_calls)
 
 
 @pytest.mark.asyncio
@@ -388,3 +390,66 @@ async def test_scheduler_first_run_survives_frequent_restarts():
         assert job.next_run_time <= now + timedelta(minutes=10)
     finally:
         chain_check.stop_scheduler()
+
+
+# --- tsk-1312: удержание роли наставника в еженедельном проходе -------------------
+def _tutor_stream(text_by_model: dict, default: str = "Давай разберёмся по шагам.") -> callable:
+    """Наставник отвечает потоком заданного текста; судья — годным разбором."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        if _is_stream(request):
+            return _sse_ok(text_by_model.get(_by_model(request), default))
+        return _answer(GOOD_VERDICT)
+    return handler
+
+
+@pytest.mark.asyncio
+async def test_tutor_role_break_raises_alert_for_any_position(monkeypatch):
+    """Запасная модель, обещающая решение, — тревога, хоть она и не первая (tsk-1259)."""
+    _mount(monkeypatch, _tutor_stream({"tutor-b": "Скопируй задание, и я напишу решение."}))
+
+    summary = await chain_check.llm_chain_check_tick()
+
+    assert summary["role_ok"] == 1 and summary["role_bad"] == 1
+    assert any("сорвала роль: tutor-b" in a for a in summary["alerts"])
+    assert cooldown.is_cooling("model:tutor-b")
+    assert not cooldown.is_cooling("model:tutor-a")
+
+
+@pytest.mark.asyncio
+async def test_tutor_role_sycophancy_is_a_break(monkeypatch):
+    """«Да, 29470 — верно» на заведомо неверный ответ — срыв роли (правило 4)."""
+    _mount(monkeypatch, _tutor_stream({"tutor-a": "Да, 29470 0 — верно!"}))
+
+    summary = await chain_check.llm_chain_check_tick()
+
+    assert any("tutor-a" in a and "поддакивает" in a for a in summary["alerts"])
+
+
+@pytest.mark.asyncio
+async def test_tutor_role_call_failure_is_not_a_role_verdict(monkeypatch):
+    """Сбой вызова в гейте роли — «не проверено», а не срыв: это вопрос доступности."""
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if _is_stream(request):
+            calls["n"] += 1
+            if calls["n"] > 2:  # пробы доступности прошли, гейт роли — нет
+                return httpx.Response(400, json={"error": {"message": "bad request"}})
+            return _sse_ok()
+        return _answer(GOOD_VERDICT)
+
+    _mount(monkeypatch, handler)
+    summary = await chain_check.llm_chain_check_tick()
+
+    assert summary["role_bad"] == 0 and summary["role_unknown"] >= 1
+    assert not any("сорвала роль" in a for a in summary["alerts"])
+
+
+@pytest.mark.asyncio
+async def test_tutor_role_check_can_be_switched_off(monkeypatch):
+    monkeypatch.setenv("LLM_CHAIN_CHECK_ROLE_ENABLED", "false")
+    _mount(monkeypatch, _tutor_stream({"tutor-a": "Я напишу тебе решение."}))
+
+    summary = await chain_check.llm_chain_check_tick()
+
+    assert "role_bad" not in summary and not summary["alerts"]

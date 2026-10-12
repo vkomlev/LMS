@@ -366,6 +366,13 @@ class Settings:
         self.llm_chain_check_startup_delay_min: int = int(
             os.getenv("LLM_CHAIN_CHECK_STARTUP_DELAY_MIN", "5")
         )
+        # tsk-1312: в том же проходе — удержание роли наставника (два образца
+        # гейта tutor_role_gate). Прокси меняет скрытую инструкцию без нас:
+        # sonnet-4.6 прошла гейт 31.08 и провалила 06.10 (tsk-1259). Около семи
+        # потоковых вызовов на модель в неделю.
+        self.llm_chain_check_role_enabled: bool = os.getenv(
+            "LLM_CHAIN_CHECK_ROLE_ENABLED", "true"
+        ).lower() in ("true", "1", "yes")
 
         self.max_attachment_size_bytes: int = int(
             os.getenv("MAX_ATTACHMENT_SIZE_BYTES", str(10 * 1024 * 1024))  # 10 MB
