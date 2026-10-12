@@ -27,7 +27,9 @@ import re
 from dataclasses import dataclass, field
 
 from app.services.ai_tutor.answer_guard import TutorStreamGuard
+from app.services.ai_tutor.session_service import opening_mode
 from app.services.ai_tutor.prompt import (
+    build_opening_user_message,
     STUDENT_DATA_CLOSE,
     STUDENT_DATA_OPEN,
     TutorTaskView,
@@ -166,13 +168,13 @@ async def run_sample(model: str, sample: Sample, purpose: str) -> list[TurnResul
     )
     system = build_system_prompt(view, sample.mode, student_answer=sample.student_answer)
     history: list[LLMMessage] = [LLMMessage(role="system", content=system)]
-    # Первый ход наставник делает сам — воспроизводим его так же, как бой.
+    # Первый ход наставник делает сам — воспроизводим его так же, как бой:
+    # той же функцией, а не копией текста (tsk-1318: копия разошлась бы с боем
+    # при первой же правке вступления).
     history.append(LLMMessage(
         role="user",
-        content=(
-            "Начни разговор: ОДНОЙ строкой дай понять, что ошибиться здесь "
-            "нормально и вы сейчас разберётесь, и в той же реплике спроси, как "
-            "ученик рассуждал."
+        content=build_opening_user_message(
+            view, sample.student_answer, opening_mode(sample.mode)
         ),
     ))
 

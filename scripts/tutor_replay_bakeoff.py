@@ -55,6 +55,7 @@ from dotenv import load_dotenv  # noqa: E402
 load_dotenv(pathlib.Path(__file__).resolve().parents[1] / ".env")
 
 from app.services.ai_tutor.answer_guard import TutorStreamGuard  # noqa: E402
+from app.services.ai_tutor.session_service import opening_mode  # noqa: E402
 from app.services.ai_tutor.prompt import (  # noqa: E402
     STUDENT_DATA_CLOSE,
     STUDENT_DATA_OPEN,
@@ -170,7 +171,7 @@ def build_units(sess: dict, *, openings: bool) -> list[Unit]:
         units.append(Unit(
             session_id=sess["id"], turn=0, mode=sess["mode"],
             messages=base + [LLMMessage(role="user", content=build_opening_user_message(
-                view, sess.get("student_answer_snapshot")))],
+                view, sess.get("student_answer_snapshot"), opening_mode(sess["mode"])))],
             stem=view.stem, student_text="", answers=sess["task"]["answers"],
             course_title=view.course_title or "", original=msgs[0]["content"],
             student_said="\n".join(said),

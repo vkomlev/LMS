@@ -56,6 +56,17 @@ class TutorSession:
         return self.turns >= HARD_TURN_LIMIT
 
 
+def opening_mode(mode: str) -> str | None:
+    """Режим для первой реплики с учётом рубильника (tsk-1318).
+
+    Одна точка решения для боя, гейта роли и стенда: иначе гейт проверял бы
+    вступление, которого ученик не увидит, или наоборот.
+    """
+    from app.core.config import Settings
+
+    return mode if Settings().ai_tutor_concept_foothold else None
+
+
 async def guard_answers(db: AsyncSession, task_id: int) -> list[str]:
     """Эталоны задания — ТОЛЬКО для стража ответа (tsk-1259).
 
@@ -322,7 +333,9 @@ async def build_llm_messages(
     if not student_turns:
         messages.append(LLMMessage(
             role="user",
-            content=build_opening_user_message(view, session.student_answer_snapshot),
+            content=build_opening_user_message(
+                view, session.student_answer_snapshot, opening_mode(session.mode)
+            ),
         ))
     else:
         for r in student_turns:

@@ -690,3 +690,48 @@ def test_opening_does_not_ask_what_he_tried_before_first_submission():
     # требуем: «ничего не пробовал» объявлено нормальным ответом.
     assert "как ученик рассуждал" in with_answer
     assert "Не требуй отчёта" in with_answer
+
+
+def test_concept_opening_after_wrong_answer_gives_a_foothold():
+    """tsk-1318: в `concept` после неверного ответа — зацепка, а не голый вопрос.
+
+    С 16.09 в `concept` 8 из 18 учеников не ответили на «как ты рассуждал?»:
+    своего кода у них нет, смотреть не на что. Зацепка «куда посмотреть» +
+    лёгкий вопрос; тему не объясняем, ответ не называем.
+    """
+    view = TutorTaskView(task_id=1, stem="Задача про циклы", task_type="SA")
+    opening = build_opening_user_message(view, "мой ответ 42", "concept")
+    assert "ОДНУ зацепку" in opening
+    assert "не называя ответ" in opening
+    assert "НЕ спрашивай «как ты рассуждал»" in opening
+    assert "Тему целиком не объясняй" in opening
+
+
+def test_other_modes_keep_the_reasoning_question():
+    """Остальные режимы и `concept` без сданного ответа — без изменений (решение оператора 11)."""
+    view = TutorTaskView(task_id=1, stem="s", task_type="SA")
+    for mode in (None, "debug", "deepen", "thin", "mission"):
+        opening = build_opening_user_message(view, "мой ответ 42", mode)
+        assert "как ученик рассуждал" in opening, mode
+        assert "Не объясняй тему" in opening, mode
+    assert "где он застрял" in build_opening_user_message(view, None, "concept")
+
+
+def test_concept_opening_forbids_naming_the_term_and_binary_choice():
+    """tsk-1318, стенд 12.10: зацепка назвала термин-ответ («в тестировании») и
+    предлагала выбор из двух, где один — ответ. Оба случая запрещены явно."""
+    view = TutorTaskView(task_id=1, stem="s", task_type="SA")
+    flat = " ".join(build_opening_user_message(view, "ответ", "concept").split())
+    assert "НЕ называй его и однокоренные слова" in flat
+    assert "Не предлагай выбор из двух вариантов" in flat
+
+
+def test_concept_foothold_is_off_by_default(monkeypatch):
+    """tsk-1318: рубильник AI_TUTOR_CONCEPT_FOOTHOLD выключен по умолчанию —
+    бой отдаёт прежнее вступление, пока гейт роли не пройден на всей цепочке."""
+    from app.services.ai_tutor.session_service import opening_mode
+
+    monkeypatch.delenv("AI_TUTOR_CONCEPT_FOOTHOLD", raising=False)
+    assert opening_mode("concept") is None
+    monkeypatch.setenv("AI_TUTOR_CONCEPT_FOOTHOLD", "true")
+    assert opening_mode("concept") == "concept"
