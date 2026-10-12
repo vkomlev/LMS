@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 from fastapi import status
 from sqlalchemy import text
@@ -233,3 +234,105 @@ async def assert_course_not_locked(
             "required_course_uid": lock.course_uid,
         },
     )
+
+
+# ─── tsk-1322: действующие замки для преподавателя и администратора ─────────
+
+# Кандидаты для общего списка: ученики, у которых закрывающий курс лежит в одном
+# из их деревьев. Остальным замок не грозит (правило `locked_roots`: зависимость
+# на недоступный ученику курс не закрывает) — их не обсчитываем вовсе.
+_CANDIDATES_SQL = """
+WITH RECURSIVE cand AS (
+    SELECT DISTINCT user_id FROM user_courses
+     WHERE is_active AND course_id IN (SELECT course_id FROM course_dependencies)
+), tree AS (
+    SELECT uc.user_id, uc.course_id AS node, ARRAY[uc.course_id] AS path
+      FROM user_courses uc JOIN cand USING (user_id)
+     WHERE uc.is_active
+    UNION ALL
+    SELECT t.user_id, cp.course_id, t.path || cp.course_id
+      FROM tree t JOIN course_parents cp ON cp.parent_course_id = t.node
+     WHERE NOT (cp.course_id = ANY(t.path))
+)
+SELECT DISTINCT uc.user_id
+  FROM user_courses uc
+  JOIN course_dependencies cd ON cd.course_id = uc.course_id
+  JOIN tree t ON t.user_id = uc.user_id AND t.node = cd.required_course_id
+ WHERE uc.is_active
+"""
+
+
+async def describe_locks(db: AsyncSession, student_id: int) -> list[dict]:
+    """Действующие замки ученика: что закрыто, чем и с какой даты.
+
+    Дата — когда замок мог начаться: позднейшая из двух записей ученика — на
+    закрытый корень и на корень, через который ему доступен закрывающий курс.
+    Своей даты у строки `course_dependencies` нет, поэтому зависимость,
+    добавленная позже обеих записей, покажется старше, чем есть. Для вопроса
+    «не висит ли замок месяцами» это приемлемо: ошибка только в сторону «дольше».
+
+    Персонал не закрывается (`assert_course_not_locked`) — для него пусто.
+    """
+    if await _is_staff(db, student_id):
+        return []
+    locks = await locked_roots(db, student_id)
+    if not locks:
+        return []
+    trees = await _cached_trees(db, student_id)
+    rows = (
+        await db.execute(
+            text(
+                "SELECT uc.course_id, uc.added_at, c.title FROM user_courses uc "
+                "JOIN courses c ON c.id = uc.course_id "
+                "WHERE uc.user_id = :sid AND uc.is_active"
+            ),
+            {"sid": student_id},
+        )
+    ).all()
+    added = {int(r[0]): r[1] for r in rows}
+    titles = {int(r[0]): r[2] for r in rows}
+    now = datetime.now(timezone.utc)
+    result: list[dict] = []
+    for root, lock in sorted(locks.items()):
+        via = [
+            added[r] for r, nodes in trees.items()
+            if lock.required_course_id in nodes and added.get(r) is not None
+        ]
+        dates = [d for d in (added.get(root), min(via) if via else None) if d is not None]
+        since = max(dates) if dates else None
+        result.append({
+            "student_id": student_id,
+            "course_id": root,
+            "course_title": titles.get(root) or "",
+            "required_course_id": lock.required_course_id,
+            "required_course_title": lock.title,
+            "since": since,
+            "days": (now - since).days if since is not None else None,
+        })
+    return result
+
+
+async def list_all_locks(db: AsyncSession) -> list[dict]:
+    """Все действующие замки школы — для администратора.
+
+    Все ученики считаются в одной сессии: кеш `_cache` ключуется по ученику и
+    не смешивает их. На проде 12.10: 105 учеников с зависимыми корнями — около
+    5 секунд, поэтому это отдельная страница админки, а не поле общего списка.
+    """
+    ids = [int(r[0]) for r in (await db.execute(text(_CANDIDATES_SQL))).all()]
+    result: list[dict] = []
+    for sid in sorted(ids):
+        result.extend(await describe_locks(db, sid))
+    if not result:
+        return result
+    names = dict(
+        (
+            await db.execute(
+                text("SELECT id, full_name FROM users WHERE id = ANY(:ids)"),
+                {"ids": sorted({r["student_id"] for r in result})},
+            )
+        ).all()
+    )
+    for r in result:
+        r["student_name"] = names.get(r["student_id"]) or f"#{r['student_id']}"
+    return result

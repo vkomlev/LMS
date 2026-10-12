@@ -25205,6 +25205,206 @@
         }
       }
     },
+    "/api/v1/teacher/students/{student_id}/dependency-locks": {
+      "get": {
+        "tags": [
+          "dependency_locks"
+        ],
+        "summary": "Действующие замки курсов ученика (для преподавателя)",
+        "description": "Замки ученика по курсам, доступным текущему преподавателю.\n\nЗамок по чужому курсу не показывается, а не даёт 403: карточка общая, и\nпустой блок честнее, чем ошибка на всей странице.",
+        "operationId": "get_student_dependency_locks_api_v1_teacher_students__student_id__dependency_locks_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "student_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "ID ученика",
+              "title": "Student Id"
+            },
+            "description": "ID ученика"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DependencyLockRead"
+                  },
+                  "title": "Response Get Student Dependency Locks Api V1 Teacher Students  Student Id  Dependency Locks Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/dependency-locks": {
+      "get": {
+        "tags": [
+          "dependency_locks"
+        ],
+        "summary": "Все действующие замки курсов (для администратора)",
+        "description": "Все замки школы: кто, какой курс закрыт, чем и с какой даты.",
+        "operationId": "list_dependency_locks_api_v1_admin_dependency_locks_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AdminDependencyLockRead"
+                  },
+                  "title": "Response List Dependency Locks Api V1 Admin Dependency Locks Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/teacher/students/{student_id}/tasks/search": {
       "get": {
         "tags": [
@@ -49743,6 +49943,72 @@
         "title": "AdminCreateStudentRequest",
         "description": "tsk-931: свободная заметка оператора — не ФИО, уходит только в audit."
       },
+      "AdminDependencyLockRead": {
+        "properties": {
+          "student_id": {
+            "type": "integer",
+            "title": "Student Id"
+          },
+          "course_id": {
+            "type": "integer",
+            "title": "Course Id",
+            "description": "Закрытый корневой курс ученика"
+          },
+          "course_title": {
+            "type": "string",
+            "title": "Course Title"
+          },
+          "required_course_id": {
+            "type": "integer",
+            "title": "Required Course Id",
+            "description": "Курс, который надо пройти раньше"
+          },
+          "required_course_title": {
+            "type": "string",
+            "title": "Required Course Title"
+          },
+          "since": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Since",
+            "description": "С какой даты замок мог действовать: позднейшая из записей ученика на закрытый курс и на закрывающий. Своей даты у зависимости нет — оценка сверху"
+          },
+          "days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Days",
+            "description": "Сколько полных дней висит"
+          },
+          "student_name": {
+            "type": "string",
+            "title": "Student Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "student_id",
+          "course_id",
+          "course_title",
+          "required_course_id",
+          "required_course_title",
+          "student_name"
+        ],
+        "title": "AdminDependencyLockRead",
+        "description": "Замок в общем списке администратора — с именем ученика."
+      },
       "AdminLoginLinkIssuedRead": {
         "properties": {
           "student_id": {
@@ -55773,6 +56039,67 @@
         ],
         "title": "CuratorWeeklyReportResponse",
         "description": "Недельный отчёт по активности кураторов."
+      },
+      "DependencyLockRead": {
+        "properties": {
+          "student_id": {
+            "type": "integer",
+            "title": "Student Id"
+          },
+          "course_id": {
+            "type": "integer",
+            "title": "Course Id",
+            "description": "Закрытый корневой курс ученика"
+          },
+          "course_title": {
+            "type": "string",
+            "title": "Course Title"
+          },
+          "required_course_id": {
+            "type": "integer",
+            "title": "Required Course Id",
+            "description": "Курс, который надо пройти раньше"
+          },
+          "required_course_title": {
+            "type": "string",
+            "title": "Required Course Title"
+          },
+          "since": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Since",
+            "description": "С какой даты замок мог действовать: позднейшая из записей ученика на закрытый курс и на закрывающий. Своей даты у зависимости нет — оценка сверху"
+          },
+          "days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Days",
+            "description": "Сколько полных дней висит"
+          }
+        },
+        "type": "object",
+        "required": [
+          "student_id",
+          "course_id",
+          "course_title",
+          "required_course_id",
+          "required_course_title"
+        ],
+        "title": "DependencyLockRead",
+        "description": "Один замок: курс ученика закрыт, пока не пройден другой курс."
       },
       "DerivePreviewResponse": {
         "properties": {

@@ -387,6 +387,8 @@ app.include_router(homework_router, prefix=API_PREFIX)
 # История выполнения задания учеником для преподавателя (tsk-349)
 from app.api.v1.teacher_task_history import router as teacher_task_history_router
 app.include_router(teacher_task_history_router, prefix=API_PREFIX)
+from app.api.v1.dependency_locks import router as dependency_locks_router
+app.include_router(dependency_locks_router, prefix=API_PREFIX)
 
 # Поиск задания в кабинете преподавателя по номеру/тексту (tsk-353)
 from app.api.v1.teacher_task_search import router as teacher_task_search_router
