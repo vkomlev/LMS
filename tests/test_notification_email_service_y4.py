@@ -15,6 +15,9 @@ class _FakeSettings:
         self.resend_api_key = api_key
         self.smtp_from = "noreply@victor-komlev.ru"
         self.public_base_url = base
+        self.email_backend = "resend"
+        self.smtp_host = "127.0.0.1"
+        self.smtp_port = 25
 
 
 @pytest.mark.asyncio
@@ -95,3 +98,46 @@ def test_render_history_url_strips_trailing_slash():
     assert url == "http://localhost:3000/me/history"
     url2 = notification_email_service._build_history_url("https://learn.victor-komlev.ru")
     assert url2 == "https://learn.victor-komlev.ru/me/history"
+
+
+@pytest.mark.asyncio
+async def test_smtp_backend_sends_via_smtp(monkeypatch):
+    """tsk-1340: EMAIL_BACKEND=smtp → письмо уходит через SMTP, Resend не зовётся."""
+    from app.services import email_transport
+
+    settings = _FakeSettings(api_key="")
+    settings.email_backend = "smtp"
+    sent: list = []
+    monkeypatch.setattr(email_transport, "_smtp_send_sync", lambda s, msg: sent.append(msg))
+    ok = await notification_email_service.send_sa_com_graded(
+        recipient_email="t@example.com",
+        task_title="Задача 1",
+        score=7, max_score=10,
+        comment=None,
+        settings=settings,
+    )
+    assert ok is True
+    assert sent and sent[0]["To"] == "t@example.com"
+    assert sent[0]["Message-ID"] and sent[0]["Date"]
+
+
+@pytest.mark.asyncio
+async def test_smtp_failure_returns_false(monkeypatch):
+    """tsk-1340: SMTP недоступен → False, не raises."""
+    from app.services import email_transport
+
+    settings = _FakeSettings(api_key="")
+    settings.email_backend = "smtp"
+
+    def _boom(s, msg):
+        raise ConnectionRefusedError("нет Postfix")
+
+    monkeypatch.setattr(email_transport, "_smtp_send_sync", _boom)
+    ok = await notification_email_service.send_sa_com_graded(
+        recipient_email="t@example.com",
+        task_title=None,
+        score=1, max_score=2,
+        comment=None,
+        settings=settings,
+    )
+    assert ok is False

@@ -10,7 +10,6 @@ import logging
 import os
 from datetime import datetime, timedelta, timezone
 
-import httpx
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,6 +18,7 @@ from app.core.config import Settings
 from app.models.magic_link import MagicLink
 from app.models.users import Users
 from app.services.audit_service import log_event
+from app.services.email_transport import email_configured, send_html_email
 from app.services.auth import identity_link_service
 from app.services.auth.exceptions import IdentityConflictError
 
@@ -27,7 +27,6 @@ logger = logging.getLogger(__name__)
 _TOKEN_BYTES = 32
 _TTL_MINUTES = 15
 ADMIN_ISSUED_TTL_HOURS = 24  # tsk-930: публичная — endpoint ссылается на неё в audit-деталях
-_RESEND_API_URL = "https://api.resend.com/emails"
 
 
 def _now() -> datetime:
@@ -110,7 +109,7 @@ async def send_magic_link_email(
     settings: Settings,
     link_mode: bool = False,
 ) -> None:
-    """Отправить magic-link через Resend API.
+    """Отправить magic-link транспортом из EMAIL_BACKEND (smtp/resend).
 
     `link_mode=True` (Phase Y-3): добавляет query-параметр `link_mode=1` в callback URL —
     SPW использует его, чтобы переключить страницу /auth/magic-link/consume в режим
@@ -119,36 +118,22 @@ async def send_magic_link_email(
     suffix = "&link_mode=1" if link_mode else ""
     link_url = f"{settings.public_base_url}/auth/magic-link/consume?token={token}{suffix}"
 
-    if not settings.resend_api_key:
-        # Dev-fallback: Resend не настроен — логируем готовую ссылку,
+    if not email_configured(settings):
+        # Dev-fallback: транспорт не настроен — логируем готовую ссылку,
         # оператор видит её в LMS stdout и переходит вручную.
-        # В prod присутствие RESEND_API_KEY обязательно (см. preflight ТЗ Y-1 §15).
         logger.warning(
-            "RESEND_API_KEY не задан — письмо не отправлено. DEV magic-link для %s: %s",
+            "Почтовый транспорт не настроен — письмо не отправлено. DEV magic-link для %s: %s",
             email, link_url,
         )
         return
 
-    async with httpx.AsyncClient(timeout=10) as client:
-        resp = await client.post(
-            _RESEND_API_URL,
-            headers={
-                "Authorization": f"Bearer {settings.resend_api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "from": settings.smtp_from,
-                "to": [email],
-                "subject": "Вход на платформу",
-                "html": (
-                    f"<p>Для входа перейдите по ссылке (действительна {_TTL_MINUTES} мин):</p>"
-                    f'<p><a href="{link_url}">{link_url}</a></p>'
-                ),
-            },
-        )
-    if resp.status_code >= 400:
-        logger.error("Resend API error %s: %s", resp.status_code, resp.text)
-        raise RuntimeError("Ошибка отправки email")
+    await send_html_email(
+        settings,
+        email,
+        "Вход на платформу",
+        f"<p>Для входа перейдите по ссылке (действительна {_TTL_MINUTES} мин):</p>"
+        f'<p><a href="{link_url}">{link_url}</a></p>',
+    )
 
 
 async def consume_magic_link(

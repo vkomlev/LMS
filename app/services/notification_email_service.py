@@ -1,6 +1,6 @@
 """NotificationEmailService — best-effort email-уведомления ученикам (Phase Y-4).
 
-Wrapper над Resend API в стиле magic_link_service.send_magic_link_email.
+Письма-уведомления поверх app.services.email_transport в стиле magic_link_service.send_magic_link_email.
 Не raises — на любую ошибку транспорта возвращает False; caller записывает
 audit_event 'email.failed' и продолжает.
 
@@ -13,13 +13,16 @@ import logging
 from datetime import date
 from typing import Optional
 
-import httpx
 
 from app.core.config import Settings
+from app.services.email_transport import (
+    EmailSendError,
+    email_configured,
+    send_html_email,
+)
 
 logger = logging.getLogger(__name__)
 
-_RESEND_API_URL = "https://api.resend.com/emails"
 
 
 def _build_history_url(public_base_url: str) -> str:
@@ -71,12 +74,12 @@ async def send_sa_com_graded(
 ) -> bool:
     """Отправить email ученику об оценке SA_COM.
 
-    Возвращает True при success (Resend 2xx), False при любой ошибке транспорта.
+    Возвращает True при success (транспорт принял письмо), False при любой ошибке транспорта.
     Никогда не raises — ошибка не должна валить grade-операцию.
     """
-    if not settings.resend_api_key:
+    if not email_configured(settings):
         logger.warning(
-            "RESEND_API_KEY не задан — письмо SA_COM graded не отправлено для %s",
+            "Почтовый транспорт не настроен — письмо SA_COM graded не отправлено для %s",
             recipient_email,
         )
         return False
@@ -92,32 +95,10 @@ async def send_sa_com_graded(
     )
 
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.post(
-                _RESEND_API_URL,
-                headers={
-                    "Authorization": f"Bearer {settings.resend_api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "from": settings.smtp_from,
-                    "to": [recipient_email],
-                    "subject": subject,
-                    "html": html,
-                },
-            )
-        if resp.status_code >= 400:
-            logger.error(
-                "Resend API error %s при отправке SA_COM graded для %s: %s",
-                resp.status_code, recipient_email, resp.text[:300],
-            )
-            return False
+        await send_html_email(settings, recipient_email, subject, html)
         return True
-    except (httpx.HTTPError, httpx.TimeoutException) as e:
-        logger.exception(
-            "Исключение при отправке SA_COM graded email для %s: %s",
-            recipient_email, e,
-        )
+    except EmailSendError:
+        logger.error("Не удалось отправить SA_COM graded для %s", recipient_email)
         return False
 
 
@@ -166,9 +147,9 @@ async def send_payment_overdue(
     `False` вместо исключения: неудачная отправка одному человеку не должна
     обрывать рассылку остальным.
     """
-    if not settings.resend_api_key:
+    if not email_configured(settings):
         logger.warning(
-            "RESEND_API_KEY не задан — напоминание об оплате не отправлено для %s",
+            "Почтовый транспорт не настроен — напоминание об оплате не отправлено для %s",
             recipient_email,
         )
         return False
@@ -181,28 +162,10 @@ async def send_payment_overdue(
         payments_url=payments_url,
     )
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.post(
-                _RESEND_API_URL,
-                headers={
-                    "Authorization": f"Bearer {settings.resend_api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "from": settings.smtp_from,
-                    "to": [recipient_email],
-                    "subject": f"Оплата обучения за {period:%m.%Y}",
-                    "html": html,
-                },
-            )
-        if resp.status_code >= 400:
-            logger.error(
-                "Resend API error %s при отправке напоминания об оплате: %s",
-                resp.status_code,
-                resp.text[:300],
-            )
-            return False
+        await send_html_email(
+            settings, recipient_email, f"Оплата обучения за {period:%m.%Y}", html
+        )
         return True
-    except (httpx.HTTPError, httpx.TimeoutException) as e:
-        logger.exception("Исключение при отправке напоминания об оплате: %s", e)
+    except EmailSendError:
+        logger.error("Не удалось отправить напоминание об оплате")
         return False

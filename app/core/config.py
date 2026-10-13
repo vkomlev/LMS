@@ -496,6 +496,10 @@ class Settings:
         # SPW auth — Phase Y-1
         self.resend_api_key: str = os.getenv("RESEND_API_KEY", "")
         self.smtp_from: str = os.getenv("SMTP_FROM", "noreply@victor-komlev.ru")
+        # tsk-1340: транспорт писем — smtp (локальный Postfix) | resend (откат)
+        self.email_backend: str = os.getenv("EMAIL_BACKEND", "resend").strip().lower()
+        self.smtp_host: str = os.getenv("SMTP_HOST", "127.0.0.1")
+        self.smtp_port: int = int(os.getenv("SMTP_PORT", "25"))
         # Базовый URL SPW (для встраивания в magic-link письма).
         # Dev: http://localhost:3000; prod: https://learn.victor-komlev.ru
         self.public_base_url: str = os.getenv("PUBLIC_BASE_URL", "http://localhost:3000")
