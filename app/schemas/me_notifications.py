@@ -27,6 +27,20 @@ class UnreadCountResponse(BaseModel):
     last_check_at: datetime = Field(..., description="Серверное now() — для дебага клиента")
 
 
+class MarkAllReadRequest(BaseModel):
+    """Тело POST /me/notifications/read-all (tsk-1338)."""
+
+    up_to: datetime | None = Field(
+        None, description="Отметить только записи не новее этого времени (created_at)"
+    )
+
+
+class MarkAllReadResponse(BaseModel):
+    """Ответ POST /me/notifications/read-all."""
+
+    marked: int = Field(..., ge=0, description="Сколько записей помечено")
+
+
 class MarkReadResponse(BaseModel):
     """Ответ POST /me/notifications/{id}/read."""
 

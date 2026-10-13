@@ -23,6 +23,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_async_db, require_authenticated
 from app.auth.current_user import CurrentUser
 from app.schemas.me_notifications import (
+    MarkAllReadRequest,
+    MarkAllReadResponse,
     MarkReadResponse,
     NotificationRead,
     UnreadCountResponse,
@@ -80,6 +82,23 @@ async def list_notifications(
         )
         for item in items
     ]
+
+
+@router.post(
+    "/read-all",
+    response_model=MarkAllReadResponse,
+    summary="Пометить прочитанными все уведомления (tsk-1338)",
+)
+async def mark_all_notifications_read(
+    body: MarkAllReadRequest,
+    current_user: CurrentUser = Depends(require_authenticated),
+    db: AsyncSession = Depends(get_async_db),
+) -> MarkAllReadResponse:
+    """Сброс счётчика при просмотре ленты: отмечает и то, что ниже первой страницы."""
+    marked = await inbox_service.mark_all_read(db, current_user.id, body.up_to)
+    await db.commit()
+    logger.info("read-all user=%s marked=%s", current_user.id, marked)
+    return MarkAllReadResponse(marked=marked)
 
 
 @router.post(

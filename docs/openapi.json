@@ -29988,6 +29988,106 @@
         }
       }
     },
+    "/api/v1/me/notifications/read-all": {
+      "post": {
+        "tags": [
+          "me_notifications"
+        ],
+        "summary": "Пометить прочитанными все уведомления (tsk-1338)",
+        "description": "Сброс счётчика при просмотре ленты: отмечает и то, что ниже первой страницы.",
+        "operationId": "mark_all_notifications_read_api_v1_me_notifications_read_all_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MarkAllReadRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarkAllReadResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/me/notifications/{notification_id}/read": {
       "post": {
         "tags": [
@@ -64080,6 +64180,42 @@
         "type": "object",
         "title": "ManualPricingState",
         "description": "Ручные деньги ученика — то, что смена тарифа затрагивает (tsk-634).\n\nЭкран смены тарифа обязан это показать ДО перевода: ручная цена ставится\nтам, где есть личная договорённость (скидка, особые условия), и её тихое\nизменение выглядит нормальным пересчётом, а не ошибкой.\n\nДве сущности ведут себя по-разному, и сводить их в одну строку нельзя:\n\n* `monthly_amounts` — сумма конкретного месяца. При переводе она **едет\n  следом** на строку нового тарифа; со следующего месяца считается заново;\n* `group_prices` — цена ученика в группе. При переводе она **перестаёт\n  действовать** (`applies_now = false`), но из базы не исчезает."
+      },
+      "MarkAllReadRequest": {
+        "properties": {
+          "up_to": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Up To",
+            "description": "Отметить только записи не новее этого времени (created_at)"
+          }
+        },
+        "type": "object",
+        "title": "MarkAllReadRequest",
+        "description": "Тело POST /me/notifications/read-all (tsk-1338)."
+      },
+      "MarkAllReadResponse": {
+        "properties": {
+          "marked": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Marked",
+            "description": "Сколько записей помечено"
+          }
+        },
+        "type": "object",
+        "required": [
+          "marked"
+        ],
+        "title": "MarkAllReadResponse",
+        "description": "Ответ POST /me/notifications/read-all."
       },
       "MarkReadBySenderRequest": {
         "properties": {

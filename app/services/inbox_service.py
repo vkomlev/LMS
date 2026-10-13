@@ -134,6 +134,32 @@ async def mark_read(
     return row[0]
 
 
+async def mark_all_read(
+    db: AsyncSession,
+    user_id: int,
+    up_to: Optional[datetime] = None,
+) -> int:
+    """Пометить прочитанными все непрочитанные записи пользователя (tsk-1338).
+
+    `up_to` — граница по modified_at включительно: экран отмечает только то,
+    что успел загрузить, чтобы не «съесть» событие, пришедшее после загрузки.
+    Возвращает число помеченных строк.
+    """
+    clause = "AND modified_at <= :up_to" if up_to is not None else ""
+    params: dict[str, Any] = {"uid": user_id}
+    if up_to is not None:
+        params["up_to"] = up_to
+    result = await db.execute(
+        text(
+            "UPDATE notifications SET read_at = now() "
+            "WHERE user_id = :uid AND read_at IS NULL "
+            + clause  # nosec B608 — clause из 2 литералов, не user-input
+        ),
+        params,
+    )
+    return int(result.rowcount or 0)
+
+
 async def get_status(
     db: AsyncSession,
     notification_id: int,
