@@ -263,7 +263,9 @@ async def _judge(o: Outcome, unit: Unit, judge_model: str) -> None:
 async def run_unit(model: str, unit: Unit) -> Outcome:
     o = Outcome(session_id=unit.session_id, turn=unit.turn, model=model,
                 student_text=unit.student_text)
-    guard = TutorStreamGuard(mode=unit.mode, stem=unit.stem)
+    # tsk-1259: без эталона страж слеп к расчёту на производных числах
+    # («45 + 7 − 3 = 49», сессия 104) — боевой путь эталон передаёт, стенд обязан тоже.
+    guard = TutorStreamGuard(mode=unit.mode, stem=unit.stem, answers=unit.answers)
     raw: list[str] = []
     shown = ""
     t0 = time.monotonic()
