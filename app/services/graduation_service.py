@@ -44,6 +44,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services import charge_service, charge_writeoff_service, inbox_service, payment_service
+from app.services import notification_names
 from app.utils.exceptions import DomainError
 
 logger = logging.getLogger(__name__)
@@ -510,7 +511,7 @@ async def _notify_marketers(
         )
         return []
 
-    who = full_name or f"#{student_id}"
+    who = full_name or await notification_names.user_display_name(db, student_id)  # tsk-1338: без номера — email или «Ученик»
     months = ", ".join(f"{line.period:%m.%Y}" for line in debt.lines if line.due_minor)
     content = (
         f"{who} переведён на тариф «Выпускник», но за ним остался долг "

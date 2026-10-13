@@ -39,7 +39,7 @@ from app.core import settings_store
 from app.core.config import Settings
 from app.core.cron_registry import register_interval_job
 from app.db.session import async_session_factory
-from app.services import homework_service, inbox_service
+from app.services import homework_service, inbox_service, notification_names
 
 logger = logging.getLogger("app.lesson_calendar")
 
@@ -207,14 +207,19 @@ async def _mark_no_show(db: AsyncSession, *, threshold_minutes: int) -> int:
             {"oid": int(occurrence_id)},
         )
         occurrence_teacher_ids = {row[0] for row in teacher_ids_res.fetchall()} or {int(teacher_id)}
+        # tsk-1338: преподавателю — имя ученика, а не безликое «Ученик».
+        student_name = await notification_names.user_display_name(db, int(student_id))
         for occ_teacher_id in occurrence_teacher_ids:
             await inbox_service.create_for_user(
                 db,
                 user_id=int(occ_teacher_id),
                 kind="lesson_missed",
                 title="Ученик не пришёл",
-                content=f"Ученик не подтвердил явку на занятие {_format_lesson_time(scheduled_at)}.",
-                payload={**payload, "role": "teacher"},
+                content=(
+                    f"{student_name} не подтвердил(а) явку на занятие "
+                    f"{_format_lesson_time(scheduled_at)}."
+                ),
+                payload={**payload, "role": "teacher", "student_name": student_name},
                 created_by=None,
             )
         marked += 1

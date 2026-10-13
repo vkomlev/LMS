@@ -50,6 +50,7 @@ from app.schemas.schedule_preference import (
 )
 from app.services import audit_service, inbox_service, lesson_calendar_service
 from app.services import schedule_group_service, schedule_preference_service
+from app.services import notification_names
 from app.services.schedule_plan_service import in_grid
 from app.utils.exceptions import DomainError
 
@@ -718,7 +719,7 @@ async def _notify_methodists(
 
     preferred = [_hour_label(h.weekday, h.start_time) for h in hours if h.kind == "preferred"]
     possible = [_hour_label(h.weekday, h.start_time) for h in hours if h.kind == "possible"]
-    who = student_name or f"ученик #{student_id}"
+    who = student_name or await notification_names.user_display_name(db, student_id)  # tsk-1338: без номера — email или «Ученик»
 
     lines = [f"{who} не нашёл подходящего времени в расписании."]
     if comment:

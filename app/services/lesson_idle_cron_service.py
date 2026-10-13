@@ -80,6 +80,7 @@ from app.core.config import Settings
 from app.core.cron_registry import register_interval_job
 from app.db.session import async_session_factory
 from app.services import inbox_service
+from app.services import notification_names
 # tsk-656: правило «это реальная сдача ученика» — из одного места.
 from app.services.learning_gaps_service import (
     real_student_material_filter,
@@ -388,7 +389,9 @@ async def _notify_teachers(
             return
         teacher_ids = {int(fallback)}
 
-    student = p.student_name or f"Ученик #{p.student_id}"
+    student = p.student_name or await notification_names.user_display_name(
+        db, p.student_id
+    )  # tsk-1338: без номера — email или «Ученик»
     if kind == "away":
         title = "Ученик вышел из кабинета"
         content = (

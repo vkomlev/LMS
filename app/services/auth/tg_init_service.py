@@ -147,5 +147,8 @@ async def get_or_create_user_by_tg(
             "full_name_source": fn_source,
         },
     )
+    # tsk-1338: маркетологам — уведомление о новой регистрации (сбой не ломает вход).
+    from app.services.registration_notify_service import notify_marketers_new_user
+    await notify_marketers_new_user(db, new_user.id, "tg")
     logger.info("user.registered.via_tg_init user_id=%d", new_user.id)
     return new_user, True

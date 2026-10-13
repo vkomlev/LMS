@@ -33,6 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import Settings
 from app.schemas.task_content import QUIZ_TASK_TYPES
 from app.services import inbox_service
+from app.services import notification_names
 from app.services.help_requests_service import resolve_assigned_teacher
 from app.services.learning_engine_service import DEFAULT_MAX_ATTEMPTS
 from app.services.learning_events_service import record_task_limit_override
@@ -197,7 +198,7 @@ async def _notify_teacher(
             text("SELECT full_name FROM users WHERE id = :id"), {"id": student_id}
         )
     ).scalar()
-    student = name or f"Ученик #{student_id}"
+    student = name or await notification_names.user_display_name(db, student_id)  # tsk-1338: без номера — email или «Ученик»
     await inbox_service.create_for_user(
         db,
         user_id=teacher_id,

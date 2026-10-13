@@ -30,6 +30,7 @@ from app.services.learning_events_service import (
     HELP_DEDUPE_MINUTES,
 )
 from app.services import inbox_service
+from app.services import notification_names
 from app.services import methodist_notify_service
 from app.services.messages_service import MessagesService
 from app.services.student_teacher_links_service import StudentTeacherLinksService
@@ -137,6 +138,35 @@ def _item_title_display(
     return "Заявка"
 
 
+async def _teacher_notice_head(
+    db: AsyncSession, request_id: int
+) -> Tuple[str, dict[str, Any]]:
+    """tsk-1338: шапка уведомления преподавателю и поля для payload.
+
+    Возвращает строку «Имя · «Задание»\n» и словарь `student_name` +
+    `task_title` (или `material_title` для заявки по материалу), чтобы
+    кабинет мог показать имя и построить ссылку без голых номеров.
+    """
+    row = (
+        await db.execute(
+            text("SELECT student_id, task_id, material_id FROM help_requests WHERE id = :id"),
+            {"id": int(request_id)},
+        )
+    ).fetchone()
+    student_id = row[0] if row else None
+    task_id = row[1] if row else None
+    material_id = row[2] if row else None
+    student_name = await notification_names.user_display_name(db, student_id)
+    extra: dict[str, Any] = {"student_name": student_name}
+    if material_id is not None and task_id is None:
+        item_title = await notification_names.material_title(db, material_id)
+        extra["material_title"] = item_title
+    else:
+        item_title = await notification_names.task_title(db, task_id)
+        extra["task_title"] = item_title
+    return (f"{student_name} · «{item_title}»\n", extra)
+
+
 async def resolve_assigned_teacher(
     db: AsyncSession,
     student_id: int,
@@ -232,13 +262,17 @@ async def get_or_create_help_request(
         # pending-count (число в бейдже/боте) — негде было прочитать, что
         # именно случилось, и перейти к заявке одним кликом. Inbox-запись
         # даёт реальную ленту (как у ученика) + CTA-переход.
+        # tsk-1338: имя ученика и название задания в начале текста.
+        head, extra = await _teacher_notice_head(db, int(new_id))
         await inbox_service.create_for_user(
             db,
             user_id=assigned,
             kind="help_request_opened",
             title="Новый вопрос от ученика",
-            content=msg_truncated or "Ученик запросил помощь по заданию.",
-            payload={"request_id": int(new_id), "task_id": task_id, "student_id": student_id},
+            content=head + (msg_truncated or "Ученик запросил помощь по заданию."),
+            payload={
+                "request_id": int(new_id), "task_id": task_id, "student_id": student_id, **extra,
+            },
             created_by=student_id,
         )
     return (int(new_id), True)
@@ -324,13 +358,18 @@ async def get_or_create_material_help_request(
     )
     new_id = r.scalar()
     if assigned is not None:
+        # tsk-1338: имя ученика и название материала в начале текста.
+        head, extra = await _teacher_notice_head(db, int(new_id))
         await inbox_service.create_for_user(
             db,
             user_id=assigned,
             kind="help_request_opened",
             title="Вопрос по материалу",
-            content=msg_truncated,
-            payload={"request_id": int(new_id), "material_id": material_id, "student_id": student_id},
+            content=head + msg_truncated,
+            payload={
+                "request_id": int(new_id), "material_id": material_id,
+                "student_id": student_id, **extra,
+            },
             created_by=student_id,
         )
     return (int(new_id), True)
@@ -430,13 +469,17 @@ async def get_or_create_blocked_limit_help_request(
         db, student_id, new_id, task_id, attempts_used, attempts_limit_effective, course_id
     )
     if assigned is not None:
+        # tsk-1338: имя ученика и название задания в начале текста.
+        head, extra = await _teacher_notice_head(db, int(new_id))
         await inbox_service.create_for_user(
             db,
             user_id=assigned,
             kind="help_request_opened",
             title="Ученик заблокирован лимитом попыток",
-            content=f"Использовано попыток: {attempts_used}/{attempts_limit_effective}.",
-            payload={"request_id": int(new_id), "task_id": task_id, "student_id": student_id},
+            content=head + f"Использовано попыток: {attempts_used}/{attempts_limit_effective}.",
+            payload={
+                "request_id": int(new_id), "task_id": task_id, "student_id": student_id, **extra,
+            },
             created_by=None,
         )
     return (int(new_id), True, False)
@@ -1626,13 +1669,16 @@ async def reopen_help_request(
     )
 
     if blamed_teacher_id is not None:
+        # tsk-1338: имя ученика и название задания в начале текста.
+        head, extra = await _teacher_notice_head(db, request_id)
         await inbox_service.create_for_user(
             db,
             user_id=blamed_teacher_id,
             kind="help_request_reopened",
             title="Ученик вернул заявку: ответ не помог",
-            content="Ученик отметил, что после ответа всё равно не разобрался.",
+            content=head + "Ученик отметил, что после ответа всё равно не разобрался.",
             payload={
+                **extra,
                 "request_id": request_id,
                 "task_id": task_id,
                 "student_id": student_id,
@@ -1703,13 +1749,16 @@ async def request_individual_review(
         {"id": request_id},
     )
     if assigned is not None:
+        # tsk-1338: имя ученика и название задания в начале текста.
+        head, extra = await _teacher_notice_head(db, request_id)
         await inbox_service.create_for_user(
             db,
             user_id=assigned,
             kind="individual_review_requested",
             title="Ученик просит индивидуальный разбор",
-            content="Текстовый ответ не помог — ученик просит разбор в личной встрече.",
+            content=head + "Текстовый ответ не помог — ученик просит разбор в личной встрече.",
             payload={
+                **extra,
                 "request_id": request_id,
                 "task_id": task_id,
                 "student_id": student_id,

@@ -275,5 +275,8 @@ async def get_or_create_user_by_email(
         user_agent=user_agent,
         details={"identity_kind": "email", "value_masked": mask_email(email)},
     )
+    # tsk-1338: маркетологам — уведомление о новой регистрации (сбой не ломает вход).
+    from app.services.registration_notify_service import notify_marketers_new_user
+    await notify_marketers_new_user(db, new_user.id, "magic_link")
     logger.info("user.registered.via_magic_link user_id=%d", new_user.id)
     return new_user, True

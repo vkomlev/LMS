@@ -274,7 +274,8 @@ async def _notify_shifted_past_months(
     ]
     for item in examples:
         lines.append(
-            f"• {item['full_name']} (id {item['student_id']}), {item['period']:%m.%Y}: "
+            # tsk-1338: без «(id N)» — номер остаётся в payload.examples.
+            f"• {item['full_name']}, {item['period']:%m.%Y}: "
             f"было {item['was_minor'] / 100:.2f} ₽, стало {item['now_minor'] / 100:.2f} ₽ "
             f"({item['delta_minor'] / 100:+.2f} ₽)"
         )
@@ -337,7 +338,8 @@ async def _notify_methodists(
     ]
     for item in examples:
         lines.append(
-            f"• {item['full_name']} (id {item['student_id']}): "
+            # tsk-1338: без «(id N)» — номер остаётся в payload.examples.
+            f"• {item['full_name']}: "
             f"слотов {item['active_slots']}, занятий впереди {item['future_lessons']} "
             f"— {item['reason']}"
         )

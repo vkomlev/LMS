@@ -12,13 +12,14 @@ import logging
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_async_db, require_role
 from app.auth.current_user import CurrentUser
+from app.services import inbox_service
 
 router = APIRouter(prefix="/methodist", tags=["methodist_escalations"])
 logger = logging.getLogger("api.methodist_escalations")
@@ -109,7 +110,9 @@ async def list_pending_escalations(
             "FROM notifications n "
             "WHERE n.user_id = :uid "
             "  AND n.kind IN ('review_escalated','course_pending_review','broken_media_links',"
-            "'help_request_escalated','schedule_slot_request','schedule_preference_submitted') "
+            "'help_request_escalated','schedule_slot_request','schedule_preference_submitted',"
+            # tsk-1338: сигнал «нужно повторение» тоже доставляет бот.
+            "'learning_gap_escalated') "
             f"  {since_clause}"  # nosec B608 — since_clause из закрытого набора (либо "", либо литерал с :since bind)
             "ORDER BY n.modified_at DESC "
             "LIMIT :limit"
@@ -129,3 +132,53 @@ async def list_pending_escalations(
         for r in rows
     ]
     return EscalationListResponse(items=items, count=len(items))
+
+
+class EscalationReadResponse(BaseModel):
+    """Ответ POST /escalations/{id}/read (tsk-1338)."""
+    id: int
+    read_at: datetime
+
+
+@router.post(
+    "/escalations/{notification_id}/read",
+    response_model=EscalationReadResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Отметить эскалацию обработанной (tsk-1338)",
+    responses={
+        200: {"description": "Помечено (или уже было помечено раньше)"},
+        404: {"description": "Нет такой записи у этого методиста"},
+    },
+)
+async def mark_escalation_read(
+    notification_id: int = Path(..., ge=1),
+    user_id: Optional[int] = Query(
+        None,
+        ge=1,
+        description=(
+            "Чью запись помечаем. Обязателен для сервисного ключа (бот); "
+            "живой человек помечает только своё."
+        ),
+    ),
+    current_user: CurrentUser = Depends(require_role("methodist")),
+    db: AsyncSession = Depends(get_async_db),
+) -> EscalationReadResponse:
+    """tsk-1338: бот после кнопки «Обработано» гасит уведомление в кабинете.
+
+    Права — те же, что у списка: сервисный ключ действует за `user_id`,
+    человек — только за себя. Чужая запись неотличима от отсутствующей (404),
+    чтобы не раскрывать чужие номера.
+    """
+    target_id = (
+        int(user_id) if (current_user.is_service and user_id is not None) else current_user.id
+    )
+    read_at = await inbox_service.mark_read(db, notification_id, target_id)
+    if read_at is None:
+        status_pair = await inbox_service.get_status(db, notification_id)
+        if status_pair is None or status_pair[0] != target_id or status_pair[1] is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Запись не найдена")
+        read_at = status_pair[1]  # уже прочитана — повтор безопасен
+    else:
+        await db.commit()
+    logger.info("tsk-1338: эскалация %s отмечена для user=%s", notification_id, target_id)
+    return EscalationReadResponse(id=notification_id, read_at=read_at)

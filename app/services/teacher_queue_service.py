@@ -27,6 +27,7 @@ from app.schemas.task_content import MANUAL_REVIEW_TASK_TYPES
 # tsk-575: файл вложения мог быть утрачен дефектом хранения — преподавателю
 # отдаём работу с пометкой, а не с рабочей на вид ссылкой в никуда.
 from app.services import feedback_draft_service, inbox_service, review_sla
+from app.services import notification_names
 from app.services.attempt_attachments import mark_missing_one
 from app.utils.task_title import humanize_task_title
 
@@ -599,7 +600,9 @@ async def notify_owner_about_takeover(
             {"tid": int(new_teacher_id)},
         )
     ).fetchone()
-    new_name = (row[0] if row else None) or f"преподаватель #{new_teacher_id}"
+    new_name = (row[0] if row else None) or await notification_names.user_display_name(
+        db, int(new_teacher_id), fallback=notification_names.TEACHER_FALLBACK
+    )  # tsk-1338: без номера — email или «Преподаватель»
 
     await inbox_service.create_for_user(
         db,

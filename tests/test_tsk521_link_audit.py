@@ -171,7 +171,9 @@ async def test_missing_file_is_reported_to_methodist(
             (ex for ex in payload["examples"] if ex["target"] == f"material:{file_id}"), None
         )
         assert example is not None, payload
-        assert f"material {mid}" in example["where"], example
+        # tsk-1338: в тексте — название материала, номер — в полях примера.
+        assert example["owner_kind"] == "material" and example["owner_id"] == mid, example
+        assert example["where"].startswith("«") and f"material {mid}" not in example["where"], example
     finally:
         await _cleanup(db, material_ids=[mid])
 

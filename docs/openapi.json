@@ -31662,6 +31662,128 @@
         }
       }
     },
+    "/api/v1/methodist/escalations/{notification_id}/read": {
+      "post": {
+        "tags": [
+          "methodist_escalations"
+        ],
+        "summary": "Отметить эскалацию обработанной (tsk-1338)",
+        "description": "tsk-1338: бот после кнопки «Обработано» гасит уведомление в кабинете.\n\nПрава — те же, что у списка: сервисный ключ действует за `user_id`,\nчеловек — только за себя. Чужая запись неотличима от отсутствующей (404),\nчтобы не раскрывать чужие номера.",
+        "operationId": "mark_escalation_read_api_v1_methodist_escalations__notification_id__read_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "notification_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "title": "Notification Id"
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Чью запись помечаем. Обязателен для сервисного ключа (бот); живой человек помечает только своё.",
+              "title": "User Id"
+            },
+            "description": "Чью запись помечаем. Обязателен для сервисного ключа (бот); живой человек помечает только своё."
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Помечено (или уже было помечено раньше)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EscalationReadResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Нет такой записи у этого методиста"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/admin/new-users": {
       "get": {
         "tags": [
@@ -57360,6 +57482,26 @@
         ],
         "title": "EscalationListResponse",
         "description": "Ответ /escalations/pending."
+      },
+      "EscalationReadResponse": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "read_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Read At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "read_at"
+        ],
+        "title": "EscalationReadResponse",
+        "description": "Ответ POST /escalations/{id}/read (tsk-1338)."
       },
       "ExternalLeadCreateRequest": {
         "properties": {

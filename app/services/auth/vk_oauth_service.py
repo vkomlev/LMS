@@ -397,5 +397,8 @@ async def get_or_create_user_by_vk(
             "email_provided": bool(email),
         },
     )
+    # tsk-1338: маркетологам — уведомление о новой регистрации (сбой не ломает вход).
+    from app.services.registration_notify_service import notify_marketers_new_user
+    await notify_marketers_new_user(db, new_user.id, "vk")
     logger.info("user.registered.via_vk user_id=%d email_provided=%s", new_user.id, bool(email))
     return new_user, True

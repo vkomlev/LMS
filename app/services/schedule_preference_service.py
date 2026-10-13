@@ -38,6 +38,7 @@ from app.schemas.schedule_preference import (
     SchedulePreferenceWrite,
 )
 from app.services import inbox_service, schedule_group_service
+from app.services import notification_names
 
 logger = logging.getLogger(__name__)
 
@@ -514,7 +515,7 @@ async def _notify_methodists_of_submission(
             text("SELECT full_name FROM users WHERE id = :id"), {"id": student_id}
         )
     ).scalar()
-    who = student_name or f"ученик #{student_id}"
+    who = student_name or await notification_names.user_display_name(db, student_id)  # tsk-1338: без номера — email или «Ученик»
 
     preferred = [_hour_label(h.weekday, h.start_time) for h in hours if h.kind == "preferred"]
     possible = [_hour_label(h.weekday, h.start_time) for h in hours if h.kind == "possible"]

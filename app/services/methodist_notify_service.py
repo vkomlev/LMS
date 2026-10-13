@@ -27,6 +27,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services import audit_service, inbox_service
+from app.services import notification_names
 
 logger = logging.getLogger(__name__)
 
@@ -127,6 +128,11 @@ async def escalate_pending_timeout(
         "trigger": "timeout",
         "timeout_hours": int(timeout_hours),
     }
+    # tsk-1338: имя ученика и название задания вместо номера заявки.
+    student_name = await notification_names.user_display_name(db, student_id)
+    task_title = await notification_names.task_title(db, task_id)
+    payload["student_name"] = student_name
+    payload["task_title"] = task_title
 
     created = 0
     for mid in methodist_ids:
@@ -136,8 +142,8 @@ async def escalate_pending_timeout(
             kind="review_escalated",
             title="Эскалация: проверка зависла",
             content=(
-                f"Заявка на проверку №{result_id} ждёт ответа учителя более "
-                f"{timeout_hours} ч. Подключитесь, если требуется."
+                f"{student_name}: работа по заданию «{task_title}» ждёт проверки "
+                f"больше {timeout_hours} ч. Подключитесь, если нужно."
             ),
             payload=payload,
             created_by=None,
@@ -208,6 +214,11 @@ async def escalate_help_request(
         "course_id": int(course_id) if course_id is not None else None,
         "trigger": "individual_review_not_understood",
     }
+    # tsk-1338: имя ученика и название задания вместо номера заявки.
+    student_name = await notification_names.user_display_name(db, student_id)
+    task_title = await notification_names.task_title(db, task_id)
+    payload["student_name"] = student_name
+    payload["task_title"] = task_title
     for mid in methodist_ids:
         await inbox_service.create_for_user(
             db,
@@ -215,8 +226,8 @@ async def escalate_help_request(
             kind="help_request_escalated",
             title="Ученику не помог индивидуальный разбор",
             content=(
-                f"Заявка №{request_id}: после разбора с преподавателем ученик "
-                "всё ещё не разобрался. Нужен методист."
+                f"{student_name}, задание «{task_title}»: после разбора с "
+                "преподавателем ученик всё ещё не разобрался. Нужен методист."
             ),
             payload=payload,
             created_by=student_id,
@@ -317,6 +328,11 @@ async def escalate_course_completion(
         "pending_result_ids": pending_ids,
         "trigger": "course_completion",
     }
+    # tsk-1338: имя ученика и название курса вместо голых номеров.
+    student_name = await notification_names.user_display_name(db, student_id)
+    course_title = await notification_names.course_title(db, course_id)
+    payload["student_name"] = student_name
+    payload["course_title"] = course_title
 
     created = 0
     for mid in methodist_ids:
@@ -326,8 +342,8 @@ async def escalate_course_completion(
             kind="course_pending_review",
             title="Курс завершён — но есть непроверенные задания",
             content=(
-                f"Студент {student_id} завершил курс {course_id}, "
-                f"однако {len(pending_ids)} задач ждёт оценки учителя."
+                f"{student_name} завершил(а) курс «{course_title}», но "
+                f"{len(pending_ids)} задач(и) ждут оценки преподавателя."
             ),
             payload=payload,
             created_by=None,
@@ -391,7 +407,13 @@ async def escalate_learning_gap(
         )
         return 0
 
-    who = student_name or (f"ученик #{student_id}" if student_id else "несколько учеников")
+    # tsk-1338: без номера — имя/email из users, иначе нейтральное «Ученик».
+    if student_name:
+        who = student_name
+    elif student_id:
+        who = await notification_names.user_display_name(db, student_id)
+    else:
+        who = "несколько учеников"
     lines = []
     if comment:
         lines.append(f"Преподаватель: {comment}")

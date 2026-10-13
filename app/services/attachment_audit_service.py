@@ -38,7 +38,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.config import Settings
 from app.core.cron_registry import register_interval_job
 from app.db.session import async_session_factory
-from app.services import attachment_storage, inbox_service
+from app.services import attachment_storage, inbox_service, notification_names
 from app.services.attempt_attachments import collect_attachment_ids
 from app.utils.exceptions import DomainError
 
@@ -185,6 +185,42 @@ async def _recipients(db: AsyncSession, role: str) -> List[int]:
     return [int(row[0]) for row in res.fetchall()]
 
 
+async def _owner_title(db: AsyncSession, kind: str, oid: int) -> str:
+    """tsk-1338: подпись владельца утраченного файла для текста уведомления.
+
+    task_result → «Ученик · «Задание»», message → «сообщение от Имя»,
+    payment → «оплата: Имя». Неизвестный вид — «вид номер» (не должен встречаться).
+    """
+    if kind == "task_result":
+        row = (
+            await db.execute(
+                text("SELECT user_id, task_id FROM task_results WHERE id = :id"), {"id": oid}
+            )
+        ).first()
+        if row is None:
+            return "работа ученика"
+        who = await notification_names.user_display_name(db, row[0])
+        what = await notification_names.task_title(db, row[1])
+        return f"{who} · «{what}»"
+    if kind == "message":
+        row = (
+            await db.execute(text("SELECT sender_id FROM messages WHERE id = :id"), {"id": oid})
+        ).first()
+        who = await notification_names.user_display_name(
+            db, row[0] if row else None, fallback="неизвестного отправителя"
+        )
+        return f"сообщение от {who}"
+    if kind == "payment":
+        row = (
+            await db.execute(
+                text("SELECT student_id FROM student_payment WHERE id = :id"), {"id": oid}
+            )
+        ).first()
+        who = await notification_names.user_display_name(db, row[0] if row else None)
+        return f"оплата: {who}"
+    return f"{kind} {oid}"
+
+
 async def _notify(
     db: AsyncSession,
     *,
@@ -205,14 +241,21 @@ async def _notify(
             )
             continue
 
-        examples = [
-            {
-                "space": space,
-                "name": name,
-                "where": f"{owner_kind} {owner_id}",
-            }
-            for (space, name), (owner_kind, owner_id) in sorted(items)[:max_examples]
-        ]
+        # tsk-1338: «где» — по-человечески (ученик, задание, отправитель),
+        # номер владельца уходит в payload (`owner_kind`, `owner_id`).
+        examples = []
+        for (space, name), (owner_kind, owner_id) in sorted(items)[:max_examples]:
+            title = await _owner_title(db, owner_kind, int(owner_id))
+            examples.append(
+                {
+                    "space": space,
+                    "name": name,
+                    "where": title,
+                    "owner_kind": owner_kind,
+                    "owner_id": int(owner_id),
+                    "title": title,
+                }
+            )
         lines = [
             f"Пропало файлов: {len(items)}. Ссылка на файл в базе есть, "
             f"самого файла в хранилище нет.",

@@ -42,7 +42,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.config import Settings
 from app.core.cron_registry import register_interval_job
 from app.db.session import async_session_factory
-from app.services import inbox_service, material_files_storage
+from app.services import inbox_service, material_files_storage, notification_names
 from app.utils.exceptions import DomainError
 
 logger = logging.getLogger("app.link_audit")
@@ -161,6 +161,16 @@ async def _recently_notified(db: AsyncSession, cooldown_hours: int) -> bool:
     return int(res.scalar() or 0) > 0
 
 
+async def _owner_title(db: AsyncSession, kind: str, oid: int) -> str:
+    """tsk-1338: название владельца ссылки (задание/материал) для текста."""
+    if kind == "task":
+        return await notification_names.task_title(db, oid)
+    if kind == "material":
+        return await notification_names.material_title(db, oid)
+    # Других владельцев проверка не собирает; на всякий случай — без падения.
+    return f"{kind} {oid}"
+
+
 async def _notify_methodists(
     db: AsyncSession,
     *,
@@ -182,8 +192,29 @@ async def _notify_methodists(
 
     examples = []
     for target, reason in sorted(broken.items())[:max_examples]:
-        where = ", ".join(f"{kind} {oid}" for kind, oid in owners.get(target, [])[:3])
-        examples.append({"target": target, "reason": reason, "where": where})
+        # tsk-1338: в тексте — название задания/материала, номера — в payload.
+        found = []
+        for kind, oid in owners.get(target, [])[:3]:
+            found.append(
+                {
+                    "owner_kind": kind,
+                    "owner_id": int(oid),
+                    "title": await _owner_title(db, kind, int(oid)),
+                }
+            )
+        where = ", ".join(f"«{o['title']}»" for o in found)
+        first = found[0] if found else {}
+        examples.append(
+            {
+                "target": target,
+                "reason": reason,
+                "where": where,
+                "owner_kind": first.get("owner_kind"),
+                "owner_id": first.get("owner_id"),
+                "title": first.get("title"),
+                "owners": found,
+            }
+        )
 
     payload = {
         "broken_count": len(broken),
