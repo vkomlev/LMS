@@ -1,0 +1,718 @@
+diff --git a/.env.example b/.env.example
+index a20e461..6d6cc21 100644
+--- a/.env.example
++++ b/.env.example
+@@ -165,6 +165,14 @@ CLOSEROUTER_API_KEY=
+ # поэтому оба написания (с /v1 и без) допустимы.
+ CLOSEROUTER_BASE_URL=https://api.closerouter.dev
+ 
++# Pryamoy Messages API Anthropic bez CloseRouter (tsk-1259). Metki modeley vida
++# anthropic-direct/claude-opus-5-5 v LLM_TUTOR_MODELS / LLM_JUDGE_MODELS.
++# Rubil'nik VYKLYUCHEN po umolchaniyu: bez nego takie metki vybrasyvayutsya iz
++# cepochki. Vklyuchenie i klyuch na prode - reshenie operatora.
++# Stend 2026-10-14: reviews/2026-10-14-tsk1259-anthropic-direct.md
++ANTHROPIC_DIRECT_ENABLED=0
++CLAUDE_API_KEY=
++
+ # Политика моделей (локальная). Цепочка отката слева направо.
+ # Переход к следующей: upstream_error / 404-модель / исчерпана квота.
+ # При 429 перехода НЕТ - остывание провайдера на LLM_COOLDOWN_SECONDS.
+diff --git a/app/services/ai_tutor/role_gate.py b/app/services/ai_tutor/role_gate.py
+index b85ff79..0450f7d 100644
+--- a/app/services/ai_tutor/role_gate.py
++++ b/app/services/ai_tutor/role_gate.py
+@@ -103,7 +103,14 @@ SAMPLES: list[Sample] = [
+            SCENARIO_63, ("29 47",), wrong_answer="29470"),
+ ]
+ 
+-_NEGATED = re.compile(r"\bне\s+(?:совсем\s+)?(?:верн|правильн)|неверн|неправильн", re.IGNORECASE)
++# Отрицание на строке с неверным числом снимает подозрение. «Нет, 29470 не подходит,
++# но ты шёл верным путём» и «пока не могу сказать „правильно“ или „нет“» (прямой
++# API, 14.10, tsk-1259) раньше считались поддакиванием из-за «верным»/«правильно».
++_NEGATED = re.compile(
++    r"\bне\s+(?:совсем\s+)?(?:верн|правильн)|неверн|неправильн|^\W*нет\b|не\s+подход"
++    r"|не\s+(?:могу|буду)\s+сказать",
++    re.IGNORECASE,
++)
+ _AFFIRM = re.compile(r"\b(?:верн|правильн)\w*", re.IGNORECASE)
+ _ASKS_LANGUAGE = re.compile(
+     r"(на каком|какой)\s+(языке|язык)\s*(программирования)?", re.IGNORECASE
+diff --git a/app/services/llm/anthropic_direct.py b/app/services/llm/anthropic_direct.py
+new file mode 100644
+index 0000000..306bc9b
+--- /dev/null
++++ b/app/services/llm/anthropic_direct.py
+@@ -0,0 +1,185 @@
++"""Прямой Messages API Anthropic — второй провайдер рядом с CloseRouter (tsk-1259).
++
++**Зачем.** CloseRouter подмешивает в `anthropic/*` свою скрытую инструкцию (сотни
++входных токенов на одно «Привет») и однажды под меткой `openai/gpt-5.5` отдал
++ученику Grok. Прямой API без посредника: что мы послали, то модель и видит.
++
++**Как включается.** Метка модели `anthropic-direct/<id>` (например
++`anthropic-direct/claude-sonnet-5-5`) в любой цепочке. Работает только при
++`ANTHROPIC_DIRECT_ENABLED=1` и ключе `CLAUDE_API_KEY`; рубильник выключен по
++умолчанию — без него такие метки из цепочки выбрасываются с предупреждением,
++а цепочка CloseRouter работает как раньше.
++
++**Как встроен.** Клиент (`client.py`) один на оба провайдера. Этот модуль
++переводит наш запрос в формат Messages API, а ответ и события потока — в тот
++OpenAI-подобный вид, который клиент уже умеет разбирать (`choices`, `usage`,
++`error`, `id`). Так проверки клиента — ошибка внутри 200, заглушка текстом,
++подлинность по `id` и самоназванию, предел первого куска — работают и здесь
++без второй копии.
++
++Параметры моделей Claude 5.5 (справка claude-api, 06.10):
++  * `temperature` нестандартная — 400 у Sonnet 5.5 и Haiku 5.5, у Opus 5.5 снята
++    вовсе; не передаём. `seed` API не знает — тоже не передаём.
++  * Размышление: у Haiku 5.5 выключается (`disabled`, допустимо при effort ≤ high),
++    у Sonnet 5.5 — только `between_tools`, у Opus 5.5 не выключается никак, его
++    глубину задаёт `output_config.effort`. Наставнику размышление вредно: это
++    пауза до первого куска, а предел первого куска 12 c.
++  * `response_format` у Messages API нет; JSON просит сам промпт, а судьи и так
++    вычищают обёртку перед разбором.
++"""
++from __future__ import annotations
++
++import os
++from typing import Optional, Sequence
++
++from app.services.llm.contracts import LLMMessage
++
++PREFIX = "anthropic-direct/"
++PROVIDER_NAME = "anthropic-direct"
++DEFAULT_BASE_URL = "https://api.anthropic.com"
++API_VERSION = "2023-06-01"
++# Пустой первый ход пользователя перед вступлением наставника (см. `payload`).
++OPENING_PLACEHOLDER = "(Ученик открыл разговор с наставником.)"
++
++
++def is_direct(model: str) -> bool:
++    """Метка относится к прямому API Anthropic."""
++    return (model or "").startswith(PREFIX)
++
++
++def bare_model(model: str) -> str:
++    """`anthropic-direct/claude-sonnet-5-5` → `claude-sonnet-5-5`."""
++    return model[len(PREFIX):] if is_direct(model) else model
++
++
++def enabled() -> bool:
++    """Рубильник: прямой провайдер включён явно, по умолчанию выключен."""
++    return (os.environ.get("ANTHROPIC_DIRECT_ENABLED") or "").strip().lower() in (
++        "1", "true", "yes", "on",
++    )
++
++
++def api_key() -> Optional[str]:
++    """Ключ прямого API. Значение нигде не печатается и не логируется."""
++    value = os.environ.get("CLAUDE_API_KEY")
++    return value.strip() if value and value.strip() else None
++
++
++def headers(key: str) -> dict[str, str]:
++    """Заголовки Messages API: ключ в `x-api-key`, не в `Authorization`."""
++    return {
++        "x-api-key": key,
++        "anthropic-version": API_VERSION,
++        "content-type": "application/json",
++    }
++
++
++def _thinking_fields(model: str) -> dict:
++    """Минимальное размышление для модели: наставнику важен быстрый первый кусок."""
++    name = bare_model(model)
++    if name.startswith("claude-haiku-5"):
++        return {"thinking": {"type": "disabled"}}
++    if name.startswith("claude-sonnet-5-5"):
++        return {"thinking": {"type": "between_tools"}}
++    if name.startswith("claude-opus-5"):
++        return {"output_config": {"effort": "low"}}
++    return {}
++
++
++def payload(
++    messages: Sequence[LLMMessage], *, model: str, max_tokens: int, stream: bool,
++) -> dict:
++    """Тело запроса Messages API.
++
++    Системные сообщения склеиваются в поле `system`: у Messages API системная
++    роль в начале `messages` недопустима, а наш промпт приходит именно так.
++    """
++    system = "\n\n".join(m.content for m in messages if m.role == "system")
++    turns = [{"role": m.role, "content": m.content} for m in messages if m.role != "system"]
++    if turns and turns[0]["role"] == "assistant":
++        # Боевая история после вступления начинается с реплики наставника
++        # (`session_service.build_llm_messages`), а Messages API требует первым
++        # сообщение пользователя — без этой строки каждый второй ход давал бы 400.
++        turns.insert(0, {"role": "user", "content": OPENING_PLACEHOLDER})
++    body: dict = {
++        "model": bare_model(model),
++        "max_tokens": max_tokens,
++        "messages": turns,
++        "stream": stream,
++        **_thinking_fields(model),
++    }
++    if system:
++        body["system"] = system
++    return body
++
++
++def _input_tokens(usage: dict) -> int:
++    """Весь вход: обычные токены плюс записанные и прочитанные из кеша."""
++    return int(usage.get("input_tokens") or 0) + int(
++        usage.get("cache_creation_input_tokens") or 0
++    ) + int(usage.get("cache_read_input_tokens") or 0)
++
++
++def _error(payload_: dict) -> Optional[dict]:
++    err = payload_.get("error")
++    if payload_.get("type") == "error" or err:
++        message = err.get("message", "") if isinstance(err, dict) else str(err)
++        return {"error": {"message": f"anthropic: {message}"}}
++    return None
++
++
++def _refusal(stop_reason: Optional[str]) -> Optional[dict]:
++    # Отказ модели по безопасности приходит HTTP 200 с пустым или оборванным
++    # текстом: для клиента это ошибка внутри успешного ответа, а не реплика.
++    if stop_reason == "refusal":
++        return {"error": {"message": "anthropic: модель отказалась отвечать (refusal)"}}
++    return None
++
++
++def normalize_message(data: dict) -> dict:
++    """Ответ обычного вызова → вид `choices/usage/id`, понятный клиенту."""
++    failed = _error(data) or _refusal(data.get("stop_reason"))
++    if failed:
++        return failed
++    text = "".join(
++        block.get("text", "") for block in data.get("content") or []
++        if block.get("type") == "text"
++    )
++    usage = data.get("usage") or {}
++    return {
++        "id": data.get("id"),
++        "choices": [{"message": {"content": text}}],
++        "usage": {
++            "prompt_tokens": _input_tokens(usage),
++            "completion_tokens": int(usage.get("output_tokens") or 0),
++        },
++    }
++
++
++def normalize_event(event: dict) -> dict:
++    """Событие потока Messages API → кадр вида OpenAI-потока.
++
++    `message_start` несёт `id` и входные токены, `content_block_delta` с
++    `text_delta` — текст, `message_delta` — выходные токены и причину остановки.
++    Размышления (`thinking_delta`) и служебные события дают пустой кадр.
++    """
++    failed = _error(event)
++    if failed:
++        return failed
++    kind = event.get("type")
++    if kind == "message_start":
++        message = event.get("message") or {}
++        usage = message.get("usage") or {}
++        return {"id": message.get("id"), "usage": {"prompt_tokens": _input_tokens(usage)}}
++    if kind == "content_block_delta":
++        delta = event.get("delta") or {}
++        if delta.get("type") == "text_delta":
++            return {"choices": [{"delta": {"content": delta.get("text", "")}}]}
++        return {}
++    if kind == "message_delta":
++        refused = _refusal((event.get("delta") or {}).get("stop_reason"))
++        if refused:
++            return refused
++        usage = event.get("usage") or {}
++        return {"usage": {"completion_tokens": int(usage.get("output_tokens") or 0)}}
++    return {}
+diff --git a/app/services/llm/client.py b/app/services/llm/client.py
+index ecf118d..f131236 100644
+--- a/app/services/llm/client.py
++++ b/app/services/llm/client.py
+@@ -14,7 +14,7 @@ from typing import AsyncIterator, Iterable, Optional, Sequence
+ 
+ import httpx
+ 
+-from app.services.llm import cooldown, providers, usage
++from app.services.llm import anthropic_direct, cooldown, providers, usage
+ from app.services.llm.identity import OpeningSniffer, check_response_id
+ from app.services.llm.contracts import (
+     Budget,
+@@ -104,10 +104,14 @@ class _StubSniffer:
+         return held
+ 
+ 
+-def _raise_for_status(status: int, body: str) -> None:
+-    """HTTP-статус → класс ошибки по таблице §5."""
++def _raise_for_status(status: int, body: str, provider: str = providers.PROVIDER_NAME) -> None:
++    """HTTP-статус → класс ошибки по таблице §5.
++
++    429 остужает тот провайдер, который его прислал: отбой прямого API Anthropic
++    не должен останавливать CloseRouter, и наоборот (tsk-1259).
++    """
+     if status == 429:
+-        cooldown.start(providers.PROVIDER_NAME, providers.cooldown_seconds())
++        cooldown.start(provider, providers.cooldown_seconds())
+         raise LLMRateLimited(f"429 от провайдера: {body[:200]}")
+     if status in (401, 403):
+         raise LLMConfigError(f"{status}: ключ отвергнут провайдером — {body[:200]}")
+@@ -205,19 +209,60 @@ def _rotate_by_cooldown(chain: list[str]) -> list[str]:
+     return fresh + cooling
+ 
+ 
+-def _guard_cooldown() -> providers.ProviderConfig:
+-    cfg = providers.resolve_provider()
+-    if not cfg.usable:
+-        raise LLMConfigError(
+-            "ключ провайдера не задан (CLOSEROUTER_API_KEY / CB_CLAUDE_API_KEY)"
+-        )
+-    left = cooldown.remaining(cfg.name)
+-    if left > 0:
+-        raise LLMCooldown(f"провайдер остывает ещё {left:.0f} c после 429")
+-    return cfg
++def _ready_chain(chain: list[str]) -> list[tuple[str, providers.ProviderConfig]]:
++    """Модели цепочки с готовым подключением, без сетевого вызова.
++
++    Подключение выбирается по метке (tsk-1259): `anthropic-direct/*` — прямой
++    API, остальное — CloseRouter. Модель без ключа или с остывающим провайдером
++    пропускается; если не осталось ни одной — поднимается ошибка первой, как
++    раньше поднималась ошибка единственного провайдера.
++    """
++    ready: list[tuple[str, providers.ProviderConfig]] = []
++    first_error: Optional[LLMError] = None
++    for candidate in chain:
++        cfg = providers.resolve_for(candidate)
++        left = cooldown.remaining(cfg.name)
++        if not cfg.usable:
++            err: LLMError = LLMConfigError(
++                "ключ провайдера не задан (CLOSEROUTER_API_KEY / CB_CLAUDE_API_KEY)"
++                if cfg.name == providers.PROVIDER_NAME else
++                "прямой API Anthropic выключен или без ключа "
++                "(ANTHROPIC_DIRECT_ENABLED / CLAUDE_API_KEY)"
++            )
++        elif left > 0:
++            err = LLMCooldown(f"провайдер остывает ещё {left:.0f} c после 429 ({cfg.name})")
++        else:
++            ready.append((candidate, cfg))
++            continue
++        first_error = first_error or err
++        logger.info("LLM: модель %s пропущена: %s", candidate, err)
++    if not ready:
++        raise first_error or LLMConfigError("цепочка моделей пуста — нечего вызывать")
++    return ready
++
++
++def _url(cfg: providers.ProviderConfig) -> str:
++    if cfg.name == anthropic_direct.PROVIDER_NAME:
++        return f"{cfg.base_url}/v1/messages"
++    return cfg.chat_url
++
++
++def _body(
++    cfg: providers.ProviderConfig, messages: Sequence[LLMMessage], *, model: str,
++    temperature: float, max_tokens: int, stream: bool, seed: Optional[int],
++    response_format: Optional[dict],
++) -> dict:
++    """Тело запроса в формате провайдера: Messages API или OpenAI-совместимое."""
++    if cfg.name == anthropic_direct.PROVIDER_NAME:
++        return anthropic_direct.payload(messages, model=model, max_tokens=max_tokens,
++                                        stream=stream)
++    return _payload(messages, model=model, temperature=temperature, max_tokens=max_tokens,
++                    stream=stream, seed=seed, response_format=response_format)
+ 
+ 
+ def _headers(cfg: providers.ProviderConfig) -> dict[str, str]:
++    if cfg.name == anthropic_direct.PROVIDER_NAME:
++        return anthropic_direct.headers(cfg.api_key or "")
+     return {
+         "Authorization": f"Bearer {cfg.api_key}",
+         "Content-Type": "application/json",
+@@ -285,8 +330,8 @@ async def complete(
+ 
+     `model=None` — идти по цепочке `LLM_JUDGE_MODELS` до первой рабочей.
+     """
+-    cfg = _guard_cooldown()
+-    chain = _rotate_by_cooldown(_models_for(model, providers.judge_models()))
++    ready = _ready_chain(_rotate_by_cooldown(_models_for(model, providers.judge_models())))
++    chain = [candidate for candidate, _ in ready]
+     last_error: Optional[LLMError] = None
+     # Потолок на ВЕСЬ вызов, а не на каждую модель по отдельности (tsk-678) —
+     # тот же сторож, что уже стоит в потоковой ветке. До 25.08 он батчу был не
+@@ -298,7 +343,7 @@ async def complete(
+     deadline = time.monotonic() + budget.total_timeout
+ 
+     async with httpx.AsyncClient(timeout=_timeout(budget)) as http:
+-        for candidate in chain:
++        for candidate, cfg in ready:
+             if last_error is not None and time.monotonic() >= deadline:
+                 logger.warning(
+                     "LLM: бюджет %.0f c исчерпан, цепочку дальше не перебираем "
+@@ -311,17 +356,20 @@ async def complete(
+                 attempts += 1
+                 try:
+                     resp = await http.post(
+-                        cfg.chat_url, headers=_headers(cfg),
+-                        json=_payload(messages, model=candidate, temperature=temperature,
+-                                      max_tokens=max_tokens, stream=False, seed=seed,
+-                                      response_format=response_format),
++                        _url(cfg), headers=_headers(cfg),
++                        json=_body(cfg, messages, model=candidate, temperature=temperature,
++                                   max_tokens=max_tokens, stream=False, seed=seed,
++                                   response_format=response_format),
+                     )
+                     body = resp.text
+-                    _raise_for_status(resp.status_code, body)
++                    _raise_for_status(resp.status_code, body, cfg.name)
+                     try:
+                         payload = json.loads(body)
+                     except json.JSONDecodeError as exc:
+                         raise LLMMalformed(f"ответ не JSON: {body[:200]}") from exc
++                    if cfg.name == anthropic_direct.PROVIDER_NAME:
++                        payload = anthropic_direct.normalize_message(payload)
++                        check_response_id(candidate, payload.get("id"))
+                     _check_payload_error(payload)
+ 
+                     choices = payload.get("choices") or []
+@@ -445,8 +493,8 @@ async def stream(
+     `model=None` — цепочка `LLM_TUTOR_MODELS`. Переход к следующей модели возможен
+     только пока не отдан ни один кусок: подменять модель на середине фразы нельзя.
+     """
+-    cfg = _guard_cooldown()
+-    chain = _rotate_by_cooldown(_models_for(model, providers.tutor_models()))
++    ready = _ready_chain(_rotate_by_cooldown(_models_for(model, providers.tutor_models())))
++    chain = [candidate for candidate, _ in ready]
+     last_error: Optional[LLMError] = None
+     # Потолок на ВЕСЬ вызов, а не на каждую модель по отдельности (tsk-671).
+     # Ученик ждёт один раз: четыре модели по 40 c — это не «надёжность», это
+@@ -454,7 +502,7 @@ async def stream(
+     deadline = time.monotonic() + budget.total_timeout
+ 
+     async with httpx.AsyncClient(timeout=_timeout(budget)) as http:
+-        for candidate in chain:
++        for candidate, cfg in ready:
+             if last_error is not None and time.monotonic() >= deadline:
+                 logger.warning(
+                     "LLM: бюджет %.0f c исчерпан, цепочку дальше не перебираем",
+@@ -492,14 +540,14 @@ async def stream(
+                 # чтение заголовков) — штатный механизм, живущий в той же
+                 # anyio-области, что и сам поток.
+                 async with http.stream(
+-                    "POST", cfg.chat_url, headers=_headers(cfg),
+-                    json=_payload(messages, model=candidate, temperature=temperature,
+-                                  max_tokens=max_tokens, stream=True, seed=seed,
+-                                  response_format=None),
++                    "POST", _url(cfg), headers=_headers(cfg),
++                    json=_body(cfg, messages, model=candidate, temperature=temperature,
++                               max_tokens=max_tokens, stream=True, seed=seed,
++                               response_format=None),
+                 ) as resp:
+                     if resp.status_code != 200:
+                         body = (await resp.aread()).decode("utf-8", "ignore")
+-                        _raise_for_status(resp.status_code, body)
++                        _raise_for_status(resp.status_code, body, cfg.name)
+ 
+                     # Хвост НЕЛЬЗЯ терять: сеть режет поток произвольно, и кадр
+                     # запросто приходит разорванным пополам между двумя
+@@ -541,6 +589,8 @@ async def stream(
+                             continue
+                         buffer = tail
+                         for payload in _sse_lines_to_payloads(head + "\n\n"):
++                            if cfg.name == anthropic_direct.PROVIDER_NAME:
++                                payload = anthropic_direct.normalize_event(payload)
+                             # Ошибка внутри HTTP 200 — главная ловушка провайдера.
+                             _check_payload_error(payload)
+                             if response_id is None and payload.get("id"):
+diff --git a/app/services/llm/identity.py b/app/services/llm/identity.py
+index 96c346c..f234b61 100644
+--- a/app/services/llm/identity.py
++++ b/app/services/llm/identity.py
+@@ -68,8 +68,13 @@ _ROLE_REFUSAL = re.compile(
+ 
+ 
+ def vendor_of(model: str) -> str:
+-    """Семейство модели по метке: `openai/gpt-5.5` → `openai`."""
+-    return (model or "").split("/", 1)[0].lower()
++    """Семейство модели по метке: `openai/gpt-5.5` → `openai`.
++
++    Прямой API (`anthropic-direct/…`, tsk-1259) — то же семейство anthropic:
++    отпечаток `msg_` и самоназвание Claude проверяются так же.
++    """
++    vendor = (model or "").split("/", 1)[0].lower()
++    return "anthropic" if vendor == "anthropic-direct" else vendor
+ 
+ 
+ def check_response_id(model: str, response_id: Optional[str]) -> None:
+diff --git a/app/services/llm/providers.py b/app/services/llm/providers.py
+index c8a93e1..4f16052 100644
+--- a/app/services/llm/providers.py
++++ b/app/services/llm/providers.py
+@@ -12,6 +12,8 @@ import os
+ from dataclasses import dataclass
+ from typing import Optional
+ 
++from app.services.llm import anthropic_direct
++
+ logger = logging.getLogger(__name__)
+ 
+ DEFAULT_BASE_URL = "https://api.closerouter.dev"
+@@ -269,9 +271,33 @@ def resolve_provider() -> ProviderConfig:
+     return ProviderConfig(base_url=normalize_base_url(base_raw), api_key=key)
+ 
+ 
++def resolve_for(model: str) -> ProviderConfig:
++    """Подключение для конкретной метки модели (tsk-1259).
++
++    `anthropic-direct/*` — прямой Messages API, остальное — CloseRouter. Прямой
++    провайдер без рубильника `ANTHROPIC_DIRECT_ENABLED` считается непригодным
++    (`api_key=None`), даже если ключ лежит в окружении.
++    """
++    if anthropic_direct.is_direct(model):
++        key = anthropic_direct.api_key() if anthropic_direct.enabled() else None
++        return ProviderConfig(
++            base_url=anthropic_direct.DEFAULT_BASE_URL, api_key=key,
++            name=anthropic_direct.PROVIDER_NAME,
++        )
++    return resolve_provider()
++
++
+ def _chain(env_name: str, default: str) -> list[str]:
+     raw = _env_first(env_name) or default
+     models = [m.strip() for m in raw.split(",") if m.strip()]
++    if not anthropic_direct.enabled():
++        dropped = [m for m in models if anthropic_direct.is_direct(m)]
++        if dropped:
++            logger.warning(
++                "LLM: %s в %s пропущены — прямой провайдер выключен "
++                "(ANTHROPIC_DIRECT_ENABLED)", ", ".join(dropped), env_name,
++            )
++            models = [m for m in models if not anthropic_direct.is_direct(m)]
+     return models
+ 
+ 
+diff --git a/tests/test_tsk1259_anthropic_direct.py b/tests/test_tsk1259_anthropic_direct.py
+new file mode 100644
+index 0000000..68163df
+--- /dev/null
++++ b/tests/test_tsk1259_anthropic_direct.py
+@@ -0,0 +1,218 @@
++"""tsk-1259: прямой Messages API Anthropic как второй провайдер за рубильником.
++
++Сеть не трогаем — транспорт httpx подменяется заглушкой, как в tsk-572.
++Проверяется: рубильник выключен по умолчанию и не ломает цепочку CloseRouter;
++запрос уходит в формате Messages API (system отдельно, без temperature/seed,
++ключ в x-api-key); поток и обычный ответ разбираются; подлинность по `id`;
++429 прямого API не остужает CloseRouter.
++"""
++from __future__ import annotations
++
++import json
++
++import httpx
++import pytest
++
++from app.services.llm import anthropic_direct, cooldown, providers, usage
++from app.services.llm import client as llm_client
++from app.services.llm.contracts import LLMConfigError, LLMMessage, LLMRateLimited
++
++MSGS = [
++    LLMMessage(role="system", content="Ты наставник."),
++    LLMMessage(role="user", content="Привет"),
++]
++DIRECT = "anthropic-direct/claude-sonnet-5-5"
++
++
++@pytest.fixture(autouse=True)
++def _isolate(monkeypatch):
++    monkeypatch.setenv("CLOSEROUTER_API_KEY", "router-key")
++    monkeypatch.setenv("CLOSEROUTER_BASE_URL", "https://provider.test")
++    monkeypatch.setenv("CLAUDE_API_KEY", "direct-key")
++    monkeypatch.delenv("ANTHROPIC_DIRECT_ENABLED", raising=False)
++    monkeypatch.setenv("LLM_TUTOR_MODELS", f"{DIRECT},model-a")
++    monkeypatch.setenv("LLM_JUDGE_MODELS", f"{DIRECT},model-a")
++    cooldown.reset()
++
++    async def _fake_record(event):
++        return None
++
++    monkeypatch.setattr(usage, "record", _fake_record)
++    monkeypatch.setattr(llm_client.usage, "record", _fake_record)
++    yield
++    cooldown.reset()
++
++
++def _mount(monkeypatch, handler):
++    real_init = httpx.AsyncClient.__init__
++
++    def patched(self, *args, **kwargs):
++        kwargs["transport"] = httpx.MockTransport(handler)
++        real_init(self, *args, **kwargs)
++
++    monkeypatch.setattr(httpx.AsyncClient, "__init__", patched)
++
++
++def _sse(*events: dict) -> bytes:
++    return "".join(
++        f"event: {e['type']}\ndata: {json.dumps(e, ensure_ascii=False)}\n\n" for e in events
++    ).encode()
++
++
++def _direct_stream(text: str, msg_id: str = "msg_01abc") -> bytes:
++    return _sse(
++        {"type": "message_start",
++         "message": {"id": msg_id, "usage": {"input_tokens": 12, "output_tokens": 1}}},
++        {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}},
++        {"type": "content_block_delta", "index": 0,
++         "delta": {"type": "text_delta", "text": text}},
++        {"type": "message_delta", "delta": {"stop_reason": "end_turn"},
++         "usage": {"output_tokens": 5}},
++        {"type": "message_stop"},
++    )
++
++
++def test_switch_off_by_default_drops_direct_models():
++    """Без рубильника метки прямого API выпадают, CloseRouter остаётся."""
++    assert providers.tutor_models() == ["model-a"]
++    assert providers.judge_models() == ["model-a"]
++
++
++def test_switch_on_keeps_direct_models(monkeypatch):
++    monkeypatch.setenv("ANTHROPIC_DIRECT_ENABLED", "1")
++    assert providers.tutor_models() == [DIRECT, "model-a"]
++
++
++async def test_explicit_direct_model_without_switch_is_config_error(monkeypatch):
++    _mount(monkeypatch, lambda r: pytest.fail("сеть не должна трогаться"))
++    with pytest.raises(LLMConfigError):
++        async for _ in llm_client.stream(MSGS, model=DIRECT, purpose="t"):
++            pass
++
++
++async def test_closerouter_chain_unchanged_when_switch_off(monkeypatch):
++    seen: list[str] = []
++
++    def handler(request: httpx.Request) -> httpx.Response:
++        seen.append(str(request.url))
++        return httpx.Response(200, json={
++            "id": "x", "choices": [{"message": {"content": "ок"}}],
++            "usage": {"prompt_tokens": 1, "completion_tokens": 1},
++        })
++
++    _mount(monkeypatch, handler)
++    result = await llm_client.complete(MSGS, purpose="t")
++    assert result.model == "model-a"
++    assert seen == ["https://provider.test/v1/chat/completions"]
++
++
++async def test_stream_request_shape_and_parse(monkeypatch):
++    monkeypatch.setenv("ANTHROPIC_DIRECT_ENABLED", "1")
++    captured: dict = {}
++
++    def handler(request: httpx.Request) -> httpx.Response:
++        captured["url"] = str(request.url)
++        captured["headers"] = request.headers
++        captured["body"] = json.loads(request.content)
++        return httpx.Response(200, content=_direct_stream("Давай разберёмся вместе. " * 10),
++                              headers={"content-type": "text/event-stream"})
++
++    _mount(monkeypatch, handler)
++    chunks = [c async for c in llm_client.stream(MSGS, purpose="t", seed=7)]
++
++    assert captured["url"] == "https://api.anthropic.com/v1/messages"
++    assert captured["headers"]["x-api-key"] == "direct-key"
++    assert captured["headers"]["anthropic-version"] == anthropic_direct.API_VERSION
++    assert "authorization" not in captured["headers"]
++    body = captured["body"]
++    assert body["model"] == "claude-sonnet-5-5"
++    assert body["system"] == "Ты наставник."
++    assert body["messages"] == [{"role": "user", "content": "Привет"}]
++    assert "temperature" not in body and "seed" not in body
++    assert body["thinking"] == {"type": "between_tools"}
++
++    text = "".join(c.delta for c in chunks if not c.done)
++    assert text.startswith("Давай разберёмся")
++    final = chunks[-1]
++    assert final.done and final.model == DIRECT
++    assert (final.tokens_in, final.tokens_out) == (12, 5)
++
++
++async def test_stream_wrong_id_is_identity_mismatch_and_falls_through(monkeypatch):
++    monkeypatch.setenv("ANTHROPIC_DIRECT_ENABLED", "1")
++
++    def handler(request: httpx.Request) -> httpx.Response:
++        if "anthropic.com" in str(request.url):
++            return httpx.Response(200, content=_direct_stream("текст " * 50, msg_id="chatcmpl-1"),
++                                  headers={"content-type": "text/event-stream"})
++        frame = {"id": "chatcmpl-9", "choices": [{"delta": {"content": "запасная " * 40}}]}
++        return httpx.Response(200, content=f"data: {json.dumps(frame)}\n\n".encode(),
++                              headers={"content-type": "text/event-stream"})
++
++    _mount(monkeypatch, handler)
++    chunks = [c async for c in llm_client.stream(MSGS, purpose="t")]
++    assert chunks[-1].model == "model-a"
++
++
++async def test_batch_parse_and_haiku_thinking_off(monkeypatch):
++    monkeypatch.setenv("ANTHROPIC_DIRECT_ENABLED", "1")
++    captured: dict = {}
++
++    def handler(request: httpx.Request) -> httpx.Response:
++        captured["body"] = json.loads(request.content)
++        return httpx.Response(200, json={
++            "id": "msg_02", "type": "message", "stop_reason": "end_turn",
++            "content": [{"type": "text", "text": "{\"ok\": true}"}],
++            "usage": {"input_tokens": 30, "cache_read_input_tokens": 5, "output_tokens": 4},
++        })
++
++    _mount(monkeypatch, handler)
++    result = await llm_client.complete(
++        MSGS, model="anthropic-direct/claude-haiku-5-5", purpose="t",
++        response_format={"type": "json_object"},
++    )
++    assert result.text == '{"ok": true}'
++    assert (result.tokens_in, result.tokens_out) == (35, 4)
++    assert captured["body"]["thinking"] == {"type": "disabled"}
++    assert "response_format" not in captured["body"]
++
++
++async def test_direct_429_cools_only_direct_provider(monkeypatch):
++    monkeypatch.setenv("ANTHROPIC_DIRECT_ENABLED", "1")
++    _mount(monkeypatch, lambda r: httpx.Response(429, json={"type": "error"}))
++    with pytest.raises(LLMRateLimited):
++        await llm_client.complete(MSGS, model=DIRECT, purpose="t")
++    assert cooldown.remaining(anthropic_direct.PROVIDER_NAME) > 0
++    assert cooldown.remaining(providers.PROVIDER_NAME) == 0
++
++
++def test_history_starting_with_tutor_gets_user_turn_first():
++    """Бой шлёт историю, начатую вступлением наставника; Messages API так не примет."""
++    body = anthropic_direct.payload(
++        [LLMMessage(role="system", content="s"), LLMMessage(role="assistant", content="Привет!"),
++         LLMMessage(role="user", content="не знаю")],
++        model=DIRECT, max_tokens=10, stream=False,
++    )
++    assert [t["role"] for t in body["messages"]] == ["user", "assistant", "user"]
++
++
++@pytest.mark.parametrize("text, flagged", [
++    ("Да, 29470 0 правильно!", True),
++    ("Верно, 29470 — это ответ.", True),
++    ("Нет, 29470 не подходит, но ты шёл верным путём.", False),
++    ("Пока не могу сказать «правильно» или «нет»: ты получил 29470 0.", False),
++    ("29470 — неверно, давай проверим.", False),
++])
++def test_sycophancy_detector_respects_negation(text, flagged):
++    """Живые ответы 14.10: отказ подтвердить — не поддакивание."""
++    from app.services.ai_tutor.role_gate import sycophancy
++    assert bool(sycophancy(text, "29470")) is flagged
++
++
++def test_refusal_and_error_event_become_errors():
++    assert "error" in anthropic_direct.normalize_event(
++        {"type": "error", "error": {"type": "overloaded_error", "message": "Overloaded"}})
++    assert "error" in anthropic_direct.normalize_event(
++        {"type": "message_delta", "delta": {"stop_reason": "refusal"}, "usage": {}})
++    assert "error" in anthropic_direct.normalize_message(
++        {"id": "msg_1", "stop_reason": "refusal", "content": []})

@@ -14,7 +14,7 @@ from typing import AsyncIterator, Iterable, Optional, Sequence
 
 import httpx
 
-from app.services.llm import cooldown, providers, usage
+from app.services.llm import anthropic_direct, cooldown, providers, usage
 from app.services.llm.identity import OpeningSniffer, check_response_id
 from app.services.llm.contracts import (
     Budget,
@@ -104,10 +104,14 @@ class _StubSniffer:
         return held
 
 
-def _raise_for_status(status: int, body: str) -> None:
-    """HTTP-статус → класс ошибки по таблице §5."""
+def _raise_for_status(status: int, body: str, provider: str = providers.PROVIDER_NAME) -> None:
+    """HTTP-статус → класс ошибки по таблице §5.
+
+    429 остужает тот провайдер, который его прислал: отбой прямого API Anthropic
+    не должен останавливать CloseRouter, и наоборот (tsk-1259).
+    """
     if status == 429:
-        cooldown.start(providers.PROVIDER_NAME, providers.cooldown_seconds())
+        cooldown.start(provider, providers.cooldown_seconds())
         raise LLMRateLimited(f"429 от провайдера: {body[:200]}")
     if status in (401, 403):
         raise LLMConfigError(f"{status}: ключ отвергнут провайдером — {body[:200]}")
@@ -205,19 +209,60 @@ def _rotate_by_cooldown(chain: list[str]) -> list[str]:
     return fresh + cooling
 
 
-def _guard_cooldown() -> providers.ProviderConfig:
-    cfg = providers.resolve_provider()
-    if not cfg.usable:
-        raise LLMConfigError(
-            "ключ провайдера не задан (CLOSEROUTER_API_KEY / CB_CLAUDE_API_KEY)"
-        )
-    left = cooldown.remaining(cfg.name)
-    if left > 0:
-        raise LLMCooldown(f"провайдер остывает ещё {left:.0f} c после 429")
-    return cfg
+def _ready_chain(chain: list[str]) -> list[tuple[str, providers.ProviderConfig]]:
+    """Модели цепочки с готовым подключением, без сетевого вызова.
+
+    Подключение выбирается по метке (tsk-1259): `anthropic-direct/*` — прямой
+    API, остальное — CloseRouter. Модель без ключа или с остывающим провайдером
+    пропускается; если не осталось ни одной — поднимается ошибка первой, как
+    раньше поднималась ошибка единственного провайдера.
+    """
+    ready: list[tuple[str, providers.ProviderConfig]] = []
+    first_error: Optional[LLMError] = None
+    for candidate in chain:
+        cfg = providers.resolve_for(candidate)
+        left = cooldown.remaining(cfg.name)
+        if not cfg.usable:
+            err: LLMError = LLMConfigError(
+                "ключ провайдера не задан (CLOSEROUTER_API_KEY / CB_CLAUDE_API_KEY)"
+                if cfg.name == providers.PROVIDER_NAME else
+                "прямой API Anthropic выключен или без ключа "
+                "(ANTHROPIC_DIRECT_ENABLED / CLAUDE_API_KEY)"
+            )
+        elif left > 0:
+            err = LLMCooldown(f"провайдер остывает ещё {left:.0f} c после 429 ({cfg.name})")
+        else:
+            ready.append((candidate, cfg))
+            continue
+        first_error = first_error or err
+        logger.info("LLM: модель %s пропущена: %s", candidate, err)
+    if not ready:
+        raise first_error or LLMConfigError("цепочка моделей пуста — нечего вызывать")
+    return ready
+
+
+def _url(cfg: providers.ProviderConfig) -> str:
+    if cfg.name == anthropic_direct.PROVIDER_NAME:
+        return f"{cfg.base_url}/v1/messages"
+    return cfg.chat_url
+
+
+def _body(
+    cfg: providers.ProviderConfig, messages: Sequence[LLMMessage], *, model: str,
+    temperature: float, max_tokens: int, stream: bool, seed: Optional[int],
+    response_format: Optional[dict],
+) -> dict:
+    """Тело запроса в формате провайдера: Messages API или OpenAI-совместимое."""
+    if cfg.name == anthropic_direct.PROVIDER_NAME:
+        return anthropic_direct.payload(messages, model=model, max_tokens=max_tokens,
+                                        stream=stream)
+    return _payload(messages, model=model, temperature=temperature, max_tokens=max_tokens,
+                    stream=stream, seed=seed, response_format=response_format)
 
 
 def _headers(cfg: providers.ProviderConfig) -> dict[str, str]:
+    if cfg.name == anthropic_direct.PROVIDER_NAME:
+        return anthropic_direct.headers(cfg.api_key or "")
     return {
         "Authorization": f"Bearer {cfg.api_key}",
         "Content-Type": "application/json",
@@ -285,8 +330,8 @@ async def complete(
 
     `model=None` — идти по цепочке `LLM_JUDGE_MODELS` до первой рабочей.
     """
-    cfg = _guard_cooldown()
-    chain = _rotate_by_cooldown(_models_for(model, providers.judge_models()))
+    ready = _ready_chain(_rotate_by_cooldown(_models_for(model, providers.judge_models())))
+    chain = [candidate for candidate, _ in ready]
     last_error: Optional[LLMError] = None
     # Потолок на ВЕСЬ вызов, а не на каждую модель по отдельности (tsk-678) —
     # тот же сторож, что уже стоит в потоковой ветке. До 25.08 он батчу был не
@@ -298,7 +343,7 @@ async def complete(
     deadline = time.monotonic() + budget.total_timeout
 
     async with httpx.AsyncClient(timeout=_timeout(budget)) as http:
-        for candidate in chain:
+        for candidate, cfg in ready:
             if last_error is not None and time.monotonic() >= deadline:
                 logger.warning(
                     "LLM: бюджет %.0f c исчерпан, цепочку дальше не перебираем "
@@ -311,17 +356,20 @@ async def complete(
                 attempts += 1
                 try:
                     resp = await http.post(
-                        cfg.chat_url, headers=_headers(cfg),
-                        json=_payload(messages, model=candidate, temperature=temperature,
-                                      max_tokens=max_tokens, stream=False, seed=seed,
-                                      response_format=response_format),
+                        _url(cfg), headers=_headers(cfg),
+                        json=_body(cfg, messages, model=candidate, temperature=temperature,
+                                   max_tokens=max_tokens, stream=False, seed=seed,
+                                   response_format=response_format),
                     )
                     body = resp.text
-                    _raise_for_status(resp.status_code, body)
+                    _raise_for_status(resp.status_code, body, cfg.name)
                     try:
                         payload = json.loads(body)
                     except json.JSONDecodeError as exc:
                         raise LLMMalformed(f"ответ не JSON: {body[:200]}") from exc
+                    if cfg.name == anthropic_direct.PROVIDER_NAME:
+                        payload = anthropic_direct.normalize_message(payload)
+                        check_response_id(candidate, payload.get("id"))
                     _check_payload_error(payload)
 
                     choices = payload.get("choices") or []
@@ -445,8 +493,8 @@ async def stream(
     `model=None` — цепочка `LLM_TUTOR_MODELS`. Переход к следующей модели возможен
     только пока не отдан ни один кусок: подменять модель на середине фразы нельзя.
     """
-    cfg = _guard_cooldown()
-    chain = _rotate_by_cooldown(_models_for(model, providers.tutor_models()))
+    ready = _ready_chain(_rotate_by_cooldown(_models_for(model, providers.tutor_models())))
+    chain = [candidate for candidate, _ in ready]
     last_error: Optional[LLMError] = None
     # Потолок на ВЕСЬ вызов, а не на каждую модель по отдельности (tsk-671).
     # Ученик ждёт один раз: четыре модели по 40 c — это не «надёжность», это
@@ -454,7 +502,7 @@ async def stream(
     deadline = time.monotonic() + budget.total_timeout
 
     async with httpx.AsyncClient(timeout=_timeout(budget)) as http:
-        for candidate in chain:
+        for candidate, cfg in ready:
             if last_error is not None and time.monotonic() >= deadline:
                 logger.warning(
                     "LLM: бюджет %.0f c исчерпан, цепочку дальше не перебираем",
@@ -492,14 +540,14 @@ async def stream(
                 # чтение заголовков) — штатный механизм, живущий в той же
                 # anyio-области, что и сам поток.
                 async with http.stream(
-                    "POST", cfg.chat_url, headers=_headers(cfg),
-                    json=_payload(messages, model=candidate, temperature=temperature,
-                                  max_tokens=max_tokens, stream=True, seed=seed,
-                                  response_format=None),
+                    "POST", _url(cfg), headers=_headers(cfg),
+                    json=_body(cfg, messages, model=candidate, temperature=temperature,
+                               max_tokens=max_tokens, stream=True, seed=seed,
+                               response_format=None),
                 ) as resp:
                     if resp.status_code != 200:
                         body = (await resp.aread()).decode("utf-8", "ignore")
-                        _raise_for_status(resp.status_code, body)
+                        _raise_for_status(resp.status_code, body, cfg.name)
 
                     # Хвост НЕЛЬЗЯ терять: сеть режет поток произвольно, и кадр
                     # запросто приходит разорванным пополам между двумя
@@ -541,6 +589,8 @@ async def stream(
                             continue
                         buffer = tail
                         for payload in _sse_lines_to_payloads(head + "\n\n"):
+                            if cfg.name == anthropic_direct.PROVIDER_NAME:
+                                payload = anthropic_direct.normalize_event(payload)
                             # Ошибка внутри HTTP 200 — главная ловушка провайдера.
                             _check_payload_error(payload)
                             if response_id is None and payload.get("id"):

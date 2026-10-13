@@ -68,8 +68,13 @@ _ROLE_REFUSAL = re.compile(
 
 
 def vendor_of(model: str) -> str:
-    """Семейство модели по метке: `openai/gpt-5.5` → `openai`."""
-    return (model or "").split("/", 1)[0].lower()
+    """Семейство модели по метке: `openai/gpt-5.5` → `openai`.
+
+    Прямой API (`anthropic-direct/…`, tsk-1259) — то же семейство anthropic:
+    отпечаток `msg_` и самоназвание Claude проверяются так же.
+    """
+    vendor = (model or "").split("/", 1)[0].lower()
+    return "anthropic" if vendor == "anthropic-direct" else vendor
 
 
 def check_response_id(model: str, response_id: Optional[str]) -> None:

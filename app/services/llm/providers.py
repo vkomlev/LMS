@@ -12,6 +12,8 @@ import os
 from dataclasses import dataclass
 from typing import Optional
 
+from app.services.llm import anthropic_direct
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_BASE_URL = "https://api.closerouter.dev"
@@ -269,9 +271,33 @@ def resolve_provider() -> ProviderConfig:
     return ProviderConfig(base_url=normalize_base_url(base_raw), api_key=key)
 
 
+def resolve_for(model: str) -> ProviderConfig:
+    """Подключение для конкретной метки модели (tsk-1259).
+
+    `anthropic-direct/*` — прямой Messages API, остальное — CloseRouter. Прямой
+    провайдер без рубильника `ANTHROPIC_DIRECT_ENABLED` считается непригодным
+    (`api_key=None`), даже если ключ лежит в окружении.
+    """
+    if anthropic_direct.is_direct(model):
+        key = anthropic_direct.api_key() if anthropic_direct.enabled() else None
+        return ProviderConfig(
+            base_url=anthropic_direct.DEFAULT_BASE_URL, api_key=key,
+            name=anthropic_direct.PROVIDER_NAME,
+        )
+    return resolve_provider()
+
+
 def _chain(env_name: str, default: str) -> list[str]:
     raw = _env_first(env_name) or default
     models = [m.strip() for m in raw.split(",") if m.strip()]
+    if not anthropic_direct.enabled():
+        dropped = [m for m in models if anthropic_direct.is_direct(m)]
+        if dropped:
+            logger.warning(
+                "LLM: %s в %s пропущены — прямой провайдер выключен "
+                "(ANTHROPIC_DIRECT_ENABLED)", ", ".join(dropped), env_name,
+            )
+            models = [m for m in models if not anthropic_direct.is_direct(m)]
     return models
 
 
