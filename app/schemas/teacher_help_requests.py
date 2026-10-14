@@ -130,6 +130,14 @@ class HelpRequestDetailResponse(HelpRequestListItem):
         ),
     )
     message: Optional[str] = None
+    stuck_note: Optional[str] = Field(
+        default=None,
+        description=(
+            "tsk-993: где ученик застрял, своими словами — если он описал это "
+            "при запросе помощи (до своей сдачи — обязательно при "
+            "HELP_REQUIRES_ATTEMPT=true)"
+        ),
+    )
     # closed_at теперь в HelpRequestListItem (tsk-924) — наследуется отсюда.
     closed_by: Optional[int] = None
     resolution_comment: Optional[str] = None

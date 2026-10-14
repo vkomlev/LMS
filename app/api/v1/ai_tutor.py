@@ -14,7 +14,7 @@ import json
 import logging
 from typing import AsyncIterator, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import text
@@ -28,7 +28,7 @@ from app.api.deps import (
 )
 from app.auth.current_user import CurrentUser
 from app.core.config import Settings
-from app.services import entitlements_service
+from app.services import entitlements_service, help_attempt_gate
 from app.services.ai_tutor import session_service
 from app.services.ai_tutor.answer_guard import TutorStreamGuard
 from app.services.llm import TUTOR_MAX_TOKENS, Budget, LLMError, stream
@@ -123,16 +123,55 @@ _SUBSCRIPTION_403 = {
     }
 }
 
+# tsk-993 (П4): отказ «сначала попробуй сам» на открытии нового разговора.
+_ATTEMPT_409 = {
+    409: {
+        "description": (
+            "tsk-993: при HELP_REQUIRES_ATTEMPT=true новый разговор открывается "
+            "только после своей сдачи по заданию или с описанием «где застрял» "
+            "(`stuck_note`, не короче 20 символов). `payload.code` = "
+            "`attempt_required`, `detail` — текст для ученика."
+        )
+    }
+}
+
+
+async def _enforce_attempt_gate(
+    db: AsyncSession, *, owner: int, task_id: int, stuck_note: Optional[str]
+) -> None:
+    """Гейт П4 — только если разговор будет НОВЫМ (tsk-993).
+
+    Начатый разговор доводится до конца при любом положении рубильника:
+    иначе включение гейта оборвало бы разговоры, начатые до него.
+    """
+    if not help_attempt_gate.is_enabled():
+        return
+    if await session_service.has_live_session(db, student_id=owner, task_id=task_id):
+        return
+    await help_attempt_gate.enforce(
+        db, student_id=owner, task_id=task_id, stuck_note=stuck_note, surface="ai_tutor"
+    )
+
 
 @router.get(
     "/tasks/{task_id}",
     response_model=TutorSessionRead,
-    responses=_SUBSCRIPTION_403,
+    responses={**_SUBSCRIPTION_403, **_ATTEMPT_409},
     summary="Открыть разговор с наставником по заданию",
 )
 async def get_session(
     task_id: int,
     student_id: Optional[int] = None,
+    stuck_note: Optional[str] = Query(
+        None,
+        max_length=help_attempt_gate.STUCK_NOTE_MAX_LEN,
+        description=(
+            "tsk-993: где ученик застрял, своими словами. Учитывается только при "
+            "открытии НОВОГО разговора: уходит в первую реплику наставника, а при "
+            "HELP_REQUIRES_ATTEMPT=true без своей сдачи нужна заметка не короче "
+            "20 символов"
+        ),
+    ),
     db: AsyncSession = Depends(get_async_db),
     current_user: CurrentUser = Depends(get_current_user),
 ) -> TutorSessionRead:
@@ -171,9 +210,13 @@ async def get_session(
         ):
             raise _deny(gate)
 
+    # tsk-993 (П4): после тарифа — сначала «нельзя по тарифу», потом
+    # «сначала попробуй сам»: апгрейд гейт попытки не снимет.
+    await _enforce_attempt_gate(db, owner=owner, task_id=task_id, stuck_note=stuck_note)
+
     try:
         session, _ = await session_service.get_or_create(
-            db, student_id=owner, task_id=task_id
+            db, student_id=owner, task_id=task_id, stuck_note=stuck_note
         )
     except ValueError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
@@ -198,7 +241,7 @@ def _sse(event: str, payload: dict) -> str:
 
 @router.post(
     "/tasks/{task_id}/ask",
-    responses=_SUBSCRIPTION_403,
+    responses={**_SUBSCRIPTION_403, **_ATTEMPT_409},
     summary="Спросить наставника (поток server-sent events)",
 )
 async def ask(
@@ -218,6 +261,10 @@ async def ask(
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Наставник выключен")
 
     owner = _resolve_student(current_user, student_id)
+    # tsk-993 (П4): `ask` тоже открывает разговор, если открытого нет — без
+    # гейта здесь его обходили бы, минуя GET. Реплика ученика служит
+    # описанием «где застрял»: это тот же текст своими словами.
+    await _enforce_attempt_gate(db, owner=owner, task_id=task_id, stuck_note=body.message)
     try:
         session, _ = await session_service.get_or_create(
             db, student_id=owner, task_id=task_id

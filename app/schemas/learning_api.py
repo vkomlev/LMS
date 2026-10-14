@@ -157,6 +157,18 @@ class TaskStateResponse(BaseModel):
             "зачёт — за преподавателем (solution_rules.partial_auto_check, tsk-396)."
         ),
     )
+    # tsk-993 (П4): клиенту нужно знать заранее, что помощь закрыта до своей
+    # сдачи, — иначе ученик узнаёт об этом только отказом после нажатия кнопки.
+    # UX-сигнал, не гейт: сервер всё равно проверяет на request-help.
+    help_attempt_required: bool = Field(
+        default=False,
+        description=(
+            "Помощь преподавателя и новый разговор с наставником откроются только "
+            "после своей сдачи или с описанием «где застрял» (≥20 символов): "
+            "HELP_REQUIRES_ATTEMPT=true и своих сдач по заданию нет (tsk-993). "
+            "При выключенном рубильнике всегда false — прежнее поведение клиента."
+        ),
+    )
     # tsk-547: есть ли у задания эталон для сверки `response.value`. Ученику
     # `solution_rules` не отдаются (видимость полей — отдельный слой, tsk-460),
     # поэтому «поле ответа бессмысленно» без такого сигнала на клиенте
@@ -208,6 +220,18 @@ class RequestHelpRequest(BaseModel):
     attachment_filename: Optional[str] = Field(default=None, max_length=255)
     attachment_content_type: Optional[str] = Field(default=None, max_length=100)
     attachment_size_bytes: Optional[int] = Field(default=None, ge=0)
+    # tsk-993 (П4): «где застрял» — открывает помощь без сдачи, если не короче
+    # 20 символов после обрезки пробелов (при включённом HELP_REQUIRES_ATTEMPT).
+    # Сохраняется в заявке и видна преподавателю в карточке.
+    stuck_note: Optional[str] = Field(
+        default=None,
+        max_length=1000,
+        description=(
+            "Где ученик застрял, своими словами. При HELP_REQUIRES_ATTEMPT=true "
+            "без своей сдачи по заданию нужна заметка не короче 20 символов, "
+            "иначе 409 `attempt_required`"
+        ),
+    )
 
 
 class RequestHelpResponse(BaseModel):

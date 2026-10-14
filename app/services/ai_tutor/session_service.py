@@ -46,6 +46,8 @@ class TutorSession:
     status: str
     task_stem_snapshot: str
     student_answer_snapshot: Optional[str]
+    # tsk-993 (П4): где ученик застрял, со слов при открытии разговора.
+    stuck_note: Optional[str] = None
 
     @property
     def soft_limit_reached(self) -> bool:
@@ -169,13 +171,36 @@ async def _last_student_answer(db: AsyncSession, student_id: int, task_id: int) 
     return "\n".join(parts) or None
 
 
+async def has_live_session(db: AsyncSession, *, student_id: int, task_id: int) -> bool:
+    """Есть ли открытый и не протухший разговор, который `get_or_create` вернёт.
+
+    tsk-993 (П4): гейт «сначала попробуй сам» стоит только на открытии НОВОГО
+    разговора. Протухший (старше `SESSION_TTL_HOURS`) `get_or_create` закроет и
+    начнёт заново — значит, для гейта это тоже новый разговор.
+    """
+    row = (await db.execute(text("""
+        SELECT 1 FROM ai_tutor_session
+        WHERE student_id = :uid AND task_id = :tid AND status = 'open'
+          AND last_activity_at >= now() - make_interval(hours => :ttl)
+    """), {"uid": student_id, "tid": task_id, "ttl": SESSION_TTL_HOURS})).first()
+    return row is not None
+
+
 async def get_or_create(
-    db: AsyncSession, *, student_id: int, task_id: int
+    db: AsyncSession,
+    *,
+    student_id: int,
+    task_id: int,
+    stuck_note: Optional[str] = None,
 ) -> tuple[TutorSession, bool]:
     """Найти открытый разговор или начать новый. Второе значение — «создан ли».
 
     Уникальный частичный индекс в БД гарантирует единственность открытой сессии
     на пару: без него ученик открыл бы вторую вкладку и обнулил счётчик ходов.
+
+    tsk-993: `stuck_note` («где застрял») пишется только в НОВЫЙ разговор —
+    рядом со снимком ответа, и уходит в первую реплику наставника. У уже
+    открытого разговора первая реплика была, заметка ему не нужна.
     """
     # Протухший разговор закрываем ЗДЕСЬ, а не надеемся на уборщика: `expire_stale`
     # написан и покрыт тестом, но в рабочем коде его не зовёт никто (tsk-659 —
@@ -197,7 +222,7 @@ async def get_or_create(
 
     row = (await db.execute(text("""
         SELECT id, student_id, task_id, mode, turns, status,
-               task_stem_snapshot, student_answer_snapshot
+               task_stem_snapshot, student_answer_snapshot, stuck_note
         FROM ai_tutor_session
         WHERE student_id = :uid AND task_id = :tid AND status = 'open'
     """), {"uid": student_id, "tid": task_id})).mappings().first()
@@ -211,13 +236,14 @@ async def get_or_create(
     created = (await db.execute(text("""
         INSERT INTO ai_tutor_session
             (student_id, task_id, course_id, mode, status,
-             task_stem_snapshot, student_answer_snapshot)
-        VALUES (:uid, :tid, :cid, :mode, 'open', :stem, :answer)
+             task_stem_snapshot, student_answer_snapshot, stuck_note)
+        VALUES (:uid, :tid, :cid, :mode, 'open', :stem, :answer, :note)
         RETURNING id, student_id, task_id, mode, turns, status,
-                  task_stem_snapshot, student_answer_snapshot
+                  task_stem_snapshot, student_answer_snapshot, stuck_note
     """), {
         "uid": student_id, "tid": task_id, "cid": course_id, "mode": mode,
         "stem": view.stem, "answer": answer,
+        "note": (stuck_note or "").strip()[:1000] or None,
     })).mappings().first()
 
     session = TutorSession(**dict(created))
@@ -334,7 +360,8 @@ async def build_llm_messages(
         messages.append(LLMMessage(
             role="user",
             content=build_opening_user_message(
-                view, session.student_answer_snapshot, opening_mode(session.mode)
+                view, session.student_answer_snapshot, opening_mode(session.mode),
+                stuck_note=session.stuck_note,
             ),
         ))
     else:

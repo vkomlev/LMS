@@ -140,6 +140,13 @@ class HelpRequests(Base):
     attachment_content_type: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     attachment_size_bytes: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
+    # tsk-993 (П4): «где застрял» своими словами — открывает помощь без своей
+    # сдачи при HELP_REQUIRES_ATTEMPT=true; преподаватель видит её в карточке.
+    stuck_note: Mapped[Optional[str]] = mapped_column(
+        Text, nullable=True,
+        comment="Где ученик застрял, своими словами (tsk-993). NULL — не описывал.",
+    )
+
     replies: Mapped[List["HelpRequestReplies"]] = relationship(
         "HelpRequestReplies",
         back_populates="help_request",

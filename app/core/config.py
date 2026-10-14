@@ -402,6 +402,13 @@ class Settings:
         self.ai_tutor_concept_foothold: bool = os.getenv(
             "AI_TUTOR_CONCEPT_FOOTHOLD", "false"
         ).lower() in ("true", "1", "yes")
+        # tsk-993 (П4): помощь преподавателя и новый разговор с наставником —
+        # только после своей сдачи по заданию ИЛИ описания «где застрял»
+        # (≥20 символов). Выключено по умолчанию: выкат кода не меняет
+        # поведение, пока оператор не включит.
+        self.help_requires_attempt: bool = os.getenv(
+            "HELP_REQUIRES_ATTEMPT", "false"
+        ).lower() in ("true", "1", "yes")
 
         # tsk-301: режим подписного гейта. Четыре значения, а не булев рубильник —
         # включение идёт ступенями, и `guests` это самостоятельный шаг выката,

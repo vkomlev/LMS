@@ -71,6 +71,7 @@ from app.services import graduation_service
 from app.services import lesson_attendance_service
 # tsk-301: единственная дверь прав подписки — своей проверки здесь быть не должно.
 from app.services import entitlements_service
+from app.services import help_attempt_gate
 from app.services import course_activity_service
 from app.services.attempts_service import AttemptsService
 from app.services.tasks_service import TasksService
@@ -677,6 +678,10 @@ async def get_task_state(
             last_based_status=state.state,
         )
         await db.commit()
+    # tsk-993 (П4): при выключенном рубильнике — false без запроса в БД.
+    help_attempt_required = await help_attempt_gate.is_required(
+        db, student_id=student_id, task_id=task_id
+    )
     return TaskStateResponse(
         task_id=task_id,
         student_id=student_id,
@@ -696,6 +701,7 @@ async def get_task_state(
         has_reference_answer=has_reference_answer,
         has_io_tests=has_io_tests,
         diagnostic=form_flags.diagnostic,
+        help_attempt_required=help_attempt_required,
     )
 
 
@@ -712,7 +718,14 @@ async def get_task_state(
                 "исчерпании попыток этим гейтом не закрывается. "
                 + _PAYMENT_403_DESCRIPTION
             )
-        }
+        },
+        409: {
+            "description": (
+                "tsk-993: при HELP_REQUIRES_ATTEMPT=true — у ученика нет своей сдачи "
+                "по заданию и `stuck_note` короче 20 символов. `payload.code` = "
+                "`attempt_required`, `detail` — текст для ученика."
+            )
+        },
     },
     summary="Запросить помощь по заданию (идемпотентно в окне дедупа)",
 )
@@ -765,6 +778,16 @@ async def request_help(
     user = await users_service.get_by_id(db, body.student_id)
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Студент не найден")
+    # tsk-993 (П4): «сначала попробуй сам». Гейт после 404 — несуществующему
+    # заданию честнее ответить «не найдено», чем «сначала попробуй». При
+    # выключенном рубильнике ничего не проверяет и attempt_id не заполняет.
+    attempt_id = await help_attempt_gate.enforce(
+        db,
+        student_id=body.student_id,
+        task_id=task_id,
+        stuck_note=body.stuck_note,
+        surface="request_help",
+    )
     event_id, deduplicated = await record_help_requested(
         db, body.student_id, task_id, body.message
     )
@@ -775,6 +798,8 @@ async def request_help(
         event_id=event_id,
         message=body.message,
         course_id=task.course_id,
+        attempt_id=attempt_id,
+        stuck_note=help_attempt_gate.normalize_stuck_note(body.stuck_note),
         deduplicated=deduplicated,
         attachment_id=body.attachment_id,
         attachment_filename=body.attachment_filename,

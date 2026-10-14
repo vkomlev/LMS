@@ -19646,6 +19646,9 @@
           "403": {
             "description": "tsk-301: разбор с преподавателем не входит в тариф. Тело содержит `payload.upgrade_hint` — что даёт апгрейд. Авто-заявка при исчерпании попыток этим гейтом не закрывается. tsk-010: занятия закрыты за просроченную оплату — `payload.code = payment_overdue` (сумма, месяцы, `payments_url`); tsk-673: тариф закрывает работу в курсе — `payload.code = course_work_closed` (так устроен «Выпускник»: материалы читаются, ответы не принимаются); либо чужой `student_id`."
           },
+          "409": {
+            "description": "tsk-993: при HELP_REQUIRES_ATTEMPT=true — у ученика нет своей сдачи по заданию и `stuck_note` короче 20 символов. `payload.code` = `attempt_required`, `detail` — текст для ученика."
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -45974,6 +45977,25 @@
             }
           },
           {
+            "name": "stuck_note",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 1000
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "tsk-993: где ученик застрял, своими словами. Учитывается только при открытии НОВОГО разговора: уходит в первую реплику наставника, а при HELP_REQUIRES_ATTEMPT=true без своей сдачи нужна заметка не короче 20 символов",
+              "title": "Stuck Note"
+            },
+            "description": "tsk-993: где ученик застрял, своими словами. Учитывается только при открытии НОВОГО разговора: уходит в первую реплику наставника, а при HELP_REQUIRES_ATTEMPT=true без своей сдачи нужна заметка не короче 20 символов"
+          },
+          {
             "name": "token",
             "in": "query",
             "required": false,
@@ -46035,6 +46057,9 @@
           },
           "403": {
             "description": "tsk-301: наставник не входит в тариф либо исчерпан месячный лимит. Тело содержит `payload.upgrade_hint` — что даёт апгрейд."
+          },
+          "409": {
+            "description": "tsk-993: при HELP_REQUIRES_ATTEMPT=true новый разговор открывается только после своей сдачи по заданию или с описанием «где застрял» (`stuck_note`, не короче 20 символов). `payload.code` = `attempt_required`, `detail` — текст для ученика."
           },
           "422": {
             "description": "Validation Error",
@@ -46161,6 +46186,9 @@
           },
           "403": {
             "description": "tsk-301: наставник не входит в тариф либо исчерпан месячный лимит. Тело содержит `payload.upgrade_hint` — что даёт апгрейд."
+          },
+          "409": {
+            "description": "tsk-993: при HELP_REQUIRES_ATTEMPT=true новый разговор открывается только после своей сдачи по заданию или с описанием «где застрял» (`stuck_note`, не короче 20 символов). `payload.code` = `attempt_required`, `detail` — текст для ученика."
           },
           "422": {
             "description": "Validation Error",
@@ -60229,6 +60257,18 @@
             ],
             "title": "Message"
           },
+          "stuck_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stuck Note",
+            "description": "tsk-993: где ученик застрял, своими словами — если он описал это при запросе помощи (до своей сдачи — обязательно при HELP_REQUIRES_ATTEMPT=true)"
+          },
           "closed_by": {
             "anyOf": [
               {
@@ -70957,6 +70997,19 @@
               }
             ],
             "title": "Attachment Size Bytes"
+          },
+          "stuck_note": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stuck Note",
+            "description": "Где ученик застрял, своими словами. При HELP_REQUIRES_ATTEMPT=true без своей сдачи по заданию нужна заметка не короче 20 символов, иначе 409 `attempt_required`"
           }
         },
         "type": "object",
@@ -79952,6 +80005,12 @@
             "type": "boolean",
             "title": "Partial Auto Check",
             "description": "Гибридный режим: часть ответа проверяется автоматически сразу, финальный зачёт — за преподавателем (solution_rules.partial_auto_check, tsk-396).",
+            "default": false
+          },
+          "help_attempt_required": {
+            "type": "boolean",
+            "title": "Help Attempt Required",
+            "description": "Помощь преподавателя и новый разговор с наставником откроются только после своей сдачи или с описанием «где застрял» (≥20 символов): HELP_REQUIRES_ATTEMPT=true и своих сдач по заданию нет (tsk-993). При выключенном рубильнике всегда false — прежнее поведение клиента.",
             "default": false
           },
           "has_reference_answer": {

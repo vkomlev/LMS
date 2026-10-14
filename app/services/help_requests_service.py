@@ -202,6 +202,7 @@ async def get_or_create_help_request(
     attachment_filename: Optional[str] = None,
     attachment_content_type: Optional[str] = None,
     attachment_size_bytes: Optional[int] = None,
+    stuck_note: Optional[str] = None,
 ) -> Tuple[int, bool]:
     """
     После record_help_requested: получить или создать запись в help_requests.
@@ -212,6 +213,9 @@ async def get_or_create_help_request(
     заявки. Дедуп-ветка не перезаписывает вложение уже существующей заявки:
     дедуп по event_id — это то же самое обращение (повтор в окне 5 минут), а
     не новое сообщение с новым файлом.
+
+    tsk-993 (П4): `stuck_note` («где застрял») и `attempt_id` (последняя своя
+    сдача) пишутся так же — только при создании новой заявки.
     """
     r = await db.execute(
         text("SELECT id FROM help_requests WHERE event_id = :event_id LIMIT 1"),
@@ -227,16 +231,17 @@ async def get_or_create_help_request(
 
     assigned = await resolve_assigned_teacher(db, student_id, course_id)
     msg_truncated = (message or "")[:2000] if message else None
+    note_truncated = stuck_note[:1000] if stuck_note else None
 
     r = await db.execute(
         text("""
             INSERT INTO help_requests
             (status, request_type, auto_created, context_json, student_id, task_id, course_id, attempt_id, event_id, message, assigned_teacher_id,
              attachment_id, attachment_filename, attachment_content_type, attachment_size_bytes,
-             created_at, updated_at)
+             stuck_note, created_at, updated_at)
             VALUES ('open', 'manual_help', false, '{}'::jsonb, :student_id, :task_id, :course_id, :attempt_id, :event_id, :message, :assigned_teacher_id,
                     :attachment_id, :attachment_filename, :attachment_content_type, :attachment_size_bytes,
-                    now(), now())
+                    :stuck_note, now(), now())
             RETURNING id
         """),
         {
@@ -251,6 +256,7 @@ async def get_or_create_help_request(
             "attachment_filename": attachment_filename,
             "attachment_content_type": attachment_content_type,
             "attachment_size_bytes": attachment_size_bytes,
+            "stuck_note": note_truncated,
         },
     )
     new_id = r.scalar()
@@ -269,7 +275,12 @@ async def get_or_create_help_request(
             user_id=assigned,
             kind="help_request_opened",
             title="Новый вопрос от ученика",
-            content=head + (msg_truncated or "Ученик запросил помощь по заданию."),
+            # tsk-993: без текста вопроса показываем, где ученик застрял.
+            content=head + (
+                msg_truncated
+                or (f"Где застрял: {note_truncated}" if note_truncated else None)
+                or "Ученик запросил помощь по заданию."
+            ),
             payload={
                 "request_id": int(new_id), "task_id": task_id, "student_id": student_id, **extra,
             },
@@ -902,7 +913,9 @@ async def get_help_request_detail(
                    -- tsk-943: заявка по материалу (вместо задания) + вложение.
                    hr.material_id, m.title AS material_title,
                    hr.attachment_id, hr.attachment_filename,
-                   hr.attachment_content_type, hr.attachment_size_bytes
+                   hr.attachment_content_type, hr.attachment_size_bytes,
+                   -- tsk-993: «где застрял» — колонка 37, в конец (см. off-by-one ниже).
+                   hr.stuck_note
             FROM help_requests hr
             LEFT JOIN users u ON u.id = hr.student_id
             LEFT JOIN tasks t ON t.id = hr.task_id
@@ -1017,6 +1030,8 @@ async def get_help_request_detail(
         "attachment_filename": row[34] if len(row) > 34 else None,
         "attachment_content_type": row[35] if len(row) > 35 else None,
         "attachment_size_bytes": row[36] if len(row) > 36 else None,
+        # tsk-993: «где застрял» — колонка 37.
+        "stuck_note": row[37] if len(row) > 37 else None,
         # tsk-303: колонки 24-27 — состояние лестницы помощи. Индексы считаются
         # от порядка SELECT выше; в этом же маппинге когда-то уже был сдвиг на
         # +1 (см. комментарий про off-by-one), поэтому новые поля добавлены в

@@ -375,7 +375,10 @@ def build_context_block(view: TutorTaskView, student_answer: str | None) -> str:
 
 
 def build_opening_user_message(
-    view: TutorTaskView, student_answer: str | None, mode: TutorMode | None = None
+    view: TutorTaskView,
+    student_answer: str | None,
+    mode: TutorMode | None = None,
+    stuck_note: str | None = None,
 ) -> str:
     """Первая реплика в диалоге: данные + просьба начать с вопроса о ходе мысли.
 
@@ -389,7 +392,33 @@ def build_opening_user_message(
     режима, в `debug` молчащие решают почти все — им есть на что смотреть.
     Поэтому одна зацепка «куда посмотреть» + лёгкий вопрос. Тему по-прежнему не
     объясняем и ответ не называем.
+
+    tsk-993 (П4): `stuck_note` — где ученик застрял, своими словами (с ней он
+    открыл разговор до первой сдачи). Переспрашивать «где застрял» после такого
+    описания — тупик, поэтому наставник начинает с названного места. Заметка —
+    чужой текст и идёт в метках данных, как ответ ученика.
     """
+    opening = _opening_instruction(student_answer, mode)
+    note = (stuck_note or "").strip()
+    if not note:
+        return opening
+    if not (student_answer and student_answer.strip()):
+        # Без сдачи базовая просьба — «спроси, где застрял»; на неё уже ответили.
+        opening = (
+            "Начни разговор: поздоровайся одной строкой. Ученик ещё НЕ отправлял "
+            "ответ, но сам описал, где застрял (ниже, в данных ученика). Начни "
+            "именно с этого места: задай ОДИН короткий уточняющий вопрос про него. "
+            "Не переспрашивай, где он застрял, не объясняй тему целиком и не "
+            "называй ответ."
+        )
+    return (
+        f"{opening}\n\nГде ученик застрял, его словами:\n"
+        f"{STUDENT_DATA_OPEN}\n{note}\n{STUDENT_DATA_CLOSE}"
+    )
+
+
+def _opening_instruction(student_answer: str | None, mode: TutorMode | None) -> str:
+    """Просьба начать разговор без учёта заметки «где застрял» (до tsk-993)."""
     if mode == "concept" and student_answer and student_answer.strip():
         return (
             "Начни разговор: ОДНОЙ короткой фразой дай понять, что ошибиться здесь "

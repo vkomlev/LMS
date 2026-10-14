@@ -429,6 +429,65 @@ class LearningEngineService:
             )
         return len(student_ids)
 
+    async def last_own_attempt_id(
+        self,
+        db: AsyncSession,
+        student_id: int,
+        task_id: int,
+        root_course_id: Optional[int] = None,
+    ) -> Optional[int]:
+        """
+        ID попытки последней СОБСТВЕННОЙ сдачи ученика по заданию (tsk-993, П4).
+
+        «Своя» сдача — строка `task_results` в не отменённой попытке, внесённая
+        не преподавателем: ручной зачёт (`source_system='manual_teacher'`) —
+        отметка преподавателя, а не попытка ученика решить самому. `NULL` в
+        `source_system` (старые строки) считается сдачей ученика.
+
+        `root_course_id` — как в `compute_task_state`: задан — только попытки
+        этого корня; `None` — по всем корням (прогресс по заданию общий).
+
+        Returns:
+            ID попытки (`attempts.id`) последней своей сдачи или None.
+        """
+        row = (
+            await db.execute(
+                text("""
+                    SELECT a.id
+                    FROM task_results tr
+                    INNER JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
+                    WHERE tr.user_id = :student_id AND tr.task_id = :task_id
+                      AND tr.source_system IS DISTINCT FROM 'manual_teacher'
+                      AND (
+                            CAST(:root_course_id AS INTEGER) IS NULL
+                            OR a.root_course_id = CAST(:root_course_id AS INTEGER)
+                      )
+                    ORDER BY tr.submitted_at DESC, tr.id DESC
+                    LIMIT 1
+                """),
+                {"student_id": student_id, "task_id": task_id, "root_course_id": root_course_id},
+            )
+        ).fetchone()
+        return int(row[0]) if row is not None else None
+
+    async def has_own_attempt(
+        self,
+        db: AsyncSession,
+        student_id: int,
+        task_id: int,
+        root_course_id: Optional[int] = None,
+    ) -> bool:
+        """
+        Есть ли у ученика хотя бы одна своя сдача по заданию (tsk-993, П4).
+
+        Открывает помощь преподавателя и ИИ-наставника при включённом
+        `HELP_REQUIRES_ATTEMPT` (решение Р1: сдача ИЛИ описание «где застрял»).
+        Правило «своей» сдачи — см. `last_own_attempt_id`.
+        """
+        return (
+            await self.last_own_attempt_id(db, student_id, task_id, root_course_id)
+        ) is not None
+
     async def compute_task_state(
         self,
         db: AsyncSession,
