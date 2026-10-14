@@ -426,7 +426,7 @@ def _view():
     return TutorTaskView.from_task(_Shim, course_title="Информатика")
 
 
-def test_opening_without_note_unchanged() -> None:
+async def test_opening_without_note_unchanged() -> None:
     """Без заметки первая реплика та же, что до tsk-993."""
     view = _view()
     assert build_opening_user_message(view, None) == build_opening_user_message(
@@ -436,7 +436,7 @@ def test_opening_without_note_unchanged() -> None:
     assert "где он застрял" in build_opening_user_message(view, None)
 
 
-def test_opening_with_note_starts_from_it() -> None:
+async def test_opening_with_note_starts_from_it() -> None:
     view = _view()
     opening = build_opening_user_message(view, None, stuck_note=_NOTE_OK)
     assert f"{STUDENT_DATA_OPEN}\n{_NOTE_OK}\n{STUDENT_DATA_CLOSE}" in opening
@@ -471,3 +471,10 @@ async def test_task_state_signal_false_when_gate_off(db, client, gate_off) -> No
     student_id, token = await _user(db, "s")
     task_id = await _task(db, await _course(db))
     assert (await _state(client, token, student_id, task_id))["help_attempt_required"] is False
+
+
+async def test_tutor_missing_task_is_404_not_409(db, client, gate_on) -> None:
+    """Гейт не подменяет «не найдено» отказом «сначала попробуй»."""
+    _sid, token = await _user(db, "s")
+    resp = await client.get("/api/v1/ai-tutor/tasks/999999999", headers=_bearer(token))
+    assert resp.status_code == 404, resp.text

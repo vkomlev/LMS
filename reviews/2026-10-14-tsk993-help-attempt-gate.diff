@@ -1,0 +1,1265 @@
+diff --git a/.env.example b/.env.example
+index 6d6cc21..55985e6 100644
+--- a/.env.example
++++ b/.env.example
+@@ -251,3 +251,7 @@ LLM_CHAIN_CHECK_ROLE_ENABLED=true
+ # tsk-1318: zatsepka v pervoj replike nastavnika (rezhim concept) vmesto voprosa "kak ty rassuzhdal".
+ # Vklyuchat' tol'ko posle gejta roli na vsej cepochke (scripts/tutor_role_gate.py --runs 2).
+ AI_TUTOR_CONCEPT_FOOTHOLD=false
++
++# tsk-993 (P4): pomoshch' prepodavatelya i novyj razgovor s nastavnikom - tol'ko posle svoej sdachi
++# po zadaniyu ILI opisaniya "gde zastryal" (>=20 simvolov). Inache 409 attempt_required.
++HELP_REQUIRES_ATTEMPT=false
+diff --git a/app/api/v1/ai_tutor.py b/app/api/v1/ai_tutor.py
+index 2924373..3827f32 100644
+--- a/app/api/v1/ai_tutor.py
++++ b/app/api/v1/ai_tutor.py
+@@ -14,7 +14,7 @@ import json
+ import logging
+ from typing import AsyncIterator, Optional
+ 
+-from fastapi import APIRouter, Depends, HTTPException, status
++from fastapi import APIRouter, Depends, HTTPException, Query, status
+ from fastapi.responses import StreamingResponse
+ from pydantic import BaseModel, Field
+ from sqlalchemy import text
+@@ -28,7 +28,7 @@ from app.api.deps import (
+ )
+ from app.auth.current_user import CurrentUser
+ from app.core.config import Settings
+-from app.services import entitlements_service
++from app.services import entitlements_service, help_attempt_gate
+ from app.services.ai_tutor import session_service
+ from app.services.ai_tutor.answer_guard import TutorStreamGuard
+ from app.services.llm import TUTOR_MAX_TOKENS, Budget, LLMError, stream
+@@ -123,16 +123,61 @@ _SUBSCRIPTION_403 = {
+     }
+ }
+ 
++# tsk-993 (П4): отказ «сначала попробуй сам» на открытии нового разговора.
++_ATTEMPT_409 = {
++    409: {
++        "description": (
++            "tsk-993: при HELP_REQUIRES_ATTEMPT=true новый разговор открывается "
++            "только после своей сдачи по заданию или с описанием «где застрял» "
++            "(`stuck_note`, не короче 20 символов). `payload.code` = "
++            "`attempt_required`, `detail` — текст для ученика."
++        )
++    }
++}
++
++
++async def _enforce_attempt_gate(
++    db: AsyncSession, *, owner: int, task_id: int, stuck_note: Optional[str]
++) -> None:
++    """Гейт П4 — только если разговор будет НОВЫМ (tsk-993).
++
++    Начатый разговор доводится до конца при любом положении рубильника:
++    иначе включение гейта оборвало бы разговоры, начатые до него.
++    """
++    if not help_attempt_gate.is_enabled():
++        return
++    if await session_service.has_live_session(db, student_id=owner, task_id=task_id):
++        return
++    # Несуществующему заданию — честное «не найдено», а не «сначала попробуй».
++    active = (await db.execute(
++        text("SELECT 1 FROM tasks WHERE id = :tid AND is_active"), {"tid": task_id}
++    )).first()
++    if active is None:
++        raise HTTPException(status.HTTP_404_NOT_FOUND, f"задание {task_id} не найдено или неактивно")
++    await help_attempt_gate.enforce(
++        db, student_id=owner, task_id=task_id, stuck_note=stuck_note, surface="ai_tutor"
++    )
++
+ 
+ @router.get(
+     "/tasks/{task_id}",
+     response_model=TutorSessionRead,
+-    responses=_SUBSCRIPTION_403,
++    responses={**_SUBSCRIPTION_403, **_ATTEMPT_409},
+     summary="Открыть разговор с наставником по заданию",
+ )
+ async def get_session(
+     task_id: int,
+     student_id: Optional[int] = None,
++    stuck_note: Optional[str] = Query(
++        None,
++        max_length=help_attempt_gate.STUCK_NOTE_MAX_LEN,
++        description=(
++            "tsk-993: где ученик застрял, своими словами. Учитывается только при "
++            "открытии НОВОГО разговора: уходит в первую реплику наставника, а при "
++            "HELP_REQUIRES_ATTEMPT=true без своей сдачи нужна заметка не короче "
++            "20 символов"
++        ),
++    ),
+     db: AsyncSession = Depends(get_async_db),
+     current_user: CurrentUser = Depends(get_current_user),
+ ) -> TutorSessionRead:
+@@ -171,9 +216,13 @@ async def get_session(
+         ):
+             raise _deny(gate)
+ 
++    # tsk-993 (П4): после тарифа — сначала «нельзя по тарифу», потом
++    # «сначала попробуй сам»: апгрейд гейт попытки не снимет.
++    await _enforce_attempt_gate(db, owner=owner, task_id=task_id, stuck_note=stuck_note)
++
+     try:
+         session, _ = await session_service.get_or_create(
+-            db, student_id=owner, task_id=task_id
++            db, student_id=owner, task_id=task_id, stuck_note=stuck_note
+         )
+     except ValueError as exc:
+         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
+@@ -198,7 +247,7 @@ def _sse(event: str, payload: dict) -> str:
+ 
+ @router.post(
+     "/tasks/{task_id}/ask",
+-    responses=_SUBSCRIPTION_403,
++    responses={**_SUBSCRIPTION_403, **_ATTEMPT_409},
+     summary="Спросить наставника (поток server-sent events)",
+ )
+ async def ask(
+@@ -218,6 +267,10 @@ async def ask(
+         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Наставник выключен")
+ 
+     owner = _resolve_student(current_user, student_id)
++    # tsk-993 (П4): `ask` тоже открывает разговор, если открытого нет — без
++    # гейта здесь его обходили бы, минуя GET. Реплика ученика служит
++    # описанием «где застрял»: это тот же текст своими словами.
++    await _enforce_attempt_gate(db, owner=owner, task_id=task_id, stuck_note=body.message)
+     try:
+         session, _ = await session_service.get_or_create(
+             db, student_id=owner, task_id=task_id
+diff --git a/app/api/v1/learning.py b/app/api/v1/learning.py
+index f18b7d6..791045e 100644
+--- a/app/api/v1/learning.py
++++ b/app/api/v1/learning.py
+@@ -71,6 +71,7 @@ from app.services import graduation_service
+ from app.services import lesson_attendance_service
+ # tsk-301: единственная дверь прав подписки — своей проверки здесь быть не должно.
+ from app.services import entitlements_service
++from app.services import help_attempt_gate
+ from app.services import course_activity_service
+ from app.services.attempts_service import AttemptsService
+ from app.services.tasks_service import TasksService
+@@ -677,6 +678,10 @@ async def get_task_state(
+             last_based_status=state.state,
+         )
+         await db.commit()
++    # tsk-993 (П4): при выключенном рубильнике — false без запроса в БД.
++    help_attempt_required = await help_attempt_gate.is_required(
++        db, student_id=student_id, task_id=task_id
++    )
+     return TaskStateResponse(
+         task_id=task_id,
+         student_id=student_id,
+@@ -696,6 +701,7 @@ async def get_task_state(
+         has_reference_answer=has_reference_answer,
+         has_io_tests=has_io_tests,
+         diagnostic=form_flags.diagnostic,
++        help_attempt_required=help_attempt_required,
+     )
+ 
+ 
+@@ -712,7 +718,14 @@ async def get_task_state(
+                 "исчерпании попыток этим гейтом не закрывается. "
+                 + _PAYMENT_403_DESCRIPTION
+             )
+-        }
++        },
++        409: {
++            "description": (
++                "tsk-993: при HELP_REQUIRES_ATTEMPT=true — у ученика нет своей сдачи "
++                "по заданию и `stuck_note` короче 20 символов. `payload.code` = "
++                "`attempt_required`, `detail` — текст для ученика."
++            )
++        },
+     },
+     summary="Запросить помощь по заданию (идемпотентно в окне дедупа)",
+ )
+@@ -765,6 +778,16 @@ async def request_help(
+     user = await users_service.get_by_id(db, body.student_id)
+     if user is None:
+         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Студент не найден")
++    # tsk-993 (П4): «сначала попробуй сам». Гейт после 404 — несуществующему
++    # заданию честнее ответить «не найдено», чем «сначала попробуй». При
++    # выключенном рубильнике ничего не проверяет и attempt_id не заполняет.
++    attempt_id = await help_attempt_gate.enforce(
++        db,
++        student_id=body.student_id,
++        task_id=task_id,
++        stuck_note=body.stuck_note,
++        surface="request_help",
++    )
+     event_id, deduplicated = await record_help_requested(
+         db, body.student_id, task_id, body.message
+     )
+@@ -775,6 +798,8 @@ async def request_help(
+         event_id=event_id,
+         message=body.message,
+         course_id=task.course_id,
++        attempt_id=attempt_id,
++        stuck_note=help_attempt_gate.normalize_stuck_note(body.stuck_note),
+         deduplicated=deduplicated,
+         attachment_id=body.attachment_id,
+         attachment_filename=body.attachment_filename,
+diff --git a/app/core/config.py b/app/core/config.py
+index 28fa63b..d4013b3 100644
+--- a/app/core/config.py
++++ b/app/core/config.py
+@@ -402,6 +402,13 @@ class Settings:
+         self.ai_tutor_concept_foothold: bool = os.getenv(
+             "AI_TUTOR_CONCEPT_FOOTHOLD", "false"
+         ).lower() in ("true", "1", "yes")
++        # tsk-993 (П4): помощь преподавателя и новый разговор с наставником —
++        # только после своей сдачи по заданию ИЛИ описания «где застрял»
++        # (≥20 символов). Выключено по умолчанию: выкат кода не меняет
++        # поведение, пока оператор не включит.
++        self.help_requires_attempt: bool = os.getenv(
++            "HELP_REQUIRES_ATTEMPT", "false"
++        ).lower() in ("true", "1", "yes")
+ 
+         # tsk-301: режим подписного гейта. Четыре значения, а не булев рубильник —
+         # включение идёт ступенями, и `guests` это самостоятельный шаг выката,
+diff --git a/app/db/migrations/versions/2026_10_14_tsk993_help_stuck_note.py b/app/db/migrations/versions/2026_10_14_tsk993_help_stuck_note.py
+new file mode 100644
+index 0000000..ff44e47
+--- /dev/null
++++ b/app/db/migrations/versions/2026_10_14_tsk993_help_stuck_note.py
+@@ -0,0 +1,58 @@
++"""tsk-993 (П4): «где застрял» у заявки помощи и у разговора с наставником.
++
++Помощь по заданию при включённом `HELP_REQUIRES_ATTEMPT` открывается после
++своей сдачи ИЛИ описания «где застрял» (не короче 20 символов). Описание
++сохраняется:
++
++- `help_requests.stuck_note` — преподаватель видит его в карточке заявки;
++- `ai_tutor_session.stuck_note` — уходит в контекст первой реплики наставника
++  (системная инструкция пересобирается на каждом ходе, поэтому заметка нужна
++  в строке сессии, а не только в запросе открытия).
++
++Обе колонки необязательные, без значения по умолчанию — старые строки и
++старые клиенты не затронуты.
++
++Rollback: `alembic downgrade tsk1220_task_hint_drafts` — колонки снимаются,
++заметки теряются (сами заявки и разговоры остаются).
++
++Revision ID: tsk993_help_stuck_note
++Revises: tsk1220_task_hint_drafts
++Create Date: 2026-10-14
++"""
++from typing import Sequence, Union
++
++import sqlalchemy as sa
++from alembic import op
++
++revision: str = "tsk993_help_stuck_note"
++down_revision: Union[str, None] = "tsk1220_task_hint_drafts"
++branch_labels: Union[str, Sequence[str], None] = None
++depends_on: Union[str, Sequence[str], None] = None
++
++
++def upgrade() -> None:
++    """Добавить `stuck_note TEXT NULL` в заявки помощи и сессии наставника."""
++    op.add_column(
++        "help_requests",
++        sa.Column(
++            "stuck_note",
++            sa.Text(),
++            nullable=True,
++            comment="Где ученик застрял, своими словами (tsk-993). NULL — не описывал.",
++        ),
++    )
++    op.add_column(
++        "ai_tutor_session",
++        sa.Column(
++            "stuck_note",
++            sa.Text(),
++            nullable=True,
++            comment="Где ученик застрял, со слов при открытии разговора (tsk-993).",
++        ),
++    )
++
++
++def downgrade() -> None:
++    """Снять колонки `stuck_note`."""
++    op.drop_column("ai_tutor_session", "stuck_note")
++    op.drop_column("help_requests", "stuck_note")
+diff --git a/app/models/help_requests.py b/app/models/help_requests.py
+index a91af27..cef93c9 100644
+--- a/app/models/help_requests.py
++++ b/app/models/help_requests.py
+@@ -140,6 +140,13 @@ class HelpRequests(Base):
+     attachment_content_type: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+     attachment_size_bytes: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+ 
++    # tsk-993 (П4): «где застрял» своими словами — открывает помощь без своей
++    # сдачи при HELP_REQUIRES_ATTEMPT=true; преподаватель видит её в карточке.
++    stuck_note: Mapped[Optional[str]] = mapped_column(
++        Text, nullable=True,
++        comment="Где ученик застрял, своими словами (tsk-993). NULL — не описывал.",
++    )
++
+     replies: Mapped[List["HelpRequestReplies"]] = relationship(
+         "HelpRequestReplies",
+         back_populates="help_request",
+diff --git a/app/schemas/learning_api.py b/app/schemas/learning_api.py
+index 382f905..1454eba 100644
+--- a/app/schemas/learning_api.py
++++ b/app/schemas/learning_api.py
+@@ -157,6 +157,18 @@ class TaskStateResponse(BaseModel):
+             "зачёт — за преподавателем (solution_rules.partial_auto_check, tsk-396)."
+         ),
+     )
++    # tsk-993 (П4): клиенту нужно знать заранее, что помощь закрыта до своей
++    # сдачи, — иначе ученик узнаёт об этом только отказом после нажатия кнопки.
++    # UX-сигнал, не гейт: сервер всё равно проверяет на request-help.
++    help_attempt_required: bool = Field(
++        default=False,
++        description=(
++            "Помощь преподавателя и новый разговор с наставником откроются только "
++            "после своей сдачи или с описанием «где застрял» (≥20 символов): "
++            "HELP_REQUIRES_ATTEMPT=true и своих сдач по заданию нет (tsk-993). "
++            "При выключенном рубильнике всегда false — прежнее поведение клиента."
++        ),
++    )
+     # tsk-547: есть ли у задания эталон для сверки `response.value`. Ученику
+     # `solution_rules` не отдаются (видимость полей — отдельный слой, tsk-460),
+     # поэтому «поле ответа бессмысленно» без такого сигнала на клиенте
+@@ -208,6 +220,18 @@ class RequestHelpRequest(BaseModel):
+     attachment_filename: Optional[str] = Field(default=None, max_length=255)
+     attachment_content_type: Optional[str] = Field(default=None, max_length=100)
+     attachment_size_bytes: Optional[int] = Field(default=None, ge=0)
++    # tsk-993 (П4): «где застрял» — открывает помощь без сдачи, если не короче
++    # 20 символов после обрезки пробелов (при включённом HELP_REQUIRES_ATTEMPT).
++    # Сохраняется в заявке и видна преподавателю в карточке.
++    stuck_note: Optional[str] = Field(
++        default=None,
++        max_length=1000,
++        description=(
++            "Где ученик застрял, своими словами. При HELP_REQUIRES_ATTEMPT=true "
++            "без своей сдачи по заданию нужна заметка не короче 20 символов, "
++            "иначе 409 `attempt_required`"
++        ),
++    )
+ 
+ 
+ class RequestHelpResponse(BaseModel):
+diff --git a/app/schemas/teacher_help_requests.py b/app/schemas/teacher_help_requests.py
+index 20a72cb..f774337 100644
+--- a/app/schemas/teacher_help_requests.py
++++ b/app/schemas/teacher_help_requests.py
+@@ -130,6 +130,14 @@ class HelpRequestDetailResponse(HelpRequestListItem):
+         ),
+     )
+     message: Optional[str] = None
++    stuck_note: Optional[str] = Field(
++        default=None,
++        description=(
++            "tsk-993: где ученик застрял, своими словами — если он описал это "
++            "при запросе помощи (до своей сдачи — обязательно при "
++            "HELP_REQUIRES_ATTEMPT=true)"
++        ),
++    )
+     # closed_at теперь в HelpRequestListItem (tsk-924) — наследуется отсюда.
+     closed_by: Optional[int] = None
+     resolution_comment: Optional[str] = None
+diff --git a/app/services/ai_tutor/prompt.py b/app/services/ai_tutor/prompt.py
+index 79c18a1..68ae244 100644
+--- a/app/services/ai_tutor/prompt.py
++++ b/app/services/ai_tutor/prompt.py
+@@ -375,7 +375,10 @@ def build_context_block(view: TutorTaskView, student_answer: str | None) -> str:
+ 
+ 
+ def build_opening_user_message(
+-    view: TutorTaskView, student_answer: str | None, mode: TutorMode | None = None
++    view: TutorTaskView,
++    student_answer: str | None,
++    mode: TutorMode | None = None,
++    stuck_note: str | None = None,
+ ) -> str:
+     """Первая реплика в диалоге: данные + просьба начать с вопроса о ходе мысли.
+ 
+@@ -389,7 +392,33 @@ def build_opening_user_message(
+     режима, в `debug` молчащие решают почти все — им есть на что смотреть.
+     Поэтому одна зацепка «куда посмотреть» + лёгкий вопрос. Тему по-прежнему не
+     объясняем и ответ не называем.
++
++    tsk-993 (П4): `stuck_note` — где ученик застрял, своими словами (с ней он
++    открыл разговор до первой сдачи). Переспрашивать «где застрял» после такого
++    описания — тупик, поэтому наставник начинает с названного места. Заметка —
++    чужой текст и идёт в метках данных, как ответ ученика.
+     """
++    opening = _opening_instruction(student_answer, mode)
++    note = (stuck_note or "").strip()
++    if not note:
++        return opening
++    if not (student_answer and student_answer.strip()):
++        # Без сдачи базовая просьба — «спроси, где застрял»; на неё уже ответили.
++        opening = (
++            "Начни разговор: поздоровайся одной строкой. Ученик ещё НЕ отправлял "
++            "ответ, но сам описал, где застрял (ниже, в данных ученика). Начни "
++            "именно с этого места: задай ОДИН короткий уточняющий вопрос про него. "
++            "Не переспрашивай, где он застрял, не объясняй тему целиком и не "
++            "называй ответ."
++        )
++    return (
++        f"{opening}\n\nГде ученик застрял, его словами:\n"
++        f"{STUDENT_DATA_OPEN}\n{note}\n{STUDENT_DATA_CLOSE}"
++    )
++
++
++def _opening_instruction(student_answer: str | None, mode: TutorMode | None) -> str:
++    """Просьба начать разговор без учёта заметки «где застрял» (до tsk-993)."""
+     if mode == "concept" and student_answer and student_answer.strip():
+         return (
+             "Начни разговор: ОДНОЙ короткой фразой дай понять, что ошибиться здесь "
+diff --git a/app/services/ai_tutor/session_service.py b/app/services/ai_tutor/session_service.py
+index 7999488..82785c5 100644
+--- a/app/services/ai_tutor/session_service.py
++++ b/app/services/ai_tutor/session_service.py
+@@ -46,6 +46,8 @@ class TutorSession:
+     status: str
+     task_stem_snapshot: str
+     student_answer_snapshot: Optional[str]
++    # tsk-993 (П4): где ученик застрял, со слов при открытии разговора.
++    stuck_note: Optional[str] = None
+ 
+     @property
+     def soft_limit_reached(self) -> bool:
+@@ -169,13 +171,36 @@ async def _last_student_answer(db: AsyncSession, student_id: int, task_id: int)
+     return "\n".join(parts) or None
+ 
+ 
++async def has_live_session(db: AsyncSession, *, student_id: int, task_id: int) -> bool:
++    """Есть ли открытый и не протухший разговор, который `get_or_create` вернёт.
++
++    tsk-993 (П4): гейт «сначала попробуй сам» стоит только на открытии НОВОГО
++    разговора. Протухший (старше `SESSION_TTL_HOURS`) `get_or_create` закроет и
++    начнёт заново — значит, для гейта это тоже новый разговор.
++    """
++    row = (await db.execute(text("""
++        SELECT 1 FROM ai_tutor_session
++        WHERE student_id = :uid AND task_id = :tid AND status = 'open'
++          AND last_activity_at >= now() - make_interval(hours => :ttl)
++    """), {"uid": student_id, "tid": task_id, "ttl": SESSION_TTL_HOURS})).first()
++    return row is not None
++
++
+ async def get_or_create(
+-    db: AsyncSession, *, student_id: int, task_id: int
++    db: AsyncSession,
++    *,
++    student_id: int,
++    task_id: int,
++    stuck_note: Optional[str] = None,
+ ) -> tuple[TutorSession, bool]:
+     """Найти открытый разговор или начать новый. Второе значение — «создан ли».
+ 
+     Уникальный частичный индекс в БД гарантирует единственность открытой сессии
+     на пару: без него ученик открыл бы вторую вкладку и обнулил счётчик ходов.
++
++    tsk-993: `stuck_note` («где застрял») пишется только в НОВЫЙ разговор —
++    рядом со снимком ответа, и уходит в первую реплику наставника. У уже
++    открытого разговора первая реплика была, заметка ему не нужна.
+     """
+     # Протухший разговор закрываем ЗДЕСЬ, а не надеемся на уборщика: `expire_stale`
+     # написан и покрыт тестом, но в рабочем коде его не зовёт никто (tsk-659 —
+@@ -197,7 +222,7 @@ async def get_or_create(
+ 
+     row = (await db.execute(text("""
+         SELECT id, student_id, task_id, mode, turns, status,
+-               task_stem_snapshot, student_answer_snapshot
++               task_stem_snapshot, student_answer_snapshot, stuck_note
+         FROM ai_tutor_session
+         WHERE student_id = :uid AND task_id = :tid AND status = 'open'
+     """), {"uid": student_id, "tid": task_id})).mappings().first()
+@@ -211,13 +236,14 @@ async def get_or_create(
+     created = (await db.execute(text("""
+         INSERT INTO ai_tutor_session
+             (student_id, task_id, course_id, mode, status,
+-             task_stem_snapshot, student_answer_snapshot)
+-        VALUES (:uid, :tid, :cid, :mode, 'open', :stem, :answer)
++             task_stem_snapshot, student_answer_snapshot, stuck_note)
++        VALUES (:uid, :tid, :cid, :mode, 'open', :stem, :answer, :note)
+         RETURNING id, student_id, task_id, mode, turns, status,
+-                  task_stem_snapshot, student_answer_snapshot
++                  task_stem_snapshot, student_answer_snapshot, stuck_note
+     """), {
+         "uid": student_id, "tid": task_id, "cid": course_id, "mode": mode,
+         "stem": view.stem, "answer": answer,
++        "note": (stuck_note or "").strip()[:1000] or None,
+     })).mappings().first()
+ 
+     session = TutorSession(**dict(created))
+@@ -334,7 +360,8 @@ async def build_llm_messages(
+         messages.append(LLMMessage(
+             role="user",
+             content=build_opening_user_message(
+-                view, session.student_answer_snapshot, opening_mode(session.mode)
++                view, session.student_answer_snapshot, opening_mode(session.mode),
++                stuck_note=session.stuck_note,
+             ),
+         ))
+     else:
+diff --git a/app/services/help_attempt_gate.py b/app/services/help_attempt_gate.py
+new file mode 100644
+index 0000000..42216af
+--- /dev/null
++++ b/app/services/help_attempt_gate.py
+@@ -0,0 +1,115 @@
++"""Гейт «сначала попробуй сам» для помощи по заданию (tsk-993, П4).
++
++Решение оператора Р1: помощь преподавателя и новый разговор с ИИ-наставником
++открываются, если у ученика есть хотя бы одна своя сдача по заданию ИЛИ он
++описал, где застрял (не короче 20 символов после обрезки пробелов).
++
++Гейт глобальный, под рубильником `HELP_REQUIRES_ATTEMPT` (по умолчанию
++выключен): выкат кода не меняет поведение, пока оператор не включит. Не
++касается заявок по материалу и автозаявок `blocked_limit` — те и так
++возникают после попыток.
++"""
++from __future__ import annotations
++
++import logging
++from typing import Optional
++
++from sqlalchemy.ext.asyncio import AsyncSession
++
++from app.core.config import Settings
++from app.services.learning_engine_service import LearningEngineService
++from app.utils.exceptions import DomainError
++
++logger = logging.getLogger(__name__)
++
++settings = Settings()
++_engine = LearningEngineService()
++
++# Порог «описал, где застрял» (Р1). Меньше — это «помогите» без содержания.
++STUCK_NOTE_MIN_LEN = 20
++# Потолок заметки на уровне схем запросов.
++STUCK_NOTE_MAX_LEN = 1000
++
++ATTEMPT_REQUIRED_CODE = "attempt_required"
++ATTEMPT_REQUIRED_TEXT = (
++    "Сначала попробуй решить сам — отправь ответ или опиши, где застрял"
++)
++
++
++def is_enabled() -> bool:
++    """Включён ли гейт (рубильник `HELP_REQUIRES_ATTEMPT`)."""
++    return bool(getattr(settings, "help_requires_attempt", False))
++
++
++def normalize_stuck_note(stuck_note: Optional[str]) -> Optional[str]:
++    """Заметка без крайних пробелов; пустая строка — None."""
++    if stuck_note is None:
++        return None
++    cleaned = stuck_note.strip()
++    return cleaned or None
++
++
++def stuck_note_sufficient(stuck_note: Optional[str]) -> bool:
++    """Достаточно ли заметки, чтобы открыть помощь без сдачи (≥20 символов)."""
++    cleaned = normalize_stuck_note(stuck_note)
++    return cleaned is not None and len(cleaned) >= STUCK_NOTE_MIN_LEN
++
++
++async def is_required(db: AsyncSession, *, student_id: int, task_id: int) -> bool:
++    """Закрыта ли помощь до своей сдачи — сигнал клиенту (состояние задания).
++
++    True, только если рубильник включён и своей сдачи нет. Заметка здесь не
++    учитывается: клиент по этому признаку показывает поле «Где застрял?».
++    """
++    if not is_enabled():
++        return False
++    return not await _engine.has_own_attempt(db, student_id, task_id)
++
++
++async def enforce(
++    db: AsyncSession,
++    *,
++    student_id: int,
++    task_id: int,
++    stuck_note: Optional[str],
++    surface: str,
++) -> Optional[int]:
++    """Проверить гейт и вернуть ID попытки последней своей сдачи.
++
++    При выключенном рубильнике ничего не проверяет и возвращает None —
++    поведение как до tsk-993.
++
++    Корень курса не передаётся: заявка и наставник приходят без контекста
++    пути, а прогресс по заданию общий для всех корней (tsk-264) — сдача в
++    любом курсе означает, что ученик уже пробовал.
++
++    Args:
++        db: сессия БД.
++        student_id: ID ученика.
++        task_id: ID задания.
++        stuck_note: описание «где застрял» (может быть None).
++        surface: откуда вызов — для журнала (`request_help`/`ai_tutor`).
++
++    Returns:
++        ID попытки последней своей сдачи или None (сдачи нет либо гейт выключен).
++
++    Raises:
++        DomainError: 409 `attempt_required` — нет своей сдачи и заметка короче
++            порога.
++    """
++    if not is_enabled():
++        return None
++    attempt_id = await _engine.last_own_attempt_id(db, student_id, task_id)
++    if attempt_id is not None:
++        return attempt_id
++    if stuck_note_sufficient(stuck_note):
++        return None
++    logger.info(
++        "help gate: отказ attempt_required surface=%s student_id=%s task_id=%s",
++        surface, student_id, task_id,
++    )
++    raise DomainError(
++        detail=ATTEMPT_REQUIRED_TEXT,
++        status_code=409,
++        payload={"code": ATTEMPT_REQUIRED_CODE, "min_note_length": STUCK_NOTE_MIN_LEN},
++    )
+diff --git a/app/services/help_requests_service.py b/app/services/help_requests_service.py
+index e71c873..02f3d15 100644
+--- a/app/services/help_requests_service.py
++++ b/app/services/help_requests_service.py
+@@ -202,6 +202,7 @@ async def get_or_create_help_request(
+     attachment_filename: Optional[str] = None,
+     attachment_content_type: Optional[str] = None,
+     attachment_size_bytes: Optional[int] = None,
++    stuck_note: Optional[str] = None,
+ ) -> Tuple[int, bool]:
+     """
+     После record_help_requested: получить или создать запись в help_requests.
+@@ -212,6 +213,9 @@ async def get_or_create_help_request(
+     заявки. Дедуп-ветка не перезаписывает вложение уже существующей заявки:
+     дедуп по event_id — это то же самое обращение (повтор в окне 5 минут), а
+     не новое сообщение с новым файлом.
++
++    tsk-993 (П4): `stuck_note` («где застрял») и `attempt_id` (последняя своя
++    сдача) пишутся так же — только при создании новой заявки.
+     """
+     r = await db.execute(
+         text("SELECT id FROM help_requests WHERE event_id = :event_id LIMIT 1"),
+@@ -227,16 +231,17 @@ async def get_or_create_help_request(
+ 
+     assigned = await resolve_assigned_teacher(db, student_id, course_id)
+     msg_truncated = (message or "")[:2000] if message else None
++    note_truncated = stuck_note[:1000] if stuck_note else None
+ 
+     r = await db.execute(
+         text("""
+             INSERT INTO help_requests
+             (status, request_type, auto_created, context_json, student_id, task_id, course_id, attempt_id, event_id, message, assigned_teacher_id,
+              attachment_id, attachment_filename, attachment_content_type, attachment_size_bytes,
+-             created_at, updated_at)
++             stuck_note, created_at, updated_at)
+             VALUES ('open', 'manual_help', false, '{}'::jsonb, :student_id, :task_id, :course_id, :attempt_id, :event_id, :message, :assigned_teacher_id,
+                     :attachment_id, :attachment_filename, :attachment_content_type, :attachment_size_bytes,
+-                    now(), now())
++                    :stuck_note, now(), now())
+             RETURNING id
+         """),
+         {
+@@ -251,6 +256,7 @@ async def get_or_create_help_request(
+             "attachment_filename": attachment_filename,
+             "attachment_content_type": attachment_content_type,
+             "attachment_size_bytes": attachment_size_bytes,
++            "stuck_note": note_truncated,
+         },
+     )
+     new_id = r.scalar()
+@@ -269,7 +275,12 @@ async def get_or_create_help_request(
+             user_id=assigned,
+             kind="help_request_opened",
+             title="Новый вопрос от ученика",
+-            content=head + (msg_truncated or "Ученик запросил помощь по заданию."),
++            # tsk-993: без текста вопроса показываем, где ученик застрял.
++            content=head + (
++                msg_truncated
++                or (f"Где застрял: {note_truncated}" if note_truncated else None)
++                or "Ученик запросил помощь по заданию."
++            ),
+             payload={
+                 "request_id": int(new_id), "task_id": task_id, "student_id": student_id, **extra,
+             },
+@@ -902,7 +913,9 @@ async def get_help_request_detail(
+                    -- tsk-943: заявка по материалу (вместо задания) + вложение.
+                    hr.material_id, m.title AS material_title,
+                    hr.attachment_id, hr.attachment_filename,
+-                   hr.attachment_content_type, hr.attachment_size_bytes
++                   hr.attachment_content_type, hr.attachment_size_bytes,
++                   -- tsk-993: «где застрял» — колонка 37, в конец (см. off-by-one ниже).
++                   hr.stuck_note
+             FROM help_requests hr
+             LEFT JOIN users u ON u.id = hr.student_id
+             LEFT JOIN tasks t ON t.id = hr.task_id
+@@ -1017,6 +1030,8 @@ async def get_help_request_detail(
+         "attachment_filename": row[34] if len(row) > 34 else None,
+         "attachment_content_type": row[35] if len(row) > 35 else None,
+         "attachment_size_bytes": row[36] if len(row) > 36 else None,
++        # tsk-993: «где застрял» — колонка 37.
++        "stuck_note": row[37] if len(row) > 37 else None,
+         # tsk-303: колонки 24-27 — состояние лестницы помощи. Индексы считаются
+         # от порядка SELECT выше; в этом же маппинге когда-то уже был сдвиг на
+         # +1 (см. комментарий про off-by-one), поэтому новые поля добавлены в
+diff --git a/app/services/learning_engine_service.py b/app/services/learning_engine_service.py
+index 6655023..3a11b14 100644
+--- a/app/services/learning_engine_service.py
++++ b/app/services/learning_engine_service.py
+@@ -429,6 +429,65 @@ class LearningEngineService:
+             )
+         return len(student_ids)
+ 
++    async def last_own_attempt_id(
++        self,
++        db: AsyncSession,
++        student_id: int,
++        task_id: int,
++        root_course_id: Optional[int] = None,
++    ) -> Optional[int]:
++        """
++        ID попытки последней СОБСТВЕННОЙ сдачи ученика по заданию (tsk-993, П4).
++
++        «Своя» сдача — строка `task_results` в не отменённой попытке, внесённая
++        не преподавателем: ручной зачёт (`source_system='manual_teacher'`) —
++        отметка преподавателя, а не попытка ученика решить самому. `NULL` в
++        `source_system` (старые строки) считается сдачей ученика.
++
++        `root_course_id` — как в `compute_task_state`: задан — только попытки
++        этого корня; `None` — по всем корням (прогресс по заданию общий).
++
++        Returns:
++            ID попытки (`attempts.id`) последней своей сдачи или None.
++        """
++        row = (
++            await db.execute(
++                text("""
++                    SELECT a.id
++                    FROM task_results tr
++                    INNER JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
++                    WHERE tr.user_id = :student_id AND tr.task_id = :task_id
++                      AND tr.source_system IS DISTINCT FROM 'manual_teacher'
++                      AND (
++                            CAST(:root_course_id AS INTEGER) IS NULL
++                            OR a.root_course_id = CAST(:root_course_id AS INTEGER)
++                      )
++                    ORDER BY tr.submitted_at DESC, tr.id DESC
++                    LIMIT 1
++                """),
++                {"student_id": student_id, "task_id": task_id, "root_course_id": root_course_id},
++            )
++        ).fetchone()
++        return int(row[0]) if row is not None else None
++
++    async def has_own_attempt(
++        self,
++        db: AsyncSession,
++        student_id: int,
++        task_id: int,
++        root_course_id: Optional[int] = None,
++    ) -> bool:
++        """
++        Есть ли у ученика хотя бы одна своя сдача по заданию (tsk-993, П4).
++
++        Открывает помощь преподавателя и ИИ-наставника при включённом
++        `HELP_REQUIRES_ATTEMPT` (решение Р1: сдача ИЛИ описание «где застрял»).
++        Правило «своей» сдачи — см. `last_own_attempt_id`.
++        """
++        return (
++            await self.last_own_attempt_id(db, student_id, task_id, root_course_id)
++        ) is not None
++
+     async def compute_task_state(
+         self,
+         db: AsyncSession,
+diff --git a/tests/test_tsk993_help_attempt_gate.py b/tests/test_tsk993_help_attempt_gate.py
+new file mode 100644
+index 0000000..aab9413
+--- /dev/null
++++ b/tests/test_tsk993_help_attempt_gate.py
+@@ -0,0 +1,480 @@
++"""tsk-993 (П4): помощь по заданию — после своей попытки или описания «где застрял».
++
++Решение оператора Р1: заявка преподавателю и новый разговор с ИИ-наставником
++открываются, если у ученика есть ≥1 своя сдача по заданию ИЛИ заметка «где
++застрял» не короче 20 символов после обрезки пробелов. Ручной зачёт
++преподавателя (`manual_teacher`) и сдачи в отменённой попытке — не попытка
++ученика.
++
++Главное свойство выката проверяется отдельно: при `HELP_REQUIRES_ATTEMPT=false`
++(по умолчанию) поведение прежнее — ни отказа, ни `attempt_id`.
++"""
++from __future__ import annotations
++
++import json
++import random
++
++import pytest
++from sqlalchemy import text
++
++from app.models.users import Users
++from app.services import entitlements_service as ent
++from app.services import help_attempt_gate
++from app.services.ai_tutor import session_service
++from app.services.ai_tutor.prompt import (
++    STUDENT_DATA_CLOSE,
++    STUDENT_DATA_OPEN,
++    build_opening_user_message,
++)
++from app.services.auth import identity_link_service
++from app.services.auth.session_service import create_session
++from app.services.learning_engine_service import LearningEngineService
++
++pytestmark = pytest.mark.asyncio
++
++_TAG = "tsk993"
++_NOTE_OK = "Не понимаю, как перевести число в двоичную систему"
++_NOTE_SHORT = "   не понимаю ничего     "  # 15 символов после обрезки
++
++
++# ───────────────────────────── хелперы ──────────────────────────────────────
++
++
++async def _user(db, name: str) -> tuple[int, str]:
++    """Пользователь с живой сессией (bearer-токен)."""
++    u = Users(
++        email=f"{_TAG}-{name}-{random.randint(10**8, 10**10)}@example.com",
++        password_hash=None,
++        full_name=f"{_TAG} {name}",
++        tg_id=None,
++    )
++    db.add(u)
++    await db.flush()
++    await identity_link_service.upsert_identity(db, u.id, "email", u.email)
++    token, _, _ = await create_session(db, user_id=u.id)
++    await db.commit()
++    return u.id, token
++
++
++def _bearer(token: str) -> dict[str, str]:
++    return {"Authorization": f"Bearer {token}"}
++
++
++async def _course(db) -> int:
++    res = await db.execute(
++        text("INSERT INTO courses (title, access_level) VALUES (:t, 'self_guided') RETURNING id"),
++        {"t": f"{_TAG}-course-{random.randint(10**8, 10**10)}"},
++    )
++    return res.scalar_one()
++
++
++async def _task(db, course_id: int) -> int:
++    difficulty_id = (await db.execute(text("SELECT id FROM difficulties ORDER BY id LIMIT 1"))).scalar()
++    res = await db.execute(
++        text(
++            "INSERT INTO tasks (external_uid, max_score, task_content, solution_rules, "
++            "course_id, difficulty_id, is_active) "
++            "VALUES (:e, 10, CAST(:c AS jsonb), CAST(:r AS jsonb), :cid, :d, true) RETURNING id"
++        ),
++        {
++            "e": f"{_TAG}-{random.randint(10**8, 10**10)}",
++            "c": json.dumps({"type": "SA", "stem": "Переведи 5 в двоичную систему"}),
++            "r": json.dumps({"max_score": 10, "correct_answer": "101"}),
++            "cid": course_id,
++            "d": difficulty_id,
++        },
++    )
++    return res.scalar_one()
++
++
++async def _submission(
++    db,
++    *,
++    user_id: int,
++    task_id: int,
++    course_id: int,
++    source_system: str = "spw_web",
++    cancelled: bool = False,
++) -> int:
++    """Сдача по заданию в своей попытке. Возвращает ID попытки."""
++    attempt_id = (
++        await db.execute(
++            text(
++                "INSERT INTO attempts (user_id, course_id, root_course_id, source_system, "
++                "  cancelled_at) "
++                "VALUES (:u, :c, :c, :src, CASE WHEN :cancel THEN now() ELSE NULL END) "
++                "RETURNING id"
++            ),
++            {"u": user_id, "c": course_id, "src": source_system, "cancel": cancelled},
++        )
++    ).scalar_one()
++    await db.execute(
++        text(
++            "INSERT INTO task_results (user_id, task_id, attempt_id, score, max_score, "
++            "  is_correct, submitted_at, received_at, count_retry, source_system, answer_json) "
++            "VALUES (:u, :t, :a, 0, 10, false, now(), now(), 0, :src, CAST(:ans AS jsonb))"
++        ),
++        {
++            "u": user_id, "t": task_id, "a": attempt_id, "src": source_system,
++            "ans": json.dumps({"type": "SA", "response": {"value": "110"}}),
++        },
++    )
++    await db.commit()
++    return int(attempt_id)
++
++
++async def _link_teacher(db, student_id: int, teacher_id: int) -> None:
++    await db.execute(
++        text(
++            "INSERT INTO student_teacher_links (student_id, teacher_id, linked_at) "
++            "VALUES (:s, :t, now())"
++        ),
++        {"s": student_id, "t": teacher_id},
++    )
++    await db.commit()
++
++
++@pytest.fixture
++def gate_on(monkeypatch):
++    """Рубильник П4 включён, подписной гейт выключен (он проверяется отдельно)."""
++    monkeypatch.setattr(ent.settings, "subscription_gate_mode", "off")
++    monkeypatch.setattr(help_attempt_gate.settings, "help_requires_attempt", True)
++
++
++@pytest.fixture
++def gate_off(monkeypatch):
++    monkeypatch.setattr(ent.settings, "subscription_gate_mode", "off")
++    monkeypatch.setattr(help_attempt_gate.settings, "help_requires_attempt", False)
++
++
++async def _request_help(client, token: str, student_id: int, task_id: int, **extra):
++    return await client.post(
++        f"/api/v1/learning/tasks/{task_id}/request-help",
++        headers=_bearer(token),
++        json={"student_id": student_id, "message": "помогите", **extra},
++    )
++
++
++async def _help_row(db, request_id: int):
++    return (
++        await db.execute(
++            text("SELECT attempt_id, stuck_note FROM help_requests WHERE id = :id"),
++            {"id": request_id},
++        )
++    ).fetchone()
++
++
++# ───────────────── 1. has_own_attempt: четыре случая брифа ───────────────────
++
++
++async def test_default_is_off(monkeypatch) -> None:
++    """По умолчанию гейт выключен — выкат кода поведение не меняет."""
++    from app.core.config import Settings
++
++    monkeypatch.delenv("HELP_REQUIRES_ATTEMPT", raising=False)
++    assert Settings().help_requires_attempt is False
++
++
++async def test_has_own_attempt_no_submissions(db) -> None:
++    student_id, _ = await _user(db, "s")
++    course_id = await _course(db)
++    task_id = await _task(db, course_id)
++    engine = LearningEngineService()
++    assert await engine.has_own_attempt(db, student_id, task_id, None) is False
++
++
++async def test_has_own_attempt_with_submission(db) -> None:
++    student_id, _ = await _user(db, "s")
++    course_id = await _course(db)
++    task_id = await _task(db, course_id)
++    attempt_id = await _submission(db, user_id=student_id, task_id=task_id, course_id=course_id)
++    engine = LearningEngineService()
++    assert await engine.has_own_attempt(db, student_id, task_id, None) is True
++    assert await engine.has_own_attempt(db, student_id, task_id, course_id) is True
++    assert await engine.last_own_attempt_id(db, student_id, task_id) == attempt_id
++
++
++async def test_has_own_attempt_only_manual_teacher(db) -> None:
++    """Ручной зачёт преподавателя — не попытка ученика."""
++    student_id, _ = await _user(db, "s")
++    course_id = await _course(db)
++    task_id = await _task(db, course_id)
++    await _submission(
++        db, user_id=student_id, task_id=task_id, course_id=course_id,
++        source_system="manual_teacher",
++    )
++    engine = LearningEngineService()
++    assert await engine.has_own_attempt(db, student_id, task_id, None) is False
++
++
++async def test_has_own_attempt_cancelled_attempt(db) -> None:
++    """Сдача в отменённой попытке не считается."""
++    student_id, _ = await _user(db, "s")
++    course_id = await _course(db)
++    task_id = await _task(db, course_id)
++    await _submission(
++        db, user_id=student_id, task_id=task_id, course_id=course_id, cancelled=True,
++    )
++    engine = LearningEngineService()
++    assert await engine.has_own_attempt(db, student_id, task_id, None) is False
++
++
++async def test_has_own_attempt_respects_root(db) -> None:
++    """Заданный корень — только попытки этого корня (как счёт попыток tsk-264)."""
++    student_id, _ = await _user(db, "s")
++    course_id = await _course(db)
++    other_root = await _course(db)
++    task_id = await _task(db, course_id)
++    await _submission(db, user_id=student_id, task_id=task_id, course_id=course_id)
++    engine = LearningEngineService()
++    assert await engine.has_own_attempt(db, student_id, task_id, other_root) is False
++
++
++# ───────────────── 2. request-help: гейт и сохранение заметки ────────────────
++
++
++async def test_request_help_409_without_attempt_and_note(db, client, gate_on) -> None:
++    student_id, token = await _user(db, "s")
++    task_id = await _task(db, await _course(db))
++
++    resp = await _request_help(client, token, student_id, task_id)
++    assert resp.status_code == 409, resp.text
++    body = resp.json()
++    assert body["payload"]["code"] == "attempt_required"
++    assert body["detail"] == (
++        "Сначала попробуй решить сам — отправь ответ или опиши, где застрял"
++    )
++    count = (
++        await db.execute(
++            text("SELECT COUNT(*) FROM help_requests WHERE student_id = :s"), {"s": student_id}
++        )
++    ).scalar()
++    assert count == 0
++
++
++async def test_request_help_409_with_short_note(db, client, gate_on) -> None:
++    """Порог — после обрезки пробелов: 15 символов в обёртке из пробелов мало."""
++    student_id, token = await _user(db, "s")
++    task_id = await _task(db, await _course(db))
++
++    resp = await _request_help(client, token, student_id, task_id, stuck_note=_NOTE_SHORT)
++    assert resp.status_code == 409, resp.text
++    assert resp.json()["payload"]["code"] == "attempt_required"
++
++
++async def test_request_help_409_with_only_manual_teacher(db, client, gate_on) -> None:
++    student_id, token = await _user(db, "s")
++    course_id = await _course(db)
++    task_id = await _task(db, course_id)
++    await _submission(
++        db, user_id=student_id, task_id=task_id, course_id=course_id,
++        source_system="manual_teacher",
++    )
++    resp = await _request_help(client, token, student_id, task_id)
++    assert resp.status_code == 409, resp.text
++
++
++async def test_request_help_with_note_creates_request_visible_to_teacher(
++    db, client, gate_on
++) -> None:
++    student_id, s_token = await _user(db, "s")
++    teacher_id, t_token = await _user(db, "t")
++    await _link_teacher(db, student_id, teacher_id)
++    task_id = await _task(db, await _course(db))
++
++    resp = await _request_help(
++        client, s_token, student_id, task_id, stuck_note=f"  {_NOTE_OK}  "
++    )
++    assert resp.status_code == 200, resp.text
++    request_id = resp.json()["request_id"]
++
++    row = await _help_row(db, request_id)
++    assert row.stuck_note == _NOTE_OK
++    assert row.attempt_id is None
++
++    detail = await client.get(
++        f"/api/v1/teacher/help-requests/{request_id}?teacher_id={teacher_id}",
++        headers=_bearer(t_token),
++    )
++    assert detail.status_code == 200, detail.text
++    assert detail.json()["stuck_note"] == _NOTE_OK
++
++
++async def test_request_help_after_submission_fills_attempt_id(db, client, gate_on) -> None:
++    student_id, token = await _user(db, "s")
++    course_id = await _course(db)
++    task_id = await _task(db, course_id)
++    await _submission(db, user_id=student_id, task_id=task_id, course_id=course_id)
++    last_attempt = await _submission(
++        db, user_id=student_id, task_id=task_id, course_id=course_id
++    )
++
++    resp = await _request_help(client, token, student_id, task_id)
++    assert resp.status_code == 200, resp.text
++    row = await _help_row(db, resp.json()["request_id"])
++    assert row.attempt_id == last_attempt
++    assert row.stuck_note is None
++
++
++async def test_request_help_gate_off_keeps_old_behavior(db, client, gate_off) -> None:
++    """Рубильник выключен — заявка без сдачи и заметки создаётся, как раньше."""
++    student_id, token = await _user(db, "s")
++    course_id = await _course(db)
++    task_id = await _task(db, course_id)
++
++    resp = await _request_help(client, token, student_id, task_id)
++    assert resp.status_code == 200, resp.text
++    row = await _help_row(db, resp.json()["request_id"])
++    assert row.attempt_id is None
++
++
++async def test_request_help_note_too_long_is_422(db, client, gate_on) -> None:
++    student_id, token = await _user(db, "s")
++    task_id = await _task(db, await _course(db))
++    resp = await _request_help(client, token, student_id, task_id, stuck_note="х" * 1001)
++    assert resp.status_code == 422, resp.text
++
++
++# ───────────────── 3. ИИ-наставник: гейт на новом разговоре ──────────────────
++
++
++async def test_tutor_new_session_409_without_attempt(db, client, gate_on) -> None:
++    _sid, token = await _user(db, "s")
++    task_id = await _task(db, await _course(db))
++
++    resp = await client.get(f"/api/v1/ai-tutor/tasks/{task_id}", headers=_bearer(token))
++    assert resp.status_code == 409, resp.text
++    assert resp.json()["payload"]["code"] == "attempt_required"
++
++
++async def test_tutor_ask_without_session_is_gated(db, client, gate_on) -> None:
++    """`ask` тоже открывает разговор — обход гейта мимо GET закрыт."""
++    _sid, token = await _user(db, "s")
++    task_id = await _task(db, await _course(db))
++
++    resp = await client.post(
++        f"/api/v1/ai-tutor/tasks/{task_id}/ask",
++        headers=_bearer(token),
++        json={"message": "помоги"},
++    )
++    assert resp.status_code == 409, resp.text
++    assert resp.json()["payload"]["code"] == "attempt_required"
++
++
++async def test_tutor_new_session_with_note_goes_to_first_reply(db, client, gate_on) -> None:
++    student_id, token = await _user(db, "s")
++    task_id = await _task(db, await _course(db))
++
++    resp = await client.get(
++        f"/api/v1/ai-tutor/tasks/{task_id}",
++        params={"stuck_note": _NOTE_OK},
++        headers=_bearer(token),
++    )
++    assert resp.status_code == 200, resp.text
++
++    session, created = await session_service.get_or_create(
++        db, student_id=student_id, task_id=task_id
++    )
++    assert created is False
++    assert session.stuck_note == _NOTE_OK
++    messages = await session_service.build_llm_messages(db, session, None)
++    opening = messages[-1].content
++    assert _NOTE_OK in opening
++    assert STUDENT_DATA_OPEN in opening
++
++
++async def test_tutor_new_session_after_submission(db, client, gate_on) -> None:
++    student_id, token = await _user(db, "s")
++    course_id = await _course(db)
++    task_id = await _task(db, course_id)
++    await _submission(db, user_id=student_id, task_id=task_id, course_id=course_id)
++
++    resp = await client.get(f"/api/v1/ai-tutor/tasks/{task_id}", headers=_bearer(token))
++    assert resp.status_code == 200, resp.text
++
++
++async def test_tutor_existing_session_not_gated(db, client, gate_off, monkeypatch) -> None:
++    """Начатый до включения гейта разговор открывается и после включения."""
++    _sid, token = await _user(db, "s")
++    task_id = await _task(db, await _course(db))
++    first = await client.get(f"/api/v1/ai-tutor/tasks/{task_id}", headers=_bearer(token))
++    assert first.status_code == 200, first.text
++
++    monkeypatch.setattr(help_attempt_gate.settings, "help_requires_attempt", True)
++    again = await client.get(f"/api/v1/ai-tutor/tasks/{task_id}", headers=_bearer(token))
++    assert again.status_code == 200, again.text
++    assert again.json()["session_id"] == first.json()["session_id"]
++
++
++async def test_tutor_gate_off_keeps_old_behavior(db, client, gate_off) -> None:
++    _sid, token = await _user(db, "s")
++    task_id = await _task(db, await _course(db))
++    resp = await client.get(f"/api/v1/ai-tutor/tasks/{task_id}", headers=_bearer(token))
++    assert resp.status_code == 200, resp.text
++
++
++# ───────────────── первая реплика наставника ─────────────────────────────────
++
++
++def _view():
++    from app.services.ai_tutor.prompt import TutorTaskView
++
++    class _Shim:
++        id = 1
++        task_content = {"type": "SA", "stem": "Переведи 5 в двоичную систему"}
++
++    return TutorTaskView.from_task(_Shim, course_title="Информатика")
++
++
++async def test_opening_without_note_unchanged() -> None:
++    """Без заметки первая реплика та же, что до tsk-993."""
++    view = _view()
++    assert build_opening_user_message(view, None) == build_opening_user_message(
++        view, None, None, stuck_note=None
++    )
++    assert STUDENT_DATA_OPEN not in build_opening_user_message(view, None)
++    assert "где он застрял" in build_opening_user_message(view, None)
++
++
++async def test_opening_with_note_starts_from_it() -> None:
++    view = _view()
++    opening = build_opening_user_message(view, None, stuck_note=_NOTE_OK)
++    assert f"{STUDENT_DATA_OPEN}\n{_NOTE_OK}\n{STUDENT_DATA_CLOSE}" in opening
++    # На вопрос «где застрял» ученик уже ответил — не переспрашиваем.
++    assert "спроси, что именно в задании непонятно" not in opening
++
++
++# ───────────────── сигнал клиенту в состоянии задания ────────────────────────
++
++
++async def _state(client, token: str, student_id: int, task_id: int) -> dict:
++    resp = await client.get(
++        f"/api/v1/learning/tasks/{task_id}/state",
++        params={"student_id": student_id},
++        headers=_bearer(token),
++    )
++    assert resp.status_code == 200, resp.text
++    return resp.json()
++
++
++async def test_task_state_signals_help_attempt_required(db, client, gate_on) -> None:
++    student_id, token = await _user(db, "s")
++    course_id = await _course(db)
++    task_id = await _task(db, course_id)
++
++    assert (await _state(client, token, student_id, task_id))["help_attempt_required"] is True
++    await _submission(db, user_id=student_id, task_id=task_id, course_id=course_id)
++    assert (await _state(client, token, student_id, task_id))["help_attempt_required"] is False
++
++
++async def test_task_state_signal_false_when_gate_off(db, client, gate_off) -> None:
++    student_id, token = await _user(db, "s")
++    task_id = await _task(db, await _course(db))
++    assert (await _state(client, token, student_id, task_id))["help_attempt_required"] is False
++
++
++async def test_tutor_missing_task_is_404_not_409(db, client, gate_on) -> None:
++    """Гейт не подменяет «не найдено» отказом «сначала попробуй»."""
++    _sid, token = await _user(db, "s")
++    resp = await client.get("/api/v1/ai-tutor/tasks/999999999", headers=_bearer(token))
++    assert resp.status_code == 404, resp.text

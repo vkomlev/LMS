@@ -148,6 +148,12 @@ async def _enforce_attempt_gate(
         return
     if await session_service.has_live_session(db, student_id=owner, task_id=task_id):
         return
+    # Несуществующему заданию — честное «не найдено», а не «сначала попробуй».
+    active = (await db.execute(
+        text("SELECT 1 FROM tasks WHERE id = :tid AND is_active"), {"tid": task_id}
+    )).first()
+    if active is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"задание {task_id} не найдено или неактивно")
     await help_attempt_gate.enforce(
         db, student_id=owner, task_id=task_id, stuck_note=stuck_note, surface="ai_tutor"
     )
