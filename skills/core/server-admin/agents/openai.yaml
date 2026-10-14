@@ -1,0 +1,4 @@
+interface:
+  display_name: "Server Admin"
+  short_description: "Maintain Linux servers with recovery checks"
+  default_prompt: "Inspect or maintain this Linux server with verified access, scoped changes, recovery steps and external readiness checks."

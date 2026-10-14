@@ -5,6 +5,7 @@
 - Are edge cases and failure paths handled?
 - Any hidden state/ordering assumptions?
 - Any likely regression in neighboring flows?
+- For Telegram flows, check callback byte limits, explicit dialog conditions and claim release/recovery on cancel, back, restart and timeout per [shared Telegram rules](../../codex-booster/references/booster-shared.md#telegram-flows).
 
 ## SOLID / DRY / Clean Code
 - Single responsibility preserved at class/function level?

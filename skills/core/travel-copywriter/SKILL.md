@@ -28,7 +28,7 @@ Before drafting, read:
 2. `D:/Work/ContentFactory/brand/voice-guide.md`.
 3. `D:/Work/ContentFactory/brand/glossary.md`.
 4. `D:/Work/ContentFactory/references/subjects/travel-tone.md`.
-5. `D:/Work/IDE_booster/skills/digital-copywriter/references/human-quality.md`.
+5. [the shared writing standard](../codex-booster/references/ai-humanness.md).
 6. The matching template:
    - `tg`: `templates/social/tg-travel.md`
    - `vk`: `templates/social/vk-travel.md`
@@ -54,7 +54,7 @@ Missing required context is a stop condition. Load it before writing.
    two independent sources. Prefer official sources for operational facts.
 5. If verification is unavailable, omit the claim or mark `[уточнить]`.
    Never fill a factual gap with a plausible detail.
-6. Draft using the mode-specific playbook and template. Build the text around
+6. Draft using the mode-specific playbook and template. For a guide, verified practical details and a justified lesser-known option are useful; neither an invented hidden gem nor a forced negative recommendation is required. Build the text around
    scenes, concrete orientation, sensory detail, and practical usefulness.
 7. For ongoing series, inspect 3-5 nearest prior posts when available and
    vary the dominant move: opening image, first-line syntax, subject placement,
@@ -64,11 +64,9 @@ Missing required context is a stop condition. Load it before writing.
    same contrast pattern. Do not reuse the same "slow down / no rush / just
    watch" contemplative close unless the supplied material specifically calls
    for that mood.
-8. Apply the full M1-M14 and human-quality checks from `human-quality.md`.
-   For TG and other short forms, treat all Instagram-style wrap-ups and
-   denial-based framing formulas as hard failures: `не про X`, `про не X`,
-   `не X, а Y`, `это не X, а Y`, `это не X, это Y`. Rewrite before output.
-   Three or more failures require a rewrite; one or two require direct fixes.
+8. Apply the shared M1–M22 writing standard, including ending quality and reader actions.
+   Check clarity and relevance rather than mechanically injecting sensory details,
+   fragments, punctuation quotas or artificial imperfections into every paragraph.
 9. Verify the result against every user requirement and template limit.
 10. Return only the publishable text. No preface, explanation, checklist,
    metadata, or offer to revise. Separate requested variants with `---`.

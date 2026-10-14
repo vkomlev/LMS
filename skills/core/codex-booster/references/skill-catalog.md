@@ -18,6 +18,7 @@ This catalog tracks the managed Codex Booster skill set and nearby runtime capab
 - `qa-fix`: reproduce QA issues, apply the smallest safe fix, and verify before/after evidence.
 - `release-prep`: release go/no-go package with preflight, validation, rollback, and post-release follow-ups.
 - `db-check`: DB-centric validation and safety checks.
+- `server-admin`: Linux server inventory, hardening, migration, recovery and external readiness checks; database work routes to `db-check`.
 - `encoding-guard`: UTF-8 checks for docs/reviews before write.
 
 ## Product, Engineering, and Domain Specialists

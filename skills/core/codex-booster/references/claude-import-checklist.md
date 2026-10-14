@@ -23,6 +23,10 @@ For each Claude reference or skill:
 4. For `missing`, add a compact reference and link to it from the owner skill.
 5. For `Claude-only`, document the boundary instead of copying.
 
+Record freshness using [the shared import rule](booster-shared.md#import-freshness).
+Keep the import map in `Docs/ai-booster/claude-to-codex-import-audit.md`; a clean
+mirror audit alone does not mean Claude improvements have been reviewed.
+
 ## ContentAnalyzer Bucket Decisions
 
 When importing Claude-side decisions from ContentAnalyzer buckets:

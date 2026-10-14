@@ -21,7 +21,7 @@ Use this skill whenever text files may be affected by encoding drift, including 
 - Prefer restore-from-last-good-state over speculative conversion.
 - For PowerShell pipelines, use UTF-8 output explicitly.
 - Do not trust terminal rendering for Cyrillic; verify bytes or hashes when parity matters.
-- For CLI Python on Windows, set `PYTHONUTF8=1` when scripts read/write non-ASCII files.
+- For CLI Python on Windows, set `PYTHONUTF8=1` when scripts read/write non-ASCII files; set `PYTHONIOENCODING=utf-8` for redirected streams. New text CLIs must define UTF-8 input/output at creation, not after a cp1251 failure; only reconfigure streams that support `reconfigure`.
 
 ## PowerShell guidance
 Before bulk text operations:
@@ -32,9 +32,10 @@ Before bulk text operations:
 
 When writing files:
 ```powershell
-Set-Content -Encoding UTF8
-Out-File -Encoding utf8
+[System.IO.File]::WriteAllText($path, $text, [System.Text.UTF8Encoding]::new($false))
 ```
+
+This avoids the UTF-8 BOM emitted by `-Encoding UTF8` in Windows PowerShell 5.1.
 
 ## Quick commands
 Check one file:

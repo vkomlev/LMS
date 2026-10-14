@@ -2,6 +2,8 @@
 
 Use these guards for FastAPI/API work when public contracts, auth, or external systems are touched.
 
+Apply [shared contract and result checks](../../codex-booster/references/booster-shared.md#integration-contract-drift), including all consumers of new fields/types and realistic response shapes in tests.
+
 ## Hardcoded URL Guard
 
 Production/public URLs must come from settings, not inline constants. Search service/core/client layers for hardcoded `http://` or `https://` values and either remove them or justify local-only test fixtures.

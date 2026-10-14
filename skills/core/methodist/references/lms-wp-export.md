@@ -6,8 +6,9 @@
 явном расхождении с актуальным кодом LMS / сайтом — перепроверить и обновить
 этот файл (followup), не выдумывать.
 
-План методиста — **слой нормализации**: `docs/v2` остаётся источником, не
-переписывается; план в `curriculum/` несёт **две проекции** одного курса.
+План методиста — **слой нормализации**: материалы курса (`source-root` профиля)
+остаются источником и не переписываются; план в `output-root` несёт **две
+проекции** одного курса.
 
 ## Часть 1. LMS-проекция (подтверждено кодом d:\Work\LMS)
 
@@ -21,6 +22,18 @@
 
 > Иерархию родителя читать через `GET /courses/{id}` (by-id) или `/courses/{id}/children`:
 > `by-code/{code}` возвращает `parent_course_ids: []` даже у вложенных узлов (tsk-147).
+
+**Порядок узлов = граф предпосылок — сверять ПОСЛЕ публикации (дубль-трек Claude+Codex).**
+`order_number` управляется триггером по порядку ВСТАВКИ, значит поздний ре-импорт узла
+ставит его в КОНЕЦ дерева. После публикации/ре-импорта обязательно сверить фактический
+порядок подкурсов (`GET /courses/{id}/children`, поле `order_number`) с педагогическим
+графом предпосылок: тема-предпосылка раньше зависимой (циклы РАНЬШЕ списков/функций/
+графики-с-циклами/проекта, которые цикл используют), а итог/«Что дальше» — ПОСЛЕДНИМ узлом.
+Не доверять номеру в `title` («Раздел 7») — читать `order_number`. Провал-класс P0 (курс
+«Python-подростки»): «Раздел 7. Циклы» получил `order_number=19` (после финала=12 и
+«Что дальше»=15), т.к. переимпортирован последним → вся траектория после раздела 6 шла
+БЕЗ циклов. Расхождение порядок ↔ предпосылки = P0; фиксировать предпосылки в
+`course_dependencies` и править `order_number`.
 
 ### 1.1.1. Плоский курс vs подкурсы — порог и «почему» (tsk-148, enforced)
 **Как LMS подаёт курс.** Внутри узла сначала идут ВСЕ его материалы, затем ВСЕ его задания.
@@ -72,7 +85,10 @@ H2 и 18 заданиями = 3 материала + 18 = 21 > 20 → отказ
   "solution_rules": { "max_score": 10, "correct_options": ["B"], "scoring_mode": "all_or_nothing" }
 }
 ```
-  Для `SA/SA_COM` — `solution_rules.short_answer.accepted_answers`; для `TA` —
+  Для `SA/SA_COM` — `solution_rules.short_answer.accepted_answers` **плюс явный
+  `short_answer.normalization`** (словарь закрыт, ответ-код Python →
+  `["trim","strip_punctuation","collapse_spaces","code_ast"]` без `lower`;
+  правило и таблица выбора — `assignment-rules.md` § 4b). Для `TA` —
   `solution_rules.text_answer.rubric` (список `{id,title,max_score}`).
 - Материалы: `course_uid`, `external_uid`, `title`, `type`
   (`text|video|audio|image|link|pdf|office_document|script|document`),
@@ -83,7 +99,20 @@ H2 и 18 заданиями = 3 материала + 18 = 21 > 20 → отказ
   parent_course_uid | order_number | required_courses_uid | is_required`
 - Лист `Tasks`: `external_uid | type | stem | options ("A: .. | B: .. [пояснение]") |
   correct_answer ("A" / "A,B") | accepted_answers ("вар:10 | вар2:5") |
-  max_score | course_uid | difficulty_code | code | title | prompt`
+  normalization | max_score | course_uid | difficulty_code | code | title | prompt`
+  - **`normalization`** (SA/SA_COM, tsk-267) — вид ответа; тот же выбор, что и в
+    JSON-проекции (`assignment-rules.md` § 4b). Заполнять **всегда**, где есть
+    `accepted_answers`. Значения: `code` (ответ — программа на Python; развернётся
+    в `trim, strip_punctuation, collapse_spaces, code_ast` **без** `lower`) ·
+    `text` (слово/число/имя → `trim, lower, strip_punctuation, collapse_spaces`) ·
+    либо явный список шагов через запятую (`trim, code_ast`). Словарь закрыт:
+    опечатка (`code-ast`) **отклоняет строку** с `normalization_invalid`, а не
+    подставляет дефолт молча.
+  - **Пустая колонка = `["trim","lower"]`** (поведение импорта до tsk-267), а НЕ
+    четырёхшаговый текстовый набор из § 4b. Дефолт оставлен узким осознанно:
+    ре-импорт перезаписывает `solution_rules`, и щедрый дефолт вернул бы
+    `strip_punctuation` заданиям, у которых его точечно сняли в tsk-218. Молчание
+    колонки — не «текст», а «как было»; для задания-кода это худший вариант.
 - Лист `Materials`: `course_uid | external_uid | title | type | url |
   description | caption | order_position | is_active`
 
@@ -190,6 +219,21 @@ requires, blocks, subcourses}`. У листа `blocks` = теория + `control
    `/<навигатор>/<тема>/<урок>/`; навигацию и ссылки между уроками/темами строить
    по ним, не по плоским slug (иначе переходы не работают). Те же вложенные адреса
    — в section-ссылках навигаторов (L1 items, L2 📖/❓/💻) и в `prev/next`.
+5. **Семантический кокон (по запросу оператора, не по умолчанию).** Пункт 2 выше —
+   лёгкая ручная перелинковка «на глаз». Когда оператор явно просит карту
+   внутренней перелинковки/«семантический кокон» для курса, или курс переводится
+   на SEO/GEO-стандарт сайта отдельным решением — вместо/поверх пункта 2
+   применяется структурированная процедура: разведка сущностей (Support/Mixed/
+   Матриарх, salient terms), карта связей по фиксированному JSON-контракту
+   (роли `sister`/`support_to_mixed`/`mixed_to_matriarch`, анкоры без generic-
+   заглушек), программная валидация и заготовка реестра фактов под числа/цены.
+   Отработано и провалидировано на пилоте (tsk-1026, курс `ai-predprinimatel`).
+   Источник истины по методологии и JSON-схеме — проектный
+   `docs/ai/semantic-cocoon-policy.md` курса (пример:
+   `D:\Work\CreateCourses\docs\ai\semantic-cocoon-policy.md`); схема связей
+   зафиксирована в `D:\Work\Root\tasks\tsk-1027-mekhanizm-inektsii-perelinkovki-v-wp-publish-po-json-karte-rolej-mother-sister-daughter.md`.
+   Не копировать методологию сюда — читать по ссылке, чтобы не разойтись с
+   инженерной стороной (`wp_publish`).
 
 ## Часть 3. Таблица соответствия LMS-узел ↔ WP-страница
 

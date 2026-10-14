@@ -10,6 +10,7 @@ description: "Audit and improve AI text responses using a structured feedback lo
 - default source is the current chat if no other example was provided;
 - capture the concrete prompt, bad response, and expected behavior.
 2. Classify defects using [references/defect-taxonomy.md](references/defect-taxonomy.md).
+   For publishable text or a style review, apply [M1–M22 and the editing pass](../codex-booster/references/ai-humanness.md); for expert-to-novice advice also check M13/M14. Report examples, not an invented human-quality percentage.
 3. Run `5 Whys` and reduce the failure to one of three causes:
 - instruction gap;
 - context gap;

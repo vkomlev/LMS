@@ -11,9 +11,9 @@ skill-routing practice.
 
 ## Codex Contract
 
-Claude uses the registry behind a `PreToolUse` gate. Codex currently has no
-equivalent pre-write hook in its local config; `notify` runs after a turn. For
-Codex, the registry is advisory route data:
+Claude uses the registry behind a `PreToolUse` gate. Its presence does not establish
+any protection in Codex: inspect the active Codex tools and configuration before
+claiming enforcement. In this import, the registry remains advisory route data:
 
 1. Read the JSON when a task touches a path that may belong to a managed domain.
 2. Identify the domain and the intended skill family from matching rules.
@@ -44,6 +44,8 @@ Codex, the registry is advisory route data:
 - Code, APIs, migrations, and scripts: prefer engineering skills such as
   `executor-pro`, `fastapi-api-developer`, `db-check`, `qa-fix`, or
   `techlead-code-reviewer` according to risk.
+- Server inventory, SSH, firewall, TLS and migrations between servers: use
+  `server-admin`; database operations stay with `db-check`.
 - AI infrastructure and skill trees: prefer `codex-booster`, `encoding-guard`,
   `response-quality-coach`, `skill-creator`, or `plugin-creator` according to
   the artifact.

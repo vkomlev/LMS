@@ -73,6 +73,7 @@ It should consume the strongest available review artifacts first, especially out
 - docs/config/runtime drift;
 - repository hygiene: commit-message policy, missing expected artifacts, temporary debug files, and unrelated working-tree drift;
 - test adequacy and validation coverage;
+- for affected APIs/UI/flows, check [observable results and final state](../codex-booster/references/booster-shared.md#observable-results), including real response shapes, meaningful values, non-empty lists and cross-view invariants;
 - maintainability only where it changes release safety.
 8. In `paranoid` mode, assume missing evidence is unsafe until proven otherwise.
 9. Return a strict `PASS` or `FAIL` with required fixes and the next safe step.

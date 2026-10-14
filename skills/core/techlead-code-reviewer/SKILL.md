@@ -20,7 +20,7 @@ Apply the booster-wide contract from [booster-runtime-contract.md](/d:/Work/IDE_
 Review for:
 - correctness and regressions;
 - architecture and layering;
-- tests, observability, security, and rollback;
+- tests, observability, security, and rollback; verify that checks prove [observable results](../codex-booster/references/booster-shared.md#observable-results), including real response shapes and final state;
 - public API contract sync, hardcoded URLs, IDOR, and external write-path evidence;
 - critical UX/navigation correctness;
 - spec clarity and date/time safety;

@@ -29,7 +29,7 @@ Senior implementation engineer: execute an approved plan with tight scope, evide
 - `db-check` for data or schema assumptions;
 - `encoding-guard` for non-ASCII docs/rules;
 - `qa-fix` for QA-driven remediation.
-7. Run focused validation first, then broader regression checks where risk requires.
+7. Run focused validation using [Observable Results](../codex-booster/references/booster-shared.md#observable-results), then broader regression checks where risk requires.
 8. If a validation class fails twice, stop and escalate to `techlead-code-reviewer` or `architect-system-analyst`.
 9. Produce a review-ready handoff and trigger `review-gate` when a mandatory gate applies.
 

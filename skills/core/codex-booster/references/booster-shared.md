@@ -88,6 +88,47 @@ endpoint or schema that failed before marking the contract fixed.
 Smoke every changed contract enumerated in the specification; treat `404`,
 `422`, or a schema mismatch as unresolved drift that blocks closure.
 
+Before a cross-project change, read the relevant contract, STATE and CHANGELOG
+in the project's cross-project hub. Afterwards update the affected contract and
+CHANGELOG, and STATE when the phase/version changes. Resolve disagreements against
+current implementation and observed behavior; an old mirror is not evidence of truth.
+When enabling a new type or response field, enumerate and check every consumer,
+including generated client types and mocks, rather than only the initiating project.
+
+## Observable Results
+
+For changed behavior, tests and live checks must establish the consumer's result:
+
+- Match mocks to the actual OpenAPI response, including envelopes and pagination.
+- Assert expected values and identities, not only keys, HTTP 200 or function calls.
+- Exercise lists, inboxes and aggregates with realistic non-empty data.
+- Compare counters with their lists under the same predicate; verify the final state
+  after actions, including removal from queues and refreshed counters where applicable.
+- For URL-backed filters, verify client navigation and back/forward navigation update
+  visible state; a state initializer using the first server prop is insufficient.
+- Check authorization in every supported entry context (web, Telegram, embedded),
+  including an unauthenticated or wrong-owner case; do not invent unsupported contexts.
+
+Use focused checks for the changed risk, not a mandatory full suite for cosmetic edits.
+
+## Telegram Flows
+
+For Telegram bots, validate packed `callback_data` against Telegram's documented
+UTF-8 byte limit, keep payloads to compact identifiers, and test their encoded
+length. Use explicit boolean dialog conditions with safe defaults and render tests.
+For any claim/lock flow, specify cancellation, back, restart and timeout behavior;
+release or recover the claim on every exit, with an audit reason where the project
+supports one. Derive lock lifetime from a realistic slow path and existing project
+contracts; do not apply one project's timeout or database cleanup query fleet-wide.
+
+## Import Freshness
+
+Mirror parity proves packaging consistency, not parity of capabilities with Claude.
+For an import, record the date, source revision and dirty-source files, map each
+reviewed skill to covered/adapted/deferred/Claude-only, and verify referenced files.
+Read current source files as well as Git history; uncommitted improvements may exist.
+Do not close an import merely because `audit-codex-booster.py` passes.
+
 ## Cross-Agent Coordination
 
 Use `D:/Work/Root/agents/` as the shared coordination registry for Claude,
