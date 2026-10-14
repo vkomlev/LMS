@@ -67,6 +67,7 @@ from app.schemas.task_content import (
     MANUAL_REVIEW_TASK_TYPES as _MANUAL_REVIEW_TASK_TYPES,
 )
 from app.services import audit_service
+from app.services.learning_gaps_service import learning_path_results_filter
 from app.services.checking_service import CheckingService
 from app.services.learning_engine_service import LearningEngineService
 from app.services.transparent_subcourse import absorbed_in_tree, task_key
@@ -1168,6 +1169,8 @@ async def get_student_progress(
                     "FROM task_results tr "
                     "JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL "
                     "WHERE tr.user_id = :student_id AND tr.task_id = ANY(:task_ids) "
+                    # tsk-992: повтор не меняет статус задания в карточке ученика.
+                    f"  AND {learning_path_results_filter('tr')} "
                     "ORDER BY tr.task_id, tr.submitted_at DESC, tr.id DESC"
                 ),
                 {"student_id": student_id, "task_ids": task_ids},

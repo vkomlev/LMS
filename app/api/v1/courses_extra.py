@@ -22,6 +22,7 @@ from app.schemas.courses import (
     GoogleSheetsImportError,
 )
 from app.schemas.course_parents import CourseParentOrderUpdate
+from app.schemas.retrieval import CourseRetrievalConfig
 from app.schemas.course_sampling import (
     CourseSamplingSettingsRequest,
     CourseSamplingSettingsResponse,
@@ -1385,4 +1386,83 @@ async def patch_course_sampling_endpoint(
         config,
     )
     result = await service.get_sampling_settings(db, course_id)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# tsk-992 (П3): рубильник повторения по следам ошибок на корневом курсе
+# (по образцу /courses/{id}/sampling; поле courses.retrieval_config)
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/courses/{course_id}/retrieval",
+    response_model=CourseRetrievalConfig,
+    summary="Рубильник повторения по следам ошибок на курсе (tsk-992)",
+    description=(
+        "`{enabled}` из `courses.retrieval_config`. Пустое поле читается как "
+        "`enabled=false`. Действует на КОРНЕВОМ курсе — по нему ученик идёт по "
+        "программе; на подкурсе настройка ни на что не влияет."
+    ),
+    responses={
+        200: {"description": "Настройка отдана"},
+        401: {"description": "Не аутентифицирован"},
+        403: {"description": "Роль не позволяет менять настройки курса"},
+        404: {"description": "Курс не найден"},
+    },
+)
+async def get_course_retrieval_endpoint(
+    course_id: int,
+    db: AsyncSession = Depends(get_bare_db),
+    current_user: CurrentUser = Depends(_STRUCTURE_GATE),
+) -> Any:
+    """Прочитать рубильник повторения курса.
+
+    :param course_id: идентификатор курса.
+    :returns: `{enabled}`.
+    :raises HTTPException: 404 — курса нет.
+    """
+    result = await CoursesService().get_retrieval_config(db, course_id)
+    if result is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Курс не найден")
+    return result
+
+
+@router.put(
+    "/courses/{course_id}/retrieval",
+    response_model=CourseRetrievalConfig,
+    summary="Включить/выключить повторение по следам ошибок на курсе (tsk-992)",
+    description=(
+        "Полная замена `courses.retrieval_config`. По умолчанию повторение "
+        "выключено; включение на пилотном курсе — решение оператора. Выключение "
+        "прячет блок «Пора повторить», расписание учеников сохраняется."
+    ),
+    responses={
+        200: {"description": "Настройка записана"},
+        401: {"description": "Не аутентифицирован"},
+        403: {"description": "Роль не позволяет менять настройки курса"},
+        404: {"description": "Курс не найден"},
+    },
+)
+async def put_course_retrieval_endpoint(
+    course_id: int,
+    payload: CourseRetrievalConfig = Body(...),
+    db: AsyncSession = Depends(get_bare_db),
+    current_user: CurrentUser = Depends(_STRUCTURE_GATE),
+) -> Any:
+    """Записать рубильник повторения курса.
+
+    :param course_id: идентификатор курса.
+    :param payload: `{enabled}`.
+    :returns: записанный `{enabled}`.
+    :raises HTTPException: 404 — курса нет.
+    """
+    config = payload.model_dump()
+    result = await CoursesService().set_retrieval_config(db, course_id, config)
+    if result is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Курс не найден")
+    logging.getLogger("api.courses_extra").info(
+        "tsk-992: retrieval_config курса %s изменён пользователем %s -> %r",
+        course_id, current_user.id, config,
+    )
     return result

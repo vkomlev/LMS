@@ -50,6 +50,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.lesson_window_sql import in_lesson_sql
+from app.services.learning_gaps_service import learning_path_results_filter
 from app.services.teacher_lesson_summary_service import MANUAL_SOURCE
 
 logger = logging.getLogger("app.retention")
@@ -75,6 +76,7 @@ JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
 WHERE tr.user_id = ANY(:student_ids)
   AND tr.is_correct = true
   AND tr.source_system IS DISTINCT FROM :manual_source
+  AND {learning_path_results_filter('tr')}
   AND NOT {in_lesson_sql('tr.submitted_at', 'tr.user_id')}
 UNION
 SELECT smp.student_id,

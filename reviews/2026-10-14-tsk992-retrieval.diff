@@ -1,0 +1,2497 @@
+diff --git a/app/api/v1/attempts.py b/app/api/v1/attempts.py
+index c3d011a..3d38543 100644
+--- a/app/api/v1/attempts.py
++++ b/app/api/v1/attempts.py
+@@ -75,6 +75,7 @@ from app.services.attempt_attachments import (
+ )
+ from app.services.learning_engine_service import LearningEngineService
+ from app.services import dependency_lock_service
++from app.services import retrieval_service
+ from app.services.tasks_acl_service import (
+     assert_task_access,
+     assert_task_active_for_student,
+@@ -1384,6 +1385,36 @@ async def submit_attempt_answers(
+             except Exception:
+                 pass
+ 
++        # 2.4c' tsk-992 (П3): задание «сначала завалил, потом сдал» встаёт на
++        # повтор (3 → 7 → 21 день). Только при включённом рубильнике корневого
++        # курса — проверка рубильника первой, так что на выключенных курсах
++        # (по умолчанию все) — один запрос конфига и ничего больше, даже точки
++        # сохранения. Ручной зачёт сюда не ходит, а
++        # сам сервис ещё раз отсекает `manual_teacher`. Soft-fail по тому же
++        # паттерну, что 2.4b/2.4c: расписание повторов не роняет сдачу.
++        # Точка сохранения, а не db.rollback() (как в 2.4e): полный откат
++        # экспайрит attempt/task, и следующее обращение к ним → MissingGreenlet.
++        # В логе ошибки к ORM не обращаемся: объекты могли истечь в блоке выше.
++        retrieval_task_id: Optional[int] = None
++        try:
++            retrieval_task_id = task.id
++            if await retrieval_service.is_enabled(db, effective_root_id):
++                async with db.begin_nested():
++                    scheduled = await retrieval_service.schedule_after_pass(
++                        db,
++                        student_id=attempt.user_id,
++                        task_id=retrieval_task_id,
++                        root_course_id=effective_root_id,
++                        task_result_id=getattr(task_result, "id", None),
++                    )
++                if scheduled:
++                    await db.commit()
++        except Exception:
++            logger.warning(
++                "tsk-992: постановка на повтор не удалась: attempt=%s task=%s",
++                attempt_id, retrieval_task_id, exc_info=True,
++            )
++
+         # 2.4d tsk-439: реальное учебное действие (сдача ответа) во время
+         # окна занятия автоматически подтверждает явку — не дожидаясь клика
+         # "Я на занятии". Soft-fail по тому же паттерну, что 2.4b/2.4c: явка
+diff --git a/app/api/v1/courses_extra.py b/app/api/v1/courses_extra.py
+index 8039126..5984876 100644
+--- a/app/api/v1/courses_extra.py
++++ b/app/api/v1/courses_extra.py
+@@ -22,6 +22,7 @@ from app.schemas.courses import (
+     GoogleSheetsImportError,
+ )
+ from app.schemas.course_parents import CourseParentOrderUpdate
++from app.schemas.retrieval import CourseRetrievalConfig
+ from app.schemas.course_sampling import (
+     CourseSamplingSettingsRequest,
+     CourseSamplingSettingsResponse,
+@@ -1386,3 +1387,82 @@ async def patch_course_sampling_endpoint(
+     )
+     result = await service.get_sampling_settings(db, course_id)
+     return result
++
++
++# ---------------------------------------------------------------------------
++# tsk-992 (П3): рубильник повторения по следам ошибок на корневом курсе
++# (по образцу /courses/{id}/sampling; поле courses.retrieval_config)
++# ---------------------------------------------------------------------------
++
++
++@router.get(
++    "/courses/{course_id}/retrieval",
++    response_model=CourseRetrievalConfig,
++    summary="Рубильник повторения по следам ошибок на курсе (tsk-992)",
++    description=(
++        "`{enabled}` из `courses.retrieval_config`. Пустое поле читается как "
++        "`enabled=false`. Действует на КОРНЕВОМ курсе — по нему ученик идёт по "
++        "программе; на подкурсе настройка ни на что не влияет."
++    ),
++    responses={
++        200: {"description": "Настройка отдана"},
++        401: {"description": "Не аутентифицирован"},
++        403: {"description": "Роль не позволяет менять настройки курса"},
++        404: {"description": "Курс не найден"},
++    },
++)
++async def get_course_retrieval_endpoint(
++    course_id: int,
++    db: AsyncSession = Depends(get_bare_db),
++    current_user: CurrentUser = Depends(_STRUCTURE_GATE),
++) -> Any:
++    """Прочитать рубильник повторения курса.
++
++    :param course_id: идентификатор курса.
++    :returns: `{enabled}`.
++    :raises HTTPException: 404 — курса нет.
++    """
++    result = await CoursesService().get_retrieval_config(db, course_id)
++    if result is None:
++        raise HTTPException(status.HTTP_404_NOT_FOUND, "Курс не найден")
++    return result
++
++
++@router.put(
++    "/courses/{course_id}/retrieval",
++    response_model=CourseRetrievalConfig,
++    summary="Включить/выключить повторение по следам ошибок на курсе (tsk-992)",
++    description=(
++        "Полная замена `courses.retrieval_config`. По умолчанию повторение "
++        "выключено; включение на пилотном курсе — решение оператора. Выключение "
++        "прячет блок «Пора повторить», расписание учеников сохраняется."
++    ),
++    responses={
++        200: {"description": "Настройка записана"},
++        401: {"description": "Не аутентифицирован"},
++        403: {"description": "Роль не позволяет менять настройки курса"},
++        404: {"description": "Курс не найден"},
++    },
++)
++async def put_course_retrieval_endpoint(
++    course_id: int,
++    payload: CourseRetrievalConfig = Body(...),
++    db: AsyncSession = Depends(get_bare_db),
++    current_user: CurrentUser = Depends(_STRUCTURE_GATE),
++) -> Any:
++    """Записать рубильник повторения курса.
++
++    :param course_id: идентификатор курса.
++    :param payload: `{enabled}`.
++    :returns: записанный `{enabled}`.
++    :raises HTTPException: 404 — курса нет.
++    """
++    config = payload.model_dump()
++    result = await CoursesService().set_retrieval_config(db, course_id, config)
++    if result is None:
++        raise HTTPException(status.HTTP_404_NOT_FOUND, "Курс не найден")
++    logging.getLogger("api.courses_extra").info(
++        "tsk-992: retrieval_config курса %s изменён пользователем %s -> %r",
++        course_id, current_user.id, config,
++    )
++    return result
+diff --git a/app/api/v1/learning.py b/app/api/v1/learning.py
+index 791045e..e81a236 100644
+--- a/app/api/v1/learning.py
++++ b/app/api/v1/learning.py
+@@ -43,6 +43,12 @@ from app.schemas.learning_api import (
+     MaterialRequestHelpResponse,
+ )
+ from app.schemas.learning_engine import NextItemResult
++from app.schemas.retrieval import (
++    ReviewAnswerRequest,
++    ReviewAnswerResponse,
++    ReviewDueItem,
++    ReviewDueResponse,
++)
+ from app.services.learning_engine_service import LearningEngineService
+ from app.services.learning_events_service import (
+     record_help_requested,
+@@ -72,6 +78,7 @@ from app.services import lesson_attendance_service
+ # tsk-301: единственная дверь прав подписки — своей проверки здесь быть не должно.
+ from app.services import entitlements_service
+ from app.services import help_attempt_gate
++from app.services import retrieval_service
+ from app.services import course_activity_service
+ from app.services.attempts_service import AttemptsService
+ from app.services.tasks_service import TasksService
+@@ -1276,3 +1283,110 @@ async def hint_events(
+         task_id, body.attempt_id, body.hint_type, body.hint_index, event_id, deduplicated,
+     )
+     return HintEventResponse(ok=True, deduplicated=deduplicated, event_id=event_id)
++
++
++# ----- tsk-992 (П3): повторение по следам ошибок -----
++
++
++@router.get(
++    "/courses/{course_id}/review-due",
++    response_model=ReviewDueResponse,
++    responses=_PAYMENT_403,
++    summary="Задания курса, которые пора повторить (tsk-992)",
++    description=(
++        "Задания «сначала завалил, потом сдал», у которых подошёл срок повтора "
++        "(`due_at <= now`, не закреплены). `course_id` — корневой курс. Пустой "
++        "список, если повторение на курсе выключено (`retrieval_config`)."
++    ),
++)
++async def get_review_due(
++    course_id: int = Path(..., description="ID корневого курса"),
++    student_id: int = Query(..., description="ID студента"),
++    current_user: CurrentUser = Depends(get_current_user),
++    db: AsyncSession = Depends(get_bare_db),
++) -> ReviewDueResponse:
++    """Список «пора повторить» по корневому курсу.
++
++    :raises HTTPException: 403 — чужой `student_id`.
++    """
++    if not current_user.is_service and current_user.id != student_id:
++        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
++    # Как у остальных учебных путей: просроченная оплата закрывает контент.
++    await payment_access_service.assert_content_allowed(db, student_id)
++    items = await retrieval_service.list_due(db, student_id=student_id, course_id=course_id)
++    return ReviewDueResponse(
++        course_id=course_id,
++        items=[
++            ReviewDueItem(
++                task_id=i.task_id,
++                external_uid=i.external_uid,
++                title=i.title,
++                task_type=i.task_type,
++                interval_stage=i.interval_stage,
++                due_at=i.due_at,
++                days_since_solved=i.days_since_solved,
++            )
++            for i in items
++        ],
++    )
++
++
++@router.post(
++    "/courses/{course_id}/review/{task_id}/answer",
++    response_model=ReviewAnswerResponse,
++    responses={
++        **_PAYMENT_403,
++        404: {"description": "Задание не стоит на повторении (`payload.code = retrieval_not_scheduled`)"},
++        409: {
++            "description": (
++                "Повтор не принят: повторение на курсе выключено "
++                "(`retrieval_disabled`), срок ещё не подошёл (`retrieval_not_due`, "
++                "`payload.due_at`) либо задание не проверяется автоматически "
++                "(`retrieval_unsupported`)"
++            )
++        },
++    },
++    summary="Сдать повтор задания (tsk-992)",
++    description=(
++        "Ответ проверяется той же автоматикой, что и обычная сдача, и пишется "
++        "в `task_results` с `source_system='retrieval'` в открытую курсовую "
++        "попытку (или новую по механике start-or-get-attempt). Статус задания в "
++        "учебном пути, счёт и лимит попыток повтор не меняет. Верно — следующая "
++        "стадия (+7 / +21 день) или «закреплено»; неверно — стадия 0, +3 дня."
++    ),
++)
++async def submit_review_answer(
++    course_id: int = Path(..., description="ID корневого курса"),
++    task_id: int = Path(..., description="ID задания"),
++    body: ReviewAnswerRequest = Body(...),
++    current_user: CurrentUser = Depends(get_current_user),
++    db: AsyncSession = Depends(get_bare_db),
++) -> ReviewAnswerResponse:
++    """Принять ответ на повтор и сдвинуть расписание.
++
++    :raises HTTPException: 403 — чужой `student_id`.
++    :raises DomainError: 404/409 — см. `retrieval_service.submit_review`.
++    """
++    if not current_user.is_service and current_user.id != body.student_id:
++        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
++    # Те же гейты, что у обычной сдачи: просроченная оплата и тариф
++    # «Выпускник» закрывают работу в курсе — по УЧЕНИКУ, не по вызывающему.
++    await payment_access_service.assert_content_allowed(db, body.student_id)
++    await graduation_service.assert_course_work_allowed(db, body.student_id)
++    outcome = await retrieval_service.submit_review(
++        db,
++        student_id=body.student_id,
++        task_id=task_id,
++        course_id=course_id,
++        answer=body.answer,
++    )
++    return ReviewAnswerResponse(
++        task_id=outcome.task_id,
++        task_result_id=outcome.task_result_id,
++        attempt_id=outcome.attempt_id,
++        check_result=outcome.check_result,
++        is_correct=outcome.is_correct,
++        interval_stage=outcome.interval_stage,
++        next_due_at=outcome.next_due_at,
++        completed=outcome.completed,
++    )
+diff --git a/app/api/v1/task_results_extra.py b/app/api/v1/task_results_extra.py
+index 4a65c36..d3d6ec0 100644
+--- a/app/api/v1/task_results_extra.py
++++ b/app/api/v1/task_results_extra.py
+@@ -644,6 +644,8 @@ async def get_pending_review_results(
+             TaskResults.checked_at.is_(None),
+             TaskResults.is_correct.isnot(None),
+             sa_text(optional_review_sql("tasks")),
++            # tsk-992: сдача повтора на просмотр преподавателю не выносится.
++            TaskResults.source_system.is_distinct_from("retrieval"),
+         ]
+     else:
+         # mandatory (default): очередь обязательной ручной проверки. tsk-247:
+diff --git a/app/db/base.py b/app/db/base.py
+index babb929..9f831a9 100644
+--- a/app/db/base.py
++++ b/app/db/base.py
+@@ -62,3 +62,4 @@ import app.models.program_scope        # персональный объём п
+ import app.models.student_curator      # закрепление ученика за куратором (tsk-742)
+ import app.models.lesson_absence_followup  # «про пропуск уже спросили» (tsk-743)
+ 
++import app.models.task_review_schedule  # расписание повторов заданий (tsk-992)
+diff --git a/app/db/migrations/versions/2026_10_14_tsk992_task_review_schedule.py b/app/db/migrations/versions/2026_10_14_tsk992_task_review_schedule.py
+new file mode 100644
+index 0000000..69e26cc
+--- /dev/null
++++ b/app/db/migrations/versions/2026_10_14_tsk992_task_review_schedule.py
+@@ -0,0 +1,129 @@
++"""tsk-992 (П3): повторение по следам ошибок — расписание и рубильник курса.
++
++Решение оператора Р2: на повтор ставятся только задания «сначала завалил,
++потом сдал»; интервалы 3 → 7 → 21 день, незачёт на повторе — откат к 3 дням.
++
++- `task_review_schedule` — одна строка на (ученик, задание, корневой курс):
++  стадия интервала, срок следующего повтора, последний результат. После
++  верного повтора на стадии 2 строка закрывается (`completed_at`), а не
++  удаляется — история «закрепил» остаётся читаемой.
++- `courses.retrieval_config JSONB NULL` — рубильник на корневом курсе по
++  образцу `sampling_config`: `{"enabled": false}`. NULL и `enabled=false`
++  значат одно и то же — повторение выключено, поведение прежнее.
++
++Обе части только добавляются: старые строки и старые клиенты не затронуты.
++
++Rollback: `alembic downgrade tsk1335_pd_consents` — таблица и колонка
++снимаются, расписание повторов теряется (сами результаты повторов в
++`task_results` с `source_system='retrieval'` остаются).
++
++Revision ID: tsk992_task_review_schedule
++Revises: tsk1335_pd_consents
++Create Date: 2026-10-14
++"""
++from typing import Sequence, Union
++
++import sqlalchemy as sa
++from alembic import op
++from sqlalchemy.dialects import postgresql
++
++revision: str = "tsk992_task_review_schedule"
++down_revision: Union[str, None] = "tsk1335_pd_consents"
++branch_labels: Union[str, Sequence[str], None] = None
++depends_on: Union[str, Sequence[str], None] = None
++
++
++def upgrade() -> None:
++    """Создать `task_review_schedule` и колонку `courses.retrieval_config`."""
++    op.add_column(
++        "courses",
++        sa.Column(
++            "retrieval_config",
++            postgresql.JSONB(),
++            nullable=True,
++            comment=(
++                "Повторение по следам ошибок (tsk-992): {enabled}. "
++                "NULL/enabled=false — выключено."
++            ),
++        ),
++    )
++    op.create_table(
++        "task_review_schedule",
++        sa.Column("id", sa.BigInteger(), primary_key=True, autoincrement=True),
++        sa.Column(
++            "student_id",
++            sa.Integer(),
++            sa.ForeignKey("users.id", ondelete="CASCADE"),
++            nullable=False,
++        ),
++        sa.Column(
++            "task_id",
++            sa.Integer(),
++            sa.ForeignKey("tasks.id", ondelete="CASCADE"),
++            nullable=False,
++        ),
++        sa.Column(
++            "course_id",
++            sa.Integer(),
++            sa.ForeignKey("courses.id", ondelete="CASCADE"),
++            nullable=False,
++            comment="Корневой курс, в контексте которого шло обучение",
++        ),
++        sa.Column(
++            "interval_stage",
++            sa.SmallInteger(),
++            nullable=False,
++            server_default=sa.text("0"),
++            comment="Стадия интервала: 0 → 3 дня, 1 → 7 дней, 2 → 21 день",
++        ),
++        sa.Column("due_at", sa.DateTime(timezone=True), nullable=False),
++        sa.Column(
++            "last_result_id",
++            sa.Integer(),
++            sa.ForeignKey("task_results.id", ondelete="SET NULL"),
++            nullable=True,
++            comment="Результат, по которому выставлен текущий срок",
++        ),
++        sa.Column(
++            "created_at",
++            sa.DateTime(timezone=True),
++            nullable=False,
++            server_default=sa.text("now()"),
++        ),
++        sa.Column(
++            "updated_at",
++            sa.DateTime(timezone=True),
++            nullable=False,
++            server_default=sa.text("now()"),
++        ),
++        sa.Column(
++            "completed_at",
++            sa.DateTime(timezone=True),
++            nullable=True,
++            comment="Верный повтор на стадии 2 — задание закреплено",
++        ),
++        sa.CheckConstraint(
++            "interval_stage BETWEEN 0 AND 2",
++            name="ck_task_review_schedule_stage",
++        ),
++        sa.UniqueConstraint(
++            "student_id",
++            "task_id",
++            "course_id",
++            name="uq_task_review_schedule_student_task_course",
++        ),
++        comment="Расписание повторов заданий «сначала завалил, потом сдал» (tsk-992)",
++    )
++    op.create_index(
++        "ix_task_review_schedule_due_open",
++        "task_review_schedule",
++        ["student_id", "course_id", "due_at"],
++        postgresql_where=sa.text("completed_at IS NULL"),
++    )
++
++
++def downgrade() -> None:
++    """Снять таблицу расписания и рубильник курса."""
++    op.drop_index("ix_task_review_schedule_due_open", table_name="task_review_schedule")
++    op.drop_table("task_review_schedule")
++    op.drop_column("courses", "retrieval_config")
+diff --git a/app/models/courses.py b/app/models/courses.py
+index 826ab3e..d2f856e 100644
+--- a/app/models/courses.py
++++ b/app/models/courses.py
+@@ -77,6 +77,14 @@ class Courses(Base):
+             "{enabled, threshold, easy_ratio}. NULL/enabled=false = все задания."
+         ),
+     )
++    retrieval_config: Mapped[Optional[dict]] = mapped_column(
++        JSONB,
++        nullable=True,
++        comment=(
++            "Повторение по следам ошибок (tsk-992): {enabled}. "
++            "NULL/enabled=false — выключено."
++        ),
++    )
+     is_exam: Mapped[bool] = mapped_column(
+         Boolean,
+         nullable=False,
+diff --git a/app/models/task_review_schedule.py b/app/models/task_review_schedule.py
+new file mode 100644
+index 0000000..c09dbad
+--- /dev/null
++++ b/app/models/task_review_schedule.py
+@@ -0,0 +1,81 @@
++"""Модель расписания повторов заданий (tsk-992, П3)."""
++from __future__ import annotations
++
++from datetime import datetime
++from typing import Optional
++
++from sqlalchemy import (
++    BigInteger,
++    CheckConstraint,
++    DateTime,
++    ForeignKey,
++    Index,
++    Integer,
++    SmallInteger,
++    UniqueConstraint,
++)
++from sqlalchemy import text as sql_text
++from sqlalchemy.orm import Mapped, mapped_column
++
++from app.db.base import Base
++
++
++class TaskReviewSchedule(Base):
++    """Срок следующего повтора задания «сначала завалил, потом сдал».
++
++    Одна строка на (ученик, задание, корневой курс). Стадия 0/1/2 — интервал
++    3/7/21 день; после верного повтора на стадии 2 ставится `completed_at`.
++    """
++
++    __tablename__ = "task_review_schedule"
++    __table_args__ = (
++        CheckConstraint("interval_stage BETWEEN 0 AND 2", name="ck_task_review_schedule_stage"),
++        UniqueConstraint(
++            "student_id", "task_id", "course_id",
++            name="uq_task_review_schedule_student_task_course",
++        ),
++        Index(
++            "ix_task_review_schedule_due_open",
++            "student_id", "course_id", "due_at",
++            postgresql_where=sql_text("completed_at IS NULL"),
++        ),
++        {"comment": "Расписание повторов заданий «сначала завалил, потом сдал» (tsk-992)"},
++    )
++
++    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
++    student_id: Mapped[int] = mapped_column(
++        Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
++    )
++    task_id: Mapped[int] = mapped_column(
++        Integer, ForeignKey("tasks.id", ondelete="CASCADE"), nullable=False
++    )
++    course_id: Mapped[int] = mapped_column(
++        Integer,
++        ForeignKey("courses.id", ondelete="CASCADE"),
++        nullable=False,
++        comment="Корневой курс, в контексте которого шло обучение",
++    )
++    interval_stage: Mapped[int] = mapped_column(
++        SmallInteger,
++        nullable=False,
++        server_default=sql_text("0"),
++        comment="Стадия интервала: 0 → 3 дня, 1 → 7 дней, 2 → 21 день",
++    )
++    due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
++    last_result_id: Mapped[Optional[int]] = mapped_column(
++        Integer,
++        ForeignKey("task_results.id", ondelete="SET NULL"),
++        nullable=True,
++        comment="Результат, по которому выставлен текущий срок",
++    )
++    created_at: Mapped[datetime] = mapped_column(
++        DateTime(timezone=True), nullable=False, server_default=sql_text("now()")
++    )
++    updated_at: Mapped[datetime] = mapped_column(
++        DateTime(timezone=True), nullable=False, server_default=sql_text("now()")
++    )
++    completed_at: Mapped[Optional[datetime]] = mapped_column(
++        DateTime(timezone=True),
++        nullable=True,
++        comment="Верный повтор на стадии 2 — задание закреплено",
++    )
+diff --git a/app/schemas/retrieval.py b/app/schemas/retrieval.py
+new file mode 100644
+index 0000000..0a76a7a
+--- /dev/null
++++ b/app/schemas/retrieval.py
+@@ -0,0 +1,72 @@
++"""tsk-992 (П3): контракт повторения по следам ошибок — рубильник курса,
++список «пора повторить» и сдача повтора."""
++from __future__ import annotations
++
++from datetime import datetime
++from typing import List, Optional
++
++from pydantic import BaseModel, ConfigDict, Field
++
++from app.schemas.checking import CheckResult, StudentAnswer
++
++
++class CourseRetrievalConfig(BaseModel):
++    """Формат `courses.retrieval_config` (JSONB) и тело `PUT /courses/{id}/retrieval`.
++
++    Действует на КОРНЕВОМ курсе — по нему ученик идёт по программе. Пустое
++    поле (NULL) читается как `{"enabled": false}`.
++    """
++
++    enabled: bool = Field(False, description="Включено ли повторение на курсе")
++
++    model_config = ConfigDict(
++        json_schema_extra={"examples": [{"enabled": True}, {"enabled": False}]}
++    )
++
++
++class ReviewDueItem(BaseModel):
++    """Задание, которое пора повторить."""
++
++    task_id: int = Field(..., description="ID задания")
++    external_uid: Optional[str] = Field(None, description="Внешний код задания")
++    title: str = Field(..., description="Название задания (или начало условия)")
++    task_type: Optional[str] = Field(None, description="Тип задания (SA, SC, …)")
++    interval_stage: int = Field(
++        ..., ge=0, le=2, description="Стадия интервала: 0 → 3 дня, 1 → 7, 2 → 21"
++    )
++    due_at: datetime = Field(..., description="Когда подошёл срок повтора")
++    days_since_solved: Optional[int] = Field(
++        None, ge=0, description="Сколько дней назад ученик решал задание в последний раз"
++    )
++
++
++class ReviewDueResponse(BaseModel):
++    """Ответ `GET /learning/courses/{course_id}/review-due`."""
++
++    course_id: int = Field(..., description="Корневой курс")
++    items: List[ReviewDueItem] = Field(
++        default_factory=list,
++        description="Задания, которые пора повторить; пусто, если повторение выключено",
++    )
++
++
++class ReviewAnswerRequest(BaseModel):
++    """Тело `POST /learning/courses/{course_id}/review/{task_id}/answer`."""
++
++    student_id: int = Field(..., description="ID ученика")
++    answer: StudentAnswer = Field(..., description="Ответ ученика")
++
++
++class ReviewAnswerResponse(BaseModel):
++    """Итог сдачи повтора."""
++
++    task_id: int = Field(..., description="ID задания")
++    task_result_id: int = Field(..., description="Записанный результат (source_system=retrieval)")
++    attempt_id: int = Field(..., description="Курсовая попытка, в которую лёг ответ")
++    check_result: CheckResult = Field(..., description="Результат проверки ответа")
++    is_correct: bool = Field(..., description="Повтор засчитан")
++    interval_stage: int = Field(..., ge=0, le=2, description="Стадия после повтора")
++    next_due_at: Optional[datetime] = Field(
++        None, description="Срок следующего повтора; null — задание закреплено"
++    )
++    completed: bool = Field(..., description="Задание закреплено (верный повтор на стадии 2)")
+diff --git a/app/services/assignment_rules_service.py b/app/services/assignment_rules_service.py
+index d9680a8..9b8ac46 100644
+--- a/app/services/assignment_rules_service.py
++++ b/app/services/assignment_rules_service.py
+@@ -32,6 +32,7 @@ from app.services import (
+     course_dependencies_enrollment_service,
+ )
+ from app.utils.exceptions import DomainError
++from app.services.learning_gaps_service import learning_path_results_filter
+ 
+ logger = logging.getLogger(__name__)
+ 
+@@ -390,7 +391,10 @@ async def _evaluate_course_failed(
+                 "SELECT "
+                 "  COUNT(*) FILTER (WHERE is_correct IS NOT NULL) AS checked, "
+                 "  COUNT(*) FILTER (WHERE is_correct = true) AS correct "
+-                "FROM task_results WHERE attempt_id = :aid"
++                "FROM task_results tr WHERE tr.attempt_id = :aid "
++                # tsk-992: повтор лежит в той же курсовой попытке, но в долю
++                # верных по курсу не входит.
++                f"  AND {learning_path_results_filter('tr')}"
+             ),
+             {"aid": attempt_id},
+         )
+@@ -455,6 +459,7 @@ async def _accumulate_course_scales(
+                 "JOIN tasks t ON t.id = tr.task_id "
+                 "WHERE tr.user_id = :uid AND t.course_id = :cid "
+                 "  AND tr.scale_scores IS NOT NULL "
++                f"  AND {learning_path_results_filter('tr')} "
+                 "ORDER BY tr.task_id, tr.submitted_at DESC, tr.id DESC"
+             ),
+             {"uid": student_id, "cid": course_id},
+diff --git a/app/services/content_grace_service.py b/app/services/content_grace_service.py
+index 9dfb6cc..1584e1f 100644
+--- a/app/services/content_grace_service.py
++++ b/app/services/content_grace_service.py
+@@ -90,6 +90,8 @@ from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
+ from sqlalchemy import text
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
++from app.services.learning_gaps_service import learning_path_results_filter
++
+ logger = logging.getLogger(__name__)
+ 
+ _GRACE_CACHE_KEY = "tsk692_content_grace_cache"
+@@ -212,7 +214,7 @@ SELECT DISTINCT node_id FROM tree
+ # но появиться они могут — например ручным зачётом мимо сервиса. Поэтому зачёт с
+ # неизвестным временем читается как «когда закрыл — неизвестно» и отменяет
+ # прощение узла, а не занижает его границу.
+-_TREE_ITEMS_SQL = """
++_TREE_ITEMS_SQL = f"""
+ /* tsk692-grace-items */
+ WITH last_per_task AS (
+     SELECT DISTINCT ON (tr.task_id)
+@@ -220,6 +222,8 @@ WITH last_per_task AS (
+     FROM task_results tr
+     INNER JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
+     WHERE tr.user_id = :student_id
++      -- tsk-992: сдача повтора не меняет «закрыто» и время закрытия.
++      AND {learning_path_results_filter('tr')}
+       AND tr.task_id IN (
+           SELECT id FROM tasks
+           WHERE course_id = ANY(:tree_ids)
+diff --git a/app/services/courses_service.py b/app/services/courses_service.py
+index 6e3e5a3..df2614f 100644
+--- a/app/services/courses_service.py
++++ b/app/services/courses_service.py
+@@ -653,6 +653,42 @@ class CoursesService(BaseService[Courses]):
+         ).scalar() or 0
+         return {"sampling_config": course.sampling_config, "easy_normal_count": int(count)}
+ 
++    async def get_retrieval_config(
++        self, db: AsyncSession, course_id: int
++    ) -> Optional[Dict[str, Any]]:
++        """Прочитать рубильник повторения `courses.retrieval_config` (tsk-992).
++
++        Returns:
++            `None`, если курса нет. Иначе `{"enabled": bool}` — пустое поле
++            читается как выключенное.
++        """
++        from app.services.retrieval_service import config_enabled
++
++        course = await self.get_by_id(db, course_id)
++        if course is None:
++            return None
++        return {"enabled": config_enabled(course.retrieval_config)}
++
++    async def set_retrieval_config(
++        self, db: AsyncSession, course_id: int, config: Dict[str, Any]
++    ) -> Optional[Dict[str, Any]]:
++        """Записать рубильник повторения `courses.retrieval_config` (tsk-992).
++
++        Полная замена конфига (как у `sampling_config`). Выключение не трогает
++        расписание учеников: блок «Пора повторить» просто перестаёт выдаваться,
++        а при повторном включении сроки продолжаются с того же места.
++
++        Returns:
++            Записанный конфиг либо `None`, если курса нет.
++        """
++        course = await self.get_by_id(db, course_id)
++        if course is None:
++            return None
++        course.retrieval_config = config
++        await db.commit()
++        await db.refresh(course)
++        return dict(course.retrieval_config or {})
++
+     async def set_sampling_config(
+         self, db: AsyncSession, course_id: int, config: Optional[Dict[str, Any]]
+     ) -> Optional[Courses]:
+diff --git a/app/services/homework_service.py b/app/services/homework_service.py
+index 32934d0..eae3ca0 100644
+--- a/app/services/homework_service.py
++++ b/app/services/homework_service.py
+@@ -53,6 +53,7 @@ from app.services import (
+ )
+ # tsk-867: вес элемента — состав набирается до бюджета времени, а не до штук.
+ from app.services.lesson_window_sql import in_lesson_sql
++from app.services.learning_gaps_service import learning_path_results_filter
+ from app.services.task_effort_service import (
+     MATERIAL_EFFORT_SECONDS_PROXY,
+     EffortTable,
+@@ -970,6 +971,8 @@ def _task_done_sql(
+         "EXISTS (SELECT 1 FROM task_results tr "
+         "  JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL "
+         f" WHERE tr.user_id = {sid} AND tr.task_id = {task_id} "
++        # tsk-992: повтор дома не превращает «решено на уроке» в «решено дома».
++        f"   AND {learning_path_results_filter('tr')} "
+         f"   AND tr.is_correct = true{bounds}{home})"
+     )
+ 
+diff --git a/app/services/learning_engine_service.py b/app/services/learning_engine_service.py
+index 3a11b14..a93fb2b 100644
+--- a/app/services/learning_engine_service.py
++++ b/app/services/learning_engine_service.py
+@@ -56,6 +56,11 @@ from app.services.content_grace_service import EMPTY_GRACE, compute_graced_items
+ # «курса с неоценёнными работами» из 824. Цикла нет — `teacher_queue_service`
+ # учебный движок не тянет.
+ from app.services.teacher_queue_service import mandatory_review_sql
++from app.services.learning_gaps_service import learning_path_results_filter
++
++#: tsk-992: сдача повтора (`source_system='retrieval'`) не входит в статус задания
++#: и в счёт попыток — см. `learning_path_results_filter`.
++_LEARNING_PATH = learning_path_results_filter("tr")
+ from app.utils.exceptions import DomainError
+ from pydantic import ValidationError
+ 
+@@ -551,11 +556,12 @@ class LearningEngineService:
+ 
+         # Число поданных ответов по задаче (учитывая активный course-level attempt).
+         # tsk-264: при заданном корне — только попытки этого корня (см. docstring).
+-        count_stmt = text("""
++        count_stmt = text(f"""
+             SELECT COUNT(*)
+             FROM task_results tr
+             INNER JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
+             WHERE tr.user_id = :student_id AND tr.task_id = :task_id
++              AND {_LEARNING_PATH}
+               AND (
+                     CAST(:root_course_id AS INTEGER) IS NULL
+                     OR a.root_course_id = CAST(:root_course_id AS INTEGER)
+@@ -571,12 +577,13 @@ class LearningEngineService:
+         # tsk-222: дополнительно тянем answer_json/is_correct/checked_at — тот же
+         # ряд, что уже используется для last_score, без новых JOIN'ов. answer_json —
+         # это ответ ученика (StudentAnswer), эталон в него не входит.
+-        last_stmt = text("""
++        last_stmt = text(f"""
+             SELECT a.id, tr.submitted_at, tr.score, tr.max_score,
+                    tr.answer_json, tr.is_correct, tr.checked_at
+             FROM task_results tr
+             INNER JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
+             WHERE tr.user_id = :student_id AND tr.task_id = :task_id
++              AND {_LEARNING_PATH}
+             ORDER BY tr.submitted_at DESC, tr.id DESC
+             LIMIT 1
+         """)
+@@ -768,6 +775,7 @@ class LearningEngineService:
+                     "INNER JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL "
+                     "INNER JOIN tasks t ON t.id = tr.task_id "
+                     "WHERE tr.user_id = :student_id AND tr.task_id = ANY(:ids) "
++                    f"  AND {_LEARNING_PATH} "
+                     "  AND ( "
+                     "        CAST(:root_course_id AS INTEGER) IS NULL "
+                     "        OR t.task_content->>'type' = ANY(:quiz_types) "
+@@ -797,6 +805,7 @@ class LearningEngineService:
+                         "FROM task_results tr "
+                         "INNER JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL "
+                         "WHERE tr.user_id = :student_id AND tr.task_id = ANY(:ids) "
++                        f"  AND {_LEARNING_PATH} "
+                         "ORDER BY tr.task_id, tr.submitted_at DESC, tr.id DESC"
+                     ),
+                     {"student_id": student_id, "ids": ids},
+@@ -967,7 +976,7 @@ class LearningEngineService:
+         # Число заданий в дереве, по которым последний task_result — PASS.
+         # Парность compute_task_state: учитываем все task_results из не-cancelled attempts
+         # (включая активный course-level attempt), порядок — по submitted_at task_result.
+-        tasks_with_last_pass_stmt = text("""
++        tasks_with_last_pass_stmt = text(f"""
+             WITH last_per_task AS (
+                 SELECT DISTINCT ON (tr.task_id)
+                     tr.task_id, tr.score AS last_score, tr.max_score AS last_max
+@@ -979,6 +988,7 @@ class LearningEngineService:
+                    AND t.is_active = true
+                    AND t.requirement_level IN ('required', 'skippable')
+                 WHERE tr.user_id = :student_id
++                  AND {_LEARNING_PATH}
+                 ORDER BY tr.task_id, tr.submitted_at DESC, tr.id DESC
+             )
+             SELECT COUNT(*) FROM (
+diff --git a/app/services/learning_gaps_service.py b/app/services/learning_gaps_service.py
+index 4269dd9..ecb9bf6 100644
+--- a/app/services/learning_gaps_service.py
++++ b/app/services/learning_gaps_service.py
+@@ -103,6 +103,27 @@ def real_student_results_filter(alias: str = "tr") -> str:
+ #: Провенанс ручной отметки — один и тот же у заданий и у материалов.
+ MANUAL_TEACHER_SOURCE = "manual_teacher"
+ 
++#: tsk-992 (П3): сдача повтора по расписанию. Это ответ самого ученика, но НЕ
++#: шаг учебного пути: задание уже пройдено, повтор лишь закрепляет его. Поэтому
++#: в белый список `REAL_STUDENT_SOURCES` значение не входит (пробелы, серия,
++#: явка его не видят), а из статуса задания и счёта попыток его исключает
++#: `learning_path_results_filter`.
++RETRIEVAL_SOURCE = "retrieval"
++
++
++def learning_path_results_filter(alias: str = "tr") -> str:
++    """Условие «результат относится к учебному пути» для SQL (tsk-992).
++
++    Статус задания (последний результат решает), счёт попыток против лимита и
++    «пройдено» в прогрессе считаются БЕЗ сдач повтора: неверный повтор не
++    должен превращать пройденное задание в FAILED, а повтор — тратить лимит.
++    `IS DISTINCT FROM`, а не `<>`: строки со старым `source_system IS NULL`
++    остаются в расчёте, как и были.
++
++    ЕДИНСТВЕННОЕ место правила — расчёты статуса подставляют его отсюда.
++    """
++    return f"{alias}.source_system IS DISTINCT FROM '{RETRIEVAL_SOURCE}'"
++
+ 
+ def real_student_material_filter(alias: str = "smp") -> str:
+     """Условие «материал прошёл САМ ученик» для SQL (tsk-656).
+diff --git a/app/services/manual_progress_service.py b/app/services/manual_progress_service.py
+index b899861..68f6459 100644
+--- a/app/services/manual_progress_service.py
++++ b/app/services/manual_progress_service.py
+@@ -67,6 +67,7 @@ from app.schemas.task_content import (
+     MANUAL_REVIEW_TASK_TYPES as _MANUAL_REVIEW_TASK_TYPES,
+ )
+ from app.services import audit_service
++from app.services.learning_gaps_service import learning_path_results_filter
+ from app.services.checking_service import CheckingService
+ from app.services.learning_engine_service import LearningEngineService
+ from app.services.transparent_subcourse import absorbed_in_tree, task_key
+@@ -1168,6 +1169,8 @@ async def get_student_progress(
+                     "FROM task_results tr "
+                     "JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL "
+                     "WHERE tr.user_id = :student_id AND tr.task_id = ANY(:task_ids) "
++                    # tsk-992: повтор не меняет статус задания в карточке ученика.
++                    f"  AND {learning_path_results_filter('tr')} "
+                     "ORDER BY tr.task_id, tr.submitted_at DESC, tr.id DESC"
+                 ),
+                 {"student_id": student_id, "task_ids": task_ids},
+diff --git a/app/services/me_service.py b/app/services/me_service.py
+index 554ddff..e5fbc94 100644
+--- a/app/services/me_service.py
++++ b/app/services/me_service.py
+@@ -24,6 +24,7 @@ from app.services.learning_engine_service import PASS_THRESHOLD_RATIO, is_mentor
+ # tsk-656: единственное место, где живёт правило «это реальная сдача ученика»,
+ # а не отметка преподавателя. Копировать условие сюда нельзя — разъедется.
+ from app.services.learning_gaps_service import (
++    learning_path_results_filter,
+     real_student_material_filter,
+     real_student_results_filter,
+ )
+@@ -324,6 +325,8 @@ last_attempt_per_task AS (
+        AND a.user_id = :user_id
+        AND a.cancelled_at IS NULL
+     WHERE tr.user_id = :user_id
++      -- tsk-992: сдача повтора не меняет «пройдено».
++      AND __LEARNING_PATH__
+     ORDER BY tr.task_id, tr.submitted_at DESC, tr.id DESC
+ ),
+ tasks_total_per_root AS (
+@@ -405,7 +408,7 @@ LEFT JOIN materials_done_per_root  md ON md.root_course_id = uc.course_id
+ LEFT JOIN last_active_per_root     la ON la.root_course_id = uc.course_id
+ LEFT JOIN student_course_state    scs ON scs.course_id = uc.course_id AND scs.student_id = :user_id
+ ORDER BY la.last_active_at DESC NULLS LAST, uc.order_number ASC NULLS LAST
+-"""
++""".replace("__LEARNING_PATH__", learning_path_results_filter("tr"))
+ 
+ 
+ async def get_courses_with_progress(db: AsyncSession, user_id: int) -> list[dict]:
+@@ -825,7 +828,7 @@ LIMIT :limit OFFSET :offset
+ # (прогресс: passed) остаётся общим для всех корней — что ученик знает, то знает.
+ # attempts_limit_effective: квиз (SC_Qw/MC_Qw) → 1 (tsk-124, перебивает всё);
+ # иначе override → tasks.max_attempts → DEFAULT_MAX_ATTEMPTS.
+-_SYLLABUS_TASKS_SQL = """
++_SYLLABUS_TASKS_SQL = f"""
+ WITH last_per_task AS (
+     SELECT DISTINCT ON (tr.task_id)
+         tr.task_id,
+@@ -837,6 +840,8 @@ WITH last_per_task AS (
+     FROM task_results tr
+     INNER JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
+     WHERE tr.user_id = :user_id
++      -- tsk-992: сдача повтора не меняет статус и не тратит лимит попыток.
++      AND {learning_path_results_filter("tr")}
+       AND tr.task_id IN (
+           SELECT id FROM tasks
+           WHERE course_id = ANY(:tree_ids)
+@@ -850,6 +855,7 @@ attempts_per_task AS (
+     INNER JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
+     INNER JOIN tasks qt ON qt.id = tr.task_id
+     WHERE tr.user_id = :user_id
++      AND {learning_path_results_filter("tr")}
+       AND (
+             -- Квиз: ответ один навсегда, submit отклоняет повтор глобально
+             -- (409) — значит и счёт общий, иначе покажем «попытка есть» там,
+@@ -886,7 +892,7 @@ SELECT
+     t.requirement_level,
+     t.task_content->>'type' AS task_type,
+     -- tsk-684: название, тип и uid отдаются прямо здесь. Раньше кабинет
+-    -- добирал их запросом `GET /tasks/by-course/{id}` НА КАЖДЫЙ подкурс: у
++    -- добирал их запросом `GET /tasks/by-course/{{id}}` НА КАЖДЫЙ подкурс: у
+     -- флагмана это 55 запросов и 6,7 МБ полного содержимого заданий ради
+     -- шести коротких полей (замер 26.08). Все поля лежат в строках, которые
+     -- этот SELECT уже читает, — новых обращений к базе ноль.
+diff --git a/app/services/retention_service.py b/app/services/retention_service.py
+index fda285e..f41fa53 100644
+--- a/app/services/retention_service.py
++++ b/app/services/retention_service.py
+@@ -50,6 +50,7 @@ from sqlalchemy import text
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+ from app.services.lesson_window_sql import in_lesson_sql
++from app.services.learning_gaps_service import learning_path_results_filter
+ from app.services.teacher_lesson_summary_service import MANUAL_SOURCE
+ 
+ logger = logging.getLogger("app.retention")
+@@ -75,6 +76,7 @@ JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
+ WHERE tr.user_id = ANY(:student_ids)
+   AND tr.is_correct = true
+   AND tr.source_system IS DISTINCT FROM :manual_source
++  AND {learning_path_results_filter('tr')}
+   AND NOT {in_lesson_sql('tr.submitted_at', 'tr.user_id')}
+ UNION
+ SELECT smp.student_id,
+diff --git a/app/services/retrieval_service.py b/app/services/retrieval_service.py
+new file mode 100644
+index 0000000..cdc18db
+--- /dev/null
++++ b/app/services/retrieval_service.py
+@@ -0,0 +1,596 @@
++"""Повторение по следам ошибок (tsk-992, П3).
++
++Решение оператора Р2: на повтор ставятся ТОЛЬКО задания «сначала завалил,
++потом сдал». Интервалы 3 → 7 → 21 день; неверный повтор откатывает к 3 дням,
++верный на последней стадии закрывает строку (`completed_at`).
++
++Устройство:
++
++- рубильник — `courses.retrieval_config = {"enabled": bool}` на КОРНЕВОМ курсе
++  (по нему ученик идёт по программе); NULL и `enabled=false` — выключено;
++- планировщик (`schedule_after_pass`) зовётся из приёма ответа
++  (`POST /attempts/{id}/answers`) после записи результата — нестрого: ошибка
++  уходит в лог и не роняет сдачу;
++- выдача (`list_due`) и сдача повтора (`submit_review`) — эндпоинты
++  `/learning/courses/{course_id}/review-*`.
++
++Сдача повтора пишет обычную строку `task_results` с
++`source_system='retrieval'` в существующую курсовую попытку. Чтобы повтор не
++менял учебный путь, расчёты статуса задания, счёта попыток и «пройдено»
++исключают это значение (`learning_gaps_service.learning_path_results_filter`),
++а аналитика пробелов его не видит вовсе (белый список `REAL_STUDENT_SOURCES`).
++
++Повтору подлежат только задания, которые сверяются автоматически целиком:
++квиз (ответ один навсегда), развёрнутый ответ, обязательная ручная проверка,
++обязательное вложение, песочница (черепаха, тесты ввода/вывода) и короткий
++ответ без эталона — не подходят. Иначе неверный повтор уходил бы в очередь
++преподавателя или зависал без вердикта.
++"""
++from __future__ import annotations
++
++import asyncio
++import logging
++from dataclasses import dataclass
++from datetime import datetime, timedelta, timezone
++from typing import Any, Optional
++
++from sqlalchemy import select, text
++from sqlalchemy.ext.asyncio import AsyncSession
++
++from app.models.attempts import Attempts
++from app.models.courses import Courses
++from app.models.task_review_schedule import TaskReviewSchedule
++from app.schemas.checking import CheckResult, StudentAnswer
++from app.schemas.solution_rules import SolutionRules
++from app.schemas.task_content import (
++    QUIZ_TASK_TYPES,
++    SHORT_ANSWER_TASK_TYPES,
++    TaskContent,
++)
++from app.services.learning_engine_service import (
++    PASS_THRESHOLD_RATIO,
++    is_mentor_reviewed,
++)
++from app.services.learning_gaps_service import (
++    MANUAL_TEACHER_SOURCE,
++    RETRIEVAL_SOURCE,
++)
++from app.utils.exceptions import DomainError
++
++logger = logging.getLogger(__name__)
++
++#: Интервал до следующего повтора по стадии: 0 → 3 дня, 1 → 7, 2 → 21 (Р2).
++INTERVAL_DAYS: tuple[int, ...] = (3, 7, 21)
++LAST_STAGE = len(INTERVAL_DAYS) - 1
++
++#: Коды отказов сдачи повтора — клиент различает их по `payload.code`.
++RETRIEVAL_DISABLED_CODE = "retrieval_disabled"
++RETRIEVAL_NOT_SCHEDULED_CODE = "retrieval_not_scheduled"
++RETRIEVAL_NOT_DUE_CODE = "retrieval_not_due"
++RETRIEVAL_UNSUPPORTED_CODE = "retrieval_unsupported"
++
++
++@dataclass(frozen=True)
++class DueReview:
++    """Задание, которое пора повторить."""
++
++    task_id: int
++    external_uid: Optional[str]
++    title: str
++    task_type: Optional[str]
++    interval_stage: int
++    due_at: datetime
++    days_since_solved: Optional[int]
++
++
++@dataclass(frozen=True)
++class ReviewOutcome:
++    """Итог сдачи повтора."""
++
++    task_id: int
++    task_result_id: int
++    attempt_id: int
++    check_result: CheckResult
++    is_correct: bool
++    interval_stage: int
++    next_due_at: Optional[datetime]
++    completed: bool
++
++
++def _now() -> datetime:
++    """Текущее время, всегда с часовым поясом (UTC)."""
++    return datetime.now(timezone.utc)
++
++
++def config_enabled(config: Any) -> bool:
++    """Включено ли повторение по значению `courses.retrieval_config`.
++
++    NULL, не-объект и объект без `enabled=true` — выключено: рубильник
++    включается только явно.
++    """
++    return isinstance(config, dict) and config.get("enabled") is True
++
++
++async def is_enabled(db: AsyncSession, course_id: Optional[int]) -> bool:
++    """Включено ли повторение на курсе (рубильник `retrieval_config`)."""
++    if course_id is None:
++        return False
++    config = (
++        await db.execute(
++            select(Courses.retrieval_config).where(Courses.id == course_id)
++        )
++    ).scalar_one_or_none()
++    return config_enabled(config)
++
++
++def task_supports_review(task_content: Any, solution_rules: SolutionRules) -> bool:
++    """Подходит ли задание для повтора: проверяется автоматически целиком.
++
++    Args:
++        task_content: `tasks.task_content` (dict) либо `TaskContent`.
++        solution_rules: правила проверки задания (см. `build_solution_rules`).
++
++    Returns:
++        False для квиза, развёрнутого ответа, обязательной ручной проверки,
++        обязательного вложения, песочницы и короткого ответа без эталона.
++    """
++    task_type = (
++        task_content.type
++        if isinstance(task_content, TaskContent)
++        else (task_content or {}).get("type")
++    )
++    if not task_type or task_type in QUIZ_TASK_TYPES or task_type == "TA":
++        return False
++    if is_mentor_reviewed(task_type, solution_rules.manual_review_required):
++        return False
++    if solution_rules.requires_attachment:
++        return False
++    if solution_rules.turtle_sim is not None or solution_rules.io_tests is not None:
++        return False
++    if task_type in SHORT_ANSWER_TASK_TYPES and not solution_rules.has_reference_answer():
++        return False
++    return True
++
++
++async def schedule_after_pass(
++    db: AsyncSession,
++    *,
++    student_id: int,
++    task_id: int,
++    root_course_id: Optional[int],
++    task_result_id: Optional[int],
++) -> bool:
++    """Поставить задание на повтор после сдачи «сначала завалил, потом сдал».
++
++    Условия (все сразу):
++      - корень известен и на нём включён рубильник;
++      - результат `task_result_id` — сдача ученика (не ручной зачёт
++        `manual_teacher` и не сам повтор), и он проходной;
++      - раньше по паре (ученик, задание) был хотя бы один непроходной
++        результат ученика в не отменённой попытке;
++      - задание сверяется автоматически целиком (`task_supports_review`).
++
++    Строка создаётся один раз (уникальность ученик+задание+корень): повторная
++    пара «провал → сдача» существующее расписание не сбрасывает.
++
++    Returns:
++        True — создана новая строка расписания.
++    """
++    if root_course_id is None or task_result_id is None:
++        return False
++    if not await is_enabled(db, root_course_id):
++        return False
++
++    row = (
++        await db.execute(
++            text(
++                """
++                SELECT tr.score, tr.max_score, tr.source_system, tr.submitted_at,
++                       t.task_content, t.solution_rules, t.max_score AS task_max_score
++                FROM task_results tr
++                JOIN tasks t ON t.id = tr.task_id
++                WHERE tr.id = :rid AND tr.user_id = :sid AND tr.task_id = :tid
++                """
++            ),
++            {"rid": task_result_id, "sid": student_id, "tid": task_id},
++        )
++    ).mappings().first()
++    if row is None:
++        return False
++    if row["source_system"] in (MANUAL_TEACHER_SOURCE, RETRIEVAL_SOURCE):
++        return False
++    max_score = row["max_score"] or 0
++    if max_score <= 0 or (row["score"] or 0) / max_score < PASS_THRESHOLD_RATIO:
++        return False
++
++    # Импорт здесь: checking_service тянет песочницы и тяжёлые схемы, а модуль
++    # импортируется приёмом ответа на каждом старте приложения.
++    from app.services.checking_service import CheckingService
++
++    rules = CheckingService.build_solution_rules(row["solution_rules"], row["task_max_score"])
++    if not task_supports_review(row["task_content"], rules):
++        return False
++
++    failed_before = (
++        await db.execute(
++            text(
++                """
++                SELECT 1
++                FROM task_results tr
++                JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
++                WHERE tr.user_id = :sid AND tr.task_id = :tid
++                  AND tr.id <> :rid
++                  AND tr.submitted_at <= :submitted_at
++                  AND tr.source_system IS DISTINCT FROM :manual
++                  AND tr.source_system IS DISTINCT FROM :retrieval
++                  AND tr.max_score > 0
++                  AND (tr.score::float / tr.max_score) < :ratio
++                LIMIT 1
++                """
++            ),
++            {
++                "sid": student_id,
++                "tid": task_id,
++                "rid": task_result_id,
++                "submitted_at": row["submitted_at"],
++                "manual": MANUAL_TEACHER_SOURCE,
++                "retrieval": RETRIEVAL_SOURCE,
++                "ratio": PASS_THRESHOLD_RATIO,
++            },
++        )
++    ).first()
++    if failed_before is None:
++        return False
++
++    due_at = _now() + timedelta(days=INTERVAL_DAYS[0])
++    created = (
++        await db.execute(
++            text(
++                """
++                INSERT INTO task_review_schedule
++                    (student_id, task_id, course_id, interval_stage, due_at, last_result_id)
++                VALUES (:sid, :tid, :cid, 0, :due_at, :rid)
++                ON CONFLICT ON CONSTRAINT uq_task_review_schedule_student_task_course
++                DO NOTHING
++                RETURNING id
++                """
++            ),
++            {
++                "sid": student_id,
++                "tid": task_id,
++                "cid": root_course_id,
++                "due_at": due_at,
++                "rid": task_result_id,
++            },
++        )
++    ).first()
++    if created is None:
++        return False
++    logger.info(
++        "tsk-992: задание поставлено на повтор student_id=%s task_id=%s "
++        "course_id=%s due_at=%s",
++        student_id, task_id, root_course_id, due_at.isoformat(),
++    )
++    return True
++
++
++async def list_due(
++    db: AsyncSession,
++    *,
++    student_id: int,
++    course_id: int,
++) -> list[DueReview]:
++    """Задания курса, которые пора повторить (`due_at <= now`, не закрытые).
++
++    Пустой список, если рубильник курса выключен: выключение прячет блок
++    сразу, расписание при этом сохраняется.
++    """
++    if not await is_enabled(db, course_id):
++        return []
++    rows = (
++        await db.execute(
++            text(
++                """
++                SELECT s.task_id, t.external_uid,
++                       t.task_content, t.solution_rules, t.max_score,
++                       t.task_content->>'title' AS title,
++                       t.task_content->>'stem' AS stem,
++                       t.task_content->>'type' AS task_type,
++                       s.interval_stage, s.due_at,
++                       tr.submitted_at AS solved_at
++                FROM task_review_schedule s
++                JOIN tasks t ON t.id = s.task_id AND t.is_active = true
++                LEFT JOIN task_results tr ON tr.id = s.last_result_id
++                WHERE s.student_id = :sid AND s.course_id = :cid
++                  AND s.completed_at IS NULL
++                  AND s.due_at <= now()
++                ORDER BY s.due_at, s.task_id
++                """
++            ),
++            {"sid": student_id, "cid": course_id},
++        )
++    ).mappings().all()
++    from app.services.checking_service import CheckingService
++    from app.utils.task_title import humanize_task_title
++
++    now = _now()
++    result: list[DueReview] = []
++    for r in rows:
++        # Правила задания могли поменяться после постановки на повтор (например,
++        # включили ручную проверку). Такое задание не сдать (409
++        # `retrieval_unsupported`) — и в выдаче ему не место, иначе блок
++        # показывал бы его вечно.
++        rules = CheckingService.build_solution_rules(r["solution_rules"], r["max_score"])
++        if not task_supports_review(r["task_content"], rules):
++            continue
++        solved_at = r["solved_at"]
++        days = None
++        if isinstance(solved_at, datetime) and solved_at.tzinfo is not None:
++            days = max((now - solved_at).days, 0)
++        result.append(
++            DueReview(
++                task_id=int(r["task_id"]),
++                external_uid=r["external_uid"],
++                title=humanize_task_title(
++                    int(r["task_id"]), r["title"], r["stem"], r["external_uid"]
++                ),
++                task_type=r["task_type"],
++                interval_stage=int(r["interval_stage"]),
++                due_at=r["due_at"],
++                days_since_solved=days,
++            )
++        )
++    return result
++
++
++async def _course_attempt(
++    db: AsyncSession,
++    *,
++    student_id: int,
++    task_id: int,
++    task_course_id: int,
++    root_course_id: int,
++    source_system: str,
++) -> Attempts:
++    """Открытая курсовая попытка (ученик, курс задания, корень) — или новая.
++
++    Та же механика, что у `start-or-get-attempt`: тот же ключ замка, тот же
++    поиск открытой попытки, создание через `AttemptsService`. Своей попытки
++    повтор не заводит — ответ ложится туда же, куда легли бы обычные ответы.
++    """
++    from app.services.attempts_service import AttemptsService
++
++    attempts_service = AttemptsService()
++    await db.execute(
++        text("SELECT pg_advisory_xact_lock(:k1, hashtext(:k2))"),
++        {"k1": student_id, "k2": f"{task_course_id}:{root_course_id}"},
++    )
++    existing = (
++        await db.execute(
++            select(Attempts)
++            .where(
++                Attempts.user_id == student_id,
++                Attempts.course_id == task_course_id,
++                Attempts.root_course_id == root_course_id,
++                Attempts.finished_at.is_(None),
++                Attempts.cancelled_at.is_(None),
++            )
++            .order_by(Attempts.created_at.desc())
++            .limit(1)
++        )
++    ).scalar_one_or_none()
++    if existing is not None:
++        return await attempts_service.ensure_attempt_task_ids(db, existing, task_id)
++    attempt = await attempts_service.create_attempt(
++        db=db,
++        user_id=student_id,
++        course_id=task_course_id,
++        root_course_id=root_course_id,
++        source_system=source_system,
++        meta={"task_ids": [task_id]},
++    )
++    return await attempts_service.ensure_attempt_task_ids(db, attempt, task_id)
++
++
++async def _due_schedule(
++    db: AsyncSession,
++    *,
++    student_id: int,
++    task_id: int,
++    course_id: int,
++    lock: bool = False,
++) -> TaskReviewSchedule:
++    """Открытая строка расписания, у которой подошёл срок, — иначе отказ.
++
++    Raises:
++        DomainError: 404 `retrieval_not_scheduled` / 409 `retrieval_not_due`.
++    """
++    stmt = select(TaskReviewSchedule).where(
++        TaskReviewSchedule.student_id == student_id,
++        TaskReviewSchedule.task_id == task_id,
++        TaskReviewSchedule.course_id == course_id,
++        TaskReviewSchedule.completed_at.is_(None),
++    )
++    if lock:
++        stmt = stmt.with_for_update().execution_options(populate_existing=True)
++    schedule = (await db.execute(stmt)).scalar_one_or_none()
++    if schedule is None:
++        raise DomainError(
++            "Это задание сейчас не стоит на повторении.",
++            status_code=404,
++            payload={"code": RETRIEVAL_NOT_SCHEDULED_CODE},
++        )
++    if schedule.due_at > _now():
++        raise DomainError(
++            "Повторять это задание ещё рано.",
++            status_code=409,
++            payload={
++                "code": RETRIEVAL_NOT_DUE_CODE,
++                "due_at": schedule.due_at.isoformat(),
++            },
++        )
++    return schedule
++
++
++async def submit_review(
++    db: AsyncSession,
++    *,
++    student_id: int,
++    task_id: int,
++    course_id: int,
++    answer: StudentAnswer,
++    attempt_source_system: str = "spw_web",
++) -> ReviewOutcome:
++    """Принять ответ на повтор, записать результат и сдвинуть расписание.
++
++    Верно — следующая стадия (срок +7/+21 день) или закрытие после стадии 2.
++    Неверно — стадия 0, срок +3 дня. Результат пишется в `task_results` с
++    `source_system='retrieval'` и в статус задания / лимит попыток не входит.
++
++    Args:
++        db: сессия БД.
++        student_id: ученик.
++        task_id: задание.
++        course_id: корневой курс, на котором стоит повтор.
++        answer: ответ ученика.
++        attempt_source_system: источник для НОВОЙ курсовой попытки, если
++            открытой нет (сам результат всё равно помечается `retrieval`).
++
++    Raises:
++        DomainError: 409 `retrieval_disabled` / `retrieval_not_due` /
++            `retrieval_unsupported`; 404 `retrieval_not_scheduled`; 400 —
++            тип ответа не совпадает с типом задания.
++    """
++    from app.services.checking_service import CheckingService
++    from app.services.task_results_service import TaskResultsService
++    from app.services.tasks_service import TasksService
++
++    if not await is_enabled(db, course_id):
++        raise DomainError(
++            "Повторение на этом курсе выключено.",
++            status_code=409,
++            payload={"code": RETRIEVAL_DISABLED_CODE},
++        )
++
++    # Первая проверка — без замка: отказы «не на повторе» / «рано» не должны
++    # заводить попытку. Под замком строка перечитывается ниже.
++    await _due_schedule(db, student_id=student_id, task_id=task_id, course_id=course_id)
++
++    task = await TasksService().get_by_id(db, task_id)
++    if task is None or not task.is_active or task.course_id is None:
++        raise DomainError(
++            "Это задание сейчас не стоит на повторении.",
++            status_code=404,
++            payload={"code": RETRIEVAL_NOT_SCHEDULED_CODE},
++        )
++
++    # Те же замки, что у обычного приёма ответа (по УЧЕНИКУ): курс выведен из
++    # работы (tsk-886) и закрыт зависимостью (tsk-1276). Запись на курс
++    # подтверждается самой строкой расписания — она ставится только из сдачи
++    # в этом корне, прошедшей `assert_task_access`.
++    from app.services import course_activity_service, dependency_lock_service
++
++    await dependency_lock_service.assert_course_not_locked(
++        db, student_id=student_id, course_id=task.course_id, task_id=task_id,
++    )
++    for cid in {task.course_id, course_id}:
++        await course_activity_service.assert_course_active_for_student(
++            db, student_id=student_id, course_id=cid, action="повтор задания",
++        )
++
++    checking = CheckingService()
++    task_content = TaskContent.model_validate(task.task_content)
++    solution_rules = checking.build_solution_rules(task.solution_rules, task.max_score)
++    if not task_supports_review(task_content, solution_rules):
++        raise DomainError(
++            "Это задание не повторяется автоматически.",
++            status_code=409,
++            payload={"code": RETRIEVAL_UNSUPPORTED_CODE},
++        )
++    if answer.type != task_content.type:
++        raise DomainError(
++            f"Тип ответа ({answer.type}) не совпадает с типом задачи ({task_content.type}).",
++            status_code=400,
++        )
++
++    check_result: CheckResult = await asyncio.to_thread(
++        checking.check_task,
++        task_content=task_content,
++        solution_rules=solution_rules,
++        answer=answer,
++    )
++    if check_result.is_correct is None:
++        # Правила задания поменялись после постановки на повтор и вердикта
++        # автоматики больше нет — без вердикта двигать расписание нечем.
++        raise DomainError(
++            "Это задание не повторяется автоматически.",
++            status_code=409,
++            payload={"code": RETRIEVAL_UNSUPPORTED_CODE},
++        )
++
++    attempt = await _course_attempt(
++        db,
++        student_id=student_id,
++        task_id=task_id,
++        task_course_id=task.course_id,
++        root_course_id=course_id,
++        source_system=attempt_source_system,
++    )
++    attempt_id = attempt.id
++    # `_course_attempt` фиксирует транзакцию (запись `meta.task_ids`), поэтому
++    # замок строки расписания берётся ПОСЛЕ неё и держится до записи стадии:
++    # две одновременные сдачи повтора сериализуются, вторая увидит уже
++    # сдвинутый срок и получит 409 `retrieval_not_due`.
++    schedule = await _due_schedule(
++        db, student_id=student_id, task_id=task_id, course_id=course_id, lock=True
++    )
++    now = _now()
++    task_result = await TaskResultsService().create_from_check_result(
++        db=db,
++        attempt_id=attempt_id,
++        task_id=task_id,
++        user_id=student_id,
++        answer=answer,
++        check_result=check_result,
++        source_system=RETRIEVAL_SOURCE,
++        commit=False,
++    )
++
++    max_score = check_result.max_score or 0
++    passed = max_score > 0 and (check_result.score or 0) / max_score >= PASS_THRESHOLD_RATIO
++    completed = False
++    next_due_at: Optional[datetime]
++    if passed:
++        if schedule.interval_stage >= LAST_STAGE:
++            completed = True
++            schedule.completed_at = now
++            next_due_at = None
++        else:
++            schedule.interval_stage += 1
++            next_due_at = now + timedelta(days=INTERVAL_DAYS[schedule.interval_stage])
++            schedule.due_at = next_due_at
++    else:
++        schedule.interval_stage = 0
++        next_due_at = now + timedelta(days=INTERVAL_DAYS[0])
++        schedule.due_at = next_due_at
++    schedule.last_result_id = task_result.id
++    schedule.updated_at = now
++    stage = schedule.interval_stage
++    task_result_id = task_result.id
++    await db.commit()
++
++    logger.info(
++        "tsk-992: повтор student_id=%s task_id=%s course_id=%s correct=%s "
++        "stage=%s completed=%s",
++        student_id, task_id, course_id, passed, stage, completed,
++    )
++    return ReviewOutcome(
++        task_id=task_id,
++        task_result_id=task_result_id,
++        attempt_id=attempt_id,
++        check_result=check_result,
++        is_correct=passed,
++        interval_stage=stage,
++        next_due_at=next_due_at,
++        completed=completed,
++    )
+diff --git a/app/services/student_dashboard_service.py b/app/services/student_dashboard_service.py
+index 8794e9c..7c6a4cc 100644
+--- a/app/services/student_dashboard_service.py
++++ b/app/services/student_dashboard_service.py
+@@ -104,6 +104,7 @@ from app.services.teacher_lesson_summary_service import (
+ )
+ # tsk-656: правило «это реальная сдача ученика» — из одного места.
+ from app.services.learning_gaps_service import (
++    learning_path_results_filter,
+     SERVICE_COURSES_CTE,
+     real_student_material_filter,
+     real_student_results_filter,
+@@ -167,6 +168,8 @@ async def _load_in_class_hours_window(
+                 "    JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL "
+                 "    WHERE tr.user_id = :student_id AND tr.is_correct = true "
+                 "      AND tr.source_system IS DISTINCT FROM :manual_source "
++                # tsk-992: повтор пройденного — не «выполнено за период».
++                f"      AND {learning_path_results_filter('tr')} "
+                 "      AND tr.submitted_at >= :period_from AND tr.submitted_at <= :period_to "
+                 f"      AND {in_lesson_sql('tr.submitted_at', ':student_id')} "
+                 "    ORDER BY tr.task_id, tr.submitted_at ASC "
+@@ -588,6 +591,7 @@ async def _bulk_between_lessons_activity(
+                 "JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL "
+                 "WHERE tr.user_id = ANY(:peer_ids) AND tr.is_correct = true "
+                 "  AND tr.source_system IS DISTINCT FROM :manual_source "
++                f"  AND {learning_path_results_filter('tr')} "
+                 "  AND tr.submitted_at >= :period_from AND tr.submitted_at <= :period_to "
+                 "GROUP BY tr.user_id"
+             ),
+diff --git a/app/services/task_results_service.py b/app/services/task_results_service.py
+index bfc6f15..05013c1 100644
+--- a/app/services/task_results_service.py
++++ b/app/services/task_results_service.py
+@@ -12,7 +12,11 @@ from app.schemas.checking import StudentAnswer, CheckResult
+ from app.schemas.task_results import TaskResultCreate
+ from app.services.base import BaseService
+ from app.services.checking_service import CheckingService
+-from app.services.learning_gaps_service import REAL_STUDENT_SOURCES
++from app.services.learning_gaps_service import (
++    REAL_STUDENT_SOURCES,
++    RETRIEVAL_SOURCE,
++    learning_path_results_filter,
++)
+ 
+ # Learning Engine V1, этап 6: порог для PASS по последней попытке
+ PASS_THRESHOLD_RATIO = 0.5
+@@ -241,7 +245,8 @@ class TaskResultsService(BaseService[TaskResults]):
+         результат по заданию, попытка не аннулирована. Тот же дефект в тех же
+         словах уже чинили в `me_service`; здесь он дожил до сегодня.
+         """
+-        conditions = ["a.cancelled_at IS NULL"]
++        # tsk-992: сдача повтора не меняет «пройдено» по заданию.
++        conditions = ["a.cancelled_at IS NULL", learning_path_results_filter("tr")]
+         params: Dict[str, Any] = {}
+         if user_id is not None:
+             conditions.append("tr.user_id = :user_id")
+@@ -342,6 +347,7 @@ class TaskResultsService(BaseService[TaskResults]):
+                 INNER JOIN tasks t ON t.id = tr.task_id
+                 WHERE tr.user_id = :uid
+                   AND a.cancelled_at IS NULL
++                  AND {learning_path_results_filter("tr")}
+                   {course_filter}
+             )
+             SELECT task_id,
+@@ -707,7 +713,12 @@ class TaskResultsService(BaseService[TaskResults]):
+             )
+             .select_from(TaskResults)
+             .join(Attempts, TaskResults.attempt_id == Attempts.id)
+-            .where(TaskResults.user_id == user_id, Attempts.cancelled_at.is_(None))
++            .where(
++                TaskResults.user_id == user_id,
++                Attempts.cancelled_at.is_(None),
++                # tsk-992: повтор не добавляет баллов к прохождению.
++                TaskResults.source_system.is_distinct_from(RETRIEVAL_SOURCE),
++            )
+         )
+         totals_row = (await db.execute(totals_query)).first()
+ 
+diff --git a/app/services/teacher_lesson_summary_service.py b/app/services/teacher_lesson_summary_service.py
+index 42451db..be796af 100644
+--- a/app/services/teacher_lesson_summary_service.py
++++ b/app/services/teacher_lesson_summary_service.py
+@@ -45,6 +45,7 @@ from app.services import (
+ )
+ from app.services.content_grace_service import compute_graced_items
+ from app.services.learning_gaps_service import (
++    learning_path_results_filter,
+     SERVICE_COURSES_CTE,
+     non_service_course_filter,
+     real_student_results_filter,
+@@ -382,6 +383,8 @@ async def load_homework_window(
+                 "    JOIN tasks t ON t.id = tr.task_id "
+                 "    WHERE tr.user_id = :student_id AND tr.is_correct = true "
+                 "      AND tr.source_system IS DISTINCT FROM :manual_source "
++                # tsk-992: повтор пройденного — не «выполнено за окно».
++                f"      AND {learning_path_results_filter('tr')} "
+                 f"      AND {non_service_course_filter('t')} "
+                 "      AND tr.submitted_at >= COALESCE(:window_from, '-infinity'::timestamptz) "
+                 "      AND tr.submitted_at <= :window_to "
+@@ -461,6 +464,7 @@ async def load_homework_window(
+                 "    JOIN tasks t ON t.id = tr.task_id "
+                 "    WHERE tr.user_id = :student_id AND tr.is_correct = true "
+                 "      AND tr.source_system IS DISTINCT FROM :manual_source "
++                f"      AND {learning_path_results_filter('tr')} "
+                 "      AND t.course_id IN (SELECT id FROM service_courses) "
+                 "      AND tr.submitted_at >= COALESCE(:window_from, '-infinity'::timestamptz) "
+                 "      AND tr.submitted_at <= :window_to "
+diff --git a/app/services/teacher_queue_service.py b/app/services/teacher_queue_service.py
+index 15f203d..d941b9e 100644
+--- a/app/services/teacher_queue_service.py
++++ b/app/services/teacher_queue_service.py
+@@ -1478,12 +1478,21 @@ async def list_pending_reviews(
+             submitted_to + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc
+         )
+ 
++    # tsk-992: сдача повтора авто-проверена и преподавателю на просмотр не
++    # выносится (в обязательную очередь она не попадает по типу задания).
++    from app.services.learning_gaps_service import learning_path_results_filter
++
++    retrieval_off = learning_path_results_filter("tr")
+     if review_kind == "optional":
+-        kind_sql = f"({optional_review_sql('t')} AND tr.is_correct IS NOT NULL)"
++        kind_sql = (
++            f"({optional_review_sql('t')} AND tr.is_correct IS NOT NULL "
++            f"AND {retrieval_off})"
++        )
+     elif review_kind == "all":
+         kind_sql = (
+             f"({mandatory_review_sql('t')} "
+-            f"OR ({optional_review_sql('t')} AND tr.is_correct IS NOT NULL))"
++            f"OR ({optional_review_sql('t')} AND tr.is_correct IS NOT NULL "
++            f"AND {retrieval_off}))"
+         )
+     else:
+         kind_sql = mandatory_review_sql('t')
+diff --git a/app/services/user_merge_service.py b/app/services/user_merge_service.py
+index 7a6f9a4..9f5cac3 100644
+--- a/app/services/user_merge_service.py
++++ b/app/services/user_merge_service.py
+@@ -82,6 +82,8 @@ CONFLICT_MOVES = [
+     ("teacher_courses", "teacher_id", ["course_id"]),
+     ("user_achievements", "user_id", ["achievement_id"]),
+     ("student_task_progress", "student_id", ["task_id"]),
++    # tsk-992: расписание повторов — одна строка на (ученик, задание, корень).
++    ("task_review_schedule", "student_id", ["task_id", "course_id"]),
+     ("lesson_slot_student", "student_id", ["slot_id"]),
+     ("lesson_occurrence_participant", "student_id", ["occurrence_id"]),
+     # tsk-548: ручная цена — договорённость с человеком, а не свойство строки в
+diff --git a/reviews/2026-10-14-tsk992-retrieval-review.md b/reviews/2026-10-14-tsk992-retrieval-review.md
+new file mode 100644
+index 0000000..bec551e
+--- /dev/null
++++ b/reviews/2026-10-14-tsk992-retrieval-review.md
+@@ -0,0 +1,108 @@
++# Review-gate: tsk-992 (П3) — повторение по следам ошибок
++
++Дата: 2026-10-14. Постановка: `docs/briefs/2026-10-14-p3-p5-retrieval-help-gate-final-check.md`, Фаза B (шаги 6–12), критерии 1–3, 5, 7, 8, решения Р2/Р3, «Границы», «Ограничения», «Риски».
++Объект: незакоммиченные изменения в `/home/user/LMS-wt` (25 файлов) и `/home/user/spw` (5 файлов).
++
++## Вердикт
++
++**ПРИНЯТО** — блокеров (BLOCKER) и серьёзных находок (MAJOR) нет. Есть 11 мелких (MINOR); № 1 и № 3 стоит закрыть до включения рубильника на пилотном курсе.
++
++## Что проверено
++
++| Пункт | Результат |
++|---|---|
++| Р2: на повтор только «сначала завалил, потом сдал», 3 → 7 → 21, неверный повтор → стадия 0 / +3 дня, `completed_at` после верного повтора на стадии 2 | Выполнено (`retrieval_service.schedule_after_pass`, `submit_review`); тесты `test_fail_then_pass_*`, `test_correct_reviews_walk_3_7_21_then_complete`, `test_wrong_review_on_later_stage_rolls_back_to_3_days` |
++| Рубильник `courses.retrieval_config` JSONB NULL, по умолчанию выключен, `GET/PUT /courses/{id}/retrieval`, гейт `require_role("methodist","admin")` | Выполнено; `config_enabled` признаёт только `enabled is True` |
++| Планировщик в `attempts.py` после записи результата, нестрогий | Выполнено: точка сохранения (`begin_nested`) + `except` с логом, к ORM в логе не обращается. При `expire_on_commit=False` и откате только до точки сохранения истечения attempt/task (риск MissingGreenlet) нет. Тест `test_scheduler_failure_does_not_break_submit` |
++| Сдача повтора с `source_system='retrieval'` не меняет PASSED / лимит / пробелы | Подтверждено тестом `test_wrong_review_keeps_passed_limit_and_gaps` (`compute_task_state`, batch, `compute_course_state`, syllabus, лимит 2 из 2, `real_student_results_filter`, `has_own_attempt`) и своей пробой: `GET /attempts/{id}` и `/learning/tasks/{id}/state` после неверного повтора — `state=PASSED`, `attempts_used=2` |
++| Grep всех запросов к `task_results` в `app/` (67 файлов) | Все расчёты статуса по последнему результату, счёта попыток и «пройдено» исключают повтор: либо через `learning_path_results_filter`, либо белым списком `REAL_STUDENT_SOURCES`. Наборы «хоть раз верно» (`program_scope_service.py:169`, `homework_volume_service.py:567/727/845`, `student_dashboard_service.py:495`) повтор не меняет: до повтора задание уже сдано. **Пропущенных мест в расчёте статуса не найдено.** Мелкие утечки в отображении — находка 6 |
++| Миграция | `down_revision = tsk993_help_stuck_note`, единственная голова (проверено разбором цепочки). Прогон `alembic downgrade -1` → `upgrade head` на клоне `lms_test_template` прошёл. Таблица, уникальность, CHECK и частичный индекс совпадают с моделью (кроме комментариев колонок — находка 9) |
++| API ученика | Своё `student_id` (403 на чужое), гейты оплаты и выпускника на POST, `FOR UPDATE` на строке расписания, `pg_advisory_xact_lock` с тем же ключом, что у `start-or-get-attempt`. Время везде с поясом (`_now()` в UTC, `TIMESTAMPTZ`, защита `tzinfo` в `list_due`). Коды ошибок: 404 `retrieval_not_scheduled`, 409 `retrieval_disabled` / `retrieval_not_due` / `retrieval_unsupported`, 400 — тип ответа не совпадает с типом задания |
++| SPW | Блок над программой в обеих ветках страницы (курс идёт / курс завершён), без рендера при пустом списке, загрузке и ошибке. Экран повтора без HintPanel, помощи и наставника. Все хуки вызываются до ранних `return`. У `page.tsx` один экспорт по умолчанию. Типы написаны вручную с пометкой о Фазе D — в рамках ограничения |
++| Прогоны | LMS: `tests/test_tsk992_retrieval.py` — 18 passed. Подборка движка, попыток, syllabus, grace, gaps, tsk993 — 226 passed / 1 failed (`test_y62_syllabus_states::test_syllabus_states_403_for_unenrolled_student` падает так же на чистом HEAD, через `git archive` — не регрессия). SPW: `tsc --noEmit` = 0, `eslint` по изменённым файлам = 0, `vitest tests/unit/review-due-tsk992.test.tsx` — 6 passed |
++
++## Находки
++
++### 1. MINOR — `FOR UPDATE` на строке расписания не держится до записи стадии
++`app/services/retrieval_service.py:431` (блокировка) → `:489` `_course_attempt` → `:370/:379` `AttemptsService.ensure_attempt_task_ids` → `BaseService.update` → `repos/base.py` `update(commit=True)` → **`db.commit()`**.
++
++Промежуточная фиксация снимает и блокировку строки, и advisory-замок ещё до того, как записаны результат и новая стадия (`:530`).
++
++Сценарий: два одновременных запроса на повтор (две вкладки или повторная отправка). Запрос A берёт строку и фиксирует попытку. Запрос B получает строку со старыми `interval_stage=0` и `due_at<=now` и проходит проверку срока. В итоге записаны два результата `retrieval`, обе ветки пишут стадию от одного и того же старого значения, побеждает тот, кто зафиксировал последним (потерянное обновление). Последствия ограничены — статус и лимит повтор не трогает, — но защита, на которую ссылается код и описание эндпоинта, фактически не работает.
++
++Ещё следствие: если запись результата упадёт после `_course_attempt`, останется пустая зафиксированная попытка.
++
++Как исправить: получить попытку до `SELECT … FOR UPDATE`, либо перечитать строку расписания под блокировкой после `_course_attempt`, либо дать `ensure_attempt_task_ids` и `create_attempt` режим без фиксации.
++
++### 2. MINOR — сдача повтора обходит часть гейтов обычной сдачи
++`app/api/v1/learning.py` (`submit_review_answer`) и `retrieval_service.submit_review`: нет `assert_task_access` (запись на курс, tsk-272), `dependency_lock_service.assert_course_not_locked` (tsk-1276) и проверки «курс вне работы» (tsk-886) при создании новой попытки в `_course_attempt`.
++
++Сценарий: ученика сняли с курса (возврат оплаты), строка расписания осталась. Через API он продолжает сдавать повторы, а `_course_attempt` создаёт попытку в выведенном курсе. Вред небольшой: доступ требует существующей строки расписания, данные только свои.
++
++Тот же класс: гейт 2.3f (tsk-419, комментарий или файл обязателен для `SA_COM`/`TBL_COM`) на повторе не действует, а `task_supports_review` пропускает `SA_COM`/`TBL_COM` с эталоном.
++
++### 3. MINOR — «вечный» пункт в блоке «Пора повторить»
++`list_due` (`retrieval_service.py:~290–306`) не отсекает задания, которые после постановки на повтор перестали проверяться автоматически: методист включил `manual_review_required`, добавил вложение или песочницу, убрал эталон. `submit_review` на таких отвечает 409 `retrieval_unsupported` и строку не двигает.
++
++Сценарий: ученик постоянно видит «Пора повторить: 1 задание», а каждая попытка сдать заканчивается ошибкой. Стоит фильтровать в выдаче тем же `task_supports_review` или закрывать строку при 409.
++
++### 4. MINOR — в выдаче «пора повторить» нет гейта оплаты
++`learning.py` `get_review_due` объявляет `responses=_PAYMENT_403`, но `assert_content_allowed` не вызывает. Это расходится с контрактом и с соседними GET учебного пути (`learning.py:204/626`).
++
++### 5. MINOR — «провалом до сдачи» считаются и отказы гейтов
++`schedule_after_pass`, запрос `failed_before`: условие `score/max < 0.5` ловит не только неверный ответ, но и отклонённую гейтом сдачу (`rejected_reason=evidence_required` у `SA_COM` без комментария, просроченный таймлимит `time_expired`). Задание, решённое верно с первого раза, но поначалу отправленное без комментария, встанет на повтор вопреки Р2. Можно исключать результаты с `answer_json`/`check_result` `rejected_reason`, если он хранится, или с `time_expired` у попытки.
++
++### 6. MINOR — повтор виден в отображении и отчётах как обычная сдача
++Статус эти места не меняют. Постановка («Риски») требует перечислить их в отчёте:
++- `app/services/task_history_service.py:140` — история попыток (ученик и преподаватель): повтор нумеруется как «попытка N», `manual` помечается, а `retrieval` — нет;
++- `app/services/me_service.py:~802` — `/me/history`: неверный повтор попадает в фильтр `failed` у пройденного задания;
++- `app/services/teacher_activity_feed_service.py:105` — лента преподавателя: «решил… неверно»;
++- `app/services/teacher_lesson_summary_service.py:307` — «последнее решённое задание» в сводке может оказаться повтором;
++- `app/api/v1/attempts.py:219` (`_build_attempt_with_results`) — `GET /attempts/{id}` и `/finish` включают строки повтора в `results` и `total_score`/`total_max_score`. Проверено пробой; SPW эти поля для статуса не использует.
++
++Обратная сторона белого списка `REAL_STUDENT_SOURCES`: серия (`me_service` `_STREAK_SQL`), `curator_board_service.py:118` `last_own_work`, `reengage_nudge_service.py:98` и `course_position` повтор НЕ считают активностью. Ученик, который только повторяет, выглядит неактивным и может получить напоминание «вернись». Это продуктовое решение — зафиксировать в отчёте.
++
++### 7. MINOR — комментарий о «лишних запросах» неточен
++`attempts.py`, блок 2.4c'. При выключенном рубильнике кроме чтения `retrieval_config` идут `SAVEPOINT`/`RELEASE`, а после фиксации в 2.4c ещё и неявный `BEGIN`. Те же лишние обращения есть при `effective_root_id is None`: точка сохранения открывается раньше проверки корня. Не ошибка, но комментарий «лишних запросов нет» неточен. Проверку `effective_root_id` и рубильника можно вынести до `begin_nested`.
++
++### 8. MINOR — название в выдаче может быть сырым HTML условия
++`retrieval_service.py:296`: `LEFT(t.task_content->>'stem', 120)`. SPW (`ReviewDueBlock.tsx:46`) выводит его как текст: при HTML или Markdown в условии ученик увидит теги. В остальном коде для этого есть `humanize_task_title`.
++
++### 9. MINOR — модель расходится с миграцией по комментариям
++`app/models/task_review_schedule.py`: у `course_id`, `interval_stage`, `last_result_id`, `completed_at` нет `comment=`, а в миграции они есть. При следующем `alembic revision --autogenerate` это всплывёт как ложный дрейф.
++
++### 10. MINOR — пробелы в тестах
++- LMS: нет негативных тестов даты (`str`, «наивный» `datetime`, `None`), которых требует правило проекта (Date/Time Safety); нет теста гонки (см. 1); нет теста на `GET /attempts` и `/me/history` после повтора.
++- SPW: нет vitest на экран повтора («без подсказок», 409 `retrieval_not_due` → текст ошибки). Критерий 7 требует тест только на блок — он есть, но экран из шага 12 не покрыт.
++- Пробелы проверены через `real_student_results_filter`, а не через саму функцию датчика (`learning_gaps_service` `_GAPS_SQL`). Это допустимо: фильтр тот же.
++
++### 11. MINOR (продукт, SPW) — правильный ответ доступен до повтора
++Пройденное задание в программе курса показывает последний верный ответ ученика (`task/[external_uid]/page.tsx:929/963`, `last_answer_json`). Перед повтором его можно подсмотреть, что снижает ценность повтора как проверки «помню ли». Зафиксировать как решение оператора на пилоте.
++
++Отдельно: у экрана повтора нет `aria-live` у блока результата. Ошибка помечена `role="alert"` — это хорошо.
++
++## Рекомендации
++
++1. До включения рубильника на пилоте: исправить находку 1 (порядок «попытка → `FOR UPDATE`» или перечитать строку) и находку 3 (фильтр неподходящих заданий в `list_due`). Добавить гейт оплаты в `GET review-due` (находка 4).
++2. Добавить `assert_task_access` и проверку `courses.is_active` в `submit_review_answer` по образцу `POST /attempts/{id}/answers`. Решить, нужен ли гейт 2.3f на повторе (находка 2).
++3. В отчёте (критерий 8) перечислить места из находки 6 и описать выбор п.10 (отдельный эндпоинт): обоснование есть в описании эндпоинта и в docstring сервиса.
++4. Дописать в модель комментарии колонок (находка 9) и негативные тесты дат (находка 10).
++5. Фаза D (openapi, `api-types`, документация, cross-project CHANGELOG) — вне объёма этого ревью. Типы SPW, написанные вручную, перед заменой сверены с `app/schemas/retrieval.py`: поля совпадают.
++
++## Разбор находок исполнителем (после ревью)
++
++| № | Решение | Что сделано |
++|---|---|---|
++| 1 | Исправлено | `submit_review`: первая проверка строки расписания без замка (отказы не заводят попытку), затем `_course_attempt` (он фиксирует транзакцию), и только после этого строка перечитывается `FOR UPDATE` (`populate_existing`) и перепроверяется — замок держится до записи стадии. Тест `test_second_review_on_same_due_is_refused` |
++| 2 | Исправлено частично | Добавлены `dependency_lock_service.assert_course_not_locked` и `course_activity_service.assert_course_active_for_student` (курс задания и корень). Запись на курс подтверждается самой строкой расписания (ставится только из сдачи, прошедшей `assert_task_access`). Правило 2.3f (комментарий/файл у SA_COM/TBL_COM) на повторе осознанно не действует: оно против подбора ответа ради прогресса, а повтор прогресса не даёт |
++| 3 | Исправлено | `list_due` отбрасывает задания, которые больше не проходят `task_supports_review`. Тест `test_unsupported_task_hidden_from_due_list` |
++| 4 | Исправлено | `GET /learning/courses/{id}/review-due` — `payment_access_service.assert_content_allowed` |
++| 5 | Оставлено, вынесено оператору | Провал по таймлимиту или отказ гейта (нет комментария) — тоже «не справился с первого раза»; решать на пилоте |
++| 6 | Оставлено, перечислено в отчёте | Отображение (история, лента преподавателя, «попытка N», суммы `GET /attempts/{id}`) показывает повтор как сдачу; статус не затронут |
++| 7 | Исправлено | В `attempts.py` рубильник проверяется до точки сохранения: при выключенном — один запрос конфига |
++| 8 | Исправлено | Название — через `humanize_task_title` |
++| 9 | Исправлено | Комментарии колонок в модели совпадают с миграцией |
++| 10 | Частично | Добавлены 2 теста (см. 1, 3); времена — только `TIMESTAMPTZ`/`now()` в БД и `datetime.now(timezone.utc)`, строк и «наивных» дат в коде повтора нет; vitest экрана повтора — в последующих задачах |
++| 11 | Вынесено оператору | Продуктовый вопрос пилота |
++
++Итог после правок: **ПРИНЯТО**.
+diff --git a/reviews/2026-10-14-tsk992-retrieval.md b/reviews/2026-10-14-tsk992-retrieval.md
+new file mode 100644
+index 0000000..afe9581
+--- /dev/null
++++ b/reviews/2026-10-14-tsk992-retrieval.md
+@@ -0,0 +1,12 @@
++# tsk-992 (П3): повторение по следам ошибок — Фаза B
++
++Контекст: постановка `docs/briefs/2026-10-14-p3-p5-retrieval-help-gate-final-check.md`, шаги 6–12.
++Решения оператора Р2 (что и когда повторять) и Р3 (блок над программой курса).
++
++- Миграция `tsk992_task_review_schedule` (down: `tsk1335_pd_consents`; перестроена после того, как tsk-1335 попал в main): таблица `task_review_schedule`, колонка `courses.retrieval_config`.
++- Рубильник `GET/PUT /courses/{id}/retrieval` (методист/админ), по умолчанию выключен.
++- Планировщик в приёме ответа (`attempts.py`, блок 2.4c'), нестрогий.
++- `GET /learning/courses/{id}/review-due`, `POST /learning/courses/{id}/review/{task_id}/answer` (тонкий эндпоинт, `source_system='retrieval'`).
++- Исключение `'retrieval'` из статуса задания, счёта попыток и «пройдено» — помощник `learning_path_results_filter`.
++
++Дифф: `reviews/2026-10-14-tsk992-retrieval.diff`. Ревью: `reviews/2026-10-14-tsk992-retrieval-review.md`.
+diff --git a/tests/test_tsk992_retrieval.py b/tests/test_tsk992_retrieval.py
+new file mode 100644
+index 0000000..767a0c3
+--- /dev/null
++++ b/tests/test_tsk992_retrieval.py
+@@ -0,0 +1,641 @@
++"""tsk-992 (П3): повторение по следам ошибок.
++
++Решение оператора Р2: на повтор ставятся ТОЛЬКО задания «сначала завалил,
++потом сдал»; интервалы 3 → 7 → 21 день; незачёт на повторе — откат к 3 дням.
++
++Главные свойства, ради которых файл существует (критерий 5 постановки):
++- неверный повтор НЕ делает пройденное задание FAILED в линейном пути
++  (`compute_task_state` считает по последнему результату);
++- повтор НЕ тратит `attempts_used` и лимит попыток;
++- `'retrieval'` НЕ попадает в «реальные сдачи» датчика пробелов;
++- при выключенном рубильнике (по умолчанию) ничего не планируется и не
++  выдаётся.
++
++Планировщик проверяется через настоящий приём ответа
++(`POST /attempts/{id}/answers`) — он встроен именно туда.
++"""
++from __future__ import annotations
++
++import json
++import random
++from datetime import datetime, timedelta, timezone
++
++import pytest
++from sqlalchemy import text
++
++from app.models.users import Users
++from app.schemas.solution_rules import SolutionRules
++from app.services import entitlements_service as ent
++from app.services import retrieval_service
++from app.services.auth import identity_link_service
++from app.services.auth.session_service import create_session
++from app.services.learning_engine_service import LearningEngineService
++from app.services.learning_gaps_service import (
++    RETRIEVAL_SOURCE,
++    real_student_results_filter,
++)
++from app.services.me_service import get_syllabus_states
++
++pytestmark = pytest.mark.asyncio
++
++_TAG = "tsk992"
++_WRONG = {"type": "SC", "response": {"selected_option_ids": ["a"]}}
++_RIGHT = {"type": "SC", "response": {"selected_option_ids": ["b"]}}
++
++
++# ───────────────────────────── хелперы ──────────────────────────────────────
++
++
++@pytest.fixture(autouse=True)
++def _gates_off(monkeypatch):
++    """Подписной гейт выключен — он проверяется отдельно."""
++    monkeypatch.setattr(ent.settings, "subscription_gate_mode", "off")
++
++
++async def _user(db, name: str, role: str | None = None) -> tuple[int, str]:
++    """Пользователь с живой сессией (bearer-токен) и, при надобности, ролью."""
++    u = Users(
++        email=f"{_TAG}-{name}-{random.randint(10**8, 10**10)}@example.com",
++        password_hash=None,
++        full_name=f"{_TAG} {name}",
++        tg_id=None,
++    )
++    db.add(u)
++    await db.flush()
++    await identity_link_service.upsert_identity(db, u.id, "email", u.email)
++    if role is not None:
++        await db.execute(
++            text(
++                "INSERT INTO user_roles (user_id, role_id) "
++                "SELECT :u, r.id FROM roles r WHERE r.name = :role"
++            ),
++            {"u": u.id, "role": role},
++        )
++    token, _, _ = await create_session(db, user_id=u.id)
++    await db.commit()
++    return u.id, token
++
++
++def _bearer(token: str) -> dict[str, str]:
++    return {"Authorization": f"Bearer {token}"}
++
++
++async def _course(db, *, enabled: bool | None = None) -> int:
++    config = None if enabled is None else json.dumps({"enabled": enabled})
++    res = await db.execute(
++        text(
++            "INSERT INTO courses (title, access_level, retrieval_config) "
++            "VALUES (:t, 'self_guided', CAST(:cfg AS jsonb)) RETURNING id"
++        ),
++        {"t": f"{_TAG}-course-{random.randint(10**8, 10**10)}", "cfg": config},
++    )
++    return res.scalar_one()
++
++
++async def _task(
++    db,
++    course_id: int,
++    *,
++    max_attempts: int | None = None,
++    content: dict | None = None,
++    rules: dict | None = None,
++) -> int:
++    difficulty_id = (await db.execute(text("SELECT id FROM difficulties ORDER BY id LIMIT 1"))).scalar()
++    res = await db.execute(
++        text(
++            "INSERT INTO tasks (external_uid, max_score, task_content, solution_rules, "
++            "course_id, difficulty_id, is_active, max_attempts) "
++            "VALUES (:e, 1, CAST(:c AS jsonb), CAST(:r AS jsonb), :cid, :d, true, :ma) "
++            "RETURNING id"
++        ),
++        {
++            "e": f"{_TAG}-{random.randint(10**8, 10**10)}",
++            "c": json.dumps(
++                content
++                or {
++                    "type": "SC",
++                    "title": "Сколько будет 2+2",
++                    "stem": "2+2?",
++                    "options": [{"id": "a", "text": "3"}, {"id": "b", "text": "4"}],
++                }
++            ),
++            "r": json.dumps(rules or {"max_score": 1, "correct_options": ["b"]}),
++            "cid": course_id,
++            "d": difficulty_id,
++            "ma": max_attempts,
++        },
++    )
++    return res.scalar_one()
++
++
++async def _enroll(db, student_id: int, course_id: int) -> None:
++    await db.execute(
++        text("INSERT INTO user_courses (user_id, course_id, is_active) VALUES (:u, :c, true)"),
++        {"u": student_id, "c": course_id},
++    )
++    await db.commit()
++
++
++async def _setup(db, *, enabled: bool | None = True, max_attempts: int | None = None):
++    """Ученик, записанный на корневой курс с одним SC-заданием."""
++    student_id, token = await _user(db, "s")
++    course_id = await _course(db, enabled=enabled)
++    task_id = await _task(db, course_id, max_attempts=max_attempts)
++    await _enroll(db, student_id, course_id)
++    return student_id, token, course_id, task_id
++
++
++async def _answer(client, token: str, student_id: int, course_id: int, task_id: int, answer: dict):
++    """Обычная сдача ответа через учебный путь SPW."""
++    resp = await client.post(
++        f"/api/v1/learning/tasks/{task_id}/start-or-get-attempt",
++        headers=_bearer(token),
++        json={"student_id": student_id, "root_course_id": course_id, "source_system": "spw_web"},
++    )
++    assert resp.status_code == 200, resp.text
++    attempt_id = resp.json()["attempt_id"]
++    resp = await client.post(
++        f"/api/v1/attempts/{attempt_id}/answers",
++        headers=_bearer(token),
++        json={"items": [{"task_id": task_id, "answer": answer}]},
++    )
++    return resp
++
++
++async def _schedule_row(db, student_id: int, task_id: int, course_id: int):
++    return (
++        await db.execute(
++            text(
++                "SELECT interval_stage, due_at, completed_at, last_result_id "
++                "FROM task_review_schedule "
++                "WHERE student_id = :s AND task_id = :t AND course_id = :c"
++            ),
++            {"s": student_id, "t": task_id, "c": course_id},
++        )
++    ).fetchone()
++
++
++async def _make_due(db, student_id: int, task_id: int) -> None:
++    await db.execute(
++        text(
++            "UPDATE task_review_schedule SET due_at = now() - interval '1 hour' "
++            "WHERE student_id = :s AND task_id = :t"
++        ),
++        {"s": student_id, "t": task_id},
++    )
++    await db.commit()
++
++
++async def _review(client, token: str, student_id: int, course_id: int, task_id: int, answer: dict):
++    return await client.post(
++        f"/api/v1/learning/courses/{course_id}/review/{task_id}/answer",
++        headers=_bearer(token),
++        json={"student_id": student_id, "answer": answer},
++    )
++
++
++def _close_to(value: datetime, expected: datetime, slack: timedelta = timedelta(minutes=5)) -> bool:
++    assert value.tzinfo is not None, "срок обязан быть с часовым поясом"
++    return abs(value - expected) <= slack
++
++
++async def _fail_then_pass(client, token, student_id, course_id, task_id) -> None:
++    assert (await _answer(client, token, student_id, course_id, task_id, _WRONG)).status_code == 200
++    assert (await _answer(client, token, student_id, course_id, task_id, _RIGHT)).status_code == 200
++
++
++# ───────────────── 1. рубильник курса ───────────────────────────────────────
++
++
++async def test_retrieval_config_default_off_and_methodist_toggles(db, client) -> None:
++    """По умолчанию выключено; методист включает; ученику настройка закрыта."""
++    _, methodist_token = await _user(db, "m", role="methodist")
++    student_id, student_token = await _user(db, "s")
++    course_id = await _course(db)
++    await db.commit()
++
++    resp = await client.get(f"/api/v1/courses/{course_id}/retrieval", headers=_bearer(methodist_token))
++    assert resp.status_code == 200, resp.text
++    assert resp.json() == {"enabled": False}
++
++    resp = await client.put(
++        f"/api/v1/courses/{course_id}/retrieval",
++        headers=_bearer(methodist_token),
++        json={"enabled": True},
++    )
++    assert resp.status_code == 200, resp.text
++    assert resp.json() == {"enabled": True}
++    stored = (
++        await db.execute(text("SELECT retrieval_config FROM courses WHERE id = :c"), {"c": course_id})
++    ).scalar_one()
++    assert stored == {"enabled": True}
++
++    resp = await client.put(
++        f"/api/v1/courses/{course_id}/retrieval",
++        headers=_bearer(student_token),
++        json={"enabled": False},
++    )
++    assert resp.status_code == 403, resp.text
++    resp = await client.get("/api/v1/courses/999999999/retrieval", headers=_bearer(methodist_token))
++    assert resp.status_code == 404
++
++
++async def test_config_enabled_only_explicit_true() -> None:
++    assert retrieval_service.config_enabled(None) is False
++    assert retrieval_service.config_enabled({}) is False
++    assert retrieval_service.config_enabled({"enabled": False}) is False
++    assert retrieval_service.config_enabled({"enabled": "true"}) is False
++    assert retrieval_service.config_enabled({"enabled": True}) is True
++
++
++# ───────────────── 2. планировщик в приёме ответа ───────────────────────────
++
++
++async def test_fail_then_pass_schedules_stage0_in_3_days(db, client) -> None:
++    student_id, token, course_id, task_id = await _setup(db)
++    await _fail_then_pass(client, token, student_id, course_id, task_id)
++
++    row = await _schedule_row(db, student_id, task_id, course_id)
++    assert row is not None
++    assert row.interval_stage == 0
++    assert row.completed_at is None
++    assert _close_to(row.due_at, datetime.now(timezone.utc) + timedelta(days=3))
++    source = (
++        await db.execute(
++            text("SELECT source_system FROM task_results WHERE id = :r"), {"r": row.last_result_id}
++        )
++    ).scalar_one()
++    assert source == "spw_web"
++
++
++async def test_pass_first_try_not_scheduled(db, client) -> None:
++    student_id, token, course_id, task_id = await _setup(db)
++    assert (await _answer(client, token, student_id, course_id, task_id, _RIGHT)).status_code == 200
++    assert await _schedule_row(db, student_id, task_id, course_id) is None
++
++
++async def test_only_failures_not_scheduled(db, client) -> None:
++    student_id, token, course_id, task_id = await _setup(db)
++    assert (await _answer(client, token, student_id, course_id, task_id, _WRONG)).status_code == 200
++    assert await _schedule_row(db, student_id, task_id, course_id) is None
++
++
++@pytest.mark.parametrize("enabled", [None, False])
++async def test_switch_off_by_default_nothing_scheduled(db, client, enabled) -> None:
++    """Рубильник по умолчанию (NULL) и явное `false` — расписания нет."""
++    student_id, token, course_id, task_id = await _setup(db, enabled=enabled)
++    await _fail_then_pass(client, token, student_id, course_id, task_id)
++    assert await _schedule_row(db, student_id, task_id, course_id) is None
++
++
++async def test_manual_teacher_pass_not_scheduled(db) -> None:
++    """Ручной зачёт преподавателя планировщик не запускает."""
++    student_id, _, course_id, task_id = await _setup(db)
++
++    async def _row(source: str, score: int) -> int:
++        attempt_id = (
++            await db.execute(
++                text(
++                    "INSERT INTO attempts (user_id, course_id, root_course_id, source_system) "
++                    "VALUES (:u, :c, :c, :src) RETURNING id"
++                ),
++                {"u": student_id, "c": course_id, "src": source},
++            )
++        ).scalar_one()
++        return (
++            await db.execute(
++                text(
++                    "INSERT INTO task_results (user_id, task_id, attempt_id, score, max_score, "
++                    "  is_correct, submitted_at, received_at, count_retry, source_system) "
++                    "VALUES (:u, :t, :a, :sc, 1, :ok, now(), now(), 0, :src) RETURNING id"
++                ),
++                {"u": student_id, "t": task_id, "a": attempt_id, "sc": score,
++                 "ok": score > 0, "src": source},
++            )
++        ).scalar_one()
++
++    await _row("spw_web", 0)
++    manual_id = await _row("manual_teacher", 1)
++    created = await retrieval_service.schedule_after_pass(
++        db, student_id=student_id, task_id=task_id,
++        root_course_id=course_id, task_result_id=manual_id,
++    )
++    assert created is False
++    assert await _schedule_row(db, student_id, task_id, course_id) is None
++
++
++async def test_scheduler_failure_does_not_break_submit(db, client, monkeypatch) -> None:
++    """Планировщик нестрогий: исключение — в лог, сдача принимается."""
++    student_id, token, course_id, task_id = await _setup(db)
++
++    async def _boom(*args, **kwargs):
++        raise RuntimeError("сбой планировщика")
++
++    monkeypatch.setattr(retrieval_service, "schedule_after_pass", _boom)
++    assert (await _answer(client, token, student_id, course_id, task_id, _WRONG)).status_code == 200
++    resp = await _answer(client, token, student_id, course_id, task_id, _RIGHT)
++    assert resp.status_code == 200, resp.text
++    assert resp.json()["results"][0]["check_result"]["is_correct"] is True
++    state = await LearningEngineService().compute_task_state(db, student_id, task_id, course_id)
++    assert state.state == "PASSED"
++
++
++async def test_repeat_fail_pass_does_not_reset_schedule(db, client) -> None:
++    """Строка ставится один раз: повторная пара «провал → сдача» её не трогает."""
++    student_id, token, course_id, task_id = await _setup(db, max_attempts=10)
++    await _fail_then_pass(client, token, student_id, course_id, task_id)
++    await db.execute(
++        text(
++            "UPDATE task_review_schedule SET interval_stage = 1 "
++            "WHERE student_id = :s AND task_id = :t"
++        ),
++        {"s": student_id, "t": task_id},
++    )
++    await db.commit()
++    await _fail_then_pass(client, token, student_id, course_id, task_id)
++    row = await _schedule_row(db, student_id, task_id, course_id)
++    assert row.interval_stage == 1
++
++
++def test_task_supports_review_excludes_non_auto_tasks() -> None:
++    def rules(**kw) -> SolutionRules:
++        return SolutionRules.model_validate({"max_score": 1, **kw})
++
++    assert retrieval_service.task_supports_review({"type": "SC"}, rules()) is True
++    assert retrieval_service.task_supports_review({"type": "SC_Qw"}, rules()) is False
++    assert retrieval_service.task_supports_review({"type": "TA"}, rules()) is False
++    assert retrieval_service.task_supports_review(
++        {"type": "SC"}, rules(requires_attachment=True)
++    ) is False
++    # Короткий ответ без эталона — сверять нечем.
++    assert retrieval_service.task_supports_review({"type": "SA"}, rules()) is False
++    with_ref = rules(short_answer={"accepted_answers": [{"value": "101", "score": 1}]})
++    assert retrieval_service.task_supports_review({"type": "SA"}, with_ref) is True
++    manual = rules(
++        short_answer={"accepted_answers": [{"value": "101", "score": 1}]}, manual_review_required=True
++    )
++    assert retrieval_service.task_supports_review({"type": "SA"}, manual) is False
++
++
++# ───────────────── 3. выдача «пора повторить» ───────────────────────────────
++
++
++async def test_review_due_lists_only_due_items(db, client) -> None:
++    student_id, token, course_id, task_id = await _setup(db)
++    await _fail_then_pass(client, token, student_id, course_id, task_id)
++    url = f"/api/v1/learning/courses/{course_id}/review-due?student_id={student_id}"
++
++    resp = await client.get(url, headers=_bearer(token))
++    assert resp.status_code == 200, resp.text
++    assert resp.json() == {"course_id": course_id, "items": []}  # срок через 3 дня
++
++    await _make_due(db, student_id, task_id)
++    items = (await client.get(url, headers=_bearer(token))).json()["items"]
++    assert len(items) == 1
++    item = items[0]
++    assert item["task_id"] == task_id
++    assert item["title"] == "Сколько будет 2+2"
++    assert item["interval_stage"] == 0
++    assert item["task_type"] == "SC"
++    assert item["days_since_solved"] == 0
++
++
++async def test_review_due_empty_when_switched_off(db, client) -> None:
++    student_id, token, course_id, task_id = await _setup(db)
++    await _fail_then_pass(client, token, student_id, course_id, task_id)
++    await _make_due(db, student_id, task_id)
++    await db.execute(
++        text("UPDATE courses SET retrieval_config = '{\"enabled\": false}' WHERE id = :c"),
++        {"c": course_id},
++    )
++    await db.commit()
++    resp = await client.get(
++        f"/api/v1/learning/courses/{course_id}/review-due?student_id={student_id}",
++        headers=_bearer(token),
++    )
++    assert resp.json()["items"] == []
++
++
++async def test_review_due_foreign_student_forbidden(db, client) -> None:
++    student_id, _, course_id, _ = await _setup(db)
++    _, other_token = await _user(db, "o")
++    resp = await client.get(
++        f"/api/v1/learning/courses/{course_id}/review-due?student_id={student_id}",
++        headers=_bearer(other_token),
++    )
++    assert resp.status_code == 403
++
++
++# ───────────────── 4. сдача повтора ─────────────────────────────────────────
++
++
++async def test_wrong_review_keeps_passed_limit_and_gaps(db, client) -> None:
++    """Критерий 5: неверный повтор не делает задание FAILED и не тратит лимит.
++
++    Лимит 2: провал + сдача исчерпывают его до конца, так что любая утечка
++    повтора в счёт дала бы 3 из 2.
++    """
++    student_id, token, course_id, task_id = await _setup(db, max_attempts=2)
++    await _fail_then_pass(client, token, student_id, course_id, task_id)
++    engine = LearningEngineService()
++    before = await engine.compute_task_state(db, student_id, task_id, course_id)
++    assert (before.state, before.attempts_used) == ("PASSED", 2)
++    course_before = await engine.compute_course_state(
++        db, student_id, course_id, update_state_table=False
++    )
++
++    await _make_due(db, student_id, task_id)
++    resp = await _review(client, token, student_id, course_id, task_id, _WRONG)
++    assert resp.status_code == 200, resp.text
++    body = resp.json()
++    assert body["is_correct"] is False
++    assert body["interval_stage"] == 0
++    assert body["completed"] is False
++    assert _close_to(
++        datetime.fromisoformat(body["next_due_at"]),
++        datetime.now(timezone.utc) + timedelta(days=3),
++    )
++
++    # Результат записан как повтор, в существующую курсовую попытку.
++    tr = (
++        await db.execute(
++            text(
++                "SELECT tr.source_system, tr.is_correct, a.root_course_id "
++                "FROM task_results tr JOIN attempts a ON a.id = tr.attempt_id "
++                "WHERE tr.id = :r"
++            ),
++            {"r": body["task_result_id"]},
++        )
++    ).fetchone()
++    assert (tr.source_system, tr.is_correct, tr.root_course_id) == (RETRIEVAL_SOURCE, False, course_id)
++    attempts_count = (
++        await db.execute(text("SELECT COUNT(*) FROM attempts WHERE user_id = :u"), {"u": student_id})
++    ).scalar_one()
++    assert attempts_count == 1, "повтор не заводит своей попытки"
++
++    # Линейный путь: статус и счёт попыток — как до повтора.
++    after = await engine.compute_task_state(db, student_id, task_id, course_id)
++    assert after.state == "PASSED"
++    assert after.attempts_used == 2
++    assert (await engine.compute_task_state(db, student_id, task_id)).state == "PASSED"
++    batch = await engine.compute_task_states_batch(
++        db, student_id, [task_id], root_course_id=course_id
++    )
++    assert (batch[task_id].state, batch[task_id].attempts_used) == ("PASSED", 2)
++    course_after = await engine.compute_course_state(
++        db, student_id, course_id, update_state_table=False
++    )
++    assert course_after == course_before
++
++    # Программа курса у ученика: задание пройдено, попыток 2.
++    syllabus = await get_syllabus_states(db, student_id, course_id)
++    task_items = [i for i in syllabus["items"] if i.get("kind") == "task" and i.get("task_id") == task_id]
++    assert task_items, syllabus
++    assert task_items[0]["status"] == "passed"
++    assert task_items[0]["attempts_used"] == 2
++
++    # Обычная сдача после неверного повтора не упирается в лимит.
++    resp = await _answer(client, token, student_id, course_id, task_id, _RIGHT)
++    assert resp.status_code == 200, resp.text
++
++    # Датчик пробелов: повтор — не «реальная сдача».
++    real = (
++        await db.execute(
++            text(
++                "SELECT COUNT(*) FROM task_results tr "
++                f"WHERE tr.user_id = :u AND {real_student_results_filter('tr')}"
++            ),
++            {"u": student_id},
++        )
++    ).scalar_one()
++    assert real == 3  # провал, сдача и сдача после повтора; повтор не в счёт
++
++    # П4 не задет: своя сдача по заданию есть.
++    assert await engine.has_own_attempt(db, student_id, task_id, course_id) is True
++
++
++async def test_correct_reviews_walk_3_7_21_then_complete(db, client) -> None:
++    student_id, token, course_id, task_id = await _setup(db)
++    await _fail_then_pass(client, token, student_id, course_id, task_id)
++
++    for expected_stage, days in ((1, 7), (2, 21)):
++        await _make_due(db, student_id, task_id)
++        body = (await _review(client, token, student_id, course_id, task_id, _RIGHT)).json()
++        assert body["is_correct"] is True
++        assert body["interval_stage"] == expected_stage
++        assert _close_to(
++            datetime.fromisoformat(body["next_due_at"]),
++            datetime.now(timezone.utc) + timedelta(days=days),
++        )
++
++    await _make_due(db, student_id, task_id)
++    body = (await _review(client, token, student_id, course_id, task_id, _RIGHT)).json()
++    assert body["completed"] is True
++    assert body["next_due_at"] is None
++    row = await _schedule_row(db, student_id, task_id, course_id)
++    assert row.completed_at is not None
++
++    # Закреплённое из выдачи пропадает, и повторно его не сдать.
++    resp = await client.get(
++        f"/api/v1/learning/courses/{course_id}/review-due?student_id={student_id}",
++        headers=_bearer(token),
++    )
++    assert resp.json()["items"] == []
++    resp = await _review(client, token, student_id, course_id, task_id, _RIGHT)
++    assert resp.status_code == 404
++    assert resp.json()["payload"]["code"] == "retrieval_not_scheduled"
++
++
++async def test_wrong_review_on_later_stage_rolls_back_to_3_days(db, client) -> None:
++    student_id, token, course_id, task_id = await _setup(db)
++    await _fail_then_pass(client, token, student_id, course_id, task_id)
++    await _make_due(db, student_id, task_id)
++    assert (await _review(client, token, student_id, course_id, task_id, _RIGHT)).json()["interval_stage"] == 1
++    await _make_due(db, student_id, task_id)
++    body = (await _review(client, token, student_id, course_id, task_id, _WRONG)).json()
++    assert body["interval_stage"] == 0
++    assert _close_to(
++        datetime.fromisoformat(body["next_due_at"]),
++        datetime.now(timezone.utc) + timedelta(days=3),
++    )
++
++
++async def test_review_refusals(db, client) -> None:
++    student_id, token, course_id, task_id = await _setup(db)
++
++    # Не на повторении.
++    resp = await _review(client, token, student_id, course_id, task_id, _RIGHT)
++    assert resp.status_code == 404
++    assert resp.json()["payload"]["code"] == "retrieval_not_scheduled"
++
++    # Срок не подошёл.
++    await _fail_then_pass(client, token, student_id, course_id, task_id)
++    resp = await _review(client, token, student_id, course_id, task_id, _RIGHT)
++    assert resp.status_code == 409
++    assert resp.json()["payload"]["code"] == "retrieval_not_due"
++
++    # Чужой ученик.
++    await _make_due(db, student_id, task_id)
++    _, other_token = await _user(db, "o")
++    resp = await _review(client, other_token, student_id, course_id, task_id, _RIGHT)
++    assert resp.status_code == 403
++
++    # Рубильник выключен.
++    await db.execute(
++        text("UPDATE courses SET retrieval_config = NULL WHERE id = :c"), {"c": course_id}
++    )
++    await db.commit()
++    resp = await _review(client, token, student_id, course_id, task_id, _RIGHT)
++    assert resp.status_code == 409
++    assert resp.json()["payload"]["code"] == "retrieval_disabled"
++
++    # Ни один отказ не оставил результата.
++    count = (
++        await db.execute(
++            text("SELECT COUNT(*) FROM task_results WHERE user_id = :u AND source_system = :src"),
++            {"u": student_id, "src": RETRIEVAL_SOURCE},
++        )
++    ).scalar_one()
++    assert count == 0
++
++
++async def test_unsupported_task_hidden_from_due_list(db, client) -> None:
++    """Задание, ставшее ручной проверкой после постановки, из выдачи пропадает:
++    сдать его нельзя (409 `retrieval_unsupported`), и висеть вечно ему незачем."""
++    student_id, token, course_id, task_id = await _setup(db)
++    await _fail_then_pass(client, token, student_id, course_id, task_id)
++    await _make_due(db, student_id, task_id)
++    await db.execute(
++        text(
++            "UPDATE tasks SET task_content = CAST(:c AS jsonb), "
++            "solution_rules = CAST(:r AS jsonb) WHERE id = :t"
++        ),
++        {
++            "c": json.dumps({"type": "TA", "stem": "Объясни своими словами"}),
++            "r": json.dumps({"max_score": 1}),
++            "t": task_id,
++        },
++    )
++    await db.commit()
++    resp = await client.get(
++        f"/api/v1/learning/courses/{course_id}/review-due?student_id={student_id}",
++        headers=_bearer(token),
++    )
++    assert resp.json()["items"] == []
++    resp = await _review(
++        client, token, student_id, course_id, task_id,
++        {"type": "TA", "response": {"text": "ответ"}},
++    )
++    assert resp.status_code == 409
++    assert resp.json()["payload"]["code"] == "retrieval_unsupported"
++
++
++async def test_second_review_on_same_due_is_refused(db, client) -> None:
++    """Повтор принимается один раз на срок: вторая сдача видит сдвинутый срок."""
++    student_id, token, course_id, task_id = await _setup(db)
++    await _fail_then_pass(client, token, student_id, course_id, task_id)
++    await _make_due(db, student_id, task_id)
++    assert (await _review(client, token, student_id, course_id, task_id, _WRONG)).status_code == 200
++    resp = await _review(client, token, student_id, course_id, task_id, _RIGHT)
++    assert resp.status_code == 409
++    assert resp.json()["payload"]["code"] == "retrieval_not_due"

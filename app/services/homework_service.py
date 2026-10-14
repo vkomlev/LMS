@@ -53,6 +53,7 @@ from app.services import (
 )
 # tsk-867: вес элемента — состав набирается до бюджета времени, а не до штук.
 from app.services.lesson_window_sql import in_lesson_sql
+from app.services.learning_gaps_service import learning_path_results_filter
 from app.services.task_effort_service import (
     MATERIAL_EFFORT_SECONDS_PROXY,
     EffortTable,
@@ -970,6 +971,8 @@ def _task_done_sql(
         "EXISTS (SELECT 1 FROM task_results tr "
         "  JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL "
         f" WHERE tr.user_id = {sid} AND tr.task_id = {task_id} "
+        # tsk-992: повтор дома не превращает «решено на уроке» в «решено дома».
+        f"   AND {learning_path_results_filter('tr')} "
         f"   AND tr.is_correct = true{bounds}{home})"
     )
 

@@ -82,6 +82,8 @@ CONFLICT_MOVES = [
     ("teacher_courses", "teacher_id", ["course_id"]),
     ("user_achievements", "user_id", ["achievement_id"]),
     ("student_task_progress", "student_id", ["task_id"]),
+    # tsk-992: расписание повторов — одна строка на (ученик, задание, корень).
+    ("task_review_schedule", "student_id", ["task_id", "course_id"]),
     ("lesson_slot_student", "student_id", ["slot_id"]),
     ("lesson_occurrence_participant", "student_id", ["occurrence_id"]),
     # tsk-548: ручная цена — договорённость с человеком, а не свойство строки в

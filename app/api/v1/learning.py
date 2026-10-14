@@ -43,6 +43,12 @@ from app.schemas.learning_api import (
     MaterialRequestHelpResponse,
 )
 from app.schemas.learning_engine import NextItemResult
+from app.schemas.retrieval import (
+    ReviewAnswerRequest,
+    ReviewAnswerResponse,
+    ReviewDueItem,
+    ReviewDueResponse,
+)
 from app.services.learning_engine_service import LearningEngineService
 from app.services.learning_events_service import (
     record_help_requested,
@@ -72,6 +78,7 @@ from app.services import lesson_attendance_service
 # tsk-301: единственная дверь прав подписки — своей проверки здесь быть не должно.
 from app.services import entitlements_service
 from app.services import help_attempt_gate
+from app.services import retrieval_service
 from app.services import course_activity_service
 from app.services.attempts_service import AttemptsService
 from app.services.tasks_service import TasksService
@@ -1276,3 +1283,110 @@ async def hint_events(
         task_id, body.attempt_id, body.hint_type, body.hint_index, event_id, deduplicated,
     )
     return HintEventResponse(ok=True, deduplicated=deduplicated, event_id=event_id)
+
+
+# ----- tsk-992 (П3): повторение по следам ошибок -----
+
+
+@router.get(
+    "/courses/{course_id}/review-due",
+    response_model=ReviewDueResponse,
+    responses=_PAYMENT_403,
+    summary="Задания курса, которые пора повторить (tsk-992)",
+    description=(
+        "Задания «сначала завалил, потом сдал», у которых подошёл срок повтора "
+        "(`due_at <= now`, не закреплены). `course_id` — корневой курс. Пустой "
+        "список, если повторение на курсе выключено (`retrieval_config`)."
+    ),
+)
+async def get_review_due(
+    course_id: int = Path(..., description="ID корневого курса"),
+    student_id: int = Query(..., description="ID студента"),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_bare_db),
+) -> ReviewDueResponse:
+    """Список «пора повторить» по корневому курсу.
+
+    :raises HTTPException: 403 — чужой `student_id`.
+    """
+    if not current_user.is_service and current_user.id != student_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
+    # Как у остальных учебных путей: просроченная оплата закрывает контент.
+    await payment_access_service.assert_content_allowed(db, student_id)
+    items = await retrieval_service.list_due(db, student_id=student_id, course_id=course_id)
+    return ReviewDueResponse(
+        course_id=course_id,
+        items=[
+            ReviewDueItem(
+                task_id=i.task_id,
+                external_uid=i.external_uid,
+                title=i.title,
+                task_type=i.task_type,
+                interval_stage=i.interval_stage,
+                due_at=i.due_at,
+                days_since_solved=i.days_since_solved,
+            )
+            for i in items
+        ],
+    )
+
+
+@router.post(
+    "/courses/{course_id}/review/{task_id}/answer",
+    response_model=ReviewAnswerResponse,
+    responses={
+        **_PAYMENT_403,
+        404: {"description": "Задание не стоит на повторении (`payload.code = retrieval_not_scheduled`)"},
+        409: {
+            "description": (
+                "Повтор не принят: повторение на курсе выключено "
+                "(`retrieval_disabled`), срок ещё не подошёл (`retrieval_not_due`, "
+                "`payload.due_at`) либо задание не проверяется автоматически "
+                "(`retrieval_unsupported`)"
+            )
+        },
+    },
+    summary="Сдать повтор задания (tsk-992)",
+    description=(
+        "Ответ проверяется той же автоматикой, что и обычная сдача, и пишется "
+        "в `task_results` с `source_system='retrieval'` в открытую курсовую "
+        "попытку (или новую по механике start-or-get-attempt). Статус задания в "
+        "учебном пути, счёт и лимит попыток повтор не меняет. Верно — следующая "
+        "стадия (+7 / +21 день) или «закреплено»; неверно — стадия 0, +3 дня."
+    ),
+)
+async def submit_review_answer(
+    course_id: int = Path(..., description="ID корневого курса"),
+    task_id: int = Path(..., description="ID задания"),
+    body: ReviewAnswerRequest = Body(...),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_bare_db),
+) -> ReviewAnswerResponse:
+    """Принять ответ на повтор и сдвинуть расписание.
+
+    :raises HTTPException: 403 — чужой `student_id`.
+    :raises DomainError: 404/409 — см. `retrieval_service.submit_review`.
+    """
+    if not current_user.is_service and current_user.id != body.student_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
+    # Те же гейты, что у обычной сдачи: просроченная оплата и тариф
+    # «Выпускник» закрывают работу в курсе — по УЧЕНИКУ, не по вызывающему.
+    await payment_access_service.assert_content_allowed(db, body.student_id)
+    await graduation_service.assert_course_work_allowed(db, body.student_id)
+    outcome = await retrieval_service.submit_review(
+        db,
+        student_id=body.student_id,
+        task_id=task_id,
+        course_id=course_id,
+        answer=body.answer,
+    )
+    return ReviewAnswerResponse(
+        task_id=outcome.task_id,
+        task_result_id=outcome.task_result_id,
+        attempt_id=outcome.attempt_id,
+        check_result=outcome.check_result,
+        is_correct=outcome.is_correct,
+        interval_stage=outcome.interval_stage,
+        next_due_at=outcome.next_due_at,
+        completed=outcome.completed,
+    )

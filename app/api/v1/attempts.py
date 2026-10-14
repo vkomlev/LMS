@@ -75,6 +75,7 @@ from app.services.attempt_attachments import (
 )
 from app.services.learning_engine_service import LearningEngineService
 from app.services import dependency_lock_service
+from app.services import retrieval_service
 from app.services.tasks_acl_service import (
     assert_task_access,
     assert_task_active_for_student,
@@ -1383,6 +1384,36 @@ async def submit_attempt_answers(
                 await db.rollback()
             except Exception:
                 pass
+
+        # 2.4c' tsk-992 (П3): задание «сначала завалил, потом сдал» встаёт на
+        # повтор (3 → 7 → 21 день). Только при включённом рубильнике корневого
+        # курса — проверка рубильника первой, так что на выключенных курсах
+        # (по умолчанию все) — один запрос конфига и ничего больше, даже точки
+        # сохранения. Ручной зачёт сюда не ходит, а
+        # сам сервис ещё раз отсекает `manual_teacher`. Soft-fail по тому же
+        # паттерну, что 2.4b/2.4c: расписание повторов не роняет сдачу.
+        # Точка сохранения, а не db.rollback() (как в 2.4e): полный откат
+        # экспайрит attempt/task, и следующее обращение к ним → MissingGreenlet.
+        # В логе ошибки к ORM не обращаемся: объекты могли истечь в блоке выше.
+        retrieval_task_id: Optional[int] = None
+        try:
+            retrieval_task_id = task.id
+            if await retrieval_service.is_enabled(db, effective_root_id):
+                async with db.begin_nested():
+                    scheduled = await retrieval_service.schedule_after_pass(
+                        db,
+                        student_id=attempt.user_id,
+                        task_id=retrieval_task_id,
+                        root_course_id=effective_root_id,
+                        task_result_id=getattr(task_result, "id", None),
+                    )
+                if scheduled:
+                    await db.commit()
+        except Exception:
+            logger.warning(
+                "tsk-992: постановка на повтор не удалась: attempt=%s task=%s",
+                attempt_id, retrieval_task_id, exc_info=True,
+            )
 
         # 2.4d tsk-439: реальное учебное действие (сдача ответа) во время
         # окна занятия автоматически подтверждает явку — не дожидаясь клика

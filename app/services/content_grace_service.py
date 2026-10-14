@@ -90,6 +90,8 @@ from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.learning_gaps_service import learning_path_results_filter
+
 logger = logging.getLogger(__name__)
 
 _GRACE_CACHE_KEY = "tsk692_content_grace_cache"
@@ -212,7 +214,7 @@ SELECT DISTINCT node_id FROM tree
 # но появиться они могут — например ручным зачётом мимо сервиса. Поэтому зачёт с
 # неизвестным временем читается как «когда закрыл — неизвестно» и отменяет
 # прощение узла, а не занижает его границу.
-_TREE_ITEMS_SQL = """
+_TREE_ITEMS_SQL = f"""
 /* tsk692-grace-items */
 WITH last_per_task AS (
     SELECT DISTINCT ON (tr.task_id)
@@ -220,6 +222,8 @@ WITH last_per_task AS (
     FROM task_results tr
     INNER JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
     WHERE tr.user_id = :student_id
+      -- tsk-992: сдача повтора не меняет «закрыто» и время закрытия.
+      AND {learning_path_results_filter('tr')}
       AND tr.task_id IN (
           SELECT id FROM tasks
           WHERE course_id = ANY(:tree_ids)

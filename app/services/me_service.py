@@ -24,6 +24,7 @@ from app.services.learning_engine_service import PASS_THRESHOLD_RATIO, is_mentor
 # tsk-656: единственное место, где живёт правило «это реальная сдача ученика»,
 # а не отметка преподавателя. Копировать условие сюда нельзя — разъедется.
 from app.services.learning_gaps_service import (
+    learning_path_results_filter,
     real_student_material_filter,
     real_student_results_filter,
 )
@@ -324,6 +325,8 @@ last_attempt_per_task AS (
        AND a.user_id = :user_id
        AND a.cancelled_at IS NULL
     WHERE tr.user_id = :user_id
+      -- tsk-992: сдача повтора не меняет «пройдено».
+      AND __LEARNING_PATH__
     ORDER BY tr.task_id, tr.submitted_at DESC, tr.id DESC
 ),
 tasks_total_per_root AS (
@@ -405,7 +408,7 @@ LEFT JOIN materials_done_per_root  md ON md.root_course_id = uc.course_id
 LEFT JOIN last_active_per_root     la ON la.root_course_id = uc.course_id
 LEFT JOIN student_course_state    scs ON scs.course_id = uc.course_id AND scs.student_id = :user_id
 ORDER BY la.last_active_at DESC NULLS LAST, uc.order_number ASC NULLS LAST
-"""
+""".replace("__LEARNING_PATH__", learning_path_results_filter("tr"))
 
 
 async def get_courses_with_progress(db: AsyncSession, user_id: int) -> list[dict]:
@@ -825,7 +828,7 @@ LIMIT :limit OFFSET :offset
 # (прогресс: passed) остаётся общим для всех корней — что ученик знает, то знает.
 # attempts_limit_effective: квиз (SC_Qw/MC_Qw) → 1 (tsk-124, перебивает всё);
 # иначе override → tasks.max_attempts → DEFAULT_MAX_ATTEMPTS.
-_SYLLABUS_TASKS_SQL = """
+_SYLLABUS_TASKS_SQL = f"""
 WITH last_per_task AS (
     SELECT DISTINCT ON (tr.task_id)
         tr.task_id,
@@ -837,6 +840,8 @@ WITH last_per_task AS (
     FROM task_results tr
     INNER JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
     WHERE tr.user_id = :user_id
+      -- tsk-992: сдача повтора не меняет статус и не тратит лимит попыток.
+      AND {learning_path_results_filter("tr")}
       AND tr.task_id IN (
           SELECT id FROM tasks
           WHERE course_id = ANY(:tree_ids)
@@ -850,6 +855,7 @@ attempts_per_task AS (
     INNER JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
     INNER JOIN tasks qt ON qt.id = tr.task_id
     WHERE tr.user_id = :user_id
+      AND {learning_path_results_filter("tr")}
       AND (
             -- Квиз: ответ один навсегда, submit отклоняет повтор глобально
             -- (409) — значит и счёт общий, иначе покажем «попытка есть» там,
@@ -886,7 +892,7 @@ SELECT
     t.requirement_level,
     t.task_content->>'type' AS task_type,
     -- tsk-684: название, тип и uid отдаются прямо здесь. Раньше кабинет
-    -- добирал их запросом `GET /tasks/by-course/{id}` НА КАЖДЫЙ подкурс: у
+    -- добирал их запросом `GET /tasks/by-course/{{id}}` НА КАЖДЫЙ подкурс: у
     -- флагмана это 55 запросов и 6,7 МБ полного содержимого заданий ради
     -- шести коротких полей (замер 26.08). Все поля лежат в строках, которые
     -- этот SELECT уже читает, — новых обращений к базе ноль.

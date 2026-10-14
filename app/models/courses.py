@@ -77,6 +77,14 @@ class Courses(Base):
             "{enabled, threshold, easy_ratio}. NULL/enabled=false = все задания."
         ),
     )
+    retrieval_config: Mapped[Optional[dict]] = mapped_column(
+        JSONB,
+        nullable=True,
+        comment=(
+            "Повторение по следам ошибок (tsk-992): {enabled}. "
+            "NULL/enabled=false — выключено."
+        ),
+    )
     is_exam: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,

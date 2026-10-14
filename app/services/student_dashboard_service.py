@@ -104,6 +104,7 @@ from app.services.teacher_lesson_summary_service import (
 )
 # tsk-656: правило «это реальная сдача ученика» — из одного места.
 from app.services.learning_gaps_service import (
+    learning_path_results_filter,
     SERVICE_COURSES_CTE,
     real_student_material_filter,
     real_student_results_filter,
@@ -167,6 +168,8 @@ async def _load_in_class_hours_window(
                 "    JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL "
                 "    WHERE tr.user_id = :student_id AND tr.is_correct = true "
                 "      AND tr.source_system IS DISTINCT FROM :manual_source "
+                # tsk-992: повтор пройденного — не «выполнено за период».
+                f"      AND {learning_path_results_filter('tr')} "
                 "      AND tr.submitted_at >= :period_from AND tr.submitted_at <= :period_to "
                 f"      AND {in_lesson_sql('tr.submitted_at', ':student_id')} "
                 "    ORDER BY tr.task_id, tr.submitted_at ASC "
@@ -588,6 +591,7 @@ async def _bulk_between_lessons_activity(
                 "JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL "
                 "WHERE tr.user_id = ANY(:peer_ids) AND tr.is_correct = true "
                 "  AND tr.source_system IS DISTINCT FROM :manual_source "
+                f"  AND {learning_path_results_filter('tr')} "
                 "  AND tr.submitted_at >= :period_from AND tr.submitted_at <= :period_to "
                 "GROUP BY tr.user_id"
             ),

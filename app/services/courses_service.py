@@ -653,6 +653,42 @@ class CoursesService(BaseService[Courses]):
         ).scalar() or 0
         return {"sampling_config": course.sampling_config, "easy_normal_count": int(count)}
 
+    async def get_retrieval_config(
+        self, db: AsyncSession, course_id: int
+    ) -> Optional[Dict[str, Any]]:
+        """Прочитать рубильник повторения `courses.retrieval_config` (tsk-992).
+
+        Returns:
+            `None`, если курса нет. Иначе `{"enabled": bool}` — пустое поле
+            читается как выключенное.
+        """
+        from app.services.retrieval_service import config_enabled
+
+        course = await self.get_by_id(db, course_id)
+        if course is None:
+            return None
+        return {"enabled": config_enabled(course.retrieval_config)}
+
+    async def set_retrieval_config(
+        self, db: AsyncSession, course_id: int, config: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
+        """Записать рубильник повторения `courses.retrieval_config` (tsk-992).
+
+        Полная замена конфига (как у `sampling_config`). Выключение не трогает
+        расписание учеников: блок «Пора повторить» просто перестаёт выдаваться,
+        а при повторном включении сроки продолжаются с того же места.
+
+        Returns:
+            Записанный конфиг либо `None`, если курса нет.
+        """
+        course = await self.get_by_id(db, course_id)
+        if course is None:
+            return None
+        course.retrieval_config = config
+        await db.commit()
+        await db.refresh(course)
+        return dict(course.retrieval_config or {})
+
     async def set_sampling_config(
         self, db: AsyncSession, course_id: int, config: Optional[Dict[str, Any]]
     ) -> Optional[Courses]:

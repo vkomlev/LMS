@@ -1478,12 +1478,21 @@ async def list_pending_reviews(
             submitted_to + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc
         )
 
+    # tsk-992: сдача повтора авто-проверена и преподавателю на просмотр не
+    # выносится (в обязательную очередь она не попадает по типу задания).
+    from app.services.learning_gaps_service import learning_path_results_filter
+
+    retrieval_off = learning_path_results_filter("tr")
     if review_kind == "optional":
-        kind_sql = f"({optional_review_sql('t')} AND tr.is_correct IS NOT NULL)"
+        kind_sql = (
+            f"({optional_review_sql('t')} AND tr.is_correct IS NOT NULL "
+            f"AND {retrieval_off})"
+        )
     elif review_kind == "all":
         kind_sql = (
             f"({mandatory_review_sql('t')} "
-            f"OR ({optional_review_sql('t')} AND tr.is_correct IS NOT NULL))"
+            f"OR ({optional_review_sql('t')} AND tr.is_correct IS NOT NULL "
+            f"AND {retrieval_off}))"
         )
     else:
         kind_sql = mandatory_review_sql('t')

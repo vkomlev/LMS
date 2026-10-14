@@ -644,6 +644,8 @@ async def get_pending_review_results(
             TaskResults.checked_at.is_(None),
             TaskResults.is_correct.isnot(None),
             sa_text(optional_review_sql("tasks")),
+            # tsk-992: сдача повтора на просмотр преподавателю не выносится.
+            TaskResults.source_system.is_distinct_from("retrieval"),
         ]
     else:
         # mandatory (default): очередь обязательной ручной проверки. tsk-247:

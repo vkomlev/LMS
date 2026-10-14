@@ -32,6 +32,7 @@ from app.services import (
     course_dependencies_enrollment_service,
 )
 from app.utils.exceptions import DomainError
+from app.services.learning_gaps_service import learning_path_results_filter
 
 logger = logging.getLogger(__name__)
 
@@ -390,7 +391,10 @@ async def _evaluate_course_failed(
                 "SELECT "
                 "  COUNT(*) FILTER (WHERE is_correct IS NOT NULL) AS checked, "
                 "  COUNT(*) FILTER (WHERE is_correct = true) AS correct "
-                "FROM task_results WHERE attempt_id = :aid"
+                "FROM task_results tr WHERE tr.attempt_id = :aid "
+                # tsk-992: повтор лежит в той же курсовой попытке, но в долю
+                # верных по курсу не входит.
+                f"  AND {learning_path_results_filter('tr')}"
             ),
             {"aid": attempt_id},
         )
@@ -455,6 +459,7 @@ async def _accumulate_course_scales(
                 "JOIN tasks t ON t.id = tr.task_id "
                 "WHERE tr.user_id = :uid AND t.course_id = :cid "
                 "  AND tr.scale_scores IS NOT NULL "
+                f"  AND {learning_path_results_filter('tr')} "
                 "ORDER BY tr.task_id, tr.submitted_at DESC, tr.id DESC"
             ),
             {"uid": student_id, "cid": course_id},

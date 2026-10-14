@@ -45,6 +45,7 @@ from app.services import (
 )
 from app.services.content_grace_service import compute_graced_items
 from app.services.learning_gaps_service import (
+    learning_path_results_filter,
     SERVICE_COURSES_CTE,
     non_service_course_filter,
     real_student_results_filter,
@@ -382,6 +383,8 @@ async def load_homework_window(
                 "    JOIN tasks t ON t.id = tr.task_id "
                 "    WHERE tr.user_id = :student_id AND tr.is_correct = true "
                 "      AND tr.source_system IS DISTINCT FROM :manual_source "
+                # tsk-992: повтор пройденного — не «выполнено за окно».
+                f"      AND {learning_path_results_filter('tr')} "
                 f"      AND {non_service_course_filter('t')} "
                 "      AND tr.submitted_at >= COALESCE(:window_from, '-infinity'::timestamptz) "
                 "      AND tr.submitted_at <= :window_to "
@@ -461,6 +464,7 @@ async def load_homework_window(
                 "    JOIN tasks t ON t.id = tr.task_id "
                 "    WHERE tr.user_id = :student_id AND tr.is_correct = true "
                 "      AND tr.source_system IS DISTINCT FROM :manual_source "
+                f"      AND {learning_path_results_filter('tr')} "
                 "      AND t.course_id IN (SELECT id FROM service_courses) "
                 "      AND tr.submitted_at >= COALESCE(:window_from, '-infinity'::timestamptz) "
                 "      AND tr.submitted_at <= :window_to "

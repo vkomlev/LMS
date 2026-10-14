@@ -56,6 +56,11 @@ from app.services.content_grace_service import EMPTY_GRACE, compute_graced_items
 # «курса с неоценёнными работами» из 824. Цикла нет — `teacher_queue_service`
 # учебный движок не тянет.
 from app.services.teacher_queue_service import mandatory_review_sql
+from app.services.learning_gaps_service import learning_path_results_filter
+
+#: tsk-992: сдача повтора (`source_system='retrieval'`) не входит в статус задания
+#: и в счёт попыток — см. `learning_path_results_filter`.
+_LEARNING_PATH = learning_path_results_filter("tr")
 from app.utils.exceptions import DomainError
 from pydantic import ValidationError
 
@@ -551,11 +556,12 @@ class LearningEngineService:
 
         # Число поданных ответов по задаче (учитывая активный course-level attempt).
         # tsk-264: при заданном корне — только попытки этого корня (см. docstring).
-        count_stmt = text("""
+        count_stmt = text(f"""
             SELECT COUNT(*)
             FROM task_results tr
             INNER JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
             WHERE tr.user_id = :student_id AND tr.task_id = :task_id
+              AND {_LEARNING_PATH}
               AND (
                     CAST(:root_course_id AS INTEGER) IS NULL
                     OR a.root_course_id = CAST(:root_course_id AS INTEGER)
@@ -571,12 +577,13 @@ class LearningEngineService:
         # tsk-222: дополнительно тянем answer_json/is_correct/checked_at — тот же
         # ряд, что уже используется для last_score, без новых JOIN'ов. answer_json —
         # это ответ ученика (StudentAnswer), эталон в него не входит.
-        last_stmt = text("""
+        last_stmt = text(f"""
             SELECT a.id, tr.submitted_at, tr.score, tr.max_score,
                    tr.answer_json, tr.is_correct, tr.checked_at
             FROM task_results tr
             INNER JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
             WHERE tr.user_id = :student_id AND tr.task_id = :task_id
+              AND {_LEARNING_PATH}
             ORDER BY tr.submitted_at DESC, tr.id DESC
             LIMIT 1
         """)
@@ -768,6 +775,7 @@ class LearningEngineService:
                     "INNER JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL "
                     "INNER JOIN tasks t ON t.id = tr.task_id "
                     "WHERE tr.user_id = :student_id AND tr.task_id = ANY(:ids) "
+                    f"  AND {_LEARNING_PATH} "
                     "  AND ( "
                     "        CAST(:root_course_id AS INTEGER) IS NULL "
                     "        OR t.task_content->>'type' = ANY(:quiz_types) "
@@ -797,6 +805,7 @@ class LearningEngineService:
                         "FROM task_results tr "
                         "INNER JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL "
                         "WHERE tr.user_id = :student_id AND tr.task_id = ANY(:ids) "
+                        f"  AND {_LEARNING_PATH} "
                         "ORDER BY tr.task_id, tr.submitted_at DESC, tr.id DESC"
                     ),
                     {"student_id": student_id, "ids": ids},
@@ -967,7 +976,7 @@ class LearningEngineService:
         # Число заданий в дереве, по которым последний task_result — PASS.
         # Парность compute_task_state: учитываем все task_results из не-cancelled attempts
         # (включая активный course-level attempt), порядок — по submitted_at task_result.
-        tasks_with_last_pass_stmt = text("""
+        tasks_with_last_pass_stmt = text(f"""
             WITH last_per_task AS (
                 SELECT DISTINCT ON (tr.task_id)
                     tr.task_id, tr.score AS last_score, tr.max_score AS last_max
@@ -979,6 +988,7 @@ class LearningEngineService:
                    AND t.is_active = true
                    AND t.requirement_level IN ('required', 'skippable')
                 WHERE tr.user_id = :student_id
+                  AND {_LEARNING_PATH}
                 ORDER BY tr.task_id, tr.submitted_at DESC, tr.id DESC
             )
             SELECT COUNT(*) FROM (

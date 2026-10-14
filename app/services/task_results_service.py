@@ -12,7 +12,11 @@ from app.schemas.checking import StudentAnswer, CheckResult
 from app.schemas.task_results import TaskResultCreate
 from app.services.base import BaseService
 from app.services.checking_service import CheckingService
-from app.services.learning_gaps_service import REAL_STUDENT_SOURCES
+from app.services.learning_gaps_service import (
+    REAL_STUDENT_SOURCES,
+    RETRIEVAL_SOURCE,
+    learning_path_results_filter,
+)
 
 # Learning Engine V1, этап 6: порог для PASS по последней попытке
 PASS_THRESHOLD_RATIO = 0.5
@@ -241,7 +245,8 @@ class TaskResultsService(BaseService[TaskResults]):
         результат по заданию, попытка не аннулирована. Тот же дефект в тех же
         словах уже чинили в `me_service`; здесь он дожил до сегодня.
         """
-        conditions = ["a.cancelled_at IS NULL"]
+        # tsk-992: сдача повтора не меняет «пройдено» по заданию.
+        conditions = ["a.cancelled_at IS NULL", learning_path_results_filter("tr")]
         params: Dict[str, Any] = {}
         if user_id is not None:
             conditions.append("tr.user_id = :user_id")
@@ -342,6 +347,7 @@ class TaskResultsService(BaseService[TaskResults]):
                 INNER JOIN tasks t ON t.id = tr.task_id
                 WHERE tr.user_id = :uid
                   AND a.cancelled_at IS NULL
+                  AND {learning_path_results_filter("tr")}
                   {course_filter}
             )
             SELECT task_id,
@@ -707,7 +713,12 @@ class TaskResultsService(BaseService[TaskResults]):
             )
             .select_from(TaskResults)
             .join(Attempts, TaskResults.attempt_id == Attempts.id)
-            .where(TaskResults.user_id == user_id, Attempts.cancelled_at.is_(None))
+            .where(
+                TaskResults.user_id == user_id,
+                Attempts.cancelled_at.is_(None),
+                # tsk-992: повтор не добавляет баллов к прохождению.
+                TaskResults.source_system.is_distinct_from(RETRIEVAL_SOURCE),
+            )
         )
         totals_row = (await db.execute(totals_query)).first()
 
