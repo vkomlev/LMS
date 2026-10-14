@@ -130,7 +130,10 @@ async def create_lead(
     contact: str,
     note: Optional[str],
     created_by: Optional[int],
+    commit: bool = True,
 ) -> int:
+    """Завести лида; `commit=False` — оставить транзакцию вызывающему
+    (например, чтобы в ней же записать согласие на обработку ПДн, tsk-1335)."""
     lead_id = (
         await db.execute(
             text(
@@ -149,7 +152,8 @@ async def create_lead(
             },
         )
     ).scalar_one()
-    await db.commit()
+    if commit:
+        await db.commit()
     return int(lead_id)
 
 

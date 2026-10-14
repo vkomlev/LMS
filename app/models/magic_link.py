@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import DateTime, ForeignKeyConstraint, Integer, LargeBinary, String, text
+from sqlalchemy import BigInteger, DateTime, ForeignKeyConstraint, Integer, LargeBinary, String, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -31,6 +31,10 @@ class MagicLink(Base):
             ["issued_by_user_id"], ["users.id"], ondelete="SET NULL",
             name="magic_link_issued_by_user_id_fkey",
         ),
+        ForeignKeyConstraint(
+            ["pd_consent_id"], ["pd_consents.id"], ondelete="SET NULL",
+            name="magic_link_pd_consent_id_fkey",
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -49,3 +53,7 @@ class MagicLink(Base):
     )
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     consumed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    pd_consent_id: Mapped[Optional[int]] = mapped_column(
+        BigInteger, nullable=True,
+        comment="Согласие на обработку ПДн, данное при запросе ссылки (tsk-1335)",
+    )

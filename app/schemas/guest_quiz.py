@@ -11,6 +11,8 @@ from typing import Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.pd_consent import PdConsentFields
+
 
 class QuizOption(BaseModel):
     """Вариант ответа. Баллы по шкалам наружу не отдаются — это внутренняя механика подбора."""
@@ -101,7 +103,7 @@ class QuizResultResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-class QuizLeadRequest(BaseModel):
+class QuizLeadRequest(PdConsentFields):
     """Тело POST /learning/guest/quiz/{course_uid}/lead."""
 
     contact: str = Field(

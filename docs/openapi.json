@@ -57533,6 +57533,36 @@
       },
       "ExternalLeadCreateRequest": {
         "properties": {
+          "consent": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Consent",
+            "description": "Галочка согласия на обработку персональных данных"
+          },
+          "filler_role": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "parent",
+                  "adult",
+                  "teen_14_17",
+                  "under_14"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filler Role",
+            "description": "Кто заполняет: parent — родитель, adult — взрослый о себе, teen_14_17 — подросток 14–17, under_14 — младше 14 (заявка не принимается)"
+          },
           "external_source": {
             "type": "string",
             "maxLength": 64,
@@ -58239,6 +58269,36 @@
       },
       "FunnelLeadRequest": {
         "properties": {
+          "consent": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Consent",
+            "description": "Галочка согласия на обработку персональных данных"
+          },
+          "filler_role": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "parent",
+                  "adult",
+                  "teen_14_17",
+                  "under_14"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filler Role",
+            "description": "Кто заполняет: parent — родитель, adult — взрослый о себе, teen_14_17 — подросток 14–17, under_14 — младше 14 (заявка не принимается)"
+          },
           "contact": {
             "type": "string",
             "maxLength": 200,
@@ -64073,6 +64133,36 @@
       },
       "MagicLinkRequest": {
         "properties": {
+          "consent": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Consent",
+            "description": "Галочка согласия на обработку персональных данных"
+          },
+          "filler_role": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "parent",
+                  "adult",
+                  "teen_14_17",
+                  "under_14"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filler Role",
+            "description": "Кто заполняет: parent — родитель, adult — взрослый о себе, teen_14_17 — подросток 14–17, under_14 — младше 14 (заявка не принимается)"
+          },
           "email": {
             "type": "string",
             "format": "email",
@@ -70246,6 +70336,36 @@
       },
       "QuizLeadRequest": {
         "properties": {
+          "consent": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Consent",
+            "description": "Галочка согласия на обработку персональных данных"
+          },
+          "filler_role": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "parent",
+                  "adult",
+                  "teen_14_17",
+                  "under_14"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filler Role",
+            "description": "Кто заполняет: parent — родитель, adult — взрослый о себе, teen_14_17 — подросток 14–17, under_14 — младше 14 (заявка не принимается)"
+          },
           "contact": {
             "type": "string",
             "maxLength": 200,
@@ -82126,6 +82246,36 @@
       },
       "TgInitRequest": {
         "properties": {
+          "consent": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Consent",
+            "description": "Галочка согласия на обработку персональных данных"
+          },
+          "filler_role": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "parent",
+                  "adult",
+                  "teen_14_17",
+                  "under_14"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filler Role",
+            "description": "Кто заполняет: parent — родитель, adult — взрослый о себе, teen_14_17 — подросток 14–17, under_14 — младше 14 (заявка не принимается)"
+          },
           "init_data": {
             "type": "string",
             "minLength": 1,
@@ -83692,6 +83842,36 @@
       },
       "VkCallbackRequest": {
         "properties": {
+          "consent": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Consent",
+            "description": "Галочка согласия на обработку персональных данных"
+          },
+          "filler_role": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "parent",
+                  "adult",
+                  "teen_14_17",
+                  "under_14"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filler Role",
+            "description": "Кто заполняет: parent — родитель, adult — взрослый о себе, teen_14_17 — подросток 14–17, under_14 — младше 14 (заявка не принимается)"
+          },
           "code": {
             "type": "string",
             "minLength": 1,
@@ -83789,6 +83969,36 @@
       },
       "WebsiteLeadRequest": {
         "properties": {
+          "consent": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Consent",
+            "description": "Галочка согласия на обработку персональных данных"
+          },
+          "filler_role": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "parent",
+                  "adult",
+                  "teen_14_17",
+                  "under_14"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filler Role",
+            "description": "Кто заполняет: parent — родитель, adult — взрослый о себе, teen_14_17 — подросток 14–17, under_14 — младше 14 (заявка не принимается)"
+          },
           "full_name": {
             "type": "string",
             "maxLength": 200,

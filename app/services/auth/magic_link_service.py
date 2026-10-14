@@ -9,6 +9,7 @@ import hashlib
 import logging
 import os
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -40,14 +41,20 @@ def _hash_token(raw: bytes) -> bytes:
 async def create_magic_link(
     db: AsyncSession,
     email: str,
+    pd_consent_id: Optional[int] = None,
 ) -> str:
-    """Создать одноразовый токен и сохранить hash; вернуть raw hex-токен."""
+    """Создать одноразовый токен и сохранить hash; вернуть raw hex-токен.
+
+    `pd_consent_id` — согласие на обработку ПДн, данное при запросе ссылки на
+    новый адрес (tsk-1335): на verify ему проставится созданный пользователь.
+    """
     raw = os.urandom(_TOKEN_BYTES)
     token_hash = _hash_token(raw)
     link = MagicLink(
         email=email,
         token_hash=token_hash,
         expires_at=_now() + timedelta(minutes=_TTL_MINUTES),
+        pd_consent_id=pd_consent_id,
     )
     db.add(link)
     await db.flush()

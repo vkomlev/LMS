@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_bare_db
 from app.core.config import Settings
 from app.schemas.auth import AuthTokenResponse, VkCallbackRequest
-from app.services import user_block_service
+from app.services import pd_consent_service, user_block_service
 from app.services.auth import session_service
 from app.services.auth.exceptions import IdentityConflictError
 from app.services.auth.guest_attribution_service import attribute_guest_session
@@ -123,6 +123,19 @@ async def vk_callback(
                 "message": message,
             },
         )
+
+    if created:
+        # tsk-1335: новый пользователь — проверка согласия; отказ откатывает
+        # только что созданного пользователя (коммита ещё не было).
+        try:
+            record = pd_consent_service.check_consent(body, source="vk", registration=True)
+        except pd_consent_service.PdConsentError:
+            await db.rollback()
+            raise
+        if record:
+            await pd_consent_service.record_consent(
+                db, request, body, source="vk", user_id=user.id,
+            )
 
     # tsk-432: заблокированному отказываем ДО создания сеанса — иначе он
     # «вошёл бы» и упёрся в отказ на первом же экране, не понимая причины.

@@ -15,7 +15,7 @@ from app.schemas.auth import (
     MagicLinkVerifyRequest,
     MessageResponse,
 )
-from app.services import user_block_service
+from app.services import pd_consent_service, user_block_service
 from app.services.auth import magic_link_service, session_service
 from app.services.auth.cookie import set_refresh_cookie, set_session_cookie
 from app.services.auth.exceptions import IdentityConflictError
@@ -49,7 +49,15 @@ async def send_magic_link(
     # у нас учится), но оператор должен видеть попытки на ничьи адреса: за неделю
     # до задачи три ученика ждали письма, которое некому было получить.
     recipient_known = await magic_link_service.is_known_recipient(db, email)
-    token = await magic_link_service.create_magic_link(db, email)
+    # tsk-1335: согласие на ПДн — только для регистрации НОВОГО адреса. Вход
+    # существующего и link-режим (привязка почты в кабинете) не трогаем.
+    consent_id = None
+    if not recipient_known and not body.link_mode:
+        if pd_consent_service.check_consent(body, source="magic_link", registration=True):
+            consent_id = await pd_consent_service.record_consent(
+                db, request, body, source="magic_link", email=email,
+            )
+    token = await magic_link_service.create_magic_link(db, email, pd_consent_id=consent_id)
     await db.commit()
 
     background.add_task(
@@ -153,6 +161,10 @@ async def verify_magic_link(
     # tsk-432: заблокированному отказываем ДО создания сеанса — иначе он
     # «вошёл бы» и упёрся в отказ на первом же экране, не понимая причины.
     await user_block_service.assert_not_blocked(db, user.id)
+
+    if link.pd_consent_id is not None:
+        # tsk-1335: согласие дано на send, когда пользователя ещё не было.
+        await pd_consent_service.attach_user(db, link.pd_consent_id, user.id)
 
     if body.guest_session_id:
         await attribute_guest_session(db, body.guest_session_id, user.id)

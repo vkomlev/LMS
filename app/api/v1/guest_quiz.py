@@ -27,6 +27,7 @@ from app.schemas.guest_quiz import (
     QuizResultResponse,
 )
 from app.services import guest_quiz_service
+from app.services import pd_consent_service
 from app.services.rate_limit_service import get_redis, is_rate_limited
 from app.utils.exceptions import DomainError
 
@@ -204,6 +205,7 @@ async def submit_quiz_lead(
             status.HTTP_429_TOO_MANY_REQUESTS, "Слишком много заявок в этой сессии"
         )
 
+    record = pd_consent_service.check_consent(body, source="quiz")
     try:
         lead_id, already = await guest_quiz_service.create_quiz_lead(
             db=db,
@@ -212,6 +214,11 @@ async def submit_quiz_lead(
             contact=body.contact.strip(),
             full_name=(body.full_name or "").strip() or None,
         )
+        if record:
+            await pd_consent_service.record_consent(
+                db, request, body, source="quiz",
+                lead_id=lead_id, guest_session_id=gs_uuid,
+            )
     except DomainError:
         await db.rollback()
         raise

@@ -529,6 +529,22 @@ class Settings:
         self.quiz_funnel_reminders_enabled: bool = os.getenv(
             "QUIZ_FUNNEL_REMINDERS_ENABLED", "false"
         ).lower() in ("true", "1", "yes")
+        # tsk-1335 (152-ФЗ): редакции документов, на которые ссылается галочка
+        # согласия, — пишутся в журнал pd_consents вместе с самим согласием.
+        self.pd_consent_version: str = os.getenv("PD_CONSENT_VERSION", "2026-10-13")
+        self.pd_policy_version: str = os.getenv("PD_POLICY_VERSION", "2026-10-13")
+        # Ссылки на тексты в форме-виджете лендинга (public_leads widget).
+        self.pd_consent_url: str = os.getenv(
+            "PD_CONSENT_URL", "https://victor-komlev.ru/soglasie-na-obrabotku-personalnyh-dannyh/"
+        )
+        self.pd_policy_url: str = os.getenv(
+            "PD_POLICY_URL", "https://victor-komlev.ru/politika-konfidentsialnosti/"
+        )
+        # Рубильник обязательности согласия. Выключен, пока фронты не начали
+        # слать поля consent/filler_role: включение — правка .env + рестарт.
+        self.pd_consent_required: bool = os.getenv(
+            "PD_CONSENT_REQUIRED", "false"
+        ).lower() in ("true", "1", "yes")
         self.magic_link_secret: str = os.getenv("MAGIC_LINK_SECRET", "")
         self.session_signing_key: str = os.getenv("SESSION_SIGNING_KEY", "")
         self.fernet_master_key: str = os.getenv("FERNET_MASTER_KEY", "")

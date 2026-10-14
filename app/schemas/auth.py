@@ -4,10 +4,12 @@ from typing import Literal
 
 from pydantic import BaseModel, EmailStr, Field
 
+from app.schemas.pd_consent import PdConsentFields
+
 
 # ── Magic Link ──────────────────────────────────────────────────────────────
 
-class MagicLinkRequest(BaseModel):
+class MagicLinkRequest(PdConsentFields):
     email: EmailStr
     link_mode: bool = False  # Phase Y-3: при True email-linking flow (см. tech-spec §5.6, §7.5)
 
@@ -32,14 +34,14 @@ class MagicLinkVerifyLinkModeResponse(BaseModel):
 
 # ── Telegram initData ────────────────────────────────────────────────────────
 
-class TgInitRequest(BaseModel):
+class TgInitRequest(PdConsentFields):
     init_data: str = Field(..., min_length=1)
     guest_session_id: str | None = None
 
 
 # ── VK ID ────────────────────────────────────────────────────────────────────
 
-class VkCallbackRequest(BaseModel):
+class VkCallbackRequest(PdConsentFields):
     code: str = Field(..., min_length=1)
     code_verifier: str = Field(..., min_length=1)
     device_id: str = Field(..., min_length=1)

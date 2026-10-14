@@ -17,6 +17,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_bare_db
 from app.core.config import Settings
+from app.schemas.pd_consent import PdConsentFields
+from app.services import pd_consent_service
 from app.services import quiz_funnel_service
 from app.services.quiz_funnel_service import Funnel
 from app.services.rate_limit_service import get_redis, is_rate_limited
@@ -112,7 +114,7 @@ class FunnelResult(BaseModel):
     contact_url: Optional[str] = None
 
 
-class FunnelLeadRequest(BaseModel):
+class FunnelLeadRequest(PdConsentFields):
     contact: str = Field(..., min_length=3, max_length=200,
                          description="Телефон, почта или ник — как удобнее")
     full_name: Optional[str] = Field(default=None, max_length=200)
@@ -250,12 +252,18 @@ async def submit_funnel_lead(
     """
     await _limit(request, "funnel_lead", 10, 3600)
     gs = _require_session(guest_session)
+    record = pd_consent_service.check_consent(body, source="quiz_funnel")
     funnel = await _funnel(db, course_uid)
     try:
         lead_id = await quiz_funnel_service.submit_lead(
             db, funnel, gs, body.contact.strip(), (body.full_name or "").strip() or None,
             kind=body.kind,
         )
+        if record:
+            await pd_consent_service.record_consent(
+                db, request, body, source="quiz_funnel",
+                lead_id=lead_id, guest_session_id=gs,
+            )
     except DomainError:
         await db.rollback()
         raise

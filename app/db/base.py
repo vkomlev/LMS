@@ -31,6 +31,7 @@ import app.models.feedback_reports
 import app.models.identity_link
 import app.models.user_session
 import app.models.magic_link
+import app.models.pd_consent        # журнал согласий на обработку ПДн (tsk-1335)
 import app.models.audit_event
 import app.models.guest_session
 import app.models.guest_attempt

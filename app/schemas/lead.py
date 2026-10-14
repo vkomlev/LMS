@@ -6,6 +6,8 @@ from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.schemas.pd_consent import PdConsentFields
+
 
 class LeadSourceRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -61,7 +63,7 @@ class LeadUpdateRequest(BaseModel):
         return self
 
 
-class ExternalLeadCreateRequest(BaseModel):
+class ExternalLeadCreateRequest(PdConsentFields):
     """Заявка на лида от соседней системы (tsk-718).
 
     `external_source` + `external_id` — ключ склейки: повторный вызов с той же
@@ -131,7 +133,7 @@ class ExternalLeadStatusList(BaseModel):
     leads: list[ExternalLeadStatus]
 
 
-class WebsiteLeadRequest(BaseModel):
+class WebsiteLeadRequest(PdConsentFields):
     """Тело `POST /public/leads` — форма на продающем лендинге сайта (tsk-929).
 
     Публичная форма встаёт ПЕРЕД кнопкой «Написать в Telegram», а не заменяет

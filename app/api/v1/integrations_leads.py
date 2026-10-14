@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_async_db, get_current_user
@@ -31,7 +31,7 @@ from app.schemas.lead import (
     ExternalLeadStatusList,
 )
 from app.schemas.schedule_booking import FreeSlotsRead
-from app.services import lead_service, schedule_booking_service
+from app.services import lead_service, pd_consent_service, schedule_booking_service
 
 router = APIRouter(prefix="/integrations", tags=["integrations_leads"])
 
@@ -64,6 +64,7 @@ async def _service_only(
 )
 async def ingest_lead(
     body: ExternalLeadCreateRequest,
+    request: Request,
     db: AsyncSession = Depends(get_async_db),
     current_user: CurrentUser = Depends(_service_only),
 ) -> ExternalLeadResponse:
@@ -90,6 +91,13 @@ async def ingest_lead(
         contact=body.contact,
         note=body.note,
     )
+    # tsk-1335: служебный приём — согласие не требуется; пришло — пишем в журнал.
+    # Лид уже закоммичен сервисом (идемпотентная склейка), согласие — отдельной записью.
+    if pd_consent_service.check_consent(body, source="integration", enforce=False):
+        await pd_consent_service.record_consent(
+            db, request, body, source="integration", lead_id=lead_id,
+        )
+        await db.commit()
     return ExternalLeadResponse(lead_id=lead_id, created=created)
 
 

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+from html import escape as html_escape
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import HTMLResponse
@@ -24,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import Settings
 from app.db.session import get_async_db
 from app.schemas.lead import WebsiteLeadRequest, WebsiteLeadResponse
-from app.services import lead_service
+from app.services import lead_service, pd_consent_service
 from app.services.rate_limit_service import get_redis, is_rate_limited
 
 logger = logging.getLogger(__name__)
@@ -41,11 +42,8 @@ _WINDOW_SECONDS = 3600
 
 
 def _client_ip(request: Request) -> str:
-    """IP клиента из-за реверс-прокси — `request.client.host` был бы адресом прокси."""
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    return request.client.host if request.client else "unknown"
+    """IP клиента для ключа лимита — общая доверенная логика (tsk-1335)."""
+    return pd_consent_service.client_ip(request) or "unknown"
 
 
 @router.post(
@@ -69,6 +67,7 @@ async def submit_website_lead(
         logger.info("website_lead: honeypot сработал, page=%s", body.page)
         return WebsiteLeadResponse(lead_id=0)
 
+    record = pd_consent_service.check_consent(body, source="landing")
     ip = _client_ip(request)
     redis = get_redis(_settings.redis_url)
     if await is_rate_limited(
@@ -93,7 +92,13 @@ async def submit_website_lead(
         contact=body.contact,
         note=None,
         created_by=None,
+        commit=False,
     )
+    if record:
+        await pd_consent_service.record_consent(
+            db, request, body, source="landing", page=body.page, lead_id=lead_id,
+        )
+    await db.commit()
     logger.info("website_lead: заявка с лендинга page=%s lead_id=%s", body.page, lead_id)
     return WebsiteLeadResponse(lead_id=lead_id)
 
@@ -114,7 +119,9 @@ _WIDGET_HTML_TEMPLATE = """<!doctype html>
   p.title {{ margin:0 0 14px; font-weight:600; font-size:18px; }}
   label {{ display:block; margin-bottom:4px; }}
   .field {{ margin-bottom:12px; }}
-  input {{ width:100%; padding:10px; border:1px solid #ccc; border-radius:8px; font-size:16px; }}
+  .consent input {{ width:auto; margin-right:6px; }}
+  .consent label {{ font-size:14px; }}
+  select, input {{ width:100%; padding:10px; border:1px solid #ccc; border-radius:8px; font-size:16px; }}
   button {{ width:100%; padding:12px; border:none; border-radius:8px; background:#2aabee;
             color:#fff; font-size:16px; font-weight:600; cursor:pointer; }}
   button:disabled {{ opacity:.6; cursor:default; }}
@@ -131,6 +138,22 @@ _WIDGET_HTML_TEMPLATE = """<!doctype html>
     <div class="field">
       <label for="contact">Телефон, Telegram или e-mail</label>
       <input id="contact" name="contact" type="text" required minlength="3" maxlength="200">
+    </div>
+    <div class="field">
+      <label for="filler_role">Кто заполняет форму?</label>
+      <select id="filler_role" name="filler_role" required>
+        <option value="" disabled selected>Выберите</option>
+        <option value="parent">Родитель ученика</option>
+        <option value="adult">Взрослый — для себя</option>
+        <option value="teen_14_17">Ученик 14–17 лет</option>
+        <option value="under_14">Ученик младше 14 лет</option>
+      </select>
+    </div>
+    <div class="field consent">
+      <label><input id="consent" name="consent" type="checkbox" required>
+        Согласен(на) на обработку персональных данных
+        (<a href="{consent_url}" target="_blank" rel="noopener">согласие</a>,
+        <a href="{policy_url}" target="_blank" rel="noopener">политика</a>)</label>
     </div>
     <div class="hp" aria-hidden="true">
       <label for="hp">Не заполняйте это поле</label>
@@ -157,12 +180,20 @@ _WIDGET_HTML_TEMPLATE = """<!doctype html>
         full_name: document.getElementById('full_name').value,
         contact: document.getElementById('contact').value,
         page: PAGE,
+        filler_role: document.getElementById('filler_role').value || null,
+        consent: document.getElementById('consent').checked,
         hp: document.getElementById('hp').value
       }})
     }})
       .then(function (resp) {{
         if (resp.status === 429) {{
           throw new Error('Слишком много заявок с вашего адреса, попробуйте позже.');
+        }}
+        if (resp.status === 422) {{
+          return resp.json().then(function (data) {{
+            var d = data && data.detail;
+            throw new Error((d && d.message) || 'Проверьте поля формы.');
+          }});
         }}
         if (!resp.ok) {{
           throw new Error('Не получилось отправить, попробуйте ещё раз или напишите в Телеграм.');
@@ -199,5 +230,9 @@ async def website_lead_widget(
     не могло закрыть тег `<script>` раньше времени.
     """
     page_json = json.dumps(page).replace("</", "<\\/")
-    html = _WIDGET_HTML_TEMPLATE.format(page_json=page_json)
+    html = _WIDGET_HTML_TEMPLATE.format(
+        page_json=page_json,
+        consent_url=html_escape(_settings.pd_consent_url, quote=True),
+        policy_url=html_escape(_settings.pd_policy_url, quote=True),
+    )
     return HTMLResponse(content=html)
