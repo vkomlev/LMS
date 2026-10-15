@@ -689,6 +689,12 @@ async def get_task_state(
     help_attempt_required = await help_attempt_gate.is_required(
         db, student_id=student_id, task_id=task_id
     )
+    # tsk-992 (MINOR №11): пока задание на повторе, свой прошлый ответ не
+    # отдаём — иначе повтор проверял бы память о странице. Касается любого
+    # вызывающего: и кабинета, и бота (оба показывают «Мой ответ»).
+    answer_hidden = await retrieval_service.answer_hidden(
+        db, student_id=student_id, task_id=task_id
+    )
     return TaskStateResponse(
         task_id=task_id,
         student_id=student_id,
@@ -700,7 +706,8 @@ async def get_task_state(
         attempts_used=state.attempts_used,
         attempts_limit_effective=state.attempts_limit_effective,
         attempts_unlimited=state.attempts_unlimited,
-        last_answer_json=state.last_answer_json,
+        last_answer_json=None if answer_hidden else state.last_answer_json,
+        answer_hidden_until_review=answer_hidden,
         last_is_correct=state.last_is_correct,
         last_checked_at=state.last_checked_at,
         requires_attachment=requires_attachment,

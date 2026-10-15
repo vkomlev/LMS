@@ -216,6 +216,10 @@ class TaskHistoryResponse(BaseModel):
     attempts: List[TaskHistoryAttempt] = Field(...)
     help_requests: List[TaskHistoryHelpRequest] = Field(...)
     hints: TaskHistoryHints = Field(...)
+    answers_hidden_until_review: bool = Field(
+        default=False,
+        description="tsk-992: прошлый ответ скрыт — задание стоит на повторе (повторение включено на курсе). Покажется после закрытия повтора: у попыток `answer_json` и `review` = null (только ученический путь).",
+    )
     solution: Optional[TaskHistorySolution] = Field(
         default=None,
         description=(

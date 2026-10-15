@@ -29,6 +29,7 @@ from app.api.deps import (
 )
 from app.auth.current_user import CurrentUser
 from app.services import entitlements_service
+from app.services import retrieval_service
 from app.services.courses_acl_service import assert_course_access
 from app.core.config import Settings
 from app.schemas.auth import (
@@ -849,6 +850,16 @@ async def get_my_task_history(
         raise HTTPException(
             status.HTTP_404_NOT_FOUND, detail=f"Задание {task_id} не найдено"
         )
+    # tsk-992 (MINOR №11): пока задание на повторе — без своих прошлых ответов
+    # и разбора к ним («Совпало 3 из 4» тоже подсказка). Путь преподавателя
+    # (`include_solution=True`) не затронут.
+    if await retrieval_service.answer_hidden(
+        db, student_id=current_user.id, task_id=task_id
+    ):
+        data["answers_hidden_until_review"] = True
+        for attempt in data["attempts"]:
+            attempt["answer_json"] = None
+            attempt["review"] = None
     return TaskHistoryResponse(**data)
 
 

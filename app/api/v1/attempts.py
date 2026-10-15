@@ -229,6 +229,11 @@ async def _build_attempt_with_results(
     results_short: List[AttemptTaskResultShort] = []
     total_score = 0
     total_max_score = 0
+    # tsk-992 (MINOR №11): ответ по заданию на повторе не отдаём и здесь — иначе
+    # шпаргалка достаётся прямым запросом попытки в обход экрана.
+    hidden = await retrieval_service.tasks_with_hidden_answers(
+        db, student_id=attempt.user_id, task_ids=sorted({r.task_id for r in rows})
+    )
 
     for row in rows:
         score = row.score or 0
@@ -240,7 +245,7 @@ async def _build_attempt_with_results(
                 score=score,
                 max_score=max_score,
                 is_correct=row.is_correct,
-                answer_json=row.answer_json,
+                answer_json=None if row.task_id in hidden else row.answer_json,
             )
         )
         total_score += score

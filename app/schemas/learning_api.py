@@ -127,6 +127,10 @@ class TaskStateResponse(BaseModel):
         default=None,
         description="Сохранённый ответ ученика (task_results.answer_json) последнего результата",
     )
+    answer_hidden_until_review: bool = Field(
+        default=False,
+        description="tsk-992: прошлый ответ скрыт — задание стоит на повторе (повторение включено на курсе). Покажется после закрытия повтора: `last_answer_json` = null.",
+    )
     last_is_correct: Optional[bool] = Field(
         default=None,
         description="is_correct последнего результата (None до ручной проверки SA_COM/TA)",

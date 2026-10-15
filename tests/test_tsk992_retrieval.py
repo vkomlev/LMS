@@ -909,8 +909,10 @@ async def test_teacher_feed_says_repeated(db, client) -> None:
     events = await _fetch_task_solved(db, teacher_id=0, elevated=True, limit=50, before=None)
     mine = [e for e in events if e["student_id"] == student_id]
     assert len(mine) == 3
-    assert "повторил задание" in mine[0]["summary"] and "(неверно)" in mine[0]["summary"]
-    assert all("решил задание" in e["summary"] for e in mine[1:])
+    # Порядок событий в одну секунду не гарантирован — сверяем набором.
+    repeated = [e["summary"] for e in mine if "повторил задание" in e["summary"]]
+    assert len(repeated) == 1 and "(неверно)" in repeated[0]
+    assert sum("решил задание" in e["summary"] for e in mine) == 2
 
 
 async def test_lesson_summary_last_task_skips_review(db, client) -> None:
@@ -932,3 +934,91 @@ async def test_lesson_summary_last_task_skips_review(db, client) -> None:
     last = await _load_last_activity(db, student_id=student_id)
     assert last is not None
     assert last["kind"] == "task" and last["timestamp"] == real_pass_at
+
+
+# ───────── №11: прошлый ответ скрыт, пока задание на повторе ─────────
+
+
+async def _state(client, token: str, student_id: int, course_id: int, task_id: int) -> dict:
+    resp = await client.get(
+        f"/api/v1/learning/tasks/{task_id}/state",
+        headers=_bearer(token),
+        params={"student_id": student_id, "root_course_id": course_id},
+    )
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+async def test_task_state_hides_answer_while_on_review(db, client) -> None:
+    """Задание на повторе: «Мой ответ» не отдаётся; выключили повторение —
+    ответ снова виден; без повтора вообще (сдал с первого раза) — виден."""
+    student_id, token, course_id, task_id = await _setup(db)
+    await _fail_then_pass(client, token, student_id, course_id, task_id)
+
+    body = await _state(client, token, student_id, course_id, task_id)
+    assert body["state"] == "PASSED"
+    assert body["last_answer_json"] is None
+    assert body["answer_hidden_until_review"] is True
+
+    await db.execute(
+        text("UPDATE courses SET retrieval_config = NULL WHERE id = :c"), {"c": course_id}
+    )
+    await db.commit()
+    body = await _state(client, token, student_id, course_id, task_id)
+    assert body["answer_hidden_until_review"] is False
+    assert body["last_answer_json"]["response"]["selected_option_ids"] == ["b"]
+
+    other_task = await _task(db, course_id)
+    assert (await _answer(client, token, student_id, course_id, other_task, _RIGHT)).status_code == 200
+    body = await _state(client, token, student_id, course_id, other_task)
+    assert body["answer_hidden_until_review"] is False
+    assert body["last_answer_json"] is not None
+
+
+async def test_answer_visible_again_after_review_completed(db, client) -> None:
+    """Три верных повтора закрывают строку — прошлый ответ снова виден."""
+    student_id, token, course_id, task_id = await _setup(db)
+    await _fail_then_pass(client, token, student_id, course_id, task_id)
+    for _ in range(3):
+        await _make_due(db, student_id, task_id)
+        assert (await _review(client, token, student_id, course_id, task_id, _RIGHT)).status_code == 200
+    assert (await _schedule_row(db, student_id, task_id, course_id)).completed_at is not None
+    body = await _state(client, token, student_id, course_id, task_id)
+    assert body["answer_hidden_until_review"] is False
+    assert body["last_answer_json"] is not None
+
+
+async def test_my_task_history_hides_answers_teacher_path_does_not(db, client) -> None:
+    from app.services.task_history_service import build_task_history
+
+    student_id, token, course_id, task_id = await _setup(db)
+    await _fail_then_pass(client, token, student_id, course_id, task_id)
+
+    resp = await client.get(f"/api/v1/me/tasks/{task_id}/history", headers=_bearer(token))
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["answers_hidden_until_review"] is True
+    assert [a["answer_json"] for a in body["attempts"]] == [None, None]
+    assert [a["review"] for a in body["attempts"]] == [None, None]
+    # Статусы и баллы остаются: ученик видит, что ошибался, но не видит чем.
+    assert [a["status"] for a in body["attempts"]] == ["failed", "passed"]
+
+    teacher_view = await build_task_history(
+        db, user_id=student_id, task_id=task_id, include_solution=True
+    )
+    assert all(a["answer_json"] is not None for a in teacher_view["attempts"])
+
+
+async def test_attempt_endpoint_hides_answer_on_review(db, client) -> None:
+    student_id, token, course_id, task_id = await _setup(db)
+    await _fail_then_pass(client, token, student_id, course_id, task_id)
+    attempt_id = (
+        await db.execute(
+            text("SELECT max(attempt_id) FROM task_results WHERE user_id = :u"),
+            {"u": student_id},
+        )
+    ).scalar_one()
+    resp = await client.get(f"/api/v1/attempts/{attempt_id}", headers=_bearer(token))
+    assert resp.status_code == 200, resp.text
+    results = resp.json()["results"]
+    assert results and all(r["answer_json"] is None for r in results)

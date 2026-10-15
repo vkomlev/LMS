@@ -79031,6 +79031,12 @@
           "hints": {
             "$ref": "#/components/schemas/TaskHistoryHints"
           },
+          "answers_hidden_until_review": {
+            "type": "boolean",
+            "title": "Answers Hidden Until Review",
+            "description": "tsk-992: прошлый ответ скрыт — задание стоит на повторе (повторение включено на курсе). Покажется после закрытия повтора: у попыток `answer_json` и `review` = null (только ученический путь).",
+            "default": false
+          },
           "solution": {
             "anyOf": [
               {
@@ -80766,6 +80772,12 @@
             ],
             "title": "Last Answer Json",
             "description": "Сохранённый ответ ученика (task_results.answer_json) последнего результата"
+          },
+          "answer_hidden_until_review": {
+            "type": "boolean",
+            "title": "Answer Hidden Until Review",
+            "description": "tsk-992: прошлый ответ скрыт — задание стоит на повторе (повторение включено на курсе). Покажется после закрытия повтора: `last_answer_json` = null.",
+            "default": false
           },
           "last_is_correct": {
             "anyOf": [

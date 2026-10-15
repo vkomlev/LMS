@@ -310,6 +310,51 @@ async def schedule_after_pass(
     return True
 
 
+async def tasks_with_hidden_answers(
+    db: AsyncSession,
+    *,
+    student_id: int,
+    task_ids: list[int],
+) -> set[int]:
+    """Задания, прошлый ответ по которым ученику сейчас не показываем (MINOR №11).
+
+    Пока задание стоит на повторе (открытая строка расписания на курсе с
+    включённым рубильником), свой прошлый верный ответ — готовая шпаргалка:
+    повтор проверял бы память о странице, а не о решении. Скрывается с момента
+    постановки до закрытия строки (`completed_at`), в том числе между стадиями.
+    Выключили рубильник — ответы снова видны, расписание при этом цело.
+
+    Скрытие структурное: ответ не уходит в тело ответа API вовсе.
+    """
+    if not task_ids:
+        return set()
+    rows = (
+        await db.execute(
+            text(
+                """
+                SELECT DISTINCT s.task_id
+                FROM task_review_schedule s
+                JOIN courses c ON c.id = s.course_id
+                WHERE s.student_id = :sid
+                  AND s.task_id = ANY(:tids)
+                  AND s.completed_at IS NULL
+                  AND jsonb_typeof(c.retrieval_config) = 'object'
+                  AND c.retrieval_config->'enabled' = 'true'::jsonb
+                """
+            ),
+            {"sid": student_id, "tids": list(task_ids)},
+        )
+    ).scalars().all()
+    return {int(t) for t in rows}
+
+
+async def answer_hidden(db: AsyncSession, *, student_id: int, task_id: int) -> bool:
+    """Скрыт ли прошлый ответ ученика по одному заданию (см. `tasks_with_hidden_answers`)."""
+    return task_id in await tasks_with_hidden_answers(
+        db, student_id=student_id, task_ids=[task_id]
+    )
+
+
 async def list_due(
     db: AsyncSession,
     *,
