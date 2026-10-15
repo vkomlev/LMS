@@ -1,0 +1,895 @@
+diff --git a/app/(authed)/courses/[course_uid]/material/[material_id]/page.tsx b/app/(authed)/courses/[course_uid]/material/[material_id]/page.tsx
+index 317c946..a47ec3f 100644
+--- a/app/(authed)/courses/[course_uid]/material/[material_id]/page.tsx
++++ b/app/(authed)/courses/[course_uid]/material/[material_id]/page.tsx
+@@ -6,7 +6,10 @@ import { useState } from "react";
+ import { useParams, useRouter } from "next/navigation";
+ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+ import { Button } from "@/components/ui/button";
+-import { RequirementBadge } from "@/components/course/RequirementBadge";
++import {
++  RequirementBadge,
++  RequirementReasonNote,
++} from "@/components/course/RequirementBadge";
+ import { useMaterial, useCompleteMaterial, useSkipMaterial } from "@/lib/learning/use-material";
+ import { canSkipRequirement } from "@/lib/learning/content-requirement";
+ import { getMaterialTypeLabel } from "@/lib/learning/material-type";
+@@ -18,6 +21,7 @@ import { useRootCourseId } from "@/lib/learning/use-current-course-tree";
+ import { MaterialViewer } from "@/components/material/MaterialViewer";
+ import { MaterialHelpButton } from "@/components/material/MaterialHelpButton";
+ import { ApiError } from "@/lib/api-client";
++import { useMyRequirement } from "@/lib/learning/use-my-requirement";
+ 
+ export default function MaterialPage() {
+   const params = useParams<{ course_uid: string; material_id: string }>();
+@@ -39,6 +43,10 @@ export default function MaterialPage() {
+ 
+   const { data: user } = useCurrentUser();
+   const { data: material, isLoading, isError, error } = useMaterial(validId);
++  const myRequirement = useMyRequirement("material", validId);
++  // tsk-1361: уровень для этого ученика; пока ответ не пришёл — уровень курса.
++  const personalLevel =
++    myRequirement.data?.requirement_level ?? material?.requirement_level;
+   const complete = useCompleteMaterial(validId ?? 0, user?.id ?? null);
+   const skip = useSkipMaterial(validId ?? 0, user?.id ?? null);
+   // Fallback навигация: следующий шаг через learning-loop (даже если текущий
+@@ -128,7 +136,7 @@ export default function MaterialPage() {
+   }
+ 
+   async function onSkip() {
+-    if (!user || !material || !canSkipRequirement(material.requirement_level)) return;
++    if (!user || !material || !canSkipRequirement(personalLevel)) return;
+     try {
+       await skip.mutateAsync();
+       await goToNextStep();
+@@ -144,12 +152,13 @@ export default function MaterialPage() {
+           ← К курсу
+         </Link>
+         <div className="flex items-center gap-2">
+-          <RequirementBadge level={material.requirement_level} />
++          <RequirementBadge level={personalLevel} reason={myRequirement.data?.requirement_reason} />
+           <span className="text-xs text-muted-foreground">
+             {getMaterialTypeLabel(material.type)}
+           </span>
+         </div>
+       </header>
++      <RequirementReasonNote reason={myRequirement.data?.requirement_reason} />
+ 
+       <Card>
+         <CardHeader>
+@@ -169,7 +178,7 @@ export default function MaterialPage() {
+               >
+                 {complete.isPending ? "Сохраняем…" : "Прошёл материал →"}
+               </Button>
+-              {canSkipRequirement(material.requirement_level) && (
++              {canSkipRequirement(personalLevel) && (
+                 <Button
+                   variant="outline"
+                   onClick={onSkip}
+diff --git a/app/(authed)/courses/[course_uid]/task/[external_uid]/page.tsx b/app/(authed)/courses/[course_uid]/task/[external_uid]/page.tsx
+index 0a88958..6e13fc0 100644
+--- a/app/(authed)/courses/[course_uid]/task/[external_uid]/page.tsx
++++ b/app/(authed)/courses/[course_uid]/task/[external_uid]/page.tsx
+@@ -7,7 +7,10 @@ import { useParams, usePathname, useRouter, useSearchParams } from "next/navigat
+ import { useQuery } from "@tanstack/react-query";
+ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+ import { Button, buttonVariants } from "@/components/ui/button";
+-import { RequirementBadge } from "@/components/course/RequirementBadge";
++import {
++  RequirementBadge,
++  RequirementReasonNote,
++} from "@/components/course/RequirementBadge";
+ import { useCurrentUser } from "@/hooks/use-current-user";
+ import { useApiClient } from "@/hooks/use-api-client";
+ import { canSkipRequirement } from "@/lib/learning/content-requirement";
+@@ -67,6 +70,7 @@ import { useAutoSaveDraft, loadDraft, clearDraft } from "@/lib/delights/use-auto
+ import { useKeyboardShortcuts } from "@/lib/delights/use-keyboard-shortcuts";
+ import type { components } from "@/lib/api-types";
+ import { formatReviewDue } from "@/lib/task/review-due";
++import { useMyRequirement } from "@/lib/learning/use-my-requirement";
+ 
+ type TaskContent = components["schemas"]["TaskContent"];
+ type CheckResult = components["schemas"]["CheckResult"];
+@@ -409,6 +413,7 @@ function TaskPageInner({
+   const submit = useSubmitAnswers(attemptId);
+   const finish = useFinishAttempt(attemptId);
+   const skipTask = useSkipTask(taskId, studentId);
++  const myRequirement = useMyRequirement("task", taskId);
+   // tsk-575: вложение привязывается к паре «попытка + задание» — иначе загрузка
+   // файла к следующему заданию стирала файл предыдущего.
+   const uploadAttachment = useUploadAttemptAttachment(attemptId, taskId);
+@@ -657,8 +662,12 @@ function TaskPageInner({
+     lastResult == null &&
+     (passed || blocked) &&
+     state?.last_answer_json != null;
++  // tsk-1361: уровень для этого ученика (программа курса и «следующий шаг»
++  // считают так же); пока ответ не пришёл — уровень курса, как раньше.
++  const personalLevel =
++    myRequirement.data?.requirement_level ?? taskRead.requirement_level;
+   const canSkipTask =
+-    canSkipRequirement(taskRead.requirement_level) &&
++    canSkipRequirement(personalLevel) &&
+     !passed &&
+     !effectivelyBlocked &&
+     lastResult?.is_correct !== true;
+@@ -829,7 +838,7 @@ function TaskPageInner({
+           ← К курсу
+         </Link>
+         <div className="flex flex-wrap items-center justify-end gap-2">
+-          <RequirementBadge level={taskRead.requirement_level} />
++          <RequirementBadge level={personalLevel} reason={myRequirement.data?.requirement_reason} />
+           {state && (
+             <span className="text-xs text-muted-foreground">
+               {/* tsk-1134: наставник проверяет — лимита нет, только счёт. */}
+@@ -840,6 +849,7 @@ function TaskPageInner({
+           )}
+         </div>
+       </header>
++      <RequirementReasonNote reason={myRequirement.data?.requirement_reason} />
+ 
+       <Card>
+         <CardHeader>
+diff --git a/components/course/RequirementBadge.tsx b/components/course/RequirementBadge.tsx
+index 0868079..1af99ef 100644
+--- a/components/course/RequirementBadge.tsx
++++ b/components/course/RequirementBadge.tsx
+@@ -2,10 +2,13 @@ import { cn } from "@/lib/utils";
+ import {
+   requirementLabel,
+   type RequirementLevel,
++  type RequirementReason,
+ } from "@/lib/learning/content-requirement";
+ 
+ interface Props {
+   level: RequirementLevel | null | undefined;
++  /** tsk-1361: причина отличия от курса — подсказкой при наведении. */
++  reason?: RequirementReason | null;
+   className?: string;
+ }
+ 
+@@ -18,12 +21,13 @@ const CLASSES: Record<RequirementLevel, string> = {
+     "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+ };
+ 
+-export function RequirementBadge({ level = "required", className }: Props) {
++export function RequirementBadge({ level = "required", reason, className }: Props) {
+   const normalized = level ?? "required";
+   return (
+     <span
+       data-testid="requirement-badge"
+       data-requirement={normalized}
++      title={reason?.text}
+       className={cn(
+         "inline-flex h-6 shrink-0 items-center rounded-full border px-2 text-[11px] font-medium",
+         CLASSES[normalized],
+@@ -34,3 +38,27 @@ export function RequirementBadge({ level = "required", className }: Props) {
+     </span>
+   );
+ }
++
++/**
++ * tsk-1361: строка «почему так» под элементом. Сервер отдаёт причину, только
++ * когда уровень ученика действительно отличается от курса, поэтому пустая
++ * причина — норма, а не ошибка: ничего не рисуем.
++ */
++export function RequirementReasonNote({
++  reason,
++  className,
++}: {
++  reason: RequirementReason | null | undefined;
++  className?: string;
++}) {
++  if (!reason) return null;
++  return (
++    <span
++      data-testid="requirement-reason"
++      data-reason-code={reason.code}
++      className={cn("block text-xs text-muted-foreground", className)}
++    >
++      {reason.text}
++    </span>
++  );
++}
+diff --git a/components/course/SyllabusItem.tsx b/components/course/SyllabusItem.tsx
+index 54b199e..c9c2feb 100644
+--- a/components/course/SyllabusItem.tsx
++++ b/components/course/SyllabusItem.tsx
+@@ -4,7 +4,10 @@ import Link from "next/link";
+ import type { Route } from "next";
+ import { cn } from "@/lib/utils";
+ import { StatusBadge } from "@/components/course/StatusBadge";
+-import { RequirementBadge } from "@/components/course/RequirementBadge";
++import {
++  RequirementBadge,
++  RequirementReasonNote,
++} from "@/components/course/RequirementBadge";
+ import { splitHighlight } from "@/lib/learning/course-feed";
+ import { getMaterialTypeLabel } from "@/lib/learning/material-type";
+ import type { SyllabusItem as SyllabusItemT } from "@/lib/learning/use-course-syllabus";
+@@ -32,6 +35,7 @@ export function SyllabusItem({ item, courseUidParam, highlightQuery }: Props) {
+         highlightQuery={highlightQuery}
+         meta={`id-${item.materialId} · ${getMaterialTypeLabel(item.type)}`}
+         requirementLevel={item.requirementLevel}
++        requirementReason={item.requirementReason}
+         testId="syllabus-item-material"
+         kind="material"
+       />
+@@ -68,6 +72,7 @@ export function SyllabusItem({ item, courseUidParam, highlightQuery }: Props) {
+       highlightQuery={highlightQuery}
+       meta={meta || "Задача"}
+       requirementLevel={item.requirementLevel}
++      requirementReason={item.requirementReason}
+       testId="syllabus-item-task"
+       kind="task"
+     />
+@@ -109,6 +114,7 @@ interface ItemRowProps {
+   highlightQuery?: string;
+   meta: string;
+   requirementLevel: SyllabusItemT["requirementLevel"];
++  requirementReason: SyllabusItemT["requirementReason"];
+   testId: string;
+   kind: "task" | "material";
+ }
+@@ -121,6 +127,7 @@ function ItemRow({
+   highlightQuery,
+   meta,
+   requirementLevel,
++  requirementReason,
+   testId,
+   kind,
+ }: ItemRowProps) {
+@@ -148,8 +155,13 @@ function ItemRow({
+           <span className="block truncate text-xs text-muted-foreground">
+             {meta}
+           </span>
++          <RequirementReasonNote reason={requirementReason} />
+         </span>
+-        <RequirementBadge level={requirementLevel} className="hidden sm:inline-flex" />
++        <RequirementBadge
++          level={requirementLevel}
++          reason={requirementReason}
++          className="hidden sm:inline-flex"
++        />
+       </span>
+     </div>
+   );
+diff --git a/components/teacher/StudentProgress.tsx b/components/teacher/StudentProgress.tsx
+index 12f091a..e4c56eb 100644
+--- a/components/teacher/StudentProgress.tsx
++++ b/components/teacher/StudentProgress.tsx
+@@ -27,6 +27,9 @@ import {
+   useRevokeTask,
+   useSkipTask,
+   useUnskipTask,
++  useSetRequirement,
++  useRevokeRequirement,
++  useRequirementPreview,
+   useStudentCourses,
+   useStudentProgress,
+   toSyllabusStatus,
+@@ -82,9 +85,12 @@ interface ProgressNode {
+ /** Что подтверждает преподаватель прямо сейчас. */
+ interface PendingConfirm {
+   courseId: number;
+-  action: "grant" | "revoke";
++  /** tsk-1361: optional — сделать тему необязательной, unoptional — снять решение по теме. */
++  action: BulkAction;
+ }
+ 
++type BulkAction = "grant" | "revoke" | "optional" | "unoptional";
++
+ /**
+  * Итог последней операции, привязанный к месту клика.
+  * `scope` — `item-<type>-<id>` или `node-<courseId>`: сообщение показывается
+@@ -142,9 +148,16 @@ export function StudentProgress({ studentId }: { studentId: number }) {
+   const grantSameAgain = useGrantSameAgain(studentId, activeCourseId);
+   const skipTask = useSkipTask(studentId, activeCourseId);
+   const unskipTask = useUnskipTask(studentId, activeCourseId);
++  const setRequirement = useSetRequirement(studentId, activeCourseId);
++  const revokeRequirement = useRevokeRequirement(studentId, activeCourseId);
+   const closeBlockedLimitRequest = useCloseBlockedLimitRequest(studentId, activeCourseId);
+ 
+   const [confirm, setConfirm] = useState<PendingConfirm | null>(null);
++  // tsk-1361: масштаб решения «тема необязательна» — до подтверждения.
++  const requirementPreview = useRequirementPreview(
++    studentId,
++    confirm?.action === "optional" ? confirm.courseId : null,
++  );
+   const [feedback, setFeedback] = useState<Feedback | null>(null);
+   // tsk-335: подтверждение разблокировки (значок 🔓) — id задания, для
+   // которого сейчас показан вопрос «выдать ещё?».
+@@ -166,6 +179,8 @@ export function StudentProgress({ studentId }: { studentId: number }) {
+     grantSameAgain.isPending ||
+     skipTask.isPending ||
+     unskipTask.isPending ||
++    setRequirement.isPending ||
++    revokeRequirement.isPending ||
+     closeBlockedLimitRequest.isPending;
+ 
+   const nodes = useMemo(
+@@ -218,11 +233,37 @@ export function StudentProgress({ studentId }: { studentId: number }) {
+       revoke: "Не удалось снять отметку — сервер отклонил операцию.",
+       skip: "Не удалось пропустить — сервер отклонил операцию.",
+       unskip: "Не удалось вернуть задание — сервер отклонил операцию.",
++      restore: "Не удалось вернуть в обязательные — сервер отклонил операцию.",
++      clear: "Не удалось снять решение — сервер отклонил операцию.",
+     };
+     const handlers = {
+       onError: (e: unknown) =>
+         setFeedback({ scope, kind: "error", text: readApiErrorMessage(e, failText[action]) }),
+     };
++    // tsk-1361: решения об обязательности — у заданий и материалов одинаково.
++    if (action === "restore" || action === "clear") {
++      const target = {
++        targetKind: item.item_type as "task" | "material",
++        targetId: item.item_id,
++      };
++      if (action === "restore") {
++        setRequirement.mutate({ ...target, level: "required" }, handlers);
++        return;
++      }
++      revokeRequirement.mutate(target, {
++        ...handlers,
++        onSuccess: (res) => {
++          if (!res.revoked) {
++            setFeedback({
++              scope,
++              kind: "info",
++              text: "Решение принято для всей темы — снимите его кнопкой «Вернуть тему к курсу».",
++            });
++          }
++        },
++      });
++      return;
++    }
+     const vars = { itemId: item.item_id };
+     if (item.item_type === "task") {
+       if (action === "grant") grantTask.mutate(vars, handlers);
+@@ -277,10 +318,38 @@ export function StudentProgress({ studentId }: { studentId: number }) {
+     );
+   };
+ 
+-  const onBulkConfirmed = (node: ProgressNode, action: "grant" | "revoke") => {
++  const onBulkConfirmed = (node: ProgressNode, action: BulkAction) => {
+     const scope = `node-${node.courseId}`;
+     setFeedback(null);
+     const vars = { nodeCourseId: node.courseId };
++    if (action === "optional" || action === "unoptional") {
++      const onReqError = (e: unknown) =>
++        setFeedback({
++          scope,
++          kind: "error",
++          text: readApiErrorMessage(e, "Не удалось изменить обязательность темы."),
++        });
++      if (action === "optional") {
++        setRequirement.mutate(
++          { targetKind: "course", targetId: node.courseId, level: "recommended" },
++          { onError: onReqError },
++        );
++      } else {
++        revokeRequirement.mutate(
++          { targetKind: "course", targetId: node.courseId },
++          {
++            onError: onReqError,
++            onSuccess: (res) => {
++              if (!res.revoked) {
++                setFeedback({ scope, kind: "info", text: "Решения по этой теме не было." });
++              }
++            },
++          },
++        );
++      }
++      setConfirm(null);
++      return;
++    }
+     const onError = (e: unknown) =>
+       setFeedback({
+         scope,
+@@ -382,6 +451,14 @@ export function StudentProgress({ studentId }: { studentId: number }) {
+           feedback={feedback}
+           onAskConfirm={setConfirm}
+           onConfirmed={onBulkConfirmed}
++          previewCounts={
++            requirementPreview.data
++              ? {
++                  tasks: requirementPreview.data.tasks_affected,
++                  materials: requirementPreview.data.materials_affected,
++                }
++              : null
++          }
+           onItemAction={onItemAction}
+           unlockConfirmItemId={unlockConfirmItemId}
+           onAskUnlock={setUnlockConfirmItemId}
+@@ -421,6 +498,7 @@ function NodeSection({
+   feedback,
+   onAskConfirm,
+   onConfirmed,
++  previewCounts,
+   onItemAction,
+   unlockConfirmItemId,
+   onAskUnlock,
+@@ -434,7 +512,8 @@ function NodeSection({
+   confirm: PendingConfirm | null;
+   feedback: Feedback | null;
+   onAskConfirm: (c: PendingConfirm | null) => void;
+-  onConfirmed: (node: ProgressNode, action: "grant" | "revoke") => void;
++  onConfirmed: (node: ProgressNode, action: BulkAction) => void;
++  previewCounts: { tasks: number; materials: number } | null;
+   onItemAction: (item: StudentProgressItem, action: ItemAction) => void;
+   unlockConfirmItemId: number | null;
+   onAskUnlock: (itemId: number | null) => void;
+@@ -480,6 +559,28 @@ function NodeSection({
+           >
+             Снять зачёты в теме
+           </button>
++          {/* tsk-1361: решение об обязательности темы для ученика — с причиной,
++              которую он увидит. Пропуск отдельного задания — кнопка у задания. */}
++          <button
++            type="button"
++            data-testid="bulk-optional-btn"
++            disabled={disabled}
++            onClick={() => onAskConfirm({ courseId: node.courseId, action: "optional" })}
++            title="Задания и материалы темы перестанут быть долгом этого ученика"
++            className={ACTION_BTN}
++          >
++            Сделать тему необязательной
++          </button>
++          <button
++            type="button"
++            data-testid="bulk-unoptional-btn"
++            disabled={disabled}
++            onClick={() => onAskConfirm({ courseId: node.courseId, action: "unoptional" })}
++            title="Снять ваше решение — тема вернётся к уровню курса и правилам"
++            className={ACTION_BTN}
++          >
++            Вернуть тему к курсу
++          </button>
+         </div>
+         )}
+       </header>
+@@ -493,9 +594,7 @@ function NodeSection({
+           className="flex flex-wrap items-center gap-2 border-b border-border bg-amber-500/10 px-3 py-2 text-sm"
+         >
+           <span>
+-            {pending.action === "grant"
+-              ? `Зачесть ученику всё в теме «${node.title}»?`
+-              : `Снять все ручные зачёты в теме «${node.title}»?`}
++            {confirmText(pending.action, node.title, previewCounts)}
+           </span>
+           <button
+             type="button"
+@@ -602,6 +701,14 @@ function ItemRow({
+   // Зачтённое и решённое не пропускают: там нечего делать необязательным.
+   const isSkipped = item.status === "SKIPPED";
+   const showSkipButton = isTask && !isSkipped && item.status !== "PASSED" && !item.manual;
++  // tsk-1361: правило сняло обязательность — учитель может вернуть её;
++  // своё решение — снять. Пропуск задания (tsk-919) — отдельная кнопка выше.
++  const reason = item.requirement_reason ?? null;
++  const showRestoreButton =
++    reason?.source === "rule" &&
++    item.requirement_level === "recommended" &&
++    item.course_requirement_level !== "recommended";
++  const showClearButton = reason?.source === "human";
+ 
+   return (
+     <li
+@@ -739,6 +846,31 @@ function ItemRow({
+           </button>
+         )}
+ 
++        {showRestoreButton && (
++          <button
++            type="button"
++            data-testid="item-restore-required-btn"
++            disabled={disabled}
++            onClick={() => onAction(item, "restore")}
++            title="Сделать снова обязательным для этого ученика — главнее правила"
++            className={ACTION_BTN}
++          >
++            Вернуть в обязательные
++          </button>
++        )}
++        {showClearButton && (
++          <button
++            type="button"
++            data-testid="item-clear-requirement-btn"
++            disabled={disabled}
++            onClick={() => onAction(item, "clear")}
++            title="Снять ваше решение — элемент вернётся к уровню курса и правилам"
++            className={ACTION_BTN}
++          >
++            Снять решение
++          </button>
++        )}
++
+         {/* tsk-335: разблокировка тем же правилом выдачи, что и на карточке
+             заявки помощи (grant_same_again) — другая иконка/цвет, чем эмодзи
+             статуса 🔒 (тот остаётся индикатором, не действием). */}
+@@ -768,6 +900,17 @@ function ItemRow({
+           </button>
+         )}
+       </div>
++      {reason && (
++        <p
++          data-testid="item-requirement-reason"
++          data-reason-code={reason.code}
++          data-reason-source={reason.source}
++          className="pl-6 text-xs text-muted-foreground"
++        >
++          {reason.source === "human" ? "Ваше решение: " : "Правило: "}
++          {reason.text}
++        </p>
++      )}
+ 
+       {unlockConfirmOpen && (
+         <div
+@@ -826,7 +969,27 @@ function ItemRow({
+ // ---------------------------------------------------------------------------
+ 
+ /** Действия над одним элементом дерева (tsk-297 + tsk-919). */
+-type ItemAction = "grant" | "revoke" | "skip" | "unskip";
++type ItemAction = "grant" | "revoke" | "skip" | "unskip" | "restore" | "clear";
++
++/** Вопрос подтверждения действия над темой (tsk-1361 — с масштабом решения). */
++function confirmText(
++  action: BulkAction,
++  title: string,
++  counts: { tasks: number; materials: number } | null,
++): string {
++  switch (action) {
++    case "grant":
++      return `Зачесть ученику всё в теме «${title}»?`;
++    case "revoke":
++      return `Снять все ручные зачёты в теме «${title}»?`;
++    case "optional":
++      return counts
++        ? `Сделать тему «${title}» необязательной для ученика? Затронет заданий: ${counts.tasks}, материалов: ${counts.materials}. Ученик увидит: «Так решил преподаватель».`
++        : `Сделать тему «${title}» необязательной для ученика? Считаем, что затронет…`;
++    case "unoptional":
++      return `Снять ваше решение по теме «${title}»? Она вернётся к уровню курса и правилам.`;
++  }
++}
+ 
+ const ACTION_BTN =
+   "rounded-md border border-border px-2 py-1 text-xs font-medium text-foreground transition-colors " +
+diff --git a/lib/learning/content-requirement.ts b/lib/learning/content-requirement.ts
+index ea3084f..62229ff 100644
+--- a/lib/learning/content-requirement.ts
++++ b/lib/learning/content-requirement.ts
+@@ -3,6 +3,9 @@ import type { components } from "@/lib/api-types";
+ export type RequirementLevel =
+   components["schemas"]["MaterialRead"]["requirement_level"];
+ 
++/** tsk-1361: почему уровень для ученика отличается от курса (решение сервера). */
++export type RequirementReason = components["schemas"]["RequirementReason"];
++
+ export function canSkipRequirement(level: RequirementLevel | null | undefined) {
+   return level === "skippable";
+ }
+diff --git a/lib/learning/use-course-syllabus.ts b/lib/learning/use-course-syllabus.ts
+index bad9148..2d44a0e 100644
+--- a/lib/learning/use-course-syllabus.ts
++++ b/lib/learning/use-course-syllabus.ts
+@@ -7,6 +7,7 @@ import { useApiClient } from "@/hooks/use-api-client";
+ import {
+   countsTowardProgress,
+   type RequirementLevel,
++  type RequirementReason,
+ } from "@/lib/learning/content-requirement";
+ import { toPlainLabel } from "@/lib/task/plain-label";
+ 
+@@ -36,6 +37,8 @@ export interface SyllabusTask {
+   type: string | null;
+   status: SyllabusStatus;
+   requirementLevel: RequirementLevel;
++  /** tsk-1361: почему уровень отличается от курса; null — уровень курса. */
++  requirementReason: RequirementReason | null;
+   isActive: boolean;
+   attemptsUsed: number;
+   attemptsLimit: number;
+@@ -53,6 +56,7 @@ export interface SyllabusMaterial {
+   type: string | null;
+   status: SyllabusStatus;
+   requirementLevel: RequirementLevel;
++  requirementReason: RequirementReason | null;
+   isActive: boolean;
+ }
+ 
+@@ -263,6 +267,7 @@ function buildTask(
+     type: raw.task_type ?? null,
+     status: inferredStatus,
+     requirementLevel: raw.requirement_level,
++    requirementReason: raw.requirement_reason ?? null,
+     isActive: raw.is_active,
+     attemptsUsed: raw.attempts_used,
+     attemptsLimit: raw.attempts_limit_effective,
+@@ -302,6 +307,7 @@ function buildMaterial(
+     type: raw.material_type ?? null,
+     status: inferredStatus,
+     requirementLevel: raw.requirement_level,
++    requirementReason: raw.requirement_reason ?? null,
+     isActive: raw.is_active,
+   };
+ }
+diff --git a/lib/learning/use-my-requirement.ts b/lib/learning/use-my-requirement.ts
+new file mode 100644
+index 0000000..c09e9ee
+--- /dev/null
++++ b/lib/learning/use-my-requirement.ts
+@@ -0,0 +1,32 @@
++"use client";
++
++import { useQuery } from "@tanstack/react-query";
++import type { components } from "@/lib/api-types";
++import { useApiClient } from "@/hooks/use-api-client";
++
++export type MyRequirement = components["schemas"]["MyRequirementRead"];
++
++/**
++ * tsk-1361: уровень задания/материала для текущего ученика и причина.
++ *
++ * `GET /api/v1/me/requirement` — тот же уровень, что у программы курса и
++ * «следующего шага». `TaskRead`/`MaterialRead` отдают уровень курса, одинаковый
++ * для всех, поэтому для бейджа и кнопки «Пропустить» берётся этот ответ.
++ * Пока он грузится или упал — страница показывает уровень курса, как раньше.
++ */
++export function useMyRequirement(
++  kind: "task" | "material",
++  itemId: number | null | undefined,
++) {
++  const client = useApiClient();
++  const param = kind === "task" ? "task_id" : "material_id";
++  return useQuery<MyRequirement>({
++    queryKey: ["learning", "my-requirement", kind, itemId],
++    queryFn: () => client.get<MyRequirement>(`/api/v1/me/requirement?${param}=${itemId}`),
++    enabled: itemId != null,
++    // Уровень может смениться после сдачи (правила пересчитываются фоном в
++    // пределах минуты) — держим недолго.
++    staleTime: 30_000,
++    retry: false,
++  });
++}
+diff --git a/lib/teacher/use-student-progress.ts b/lib/teacher/use-student-progress.ts
+index 78825a1..234484f 100644
+--- a/lib/teacher/use-student-progress.ts
++++ b/lib/teacher/use-student-progress.ts
+@@ -370,3 +370,84 @@ export function useCloseBlockedLimitRequest(
+     },
+   });
+ }
++
++// ---------------------------------------------------------------------------
++// tsk-1361: обязательность элемента или темы для ученика
++// ---------------------------------------------------------------------------
++
++export type RequirementTargetKind = "task" | "material" | "course";
++export type RequirementChangeResponse = components["schemas"]["RequirementChangeResponse"];
++
++interface RequirementSetVars {
++  targetKind: RequirementTargetKind;
++  targetId: number;
++  level: "required" | "recommended";
++  comment?: string;
++}
++
++/**
++ * PUT /progress/requirement — решение преподавателя об обязательности.
++ * Главнее правил (новизна, сокращение программы); повторный вызов заменяет
++ * прежнее решение. Ученик видит итог с причиной.
++ */
++export function useSetRequirement(
++  studentId: number | null | undefined,
++  courseId: number | null | undefined,
++) {
++  const client = useApiClient();
++  const qc = useQueryClient();
++  return useMutation<RequirementChangeResponse, Error, RequirementSetVars>({
++    mutationFn: ({ targetKind, targetId, level, comment }) =>
++      client.put<RequirementChangeResponse>(
++        `${progressBase(studentId as number)}/requirement`,
++        { target_kind: targetKind, target_id: targetId, level, comment: comment || null },
++      ),
++    onSuccess: () => {
++      void qc.invalidateQueries({ queryKey: studentProgressKey(studentId, courseId) });
++    },
++  });
++}
++
++/** DELETE /progress/requirement — снять решение: элемент вернётся к курсу и правилам. */
++export function useRevokeRequirement(
++  studentId: number | null | undefined,
++  courseId: number | null | undefined,
++) {
++  const client = useApiClient();
++  const qc = useQueryClient();
++  return useMutation<
++    RequirementChangeResponse,
++    Error,
++    { targetKind: RequirementTargetKind; targetId: number }
++  >({
++    mutationFn: ({ targetKind, targetId }) =>
++      client.delete<RequirementChangeResponse>(
++        `${progressBase(studentId as number)}/requirement?target_kind=${targetKind}&target_id=${targetId}`,
++      ),
++    onSuccess: () => {
++      void qc.invalidateQueries({ queryKey: studentProgressKey(studentId, courseId) });
++    },
++  });
++}
++
++/**
++ * GET /progress/requirement/preview — сколько обязательных элементов задевает
++ * решение по теме. Учитель видит масштаб ДО сохранения. `nodeCourseId=null` —
++ * запрос не идёт.
++ */
++export function useRequirementPreview(
++  studentId: number | null | undefined,
++  nodeCourseId: number | null,
++) {
++  const client = useApiClient();
++  return useQuery<RequirementChangeResponse>({
++    queryKey: ["teacher", "requirement-preview", studentId, nodeCourseId],
++    queryFn: () =>
++      client.get<RequirementChangeResponse>(
++        `${progressBase(studentId as number)}/requirement/preview?target_kind=course&target_id=${nodeCourseId}`,
++      ),
++    enabled: studentId != null && nodeCourseId != null,
++    staleTime: 30_000,
++    retry: false,
++  });
++}
+diff --git a/tests/unit/course-feed.test.ts b/tests/unit/course-feed.test.ts
+index 4463a89..1b3d08c 100644
+--- a/tests/unit/course-feed.test.ts
++++ b/tests/unit/course-feed.test.ts
+@@ -21,6 +21,7 @@ function material(id: number, title: string): SyllabusMaterial {
+     type: "article",
+     status: "not_started",
+     requirementLevel: "required",
++    requirementReason: null,
+     isActive: true,
+   };
+ }
+@@ -35,6 +36,7 @@ function task(id: number, title: string): SyllabusTask {
+     type: "SC",
+     status: "not_started",
+     requirementLevel: "required",
++    requirementReason: null,
+     isActive: true,
+     attemptsUsed: 0,
+     attemptsLimit: 3,
+diff --git a/tests/unit/student-progress.test.tsx b/tests/unit/student-progress.test.tsx
+index 816e994..c646cfc 100644
+--- a/tests/unit/student-progress.test.tsx
++++ b/tests/unit/student-progress.test.tsx
+@@ -27,6 +27,10 @@ const grantSameAgain = vi.fn();
+ const closeBlockedLimitRequest = vi.fn();
+ const skipTask = vi.fn();
+ const unskipTask = vi.fn();
++// tsk-1361: решения об обязательности.
++const setRequirement = vi.fn();
++const revokeRequirement = vi.fn();
++const useRequirementPreview = vi.fn();
+ 
+ /** Состояние `isPending` мутаций — переключается отдельными тестами. */
+ let mutationsPending = false;
+@@ -55,6 +59,9 @@ vi.mock("@/lib/teacher/use-student-progress", async () => {
+     useRevokeCourse: () => mutation(revokeCourse),
+     useGrantSameAgain: () => mutation(grantSameAgain),
+     useCloseBlockedLimitRequest: () => mutation(closeBlockedLimitRequest),
++    useSetRequirement: () => mutation(setRequirement),
++    useRevokeRequirement: () => mutation(revokeRequirement),
++    useRequirementPreview: (...args: unknown[]) => useRequirementPreview(...args),
+   };
+ });
+ 
+@@ -164,6 +171,7 @@ describe("StudentProgress", () => {
+     mutationsPending = false;
+     useStudentCourses.mockReturnValue(COURSES);
+     useStudentProgress.mockReturnValue(progressOk());
++    useRequirementPreview.mockReturnValue({ data: undefined });
+     useTaskSearch.mockReturnValue({ data: undefined, isFetching: false, isError: false, error: null });
+     useCourseSearch.mockReturnValue({ data: undefined, isFetching: false, isError: false, error: null });
+     useStudentTaskHistory.mockReturnValue({
+@@ -975,3 +983,101 @@ describe("StudentProgress", () => {
+     expect(screen.getByText("Короткое задание")).toHaveAttribute("title", "Короткое задание");
+   });
+ });
++
++describe("StudentProgress — обязательность для ученика (tsk-1361)", () => {
++  const RULE_ITEMS = [
++    { item_type: "course", item_id: 11, title: "Тема 1", status: "IN_PROGRESS", manual: false },
++    {
++      item_type: "task",
++      item_id: 301,
++      title: "Новое задание",
++      status: "OPEN",
++      manual: false,
++      parent_course_id: 11,
++      requirement_level: "recommended",
++      course_requirement_level: "required",
++      requirement_reason: {
++        code: "grace_new_content",
++        text: "Добавлено после того, как вы прошли эту тему",
++        source: "rule",
++      },
++    },
++    {
++      item_type: "material",
++      item_id: 401,
++      title: "Конспект",
++      status: "NOT_STARTED",
++      manual: false,
++      parent_course_id: 11,
++      requirement_level: "recommended",
++      course_requirement_level: "required",
++      requirement_reason: { code: "teacher", text: "тема пройдена на занятии", source: "human" },
++    },
++  ];
++
++  beforeEach(() => {
++    vi.clearAllMocks();
++    mutationsPending = false;
++    useStudentCourses.mockReturnValue(COURSES);
++    useStudentProgress.mockReturnValue(progressOk(RULE_ITEMS));
++    useRequirementPreview.mockReturnValue({ data: undefined });
++    useTaskSearch.mockReturnValue({ data: undefined, isFetching: false, isError: false, error: null });
++    useCourseSearch.mockReturnValue({ data: undefined, isFetching: false, isError: false, error: null });
++  });
++
++  it("причина правила видна, и задание можно вернуть в обязательные", () => {
++    render(<StudentProgress studentId={42} />);
++    const row = screen
++      .getAllByTestId("progress-item")
++      .find((el) => el.getAttribute("data-item-id") === "301")!;
++    expect(within(row).getByTestId("item-requirement-reason")).toHaveTextContent(
++      "Правило: Добавлено после того, как вы прошли эту тему",
++    );
++    fireEvent.click(within(row).getByTestId("item-restore-required-btn"));
++    expect(setRequirement).toHaveBeenCalledWith(
++      { targetKind: "task", targetId: 301, level: "required" },
++      expect.anything(),
++    );
++    expect(within(row).queryByTestId("item-clear-requirement-btn")).toBeNull();
++  });
++
++  it("своё решение подписано «Ваше решение» и снимается кнопкой", () => {
++    render(<StudentProgress studentId={42} />);
++    const row = screen
++      .getAllByTestId("progress-item")
++      .find((el) => el.getAttribute("data-item-id") === "401")!;
++    expect(within(row).getByTestId("item-requirement-reason")).toHaveTextContent(
++      "Ваше решение: тема пройдена на занятии",
++    );
++    expect(within(row).queryByTestId("item-restore-required-btn")).toBeNull();
++    fireEvent.click(within(row).getByTestId("item-clear-requirement-btn"));
++    expect(revokeRequirement).toHaveBeenCalledWith(
++      { targetKind: "material", targetId: 401 },
++      expect.anything(),
++    );
++  });
++
++  it("тема: подтверждение показывает масштаб до сохранения", () => {
++    useRequirementPreview.mockReturnValue({
++      data: { tasks_affected: 7, materials_affected: 2 },
++    });
++    render(<StudentProgress studentId={42} />);
++    fireEvent.click(screen.getByTestId("bulk-optional-btn"));
++    expect(screen.getByTestId("bulk-confirm")).toHaveTextContent(
++      "Затронет заданий: 7, материалов: 2",
++    );
++    fireEvent.click(screen.getByTestId("bulk-confirm-yes"));
++    expect(setRequirement).toHaveBeenCalledWith(
++      { targetKind: "course", targetId: 11, level: "recommended" },
++      expect.anything(),
++    );
++  });
++
++  it("без причины строки причины и новых кнопок нет", () => {
++    useStudentProgress.mockReturnValue(progressOk());
++    render(<StudentProgress studentId={42} />);
++    expect(screen.queryByTestId("item-requirement-reason")).toBeNull();
++    expect(screen.queryByTestId("item-restore-required-btn")).toBeNull();
++    expect(screen.queryByTestId("item-clear-requirement-btn")).toBeNull();
++  });
++});

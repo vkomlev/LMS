@@ -25657,6 +25657,362 @@
         }
       }
     },
+    "/api/v1/teacher/students/{student_id}/progress/requirement/preview": {
+      "get": {
+        "tags": [
+          "teacher_progress"
+        ],
+        "summary": "Сколько элементов задевает решение об обязательности (tsk-1361)",
+        "description": "Показать масштаб до сохранения: для подкурса — всё поддерево.",
+        "operationId": "preview_requirement_api_v1_teacher_students__student_id__progress_requirement_preview_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "student_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "title": "Student Id"
+            }
+          },
+          {
+            "name": "target_kind",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "enum": [
+                "task",
+                "material",
+                "course"
+              ],
+              "type": "string",
+              "title": "Target Kind"
+            }
+          },
+          {
+            "name": "target_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "title": "Target Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequirementChangeResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/teacher/students/{student_id}/progress/requirement": {
+      "put": {
+        "tags": [
+          "teacher_progress"
+        ],
+        "summary": "Задать ученику обязательность элемента или подкурса (tsk-1361)",
+        "description": "Решение преподавателя главнее правил. Повторный вызов заменяет прежнее.",
+        "operationId": "set_requirement_api_v1_teacher_students__student_id__progress_requirement_put",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "student_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "title": "Student Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RequirementSetRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequirementChangeResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "teacher_progress"
+        ],
+        "summary": "Снять решение об обязательности — вернуть к курсу и правилам (tsk-1361)",
+        "description": "Идемпотентно: нечего снимать — `revoked=false`.",
+        "operationId": "revoke_requirement_api_v1_teacher_students__student_id__progress_requirement_delete",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "student_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "title": "Student Id"
+            }
+          },
+          {
+            "name": "target_kind",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "enum": [
+                "task",
+                "material",
+                "course"
+              ],
+              "type": "string",
+              "title": "Target Kind"
+            }
+          },
+          {
+            "name": "target_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "title": "Target Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequirementChangeResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/me/homework": {
       "get": {
         "tags": [
@@ -30802,6 +31158,126 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/v1/me/requirement": {
+      "get": {
+        "tags": [
+          "me"
+        ],
+        "summary": "Уровень обязательности задания/материала для меня и причина (tsk-1361)",
+        "description": "Страница задания или материала: бейдж уровня и строка причины.\n\nОтдаётся только про СЕБЯ — чужой ученик в параметрах не передаётся, IDOR\nневозможен. Уровень тот же, что у программы курса и «следующего шага».",
+        "operationId": "get_my_requirement_api_v1_me_requirement_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Task Id"
+            }
+          },
+          {
+            "name": "material_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Material Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MyRequirementRead"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Задания/материала нет"
+          },
+          "422": {
+            "description": "Нужен ровно один из task_id / material_id"
           }
         }
       }
@@ -68129,6 +68605,62 @@
         "title": "MyLessonOccurrenceRead",
         "description": "Occurrence с точки зрения ОДНОГО ученика — его личный статус участия,\nбез списка остальных участников группы (приватность)."
       },
+      "MyRequirementRead": {
+        "properties": {
+          "item_type": {
+            "type": "string",
+            "enum": [
+              "task",
+              "material"
+            ],
+            "title": "Item Type"
+          },
+          "item_id": {
+            "type": "integer",
+            "title": "Item Id"
+          },
+          "requirement_level": {
+            "type": "string",
+            "enum": [
+              "skippable",
+              "recommended",
+              "required"
+            ],
+            "title": "Requirement Level",
+            "description": "Итоговый уровень для этого ученика"
+          },
+          "course_requirement_level": {
+            "type": "string",
+            "enum": [
+              "skippable",
+              "recommended",
+              "required"
+            ],
+            "title": "Course Requirement Level",
+            "description": "Уровень в курсе"
+          },
+          "requirement_reason": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RequirementReason"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Почему отличается от курса; null — действует уровень курса"
+          }
+        },
+        "type": "object",
+        "required": [
+          "item_type",
+          "item_id",
+          "requirement_level",
+          "course_requirement_level"
+        ],
+        "title": "MyRequirementRead",
+        "description": "tsk-1361: уровень задания/материала для текущего ученика и почему."
+      },
       "NewUserItem": {
         "properties": {
           "id": {
@@ -71099,6 +71631,41 @@
             "title": "Manual",
             "description": "True — отметка поставлена вручную; у узлов курса всегда null"
           },
+          "requirement_level": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requirement Level",
+            "description": "tsk-1361: итоговый уровень для ЭТОГО ученика (required|recommended|skippable); у узлов курса null"
+          },
+          "course_requirement_level": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Course Requirement Level",
+            "description": "tsk-1361: уровень в курсе; у узлов курса null"
+          },
+          "requirement_reason": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RequirementReason"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "tsk-1361: почему уровень ученика отличается от курса. Решение преподавателя отдаётся всегда, даже если пока ничего не меняет"
+          },
           "manual_grantable": {
             "type": "boolean",
             "title": "Manual Grantable",
@@ -72620,6 +73187,142 @@
           "event_id"
         ],
         "title": "RequestHelpResponse"
+      },
+      "RequirementChangeResponse": {
+        "properties": {
+          "student_id": {
+            "type": "integer",
+            "title": "Student Id"
+          },
+          "target_kind": {
+            "type": "string",
+            "enum": [
+              "task",
+              "material",
+              "course"
+            ],
+            "title": "Target Kind"
+          },
+          "target_id": {
+            "type": "integer",
+            "title": "Target Id"
+          },
+          "tasks_affected": {
+            "type": "integer",
+            "title": "Tasks Affected"
+          },
+          "materials_affected": {
+            "type": "integer",
+            "title": "Materials Affected"
+          },
+          "override_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Override Id",
+            "description": "ID записи решения; null у предпросмотра и снятия"
+          },
+          "revoked": {
+            "type": "boolean",
+            "title": "Revoked",
+            "description": "True — решение снято, элемент вернулся к курсу и правилам",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "student_id",
+          "target_kind",
+          "target_id",
+          "tasks_affected",
+          "materials_affected"
+        ],
+        "title": "RequirementChangeResponse",
+        "description": "Итог решения: сколько обязательных по курсу элементов оно задевает."
+      },
+      "RequirementReason": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "title": "Code",
+            "description": "grace_new_content — добавлено после прохождения темы; grace_ahead — добавлено, когда ученик уже ушёл дальше; program_trim — не входит в программу до экзамена; teacher — решение преподавателя"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text",
+            "description": "Готовая строка для показа ученику и учителю"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "rule",
+              "human"
+            ],
+            "title": "Source",
+            "description": "rule — правило, human — преподаватель"
+          }
+        },
+        "type": "object",
+        "required": [
+          "code",
+          "text",
+          "source"
+        ],
+        "title": "RequirementReason",
+        "description": "tsk-1361: почему уровень элемента для ученика отличается от курса."
+      },
+      "RequirementSetRequest": {
+        "properties": {
+          "target_kind": {
+            "type": "string",
+            "enum": [
+              "task",
+              "material",
+              "course"
+            ],
+            "title": "Target Kind"
+          },
+          "target_id": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Target Id"
+          },
+          "level": {
+            "type": "string",
+            "enum": [
+              "required",
+              "recommended"
+            ],
+            "title": "Level",
+            "description": "recommended — снять обязательность; required — вернуть в обязательные то, что обязательно по курсу (повышение необязательного по курсу пока не поддерживается — 422)"
+          },
+          "comment": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 300
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comment",
+            "description": "Причина — её увидят ученик и учитель"
+          }
+        },
+        "type": "object",
+        "required": [
+          "target_kind",
+          "target_id",
+          "level"
+        ],
+        "title": "RequirementSetRequest",
+        "description": "Решение преподавателя об обязательности элемента или подкурса для ученика."
       },
       "RescheduleRequest": {
         "properties": {
@@ -78357,6 +79060,17 @@
             "title": "Requirement Level",
             "description": "Уровень обязательности ДЛЯ ЭТОГО УЧЕНИКА, а не свойство материала (tsk-692): обязательный материал, добавленный в курс после того, как ученик закрыл тему, отдаётся ему как recommended"
           },
+          "requirement_reason": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RequirementReason"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "tsk-1361: почему уровень для ученика отличается от курса; null — действует уровень курса"
+          },
           "is_active": {
             "type": "boolean",
             "title": "Is Active",
@@ -78551,6 +79265,17 @@
             ],
             "title": "Requirement Level",
             "description": "Уровень обязательности ДЛЯ ЭТОГО УЧЕНИКА, а не свойство задания (tsk-692): обязательное задание, добавленное в курс после того, как ученик закрыл тему, отдаётся ему как recommended"
+          },
+          "requirement_reason": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RequirementReason"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "tsk-1361: почему уровень для ученика отличается от курса; null — действует уровень курса"
           },
           "is_active": {
             "type": "boolean",

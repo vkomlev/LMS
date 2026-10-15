@@ -44,6 +44,7 @@ from app.schemas.learning_guest import (
     AttributeGuestResponse,
 )
 from app.schemas.me import (
+    MyRequirementRead,
     BrowserTimezoneRequest,
     BrowserTimezoneResponse,
     CourseProgress,
@@ -1259,3 +1260,49 @@ async def my_entitlements(
     """
     owner = resolve_student_owner(current_user, student_id, subject="права ничьи")
     return await entitlements_service.snapshot(db, student_id=owner)
+
+
+# ── GET /me/requirement (tsk-1361) ─────────────────────────────────────────
+
+
+@router.get(
+    "/requirement",
+    response_model=MyRequirementRead,
+    summary="Уровень обязательности задания/материала для меня и причина (tsk-1361)",
+    responses={
+        404: {"description": "Задания/материала нет"},
+        422: {"description": "Нужен ровно один из task_id / material_id"},
+    },
+)
+async def get_my_requirement(
+    task_id: int | None = Query(default=None, ge=1),
+    material_id: int | None = Query(default=None, ge=1),
+    current_user: CurrentUser = Depends(require_authenticated),
+    db: AsyncSession = Depends(get_async_db),
+) -> MyRequirementRead:
+    """Страница задания или материала: бейдж уровня и строка причины.
+
+    Отдаётся только про СЕБЯ — чужой ученик в параметрах не передаётся, IDOR
+    невозможен. Уровень тот же, что у программы курса и «следующего шага».
+    """
+    from app.services.requirement_override_service import reason_payload, requirement_view
+
+    if (task_id is None) == (material_id is None):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Нужен ровно один из task_id / material_id"
+        )
+    target = ("task", int(task_id)) if task_id is not None else ("material", int(material_id))
+    view = (await requirement_view(db, current_user.id, [target])).get(target)
+    if view is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Элемент не найден")
+    return MyRequirementRead(
+        item_type=target[0],
+        item_id=target[1],
+        requirement_level=view.level,
+        course_requirement_level=view.course_level,
+        # Решение учителя, которое пока ничего не меняет, ученику не показываем:
+        # строка причины рядом с прежним уровнем только запутала бы.
+        requirement_reason=(
+            reason_payload(view.reason) if view.level != view.course_level else None
+        ),
+    )

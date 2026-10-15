@@ -32,7 +32,8 @@ from app.api.deps import get_bare_db, require_role
 from app.auth.current_user import CurrentUser
 from app.schemas.code_review import CodeReviewBadge
 from app.schemas.teacher_help_requests import HelpRequestType
-from app.services import manual_progress_service
+from app.schemas.content_requirement import RequirementReason
+from app.services import manual_progress_service, requirement_override_service
 
 logger = logging.getLogger("api.teacher_progress")
 
@@ -129,6 +130,23 @@ class ProgressTreeItem(BaseModel):
     manual: Optional[bool] = Field(
         default=None,
         description="True — отметка поставлена вручную; у узлов курса всегда null",
+    )
+    requirement_level: Optional[str] = Field(
+        default=None,
+        description=(
+            "tsk-1361: итоговый уровень для ЭТОГО ученика (required|recommended|"
+            "skippable); у узлов курса null"
+        ),
+    )
+    course_requirement_level: Optional[str] = Field(
+        default=None, description="tsk-1361: уровень в курсе; у узлов курса null"
+    )
+    requirement_reason: Optional[RequirementReason] = Field(
+        default=None,
+        description=(
+            "tsk-1361: почему уровень ученика отличается от курса. Решение "
+            "преподавателя отдаётся всегда, даже если пока ничего не меняет"
+        ),
     )
     manual_grantable: bool = Field(
         default=True,
@@ -290,6 +308,19 @@ async def get_progress(
     data: dict[str, Any] = await manual_progress_service.get_student_progress(
         db, student_id=student_id, course_id=course_id
     )
+    # tsk-1361: уровень и причина — тем же путём, что видит ученик.
+    targets = [
+        (str(i["item_type"]), int(i["item_id"]))
+        for i in data.get("items", [])
+        if i.get("item_type") in ("task", "material")
+    ]
+    views = await requirement_override_service.requirement_view(db, student_id, targets)
+    for item in data.get("items", []):
+        view = views.get((str(item.get("item_type")), int(item.get("item_id", 0))))
+        if view is not None:
+            item["requirement_level"] = view.level
+            item["course_requirement_level"] = view.course_level
+            item["requirement_reason"] = requirement_override_service.reason_payload(view.reason)
     return ProgressTreeResponse(courses=courses, **data)
 
 
@@ -502,3 +533,164 @@ async def revoke_course(
     )
     await db.commit()
     return ProgressBulkResponse(**result)
+
+
+
+# ─── Обязательность для ученика (tsk-1361) ─────────────────────────────────
+
+
+class RequirementSetRequest(BaseModel):
+    """Решение преподавателя об обязательности элемента или подкурса для ученика."""
+
+    target_kind: Literal["task", "material", "course"]
+    target_id: int = Field(..., ge=1)
+    level: Literal["required", "recommended"] = Field(
+        ...,
+        description=(
+            "recommended — снять обязательность; required — вернуть в обязательные "
+            "то, что обязательно по курсу (повышение необязательного по курсу пока не "
+            "поддерживается — 422)"
+        ),
+    )
+    comment: Optional[str] = Field(
+        default=None, max_length=300, description="Причина — её увидят ученик и учитель"
+    )
+
+
+class RequirementChangeResponse(BaseModel):
+    """Итог решения: сколько обязательных по курсу элементов оно задевает."""
+
+    student_id: int
+    target_kind: Literal["task", "material", "course"]
+    target_id: int
+    tasks_affected: int
+    materials_affected: int
+    override_id: Optional[int] = Field(
+        default=None, description="ID записи решения; null у предпросмотра и снятия"
+    )
+    revoked: bool = Field(
+        default=False, description="True — решение снято, элемент вернулся к курсу и правилам"
+    )
+
+
+async def _target_course(db: AsyncSession, target_kind: str, target_id: int) -> int:
+    """Курс цели для scoped-ACL. 404, если цели нет."""
+    if target_kind == "task":
+        return await _course_of_task(db, target_id)
+    if target_kind == "material":
+        return await _course_of_material(db, target_id)
+    exists = (
+        await db.execute(text("SELECT 1 FROM courses WHERE id = :c"), {"c": target_id})
+    ).scalar()
+    if not exists:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=f"Курс {target_id} не найден")
+    return target_id
+
+
+def _require_person(current_user: CurrentUser) -> int:
+    """Решение об обязательности принимает человек: сервисному токену — 403."""
+    actor = _actor_id(current_user)
+    if actor is None:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, detail="Решение принимает преподаватель, не сервис"
+        )
+    return actor
+
+
+@router.get(
+    _BASE + "/requirement/preview",
+    response_model=RequirementChangeResponse,
+    summary="Сколько элементов задевает решение об обязательности (tsk-1361)",
+)
+async def preview_requirement(
+    student_id: int = Path(..., ge=1),
+    target_kind: Literal["task", "material", "course"] = Query(...),
+    target_id: int = Query(..., ge=1),
+    db: AsyncSession = Depends(get_bare_db),
+    current_user: CurrentUser = Depends(_PROGRESS_GATE),
+) -> RequirementChangeResponse:
+    """Показать масштаб до сохранения: для подкурса — всё поддерево."""
+    course_id = await _target_course(db, target_kind, target_id)
+    await manual_progress_service.ensure_can_edit_progress(db, current_user, student_id, course_id)
+    tasks_n, materials_n = await requirement_override_service.affected_counts(
+        db, target_kind, target_id
+    )
+    return RequirementChangeResponse(
+        student_id=student_id, target_kind=target_kind, target_id=target_id,
+        tasks_affected=tasks_n, materials_affected=materials_n,
+    )
+
+
+@router.put(
+    _BASE + "/requirement",
+    response_model=RequirementChangeResponse,
+    summary="Задать ученику обязательность элемента или подкурса (tsk-1361)",
+)
+async def set_requirement(
+    body: RequirementSetRequest = Body(...),
+    student_id: int = Path(..., ge=1),
+    db: AsyncSession = Depends(get_bare_db),
+    current_user: CurrentUser = Depends(_PROGRESS_GATE),
+) -> RequirementChangeResponse:
+    """Решение преподавателя главнее правил. Повторный вызов заменяет прежнее."""
+    course_id = await _target_course(db, body.target_kind, body.target_id)
+    await manual_progress_service.ensure_can_edit_progress(db, current_user, student_id, course_id)
+    actor = _require_person(current_user)
+    if body.target_kind in ("task", "material"):
+        sql = (
+            "SELECT requirement_level FROM tasks WHERE id = :i"
+            if body.target_kind == "task"
+            else "SELECT requirement_level FROM materials WHERE id = :i"
+        )
+        base = (await db.execute(text(sql), {"i": body.target_id})).scalar()
+        # Решение имеет смысл только для обязательного по курсу: понизить
+        # необязательное некуда, повысить его потребители пока не умеют.
+        if base not in requirement_override_service.REQUIRED_LEVELS:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    "Элемент необязателен по курсу — решение для ученика ничего не "
+                    "изменит (сделать его обязательным одному ученику пока нельзя)"
+                ),
+            )
+    override_id = await requirement_override_service.set_human_override(
+        db, student_id=student_id, target_kind=body.target_kind, target_id=body.target_id,
+        level=body.level, by_user_id=actor, reason_text=body.comment,
+    )
+    await db.commit()
+    tasks_n, materials_n = await requirement_override_service.affected_counts(
+        db, body.target_kind, body.target_id
+    )
+    return RequirementChangeResponse(
+        student_id=student_id, target_kind=body.target_kind, target_id=body.target_id,
+        tasks_affected=tasks_n, materials_affected=materials_n, override_id=override_id,
+    )
+
+
+@router.delete(
+    _BASE + "/requirement",
+    response_model=RequirementChangeResponse,
+    summary="Снять решение об обязательности — вернуть к курсу и правилам (tsk-1361)",
+)
+async def revoke_requirement(
+    student_id: int = Path(..., ge=1),
+    target_kind: Literal["task", "material", "course"] = Query(...),
+    target_id: int = Query(..., ge=1),
+    db: AsyncSession = Depends(get_bare_db),
+    current_user: CurrentUser = Depends(_PROGRESS_GATE),
+) -> RequirementChangeResponse:
+    """Идемпотентно: нечего снимать — `revoked=false`."""
+    course_id = await _target_course(db, target_kind, target_id)
+    await manual_progress_service.ensure_can_edit_progress(db, current_user, student_id, course_id)
+    actor = _require_person(current_user)
+    revoked = await requirement_override_service.revoke_human_override(
+        db, student_id=student_id, target_kind=target_kind, target_id=target_id, by_user_id=actor
+    )
+    await db.commit()
+    tasks_n, materials_n = await requirement_override_service.affected_counts(
+        db, target_kind, target_id
+    )
+    return RequirementChangeResponse(
+        student_id=student_id, target_kind=target_kind, target_id=target_id,
+        tasks_affected=tasks_n, materials_affected=materials_n, revoked=revoked,
+    )

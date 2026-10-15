@@ -5,6 +5,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.schemas.content_requirement import RequirementReason
+
 # tsk-427: категория ученика. Значения — латинские snake_case-коды (та же
 # конвенция, что sale_status/match_kind в pricing, tsk-505); тексты для UI
 # переводятся на стороне клиента (SPW).
@@ -451,6 +453,13 @@ class SyllabusTaskItem(BaseModel):
             "ученик закрыл тему, отдаётся ему как recommended"
         ),
     )
+    requirement_reason: RequirementReason | None = Field(
+        None,
+        description=(
+            "tsk-1361: почему уровень для ученика отличается от курса; null — "
+            "действует уровень курса"
+        ),
+    )
     is_active: bool = True
     attempts_used: int
     attempts_limit_effective: int
@@ -496,6 +505,13 @@ class SyllabusMaterialItem(BaseModel):
             "Уровень обязательности ДЛЯ ЭТОГО УЧЕНИКА, а не свойство материала "
             "(tsk-692): обязательный материал, добавленный в курс после того, как "
             "ученик закрыл тему, отдаётся ему как recommended"
+        ),
+    )
+    requirement_reason: RequirementReason | None = Field(
+        None,
+        description=(
+            "tsk-1361: почему уровень для ученика отличается от курса; null — "
+            "действует уровень курса"
         ),
     )
     is_active: bool = True
@@ -618,4 +634,16 @@ class FreeEnrollmentResponse(BaseModel):
     course_uid: Optional[str] = Field(None, description="Код курса для адреса в кабинете")
     created: bool = Field(
         ..., description="true — записан этим запросом; false — уже был записан раньше"
+    )
+
+
+class MyRequirementRead(BaseModel):
+    """tsk-1361: уровень задания/материала для текущего ученика и почему."""
+
+    item_type: Literal["task", "material"]
+    item_id: int
+    requirement_level: RequirementLevel = Field(..., description="Итоговый уровень для этого ученика")
+    course_requirement_level: RequirementLevel = Field(..., description="Уровень в курсе")
+    requirement_reason: RequirementReason | None = Field(
+        None, description="Почему отличается от курса; null — действует уровень курса"
     )

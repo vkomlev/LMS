@@ -1,0 +1,702 @@
+diff --git a/app/api/v1/me.py b/app/api/v1/me.py
+index dcb1f2e..ebb0f4a 100644
+--- a/app/api/v1/me.py
++++ b/app/api/v1/me.py
+@@ -44,6 +44,7 @@ from app.schemas.learning_guest import (
+     AttributeGuestResponse,
+ )
+ from app.schemas.me import (
++    MyRequirementRead,
+     BrowserTimezoneRequest,
+     BrowserTimezoneResponse,
+     CourseProgress,
+@@ -1259,3 +1260,49 @@ async def my_entitlements(
+     """
+     owner = resolve_student_owner(current_user, student_id, subject="права ничьи")
+     return await entitlements_service.snapshot(db, student_id=owner)
++
++
++# ── GET /me/requirement (tsk-1361) ─────────────────────────────────────────
++
++
++@router.get(
++    "/requirement",
++    response_model=MyRequirementRead,
++    summary="Уровень обязательности задания/материала для меня и причина (tsk-1361)",
++    responses={
++        404: {"description": "Задания/материала нет"},
++        422: {"description": "Нужен ровно один из task_id / material_id"},
++    },
++)
++async def get_my_requirement(
++    task_id: int | None = Query(default=None, ge=1),
++    material_id: int | None = Query(default=None, ge=1),
++    current_user: CurrentUser = Depends(require_authenticated),
++    db: AsyncSession = Depends(get_async_db),
++) -> MyRequirementRead:
++    """Страница задания или материала: бейдж уровня и строка причины.
++
++    Отдаётся только про СЕБЯ — чужой ученик в параметрах не передаётся, IDOR
++    невозможен. Уровень тот же, что у программы курса и «следующего шага».
++    """
++    from app.services.requirement_override_service import reason_payload, requirement_view
++
++    if (task_id is None) == (material_id is None):
++        raise HTTPException(
++            status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Нужен ровно один из task_id / material_id"
++        )
++    target = ("task", int(task_id)) if task_id is not None else ("material", int(material_id))
++    view = (await requirement_view(db, current_user.id, [target])).get(target)
++    if view is None:
++        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Элемент не найден")
++    return MyRequirementRead(
++        item_type=target[0],
++        item_id=target[1],
++        requirement_level=view.level,
++        course_requirement_level=view.course_level,
++        # Решение учителя, которое пока ничего не меняет, ученику не показываем:
++        # строка причины рядом с прежним уровнем только запутала бы.
++        requirement_reason=(
++            reason_payload(view.reason) if view.level != view.course_level else None
++        ),
++    )
+diff --git a/app/api/v1/teacher_progress.py b/app/api/v1/teacher_progress.py
+index 73e3357..1dfddc5 100644
+--- a/app/api/v1/teacher_progress.py
++++ b/app/api/v1/teacher_progress.py
+@@ -32,7 +32,8 @@ from app.api.deps import get_bare_db, require_role
+ from app.auth.current_user import CurrentUser
+ from app.schemas.code_review import CodeReviewBadge
+ from app.schemas.teacher_help_requests import HelpRequestType
+-from app.services import manual_progress_service
++from app.schemas.content_requirement import RequirementReason
++from app.services import manual_progress_service, requirement_override_service
+ 
+ logger = logging.getLogger("api.teacher_progress")
+ 
+@@ -130,6 +131,23 @@ class ProgressTreeItem(BaseModel):
+         default=None,
+         description="True — отметка поставлена вручную; у узлов курса всегда null",
+     )
++    requirement_level: Optional[str] = Field(
++        default=None,
++        description=(
++            "tsk-1361: итоговый уровень для ЭТОГО ученика (required|recommended|"
++            "skippable); у узлов курса null"
++        ),
++    )
++    course_requirement_level: Optional[str] = Field(
++        default=None, description="tsk-1361: уровень в курсе; у узлов курса null"
++    )
++    requirement_reason: Optional[RequirementReason] = Field(
++        default=None,
++        description=(
++            "tsk-1361: почему уровень ученика отличается от курса. Решение "
++            "преподавателя отдаётся всегда, даже если пока ничего не меняет"
++        ),
++    )
+     manual_grantable: bool = Field(
+         default=True,
+         description=(
+@@ -290,6 +308,19 @@ async def get_progress(
+     data: dict[str, Any] = await manual_progress_service.get_student_progress(
+         db, student_id=student_id, course_id=course_id
+     )
++    # tsk-1361: уровень и причина — тем же путём, что видит ученик.
++    targets = [
++        (str(i["item_type"]), int(i["item_id"]))
++        for i in data.get("items", [])
++        if i.get("item_type") in ("task", "material")
++    ]
++    views = await requirement_override_service.requirement_view(db, student_id, targets)
++    for item in data.get("items", []):
++        view = views.get((str(item.get("item_type")), int(item.get("item_id", 0))))
++        if view is not None:
++            item["requirement_level"] = view.level
++            item["course_requirement_level"] = view.course_level
++            item["requirement_reason"] = requirement_override_service.reason_payload(view.reason)
+     return ProgressTreeResponse(courses=courses, **data)
+ 
+ 
+@@ -502,3 +533,164 @@ async def revoke_course(
+     )
+     await db.commit()
+     return ProgressBulkResponse(**result)
++
++
++
++# ─── Обязательность для ученика (tsk-1361) ─────────────────────────────────
++
++
++class RequirementSetRequest(BaseModel):
++    """Решение преподавателя об обязательности элемента или подкурса для ученика."""
++
++    target_kind: Literal["task", "material", "course"]
++    target_id: int = Field(..., ge=1)
++    level: Literal["required", "recommended"] = Field(
++        ...,
++        description=(
++            "recommended — снять обязательность; required — вернуть в обязательные "
++            "то, что обязательно по курсу (повышение необязательного по курсу пока не "
++            "поддерживается — 422)"
++        ),
++    )
++    comment: Optional[str] = Field(
++        default=None, max_length=300, description="Причина — её увидят ученик и учитель"
++    )
++
++
++class RequirementChangeResponse(BaseModel):
++    """Итог решения: сколько обязательных по курсу элементов оно задевает."""
++
++    student_id: int
++    target_kind: Literal["task", "material", "course"]
++    target_id: int
++    tasks_affected: int
++    materials_affected: int
++    override_id: Optional[int] = Field(
++        default=None, description="ID записи решения; null у предпросмотра и снятия"
++    )
++    revoked: bool = Field(
++        default=False, description="True — решение снято, элемент вернулся к курсу и правилам"
++    )
++
++
++async def _target_course(db: AsyncSession, target_kind: str, target_id: int) -> int:
++    """Курс цели для scoped-ACL. 404, если цели нет."""
++    if target_kind == "task":
++        return await _course_of_task(db, target_id)
++    if target_kind == "material":
++        return await _course_of_material(db, target_id)
++    exists = (
++        await db.execute(text("SELECT 1 FROM courses WHERE id = :c"), {"c": target_id})
++    ).scalar()
++    if not exists:
++        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=f"Курс {target_id} не найден")
++    return target_id
++
++
++def _require_person(current_user: CurrentUser) -> int:
++    """Решение об обязательности принимает человек: сервисному токену — 403."""
++    actor = _actor_id(current_user)
++    if actor is None:
++        raise HTTPException(
++            status.HTTP_403_FORBIDDEN, detail="Решение принимает преподаватель, не сервис"
++        )
++    return actor
++
++
++@router.get(
++    _BASE + "/requirement/preview",
++    response_model=RequirementChangeResponse,
++    summary="Сколько элементов задевает решение об обязательности (tsk-1361)",
++)
++async def preview_requirement(
++    student_id: int = Path(..., ge=1),
++    target_kind: Literal["task", "material", "course"] = Query(...),
++    target_id: int = Query(..., ge=1),
++    db: AsyncSession = Depends(get_bare_db),
++    current_user: CurrentUser = Depends(_PROGRESS_GATE),
++) -> RequirementChangeResponse:
++    """Показать масштаб до сохранения: для подкурса — всё поддерево."""
++    course_id = await _target_course(db, target_kind, target_id)
++    await manual_progress_service.ensure_can_edit_progress(db, current_user, student_id, course_id)
++    tasks_n, materials_n = await requirement_override_service.affected_counts(
++        db, target_kind, target_id
++    )
++    return RequirementChangeResponse(
++        student_id=student_id, target_kind=target_kind, target_id=target_id,
++        tasks_affected=tasks_n, materials_affected=materials_n,
++    )
++
++
++@router.put(
++    _BASE + "/requirement",
++    response_model=RequirementChangeResponse,
++    summary="Задать ученику обязательность элемента или подкурса (tsk-1361)",
++)
++async def set_requirement(
++    body: RequirementSetRequest = Body(...),
++    student_id: int = Path(..., ge=1),
++    db: AsyncSession = Depends(get_bare_db),
++    current_user: CurrentUser = Depends(_PROGRESS_GATE),
++) -> RequirementChangeResponse:
++    """Решение преподавателя главнее правил. Повторный вызов заменяет прежнее."""
++    course_id = await _target_course(db, body.target_kind, body.target_id)
++    await manual_progress_service.ensure_can_edit_progress(db, current_user, student_id, course_id)
++    actor = _require_person(current_user)
++    if body.target_kind in ("task", "material"):
++        sql = (
++            "SELECT requirement_level FROM tasks WHERE id = :i"
++            if body.target_kind == "task"
++            else "SELECT requirement_level FROM materials WHERE id = :i"
++        )
++        base = (await db.execute(text(sql), {"i": body.target_id})).scalar()
++        # Решение имеет смысл только для обязательного по курсу: понизить
++        # необязательное некуда, повысить его потребители пока не умеют.
++        if base not in requirement_override_service.REQUIRED_LEVELS:
++            raise HTTPException(
++                status.HTTP_422_UNPROCESSABLE_ENTITY,
++                detail=(
++                    "Элемент необязателен по курсу — решение для ученика ничего не "
++                    "изменит (сделать его обязательным одному ученику пока нельзя)"
++                ),
++            )
++    override_id = await requirement_override_service.set_human_override(
++        db, student_id=student_id, target_kind=body.target_kind, target_id=body.target_id,
++        level=body.level, by_user_id=actor, reason_text=body.comment,
++    )
++    await db.commit()
++    tasks_n, materials_n = await requirement_override_service.affected_counts(
++        db, body.target_kind, body.target_id
++    )
++    return RequirementChangeResponse(
++        student_id=student_id, target_kind=body.target_kind, target_id=body.target_id,
++        tasks_affected=tasks_n, materials_affected=materials_n, override_id=override_id,
++    )
++
++
++@router.delete(
++    _BASE + "/requirement",
++    response_model=RequirementChangeResponse,
++    summary="Снять решение об обязательности — вернуть к курсу и правилам (tsk-1361)",
++)
++async def revoke_requirement(
++    student_id: int = Path(..., ge=1),
++    target_kind: Literal["task", "material", "course"] = Query(...),
++    target_id: int = Query(..., ge=1),
++    db: AsyncSession = Depends(get_bare_db),
++    current_user: CurrentUser = Depends(_PROGRESS_GATE),
++) -> RequirementChangeResponse:
++    """Идемпотентно: нечего снимать — `revoked=false`."""
++    course_id = await _target_course(db, target_kind, target_id)
++    await manual_progress_service.ensure_can_edit_progress(db, current_user, student_id, course_id)
++    actor = _require_person(current_user)
++    revoked = await requirement_override_service.revoke_human_override(
++        db, student_id=student_id, target_kind=target_kind, target_id=target_id, by_user_id=actor
++    )
++    await db.commit()
++    tasks_n, materials_n = await requirement_override_service.affected_counts(
++        db, target_kind, target_id
++    )
++    return RequirementChangeResponse(
++        student_id=student_id, target_kind=target_kind, target_id=target_id,
++        tasks_affected=tasks_n, materials_affected=materials_n, revoked=revoked,
++    )
+diff --git a/app/schemas/content_requirement.py b/app/schemas/content_requirement.py
+index dc64a92..18866c9 100644
+--- a/app/schemas/content_requirement.py
++++ b/app/schemas/content_requirement.py
+@@ -2,5 +2,21 @@ from __future__ import annotations
+ 
+ from typing import Literal
+ 
++from pydantic import BaseModel, Field
+ 
+ RequirementLevel = Literal["skippable", "recommended", "required"]
++
++
++class RequirementReason(BaseModel):
++    """tsk-1361: почему уровень элемента для ученика отличается от курса."""
++
++    code: str = Field(
++        ...,
++        description=(
++            "grace_new_content — добавлено после прохождения темы; grace_ahead — "
++            "добавлено, когда ученик уже ушёл дальше; program_trim — не входит в "
++            "программу до экзамена; teacher — решение преподавателя"
++        ),
++    )
++    text: str = Field(..., description="Готовая строка для показа ученику и учителю")
++    source: Literal["rule", "human"] = Field(..., description="rule — правило, human — преподаватель")
+diff --git a/app/schemas/me.py b/app/schemas/me.py
+index 3cc8b62..ee93880 100644
+--- a/app/schemas/me.py
++++ b/app/schemas/me.py
+@@ -5,6 +5,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+ 
+ from pydantic import BaseModel, Field, field_validator
+ 
++from app.schemas.content_requirement import RequirementReason
++
+ # tsk-427: категория ученика. Значения — латинские snake_case-коды (та же
+ # конвенция, что sale_status/match_kind в pricing, tsk-505); тексты для UI
+ # переводятся на стороне клиента (SPW).
+@@ -451,6 +453,13 @@ class SyllabusTaskItem(BaseModel):
+             "ученик закрыл тему, отдаётся ему как recommended"
+         ),
+     )
++    requirement_reason: RequirementReason | None = Field(
++        None,
++        description=(
++            "tsk-1361: почему уровень для ученика отличается от курса; null — "
++            "действует уровень курса"
++        ),
++    )
+     is_active: bool = True
+     attempts_used: int
+     attempts_limit_effective: int
+@@ -498,6 +507,13 @@ class SyllabusMaterialItem(BaseModel):
+             "ученик закрыл тему, отдаётся ему как recommended"
+         ),
+     )
++    requirement_reason: RequirementReason | None = Field(
++        None,
++        description=(
++            "tsk-1361: почему уровень для ученика отличается от курса; null — "
++            "действует уровень курса"
++        ),
++    )
+     is_active: bool = True
+     completed_at: datetime | None
+     # tsk-684, та же причина, что у SyllabusTaskItem: без этих двух полей
+@@ -619,3 +635,15 @@ class FreeEnrollmentResponse(BaseModel):
+     created: bool = Field(
+         ..., description="true — записан этим запросом; false — уже был записан раньше"
+     )
++
++
++class MyRequirementRead(BaseModel):
++    """tsk-1361: уровень задания/материала для текущего ученика и почему."""
++
++    item_type: Literal["task", "material"]
++    item_id: int
++    requirement_level: RequirementLevel = Field(..., description="Итоговый уровень для этого ученика")
++    course_requirement_level: RequirementLevel = Field(..., description="Уровень в курсе")
++    requirement_reason: RequirementReason | None = Field(
++        None, description="Почему отличается от курса; null — действует уровень курса"
++    )
+diff --git a/app/services/me_service.py b/app/services/me_service.py
+index fb117f5..355ca88 100644
+--- a/app/services/me_service.py
++++ b/app/services/me_service.py
+@@ -18,6 +18,7 @@ from app.schemas.task_content import QUIZ_TASK_TYPES
+ # — общая функция для движка и кабинета, чтобы карточка курса, программа курса
+ # и «следующий шаг» считали долг одинаково.
+ from app.services.content_grace_service import compute_graced_items, done_among
++from app.services.requirement_override_service import reason_payload, resolve_levels
+ from app.services.transparent_subcourse import absorbed_in_tree, task_key
+ # Y-3.2 (S3-A4): единая точка правды — учебный движок.
+ from app.services.learning_engine_service import PASS_THRESHOLD_RATIO, is_mentor_reviewed
+@@ -1288,6 +1289,9 @@ async def get_syllabus_states(
+     # бы не видна — тогда программа курса и учебный движок разошлись бы в том,
+     # что считать долгом.
+     graced = await compute_graced_items(db, user_id, attempts_root_id)
++    # tsk-1361: причина — только у того, что показано понижённым (тот же набор
++    # `graced`), иначе строка причины разошлась бы с уровнем рядом с ней.
++    reasons = (await resolve_levels(db, user_id)).reasons if graced else {}
+ 
+     # tsk-1198: прозрачный подкурс, чей хозяин в этом дереве, — не раздел: его
+     # элементы отдаются с course_id хозяина (SPW группирует по нему) и встают в
+@@ -1337,6 +1341,11 @@ async def get_syllabus_states(
+                         if int(m["material_id"]) in graced.materials
+                         else m["requirement_level"]
+                     ),
++                    "requirement_reason": (
++                        reason_payload(reasons.get(("material", int(m["material_id"]))))
++                        if int(m["material_id"]) in graced.materials
++                        else None
++                    ),
+                     "is_active": bool(m["is_active"]),
+                     "completed_at": m["completed_at"],
+                     "title": m["title"],
+@@ -1355,6 +1364,11 @@ async def get_syllabus_states(
+                         if int(t["task_id"]) in graced.tasks
+                         else t["requirement_level"]
+                     ),
++                    "requirement_reason": (
++                        reason_payload(reasons.get(("task", int(t["task_id"]))))
++                        if int(t["task_id"]) in graced.tasks
++                        else None
++                    ),
+                     "is_active": bool(t["is_active"]),
+                     "attempts_used": int(t["attempts_used"] or 0),
+                     "attempts_limit_effective": int(t["attempts_limit_effective"] or 0),
+diff --git a/app/services/requirement_override_service.py b/app/services/requirement_override_service.py
+index f581eb6..3e784fe 100644
+--- a/app/services/requirement_override_service.py
++++ b/app/services/requirement_override_service.py
+@@ -505,3 +505,102 @@ async def stale_students(db: AsyncSession) -> list[int]:
+             ).scalars().all()
+         }
+     return sorted(ids)
++
++
++# ─── Экраны ученика и учителя (фаза Б3) ────────────────────────────────────
++
++
++def reason_payload(view: Optional[OverrideView]) -> Optional[dict]:
++    """Причина в форме `RequirementReason` для ответа API."""
++    if view is None:
++        return None
++    return {"code": view.reason_code, "text": view.reason_text, "source": view.source}
++
++
++@dataclass(frozen=True)
++class ItemRequirement:
++    """Уровень элемента глазами ученика: как его видят экраны прямо сейчас."""
++
++    level: str  # итоговый для ученика
++    course_level: str  # уровень в курсе
++    reason: Optional[OverrideView]  # почему отличается; решение учителя — всегда
++
++
++async def requirement_view(
++    db: AsyncSession, student_id: int, targets: list[Target]
++) -> Dict[Target, ItemRequirement]:
++    """Уровень и причина для набора заданий/материалов ученика.
++
++    Итоговый уровень берётся ровно тем же путём, что у движка
++    (`graced_for_roots` — с рубильником или без), поэтому экран не может
++    разойтись со «следующим шагом». Причина показывается, только если уровень
++    действительно отличается от курса, — кроме решения учителя: его учитель
++    видит всегда, даже когда оно пока ничего не меняет.
++    """
++    # Отложенный импорт ради симметрии с content_grace_service (кольцо).
++    from app.services.content_grace_service import graced_for_roots
++
++    task_ids = sorted({i for k, i in targets if k == "task"})
++    material_ids = sorted({i for k, i in targets if k == "material"})
++    if not task_ids and not material_ids:
++        return {}
++    base_rows = (
++        await db.execute(
++            text(
++                "SELECT 'task', id, requirement_level FROM tasks WHERE id = ANY(CAST(:t AS int[])) "
++                "UNION ALL "
++                "SELECT 'material', id, requirement_level FROM materials "
++                " WHERE id = ANY(CAST(:m AS int[]))"
++            ),
++            {"t": task_ids, "m": material_ids},
++        )
++    ).fetchall()
++    graced = await graced_for_roots(db, student_id)
++    reasons = (await resolve_levels(db, student_id)).reasons
++    human = await active_overrides(db, student_id)
++
++    result: Dict[Target, ItemRequirement] = {}
++    for kind, item_id, base in base_rows:
++        target = (str(kind), int(item_id))
++        demoted = int(item_id) in (graced.tasks if kind == "task" else graced.materials)
++        level = "recommended" if demoted and base in REQUIRED_LEVELS else str(base)
++        reason = reasons.get(target) if level != base else None
++        own = human.get(target)
++        if reason is None and own is not None and own.source == "human":
++            reason = own
++        result[target] = ItemRequirement(level=level, course_level=str(base), reason=reason)
++    return result
++
++
++_AFFECTED_SQL = """
++/* tsk1361-affected */
++WITH RECURSIVE sub AS (
++    SELECT CAST(:cid AS integer) AS cid, ARRAY[CAST(:cid AS integer)] AS path
++    UNION ALL
++    SELECT cp.course_id, s.path || cp.course_id
++      FROM sub s JOIN course_parents cp ON cp.parent_course_id = s.cid
++     WHERE NOT cp.course_id = ANY(s.path)
++)
++SELECT
++    (SELECT count(*) FROM tasks
++      WHERE course_id IN (SELECT cid FROM sub) AND is_active
++        AND requirement_level = ANY(:lv)),
++    (SELECT count(*) FROM materials
++      WHERE course_id IN (SELECT cid FROM sub) AND is_active
++        AND requirement_level = ANY(:lv))
++"""
++
++
++async def affected_counts(db: AsyncSession, target_kind: str, target_id: int) -> Tuple[int, int]:
++    """Сколько обязательных по курсу заданий и материалов задевает решение.
++
++    Для подкурса — всё его поддерево (учитель видит масштаб до сохранения).
++    """
++    if target_kind == "task":
++        return 1, 0
++    if target_kind == "material":
++        return 0, 1
++    row = (
++        await db.execute(text(_AFFECTED_SQL), {"cid": target_id, "lv": list(REQUIRED_LEVELS)})
++    ).one()
++    return int(row[0] or 0), int(row[1] or 0)
+diff --git a/tests/test_tsk1361_requirement_api.py b/tests/test_tsk1361_requirement_api.py
+new file mode 100644
+index 0000000..0b27788
+--- /dev/null
++++ b/tests/test_tsk1361_requirement_api.py
+@@ -0,0 +1,175 @@
++"""tsk-1361 Б3: API обязательности — учитель задаёт, ученик видит причину.
++
++Учитель: предпросмотр масштаба, решение по элементу или подкурсу, снятие;
++чужой преподаватель — 403; «сделать обязательным» необязательное по курсу —
++422 (повышение пока не поддерживается потребителями). Ученик: личный уровень
++и причина на странице задания — ровно то, что действует (рубильник Б2).
++"""
++from __future__ import annotations
++
++import pytest
++from sqlalchemy import text
++
++from app.services.content_grace_service import invalidate_grace_cache
++from tests.test_manual_progress_tsk297 import _new_user, graph  # noqa: F401 — фикстура
++
++pytestmark = pytest.mark.asyncio
++
++
++def _base(ids: dict) -> str:
++    return f"/api/v1/teacher/students/{ids['student']}/progress"
++
++
++async def _cleanup_overrides(db, student_id: int) -> None:
++    await db.execute(
++        text("DELETE FROM student_requirement_override WHERE student_id = :s"), {"s": student_id}
++    )
++    await db.commit()
++
++
++async def test_foreign_teacher_cannot_set_requirement(graph, client):  # noqa: F811
++    """Преподаватель без связки с учеником → 403, запись не создаётся."""
++    ids = graph["ids"]
++    resp = await client.put(
++        _base(ids) + "/requirement",
++        json={"target_kind": "task", "target_id": ids["task_root_a"], "level": "recommended"},
++        headers={"Authorization": f"Bearer {graph['tokens']['other']}"},
++    )
++    assert resp.status_code == 403, resp.text
++    count = (
++        await graph["db"].execute(
++            text("SELECT count(*) FROM student_requirement_override WHERE student_id = :s"),
++            {"s": ids["student"]},
++        )
++    ).scalar_one()
++    assert count == 0
++
++
++async def test_teacher_full_cycle_on_subcourse(graph, client, monkeypatch):  # noqa: F811
++    """Предпросмотр → снять обязательность с подкурса → видно в карточке → снять решение."""
++    ids, db = graph["ids"], graph["db"]
++    headers = {"Authorization": f"Bearer {graph['tokens']['teacher']}"}
++    try:
++        preview = await client.get(
++            _base(ids) + f"/requirement/preview?target_kind=course&target_id={ids['child']}",
++            headers=headers,
++        )
++        assert preview.status_code == 200, preview.text
++        assert (preview.json()["tasks_affected"], preview.json()["materials_affected"]) == (1, 1)
++
++        put = await client.put(
++            _base(ids) + "/requirement",
++            json={
++                "target_kind": "course", "target_id": ids["child"],
++                "level": "recommended", "comment": "тема уже пройдена на занятии",
++            },
++            headers=headers,
++        )
++        assert put.status_code == 200, put.text
++        assert put.json()["override_id"]
++
++        monkeypatch.setenv("REQUIREMENT_OVERRIDE_READ_ENABLED", "true")
++        tree = await client.get(f"{_base(ids)}?course_id={ids['root']}", headers=headers)
++        assert tree.status_code == 200, tree.text
++        item = next(
++            i for i in tree.json()["items"]
++            if i["item_type"] == "task" and i["item_id"] == ids["task_child"]
++        )
++        assert item["requirement_level"] == "recommended"
++        assert item["course_requirement_level"] == "required"
++        assert item["requirement_reason"] == {
++            "code": "teacher", "text": "тема уже пройдена на занятии", "source": "human",
++        }
++        untouched = next(
++            i for i in tree.json()["items"]
++            if i["item_type"] == "task" and i["item_id"] == ids["task_root_a"]
++        )
++        assert untouched["requirement_level"] == "required"
++        assert untouched["requirement_reason"] is None
++
++        delete = await client.delete(
++            _base(ids) + f"/requirement?target_kind=course&target_id={ids['child']}",
++            headers=headers,
++        )
++        assert delete.status_code == 200, delete.text
++        assert delete.json()["revoked"] is True
++        again = await client.delete(
++            _base(ids) + f"/requirement?target_kind=course&target_id={ids['child']}",
++            headers=headers,
++        )
++        assert again.json()["revoked"] is False, "Снятие идемпотентно"
++    finally:
++        await _cleanup_overrides(db, ids["student"])
++
++
++async def test_promoting_course_optional_item_is_rejected(graph, client):  # noqa: F811
++    """Сделать обязательным необязательное по курсу — 422, а не тихо бесполезная запись."""
++    ids, db = graph["ids"], graph["db"]
++    await db.execute(
++        text("UPDATE tasks SET requirement_level = 'recommended' WHERE id = :t"),
++        {"t": ids["task_root_b"]},
++    )
++    await db.commit()
++    resp = await client.put(
++        _base(ids) + "/requirement",
++        json={"target_kind": "task", "target_id": ids["task_root_b"], "level": "required"},
++        headers={"Authorization": f"Bearer {graph['tokens']['teacher']}"},
++    )
++    assert resp.status_code == 422, resp.text
++    useless = await client.put(
++        _base(ids) + "/requirement",
++        json={"target_kind": "task", "target_id": ids["task_root_b"], "level": "recommended"},
++        headers={"Authorization": f"Bearer {graph['tokens']['teacher']}"},
++    )
++    assert useless.status_code == 422, "Понижать необязательное по курсу некуда"
++
++
++async def test_student_sees_personal_level_and_reason_only_when_in_effect(
++    graph, client, monkeypatch  # noqa: F811
++):
++    """Ученик: причина — только когда уровень действительно отличается от курса."""
++    ids, db = graph["ids"], graph["db"]
++    student_id, student_token = await _new_user(db, "student", "tsk1361-stud")
++    await db.execute(
++        text("INSERT INTO user_courses (user_id, course_id, is_active) VALUES (:u, :c, true)"),
++        {"u": student_id, "c": ids["root"]},
++    )
++    await db.execute(
++        text("INSERT INTO student_teacher_links (student_id, teacher_id) VALUES (:s, :t)"),
++        {"s": student_id, "t": ids["teacher"]},
++    )
++    await db.commit()
++    headers = {"Authorization": f"Bearer {student_token}"}
++    try:
++        put = await client.put(
++            f"/api/v1/teacher/students/{student_id}/progress/requirement",
++            json={"target_kind": "task", "target_id": ids["task_root_a"], "level": "recommended"},
++            headers={"Authorization": f"Bearer {graph['tokens']['teacher']}"},
++        )
++        assert put.status_code == 200, put.text
++
++        monkeypatch.setenv("REQUIREMENT_OVERRIDE_READ_ENABLED", "false")
++        off = await client.get(f"/api/v1/me/requirement?task_id={ids['task_root_a']}", headers=headers)
++        assert off.status_code == 200, off.text
++        assert off.json()["requirement_level"] == "required"
++        assert off.json()["requirement_reason"] is None, "Решение без эффекта ученику не показываем"
++
++        monkeypatch.setenv("REQUIREMENT_OVERRIDE_READ_ENABLED", "true")
++        on = await client.get(f"/api/v1/me/requirement?task_id={ids['task_root_a']}", headers=headers)
++        assert on.json()["requirement_level"] == "recommended"
++        assert on.json()["requirement_reason"]["text"] == "Так решил преподаватель"
++
++        bad = await client.get("/api/v1/me/requirement", headers=headers)
++        assert bad.status_code == 422
++    finally:
++        invalidate_grace_cache(db)
++        for sql in (
++            "DELETE FROM student_requirement_override WHERE student_id = :u",
++            "DELETE FROM student_teacher_links WHERE student_id = :u",
++            "DELETE FROM user_courses WHERE user_id = :u",
++            "DELETE FROM user_session WHERE user_id = :u",
++            "DELETE FROM identity_link WHERE user_id = :u",
++            "DELETE FROM user_roles WHERE user_id = :u",
++        ):
++            await db.execute(text(sql), {"u": student_id})
++        await db.commit()

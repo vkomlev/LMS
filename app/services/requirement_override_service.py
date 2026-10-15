@@ -505,3 +505,102 @@ async def stale_students(db: AsyncSession) -> list[int]:
             ).scalars().all()
         }
     return sorted(ids)
+
+
+# ─── Экраны ученика и учителя (фаза Б3) ────────────────────────────────────
+
+
+def reason_payload(view: Optional[OverrideView]) -> Optional[dict]:
+    """Причина в форме `RequirementReason` для ответа API."""
+    if view is None:
+        return None
+    return {"code": view.reason_code, "text": view.reason_text, "source": view.source}
+
+
+@dataclass(frozen=True)
+class ItemRequirement:
+    """Уровень элемента глазами ученика: как его видят экраны прямо сейчас."""
+
+    level: str  # итоговый для ученика
+    course_level: str  # уровень в курсе
+    reason: Optional[OverrideView]  # почему отличается; решение учителя — всегда
+
+
+async def requirement_view(
+    db: AsyncSession, student_id: int, targets: list[Target]
+) -> Dict[Target, ItemRequirement]:
+    """Уровень и причина для набора заданий/материалов ученика.
+
+    Итоговый уровень берётся ровно тем же путём, что у движка
+    (`graced_for_roots` — с рубильником или без), поэтому экран не может
+    разойтись со «следующим шагом». Причина показывается, только если уровень
+    действительно отличается от курса, — кроме решения учителя: его учитель
+    видит всегда, даже когда оно пока ничего не меняет.
+    """
+    # Отложенный импорт ради симметрии с content_grace_service (кольцо).
+    from app.services.content_grace_service import graced_for_roots
+
+    task_ids = sorted({i for k, i in targets if k == "task"})
+    material_ids = sorted({i for k, i in targets if k == "material"})
+    if not task_ids and not material_ids:
+        return {}
+    base_rows = (
+        await db.execute(
+            text(
+                "SELECT 'task', id, requirement_level FROM tasks WHERE id = ANY(CAST(:t AS int[])) "
+                "UNION ALL "
+                "SELECT 'material', id, requirement_level FROM materials "
+                " WHERE id = ANY(CAST(:m AS int[]))"
+            ),
+            {"t": task_ids, "m": material_ids},
+        )
+    ).fetchall()
+    graced = await graced_for_roots(db, student_id)
+    reasons = (await resolve_levels(db, student_id)).reasons
+    human = await active_overrides(db, student_id)
+
+    result: Dict[Target, ItemRequirement] = {}
+    for kind, item_id, base in base_rows:
+        target = (str(kind), int(item_id))
+        demoted = int(item_id) in (graced.tasks if kind == "task" else graced.materials)
+        level = "recommended" if demoted and base in REQUIRED_LEVELS else str(base)
+        reason = reasons.get(target) if level != base else None
+        own = human.get(target)
+        if reason is None and own is not None and own.source == "human":
+            reason = own
+        result[target] = ItemRequirement(level=level, course_level=str(base), reason=reason)
+    return result
+
+
+_AFFECTED_SQL = """
+/* tsk1361-affected */
+WITH RECURSIVE sub AS (
+    SELECT CAST(:cid AS integer) AS cid, ARRAY[CAST(:cid AS integer)] AS path
+    UNION ALL
+    SELECT cp.course_id, s.path || cp.course_id
+      FROM sub s JOIN course_parents cp ON cp.parent_course_id = s.cid
+     WHERE NOT cp.course_id = ANY(s.path)
+)
+SELECT
+    (SELECT count(*) FROM tasks
+      WHERE course_id IN (SELECT cid FROM sub) AND is_active
+        AND requirement_level = ANY(:lv)),
+    (SELECT count(*) FROM materials
+      WHERE course_id IN (SELECT cid FROM sub) AND is_active
+        AND requirement_level = ANY(:lv))
+"""
+
+
+async def affected_counts(db: AsyncSession, target_kind: str, target_id: int) -> Tuple[int, int]:
+    """Сколько обязательных по курсу заданий и материалов задевает решение.
+
+    Для подкурса — всё его поддерево (учитель видит масштаб до сохранения).
+    """
+    if target_kind == "task":
+        return 1, 0
+    if target_kind == "material":
+        return 0, 1
+    row = (
+        await db.execute(text(_AFFECTED_SQL), {"cid": target_id, "lv": list(REQUIRED_LEVELS)})
+    ).one()
+    return int(row[0] or 0), int(row[1] or 0)

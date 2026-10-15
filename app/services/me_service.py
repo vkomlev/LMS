@@ -18,6 +18,7 @@ from app.schemas.task_content import QUIZ_TASK_TYPES
 # — общая функция для движка и кабинета, чтобы карточка курса, программа курса
 # и «следующий шаг» считали долг одинаково.
 from app.services.content_grace_service import compute_graced_items, done_among
+from app.services.requirement_override_service import reason_payload, resolve_levels
 from app.services.transparent_subcourse import absorbed_in_tree, task_key
 # Y-3.2 (S3-A4): единая точка правды — учебный движок.
 from app.services.learning_engine_service import PASS_THRESHOLD_RATIO, is_mentor_reviewed
@@ -1288,6 +1289,9 @@ async def get_syllabus_states(
     # бы не видна — тогда программа курса и учебный движок разошлись бы в том,
     # что считать долгом.
     graced = await compute_graced_items(db, user_id, attempts_root_id)
+    # tsk-1361: причина — только у того, что показано понижённым (тот же набор
+    # `graced`), иначе строка причины разошлась бы с уровнем рядом с ней.
+    reasons = (await resolve_levels(db, user_id)).reasons if graced else {}
 
     # tsk-1198: прозрачный подкурс, чей хозяин в этом дереве, — не раздел: его
     # элементы отдаются с course_id хозяина (SPW группирует по нему) и встают в
@@ -1337,6 +1341,11 @@ async def get_syllabus_states(
                         if int(m["material_id"]) in graced.materials
                         else m["requirement_level"]
                     ),
+                    "requirement_reason": (
+                        reason_payload(reasons.get(("material", int(m["material_id"]))))
+                        if int(m["material_id"]) in graced.materials
+                        else None
+                    ),
                     "is_active": bool(m["is_active"]),
                     "completed_at": m["completed_at"],
                     "title": m["title"],
@@ -1354,6 +1363,11 @@ async def get_syllabus_states(
                         "recommended"
                         if int(t["task_id"]) in graced.tasks
                         else t["requirement_level"]
+                    ),
+                    "requirement_reason": (
+                        reason_payload(reasons.get(("task", int(t["task_id"]))))
+                        if int(t["task_id"]) in graced.tasks
+                        else None
                     ),
                     "is_active": bool(t["is_active"]),
                     "attempts_used": int(t["attempts_used"] or 0),
