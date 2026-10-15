@@ -62195,6 +62195,12 @@
             ],
             "title": "Review Due At",
             "description": "tsk-1176: срок ручной проверки (submitted_at + REVIEW_SLA_HOURS), если работа ждёт преподавателя; null — проверять вручную нечего или уже проверено"
+          },
+          "is_retrieval": {
+            "type": "boolean",
+            "title": "Is Retrieval",
+            "description": "tsk-992: сдача повтора уже пройденного задания (source_system='retrieval'). Статус задания она не меняет; в фильтр `failed` неверный повтор не попадает",
+            "default": false
           }
         },
         "type": "object",
@@ -78800,6 +78806,12 @@
             "type": "boolean",
             "title": "Manual",
             "description": "True — зачтено вручную преподавателем (source_system=manual_teacher)",
+            "default": false
+          },
+          "is_retrieval": {
+            "type": "boolean",
+            "title": "Is Retrieval",
+            "description": "tsk-992: сдача повтора уже пройденного задания (source_system='retrieval'). Попыткой не считается: `attempt_no` повтор не увеличивает и несёт номер последней настоящей попытки перед ним",
             "default": false
           },
           "review": {

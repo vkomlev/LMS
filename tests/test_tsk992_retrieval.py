@@ -754,3 +754,181 @@ async def test_review_due_checks_payment_gate(db, client, monkeypatch) -> None:
     )
     assert resp.status_code == 403
     assert seen == [student_id]
+
+
+# ───────── №5: отказ гейта — не «провал» (решение оператора 2026-10-15) ─────────
+
+
+async def _sa_com_setup(db):
+    """Ученик и SA_COM-задание с эталоном «42» на курсе с включённым повтором."""
+    student_id, token = await _user(db, "s")
+    course_id = await _course(db, enabled=True)
+    task_id = await _task(
+        db,
+        course_id,
+        content={"type": "SA_COM", "title": "Ответ числом", "stem": "Сколько?"},
+        rules={
+            "max_score": 1,
+            "short_answer": {
+                "normalization": ["trim", "lower"],
+                "accepted_answers": [{"value": "42", "score": 1}],
+            },
+        },
+    )
+    await _enroll(db, student_id, course_id)
+    return student_id, token, course_id, task_id
+
+
+async def test_comment_gate_rejection_is_not_a_fail(db, client) -> None:
+    """Верный ответ без комментария (гейт 2.3f → 0 баллов), затем с комментарием —
+    задание НЕ встаёт на повтор: первым разом ученик не ошибся."""
+    student_id, token, course_id, task_id = await _sa_com_setup(db)
+    no_comment = {"type": "SA_COM", "response": {"value": "42"}}
+    right = {"type": "SA_COM", "response": {"value": "42", "comment": "посчитал"}}
+    resp = await _answer(client, token, student_id, course_id, task_id, no_comment)
+    assert resp.status_code == 200, resp.text
+    assert (await _answer(client, token, student_id, course_id, task_id, right)).status_code == 200
+    assert await _schedule_row(db, student_id, task_id, course_id) is None
+
+
+async def test_real_fail_after_gate_rejection_still_schedules(db, client) -> None:
+    """Отказ гейта исключается точечно: настоящий неверный ответ рядом с ним
+    по-прежнему ставит задание на повтор."""
+    student_id, token, course_id, task_id = await _sa_com_setup(db)
+    for answer in (
+        {"type": "SA_COM", "response": {"value": "42"}},
+        {"type": "SA_COM", "response": {"value": "1", "comment": "так решил"}},
+        {"type": "SA_COM", "response": {"value": "42", "comment": "посчитал"}},
+    ):
+        assert (await _answer(client, token, student_id, course_id, task_id, answer)).status_code == 200
+    assert await _schedule_row(db, student_id, task_id, course_id) is not None
+
+
+async def test_time_limit_rejection_is_not_a_fail(db, client) -> None:
+    """Ответ после истечения таймлимита (0 баллов от гейта 2.3c), потом верный в
+    новой попытке — на повтор не ставится."""
+    student_id, token, course_id, task_id = await _setup(db)
+    await db.execute(text("UPDATE tasks SET time_limit_sec = 60 WHERE id = :t"), {"t": task_id})
+    await db.commit()
+
+    resp = await client.post(
+        f"/api/v1/learning/tasks/{task_id}/start-or-get-attempt",
+        headers=_bearer(token),
+        json={"student_id": student_id, "root_course_id": course_id, "source_system": "spw_web"},
+    )
+    attempt_id = resp.json()["attempt_id"]
+    await db.execute(
+        text("UPDATE attempts SET created_at = now() - interval '1 hour' WHERE id = :a"),
+        {"a": attempt_id},
+    )
+    await db.commit()
+    resp = await client.post(
+        f"/api/v1/attempts/{attempt_id}/answers",
+        headers=_bearer(token),
+        json={"items": [{"task_id": task_id, "answer": _RIGHT}]},
+    )
+    assert resp.status_code == 200, resp.text
+    late = (
+        await db.execute(
+            text("SELECT score FROM task_results WHERE attempt_id = :a"), {"a": attempt_id}
+        )
+    ).scalar_one()
+    assert late == 0, "предпосылка: просроченный ответ получил 0 от гейта"
+
+    assert (await _answer(client, token, student_id, course_id, task_id, _RIGHT)).status_code == 200
+    assert await _schedule_row(db, student_id, task_id, course_id) is None
+
+
+# ───────── №6: повтор не выдаётся за обычную сдачу ─────────
+
+
+async def _fail_pass_wrong_review(db, client):
+    student_id, token, course_id, task_id = await _setup(db)
+    await _fail_then_pass(client, token, student_id, course_id, task_id)
+    await _make_due(db, student_id, task_id)
+    resp = await _review(client, token, student_id, course_id, task_id, _WRONG)
+    assert resp.status_code == 200, resp.text
+    return student_id, token, course_id, task_id, resp.json()
+
+
+async def test_task_history_marks_review_and_keeps_numbering(db, client) -> None:
+    student_id, token, _, task_id, _ = await _fail_pass_wrong_review(db, client)
+    resp = await client.get(f"/api/v1/me/tasks/{task_id}/history", headers=_bearer(token))
+    assert resp.status_code == 200, resp.text
+    rows = [(a["attempt_no"], a["is_retrieval"]) for a in resp.json()["attempts"]]
+    assert rows == [(1, False), (2, False), (2, True)]
+
+
+async def test_me_history_failed_filter_skips_review(db, client) -> None:
+    student_id, token, _, task_id, review = await _fail_pass_wrong_review(db, client)
+
+    async def _hist(flt: str) -> list[dict]:
+        resp = await client.get(
+            "/api/v1/me/history", headers=_bearer(token), params={"filter": flt}
+        )
+        assert resp.status_code == 200, resp.text
+        return [i for i in resp.json() if i["task_id"] == task_id]
+
+    failed = await _hist("failed")
+    assert [i["task_result_id"] for i in failed] != [] and all(not i["is_retrieval"] for i in failed)
+    assert review["task_result_id"] not in [i["task_result_id"] for i in failed]
+    everything = await _hist("all")
+    marked = {i["task_result_id"]: i["is_retrieval"] for i in everything}
+    assert marked[review["task_result_id"]] is True
+
+
+async def test_attempt_totals_exclude_review(db, client) -> None:
+    _, token, _, task_id, review = await _fail_pass_wrong_review(db, client)
+    resp = await client.get(f"/api/v1/attempts/{review['attempt_id']}", headers=_bearer(token))
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert len(body["results"]) == 2  # неверная + верная сдача, без повтора
+    assert body["total_score"] == 1 and body["total_max_score"] == 2
+
+
+async def test_review_counts_as_activity_for_streak(db, client) -> None:
+    """День, когда ученик только повторял, — активный день серии."""
+    from app.services.me_service import get_streak
+
+    student_id, *_ = await _fail_pass_wrong_review(db, client)
+    await db.execute(
+        text(
+            "UPDATE task_results SET received_at = received_at - interval '10 days' "
+            "WHERE user_id = :u AND source_system IS DISTINCT FROM :src"
+        ),
+        {"u": student_id, "src": RETRIEVAL_SOURCE},
+    )
+    await db.commit()
+    assert (await get_streak(db, student_id))["today_active"] is True
+
+
+async def test_teacher_feed_says_repeated(db, client) -> None:
+    from app.services.teacher_activity_feed_service import _fetch_task_solved
+
+    student_id, *_ = await _fail_pass_wrong_review(db, client)
+    events = await _fetch_task_solved(db, teacher_id=0, elevated=True, limit=50, before=None)
+    mine = [e for e in events if e["student_id"] == student_id]
+    assert len(mine) == 3
+    assert "повторил задание" in mine[0]["summary"] and "(неверно)" in mine[0]["summary"]
+    assert all("решил задание" in e["summary"] for e in mine[1:])
+
+
+async def test_lesson_summary_last_task_skips_review(db, client) -> None:
+    from app.services.teacher_lesson_summary_service import _load_last_activity
+
+    student_id, token, course_id, task_id = await _setup(db)
+    await _fail_then_pass(client, token, student_id, course_id, task_id)
+    await _make_due(db, student_id, task_id)
+    assert (await _review(client, token, student_id, course_id, task_id, _RIGHT)).status_code == 200
+    real_pass_at = (
+        await db.execute(
+            text(
+                "SELECT max(submitted_at) FROM task_results "
+                "WHERE user_id = :u AND is_correct AND source_system IS DISTINCT FROM :src"
+            ),
+            {"u": student_id, "src": RETRIEVAL_SOURCE},
+        )
+    ).scalar_one()
+    last = await _load_last_activity(db, student_id=student_id)
+    assert last is not None
+    assert last["kind"] == "task" and last["timestamp"] == real_pass_at

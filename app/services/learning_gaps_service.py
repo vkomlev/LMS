@@ -111,6 +111,18 @@ MANUAL_TEACHER_SOURCE = "manual_teacher"
 RETRIEVAL_SOURCE = "retrieval"
 
 
+def own_activity_results_filter(alias: str = "tr") -> str:
+    """Условие «ученик сам что-то сдавал» для SQL — признак АКТИВНОСТИ (tsk-992).
+
+    Шире `real_student_results_filter` на сдачи повтора: ученик, который
+    только повторяет пройденное, работает, а не затих. Нужно там, где вопрос
+    «был ли ученик занят» — серия, «последняя своя работа» у куратора,
+    напоминание «вернись». Аналитика пробелов и явка повтор по-прежнему не видят.
+    """
+    sources = ", ".join(f"'{s}'" for s in (*REAL_STUDENT_SOURCES, RETRIEVAL_SOURCE))
+    return f"{alias}.source_system IN ({sources})"
+
+
 def learning_path_results_filter(alias: str = "tr") -> str:
     """Условие «результат относится к учебному пути» для SQL (tsk-992).
 

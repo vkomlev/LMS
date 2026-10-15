@@ -26,7 +26,7 @@ from app.services import attendance_service
 from app.services import curator_activity_service as activity
 from app.services.curator_service import active_student_sql
 from app.services.help_requests_service import awaiting_teacher_sql
-from app.services.learning_gaps_service import real_student_results_filter
+from app.services.learning_gaps_service import own_activity_results_filter
 from app.services.teacher_queue_service import mandatory_review_sql
 
 logger = logging.getLogger(__name__)
@@ -153,7 +153,8 @@ async def get_board(db: AsyncSession, *, curator_id: int) -> Dict[str, Any]:
     now = datetime.now(timezone.utc)
     sql = _BOARD_SQL.format(  # nosec B608 — подставляются литералы из закрытого набора
         mandatory=mandatory_review_sql("t", "tr"),
-        real_student=real_student_results_filter("tr"),
+        # tsk-992: повтор пройденного — тоже своя работа ученика.
+        real_student=own_activity_results_filter("tr"),
         awaiting_teacher=awaiting_teacher_sql("hr"),
         active_student=active_student_sql("s.id"),
     )

@@ -403,6 +403,13 @@ class HistoryItem(BaseModel):
             "ждёт преподавателя; null — проверять вручную нечего или уже проверено"
         ),
     )
+    is_retrieval: bool = Field(
+        default=False,
+        description=(
+            "tsk-992: сдача повтора уже пройденного задания (source_system='retrieval'). "
+            "Статус задания она не меняет; в фильтр `failed` неверный повтор не попадает"
+        ),
+    )
 
 
 # ── Phase Y-6.2: /me/courses/{course_id}/syllabus-states ─────────────────────

@@ -25,6 +25,7 @@ from app.services.learning_engine_service import PASS_THRESHOLD_RATIO, is_mentor
 # а не отметка преподавателя. Копировать условие сюда нельзя — разъедется.
 from app.services.learning_gaps_service import (
     learning_path_results_filter,
+    own_activity_results_filter,
     real_student_material_filter,
     real_student_results_filter,
 )
@@ -721,7 +722,8 @@ WITH active_days AS (
     SELECT DISTINCT (tr.received_at AT TIME ZONE 'Europe/Moscow')::date AS d
     FROM task_results tr
     WHERE tr.user_id = :user_id
-      AND {real_student_results_filter("tr")}
+      -- tsk-992: день, когда ученик только повторял, серию не рвёт.
+      AND {own_activity_results_filter("tr")}
 ),
 numbered AS (
     SELECT d,
@@ -797,6 +799,8 @@ SELECT
     tr.received_at,
     tr.submitted_at,
     tr.checked_at,
+    -- tsk-992: сдача повтора пройденного задания, а не шаг учебного пути.
+    (tr.source_system = 'retrieval') AS is_retrieval,
     -- tsk-1176: работа ждёт преподавателя — тот же предикат, что у очереди.
     (tr.checked_at IS NULL AND {mandatory_review_sql('t')}) AS awaits_teacher
 FROM task_results tr
@@ -807,7 +811,9 @@ WHERE tr.user_id = :user_id
        :filter = 'all'
     OR (:filter = 'pending_review' AND tr.is_correct IS NULL)
     OR (:filter = 'passed'         AND tr.is_correct = TRUE)
-    OR (:filter = 'failed'         AND tr.is_correct = FALSE)
+    -- tsk-992: неверный повтор — не «надо доделать»: задание уже пройдено.
+    OR (:filter = 'failed'         AND tr.is_correct = FALSE
+                                   AND {learning_path_results_filter('tr')})
   )
 ORDER BY tr.received_at DESC
 LIMIT :limit OFFSET :offset

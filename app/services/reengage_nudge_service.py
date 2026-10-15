@@ -44,7 +44,7 @@ from app.core.cron_registry import register_interval_job
 from app.db.session import async_session_factory
 from app.services import inbox_service
 from app.services.learning_gap_signals_service import real_student_plan_filter
-from app.services.learning_gaps_service import real_student_results_filter
+from app.services.learning_gaps_service import own_activity_results_filter
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +116,8 @@ async def list_quiet(db: AsyncSession, *, days: int) -> list[int]:
     """ID учеников, которым пора напомнить (см. условия в `_QUIET_SQL`)."""
     sql = _QUIET_SQL.format(
         real_student_plan=real_student_plan_filter("u.id"),
-        real_student=real_student_results_filter("tr"),
+        # tsk-992: кто повторяет пройденное, тот не затих.
+        real_student=own_activity_results_filter("tr"),
     )
     rows = (await db.execute(text(sql), {"days": days, "kind": NUDGE_KIND})).fetchall()
     return [int(r[0]) for r in rows]

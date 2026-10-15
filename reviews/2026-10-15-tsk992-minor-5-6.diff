@@ -1,0 +1,506 @@
+diff --git a/app/api/v1/attempts.py b/app/api/v1/attempts.py
+index 3d38543..f8c2053 100644
+--- a/app/api/v1/attempts.py
++++ b/app/api/v1/attempts.py
+@@ -76,6 +76,7 @@ from app.services.attempt_attachments import (
+ from app.services.learning_engine_service import LearningEngineService
+ from app.services import dependency_lock_service
+ from app.services import retrieval_service
++from app.services.learning_gaps_service import RETRIEVAL_SOURCE
+ from app.services.tasks_acl_service import (
+     assert_task_access,
+     assert_task_active_for_student,
+@@ -216,7 +217,12 @@ async def _build_attempt_with_results(
+     Здесь специально не выносим в сервис, чтобы минимально трогать доменную логику,
+     как ты просил — «нет только самих эндпойнтов».
+     """
+-    stmt = select(TaskResults).where(TaskResults.attempt_id == attempt.id)
++    # tsk-992: сдача повтора лежит в курсовой попытке, но к её прохождению
++    # не относится — ни в список результатов, ни в суммы баллов не входит.
++    stmt = select(TaskResults).where(
++        TaskResults.attempt_id == attempt.id,
++        TaskResults.source_system.is_distinct_from(RETRIEVAL_SOURCE),
++    )
+     result = await db.execute(stmt)
+     rows: List[TaskResults] = result.scalars().all()
+ 
+diff --git a/app/schemas/me.py b/app/schemas/me.py
+index 760598a..792d889 100644
+--- a/app/schemas/me.py
++++ b/app/schemas/me.py
+@@ -403,6 +403,13 @@ class HistoryItem(BaseModel):
+             "ждёт преподавателя; null — проверять вручную нечего или уже проверено"
+         ),
+     )
++    is_retrieval: bool = Field(
++        default=False,
++        description=(
++            "tsk-992: сдача повтора уже пройденного задания (source_system='retrieval'). "
++            "Статус задания она не меняет; в фильтр `failed` неверный повтор не попадает"
++        ),
++    )
+ 
+ 
+ # ── Phase Y-6.2: /me/courses/{course_id}/syllabus-states ─────────────────────
+diff --git a/app/schemas/task_history.py b/app/schemas/task_history.py
+index bffe782..752a5fd 100644
+--- a/app/schemas/task_history.py
++++ b/app/schemas/task_history.py
+@@ -65,6 +65,14 @@ class TaskHistoryAttempt(BaseModel):
+         default=False,
+         description="True — зачтено вручную преподавателем (source_system=manual_teacher)",
+     )
++    is_retrieval: bool = Field(
++        default=False,
++        description=(
++            "tsk-992: сдача повтора уже пройденного задания (source_system='retrieval'). "
++            "Попыткой не считается: `attempt_no` повтор не увеличивает и несёт номер "
++            "последней настоящей попытки перед ним"
++        ),
++    )
+     review: Optional[str] = Field(
+         default=None,
+         description=(
+diff --git a/app/services/curator_board_service.py b/app/services/curator_board_service.py
+index 84a738e..dc04ef8 100644
+--- a/app/services/curator_board_service.py
++++ b/app/services/curator_board_service.py
+@@ -26,7 +26,7 @@ from app.services import attendance_service
+ from app.services import curator_activity_service as activity
+ from app.services.curator_service import active_student_sql
+ from app.services.help_requests_service import awaiting_teacher_sql
+-from app.services.learning_gaps_service import real_student_results_filter
++from app.services.learning_gaps_service import own_activity_results_filter
+ from app.services.teacher_queue_service import mandatory_review_sql
+ 
+ logger = logging.getLogger(__name__)
+@@ -153,7 +153,8 @@ async def get_board(db: AsyncSession, *, curator_id: int) -> Dict[str, Any]:
+     now = datetime.now(timezone.utc)
+     sql = _BOARD_SQL.format(  # nosec B608 — подставляются литералы из закрытого набора
+         mandatory=mandatory_review_sql("t", "tr"),
+-        real_student=real_student_results_filter("tr"),
++        # tsk-992: повтор пройденного — тоже своя работа ученика.
++        real_student=own_activity_results_filter("tr"),
+         awaiting_teacher=awaiting_teacher_sql("hr"),
+         active_student=active_student_sql("s.id"),
+     )
+diff --git a/app/services/learning_gaps_service.py b/app/services/learning_gaps_service.py
+index ecb9bf6..724aad7 100644
+--- a/app/services/learning_gaps_service.py
++++ b/app/services/learning_gaps_service.py
+@@ -111,6 +111,18 @@ MANUAL_TEACHER_SOURCE = "manual_teacher"
+ RETRIEVAL_SOURCE = "retrieval"
+ 
+ 
++def own_activity_results_filter(alias: str = "tr") -> str:
++    """Условие «ученик сам что-то сдавал» для SQL — признак АКТИВНОСТИ (tsk-992).
++
++    Шире `real_student_results_filter` на сдачи повтора: ученик, который
++    только повторяет пройденное, работает, а не затих. Нужно там, где вопрос
++    «был ли ученик занят» — серия, «последняя своя работа» у куратора,
++    напоминание «вернись». Аналитика пробелов и явка повтор по-прежнему не видят.
++    """
++    sources = ", ".join(f"'{s}'" for s in (*REAL_STUDENT_SOURCES, RETRIEVAL_SOURCE))
++    return f"{alias}.source_system IN ({sources})"
++
++
+ def learning_path_results_filter(alias: str = "tr") -> str:
+     """Условие «результат относится к учебному пути» для SQL (tsk-992).
+ 
+diff --git a/app/services/me_service.py b/app/services/me_service.py
+index e5fbc94..55c22a5 100644
+--- a/app/services/me_service.py
++++ b/app/services/me_service.py
+@@ -25,6 +25,7 @@ from app.services.learning_engine_service import PASS_THRESHOLD_RATIO, is_mentor
+ # а не отметка преподавателя. Копировать условие сюда нельзя — разъедется.
+ from app.services.learning_gaps_service import (
+     learning_path_results_filter,
++    own_activity_results_filter,
+     real_student_material_filter,
+     real_student_results_filter,
+ )
+@@ -721,7 +722,8 @@ WITH active_days AS (
+     SELECT DISTINCT (tr.received_at AT TIME ZONE 'Europe/Moscow')::date AS d
+     FROM task_results tr
+     WHERE tr.user_id = :user_id
+-      AND {real_student_results_filter("tr")}
++      -- tsk-992: день, когда ученик только повторял, серию не рвёт.
++      AND {own_activity_results_filter("tr")}
+ ),
+ numbered AS (
+     SELECT d,
+@@ -797,6 +799,8 @@ SELECT
+     tr.received_at,
+     tr.submitted_at,
+     tr.checked_at,
++    -- tsk-992: сдача повтора пройденного задания, а не шаг учебного пути.
++    (tr.source_system = 'retrieval') AS is_retrieval,
+     -- tsk-1176: работа ждёт преподавателя — тот же предикат, что у очереди.
+     (tr.checked_at IS NULL AND {mandatory_review_sql('t')}) AS awaits_teacher
+ FROM task_results tr
+@@ -807,7 +811,9 @@ WHERE tr.user_id = :user_id
+        :filter = 'all'
+     OR (:filter = 'pending_review' AND tr.is_correct IS NULL)
+     OR (:filter = 'passed'         AND tr.is_correct = TRUE)
+-    OR (:filter = 'failed'         AND tr.is_correct = FALSE)
++    -- tsk-992: неверный повтор — не «надо доделать»: задание уже пройдено.
++    OR (:filter = 'failed'         AND tr.is_correct = FALSE
++                                   AND {learning_path_results_filter('tr')})
+   )
+ ORDER BY tr.received_at DESC
+ LIMIT :limit OFFSET :offset
+diff --git a/app/services/reengage_nudge_service.py b/app/services/reengage_nudge_service.py
+index 541930e..a6811d3 100644
+--- a/app/services/reengage_nudge_service.py
++++ b/app/services/reengage_nudge_service.py
+@@ -44,7 +44,7 @@ from app.core.cron_registry import register_interval_job
+ from app.db.session import async_session_factory
+ from app.services import inbox_service
+ from app.services.learning_gap_signals_service import real_student_plan_filter
+-from app.services.learning_gaps_service import real_student_results_filter
++from app.services.learning_gaps_service import own_activity_results_filter
+ 
+ logger = logging.getLogger(__name__)
+ 
+@@ -116,7 +116,8 @@ async def list_quiet(db: AsyncSession, *, days: int) -> list[int]:
+     """ID учеников, которым пора напомнить (см. условия в `_QUIET_SQL`)."""
+     sql = _QUIET_SQL.format(
+         real_student_plan=real_student_plan_filter("u.id"),
+-        real_student=real_student_results_filter("tr"),
++        # tsk-992: кто повторяет пройденное, тот не затих.
++        real_student=own_activity_results_filter("tr"),
+     )
+     rows = (await db.execute(text(sql), {"days": days, "kind": NUDGE_KIND})).fetchall()
+     return [int(r[0]) for r in rows]
+diff --git a/app/services/retrieval_service.py b/app/services/retrieval_service.py
+index e0e9e50..fd3df05 100644
+--- a/app/services/retrieval_service.py
++++ b/app/services/retrieval_service.py
+@@ -75,6 +75,35 @@ RETRIEVAL_UNSUPPORTED_CODE = "retrieval_unsupported"
+ RETRIEVAL_EVIDENCE_REQUIRED_CODE = "evidence_required"
+ 
+ 
++#: Нулевой результат, который поставил ГЕЙТ приёма ответа, а не сверка: такой
++#: «провал» не значит «не справился», и на повтор задание из-за него не встаёт
++#: (решение оператора 2026-10-15, MINOR №5 ревью). Причина отказа в
++#: `task_results` не хранится, поэтому распознаётся по данным:
++#:   - просрочка таймлимита (2.3c): результат записан позже срока попытки —
++#:     `tasks.time_limit_sec` или `attempts.meta.time_limit` от `created_at`;
++#:   - нет комментария у SA_COM/TBL_COM (2.3f, tsk-419): комментарий пуст.
++#:     Неверный ответ с файлом, но без комментария, тоже попадёт сюда — гейт его
++#:     пропустил бы. Ошибка в безопасную сторону: задание не встанет на повтор,
++#:     лишнего повтора не будет. Задания с тестами ввода/вывода гейт не трогает,
++#:     но они и на повтор не идут (`task_supports_review`).
++#: Вложение (2.3e) и пустой TA (2.3g) не нужны: такие задания повтору не подлежат.
++#: Ожидает алиасы `tr` (task_results), `a` (attempts), `t` (tasks).
++_GATE_REJECTION_SQL = """
++    (
++        tr.submitted_at > a.created_at + make_interval(secs => COALESCE(
++            t.time_limit_sec::float,
++            CASE WHEN jsonb_typeof(a.meta) = 'object'
++                      AND jsonb_typeof(a.meta->'time_limit') = 'number'
++                 THEN (a.meta->>'time_limit')::float END
++        ))
++    ) IS TRUE
++    OR (
++        t.task_content->>'type' IN ('SA_COM', 'TBL_COM')
++        AND btrim(COALESCE(tr.answer_json->'response'->>'comment', '')) = ''
++    )
++"""
++
++
+ @dataclass(frozen=True)
+ class DueReview:
+     """Задание, которое пора повторить."""
+@@ -219,10 +248,11 @@ async def schedule_after_pass(
+     failed_before = (
+         await db.execute(
+             text(
+-                """
++                f"""
+                 SELECT 1
+                 FROM task_results tr
+                 JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
++                JOIN tasks t ON t.id = tr.task_id
+                 WHERE tr.user_id = :sid AND tr.task_id = :tid
+                   AND tr.id <> :rid
+                   AND tr.submitted_at <= :submitted_at
+@@ -230,6 +260,7 @@ async def schedule_after_pass(
+                   AND tr.source_system IS DISTINCT FROM :retrieval
+                   AND tr.max_score > 0
+                   AND (tr.score::float / tr.max_score) < :ratio
++                  AND NOT ({_GATE_REJECTION_SQL})
+                 LIMIT 1
+                 """
+             ),
+diff --git a/app/services/task_history_service.py b/app/services/task_history_service.py
+index af11739..075e4fc 100644
+--- a/app/services/task_history_service.py
++++ b/app/services/task_history_service.py
+@@ -36,6 +36,7 @@ from app.schemas.checking import StudentAnswer
+ from app.schemas.task_content import TaskContent
+ from app.services.checking_service import CheckingService
+ from app.services.learning_events_service import get_hint_open_counts
++from app.services.learning_gaps_service import RETRIEVAL_SOURCE
+ 
+ logger = logging.getLogger(__name__)
+ 
+@@ -162,11 +163,17 @@ async def _load_attempts(
+     )
+ 
+     attempts: List[Dict[str, Any]] = []
+-    for idx, r in enumerate(rows, start=1):
++    # tsk-992: повтор пройденного — не попытка: номер не увеличивает и несёт
++    # номер последней настоящей попытки перед ним (клиент пишет «Повтор»).
++    attempt_no = 0
++    for r in rows:
++        is_retrieval = r["source_system"] == RETRIEVAL_SOURCE
++        if not is_retrieval:
++            attempt_no += 1
+         attempt: Dict[str, Any] = {
+             "task_result_id": int(r["task_result_id"]),
+             "attempt_id": int(r["attempt_id"]) if r["attempt_id"] is not None else None,
+-            "attempt_no": idx,
++            "attempt_no": attempt_no,
+             "submitted_at": r["submitted_at"],
+             "score": int(r["score"] or 0),
+             "max_score": int(r["max_score"] or 0),
+@@ -177,6 +184,7 @@ async def _load_attempts(
+             "comment": r["comment"],
+             "checked_at": r["checked_at"],
+             "manual": (r["source_system"] == _MANUAL_SOURCE),
++            "is_retrieval": is_retrieval,
+         }
+         if task_meta is not None:
+             # Пересчитываем по СЫРОМУ ответу из БД, а не по `attempt["answer_json"]`:
+diff --git a/app/services/teacher_activity_feed_service.py b/app/services/teacher_activity_feed_service.py
+index fcb54fe..ffc6db3 100644
+--- a/app/services/teacher_activity_feed_service.py
++++ b/app/services/teacher_activity_feed_service.py
+@@ -33,6 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
+ from app.auth.current_user import CurrentUser
+ from app.schemas.code_review import build_code_review_badge
+ from app.services import roles_service
++from app.services.learning_gaps_service import RETRIEVAL_SOURCE
+ from app.services.teacher_queue_service import teacher_course_acl
+ from app.utils.task_title import humanize_task_title
+ 
+@@ -101,7 +102,7 @@ async def _fetch_task_solved(
+                        tr.task_id, t.course_id, t.external_uid,
+                        t.task_content->>'title' AS title_raw, t.task_content->>'stem' AS stem,
+                        tr.is_correct, tr.submitted_at AS event_at,
+-                       tr.code_review
++                       tr.code_review, tr.source_system
+                 FROM task_results tr
+                 JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
+                 JOIN tasks t ON t.id = tr.task_id
+@@ -123,6 +124,10 @@ async def _fetch_task_solved(
+             "correct": "верно", "incorrect": "неверно", "pending_review": "на проверке",
+         }[outcome]
+         verb = "сдал" if outcome == "pending_review" else "решил"
++        if r["source_system"] == RETRIEVAL_SOURCE:
++            # tsk-992: повтор уже пройденного задания — «решил неверно» читалось
++            # бы как провал по учебному пути, а статус задания не меняется.
++            verb = "повторил"
+         events.append({
+             "type": "task_solved",
+             "student_id": int(r["student_id"]),
+diff --git a/app/services/teacher_lesson_summary_service.py b/app/services/teacher_lesson_summary_service.py
+index be796af..806479b 100644
+--- a/app/services/teacher_lesson_summary_service.py
++++ b/app/services/teacher_lesson_summary_service.py
+@@ -307,6 +307,8 @@ async def _load_last_activity(db: AsyncSession, *, student_id: int) -> Optional[
+                 "    SELECT tr.task_id, tr.submitted_at FROM task_results tr "
+                 "    WHERE tr.user_id = :student_id AND tr.is_correct = true "
+                 "      AND tr.source_system IS DISTINCT FROM :manual_source "
++                # tsk-992: повтор пройденного — не «последнее решённое».
++                "      AND tr.source_system IS DISTINCT FROM 'retrieval' "
+                 "    ORDER BY tr.submitted_at DESC LIMIT 1 "
+                 ") t "
+                 "JOIN tasks tk ON tk.id = t.task_id "
+diff --git a/tests/test_tsk992_retrieval.py b/tests/test_tsk992_retrieval.py
+index f7f2c32..997332e 100644
+--- a/tests/test_tsk992_retrieval.py
++++ b/tests/test_tsk992_retrieval.py
+@@ -754,3 +754,181 @@ async def test_review_due_checks_payment_gate(db, client, monkeypatch) -> None:
+     )
+     assert resp.status_code == 403
+     assert seen == [student_id]
++
++
++# ───────── №5: отказ гейта — не «провал» (решение оператора 2026-10-15) ─────────
++
++
++async def _sa_com_setup(db):
++    """Ученик и SA_COM-задание с эталоном «42» на курсе с включённым повтором."""
++    student_id, token = await _user(db, "s")
++    course_id = await _course(db, enabled=True)
++    task_id = await _task(
++        db,
++        course_id,
++        content={"type": "SA_COM", "title": "Ответ числом", "stem": "Сколько?"},
++        rules={
++            "max_score": 1,
++            "short_answer": {
++                "normalization": ["trim", "lower"],
++                "accepted_answers": [{"value": "42", "score": 1}],
++            },
++        },
++    )
++    await _enroll(db, student_id, course_id)
++    return student_id, token, course_id, task_id
++
++
++async def test_comment_gate_rejection_is_not_a_fail(db, client) -> None:
++    """Верный ответ без комментария (гейт 2.3f → 0 баллов), затем с комментарием —
++    задание НЕ встаёт на повтор: первым разом ученик не ошибся."""
++    student_id, token, course_id, task_id = await _sa_com_setup(db)
++    no_comment = {"type": "SA_COM", "response": {"value": "42"}}
++    right = {"type": "SA_COM", "response": {"value": "42", "comment": "посчитал"}}
++    resp = await _answer(client, token, student_id, course_id, task_id, no_comment)
++    assert resp.status_code == 200, resp.text
++    assert (await _answer(client, token, student_id, course_id, task_id, right)).status_code == 200
++    assert await _schedule_row(db, student_id, task_id, course_id) is None
++
++
++async def test_real_fail_after_gate_rejection_still_schedules(db, client) -> None:
++    """Отказ гейта исключается точечно: настоящий неверный ответ рядом с ним
++    по-прежнему ставит задание на повтор."""
++    student_id, token, course_id, task_id = await _sa_com_setup(db)
++    for answer in (
++        {"type": "SA_COM", "response": {"value": "42"}},
++        {"type": "SA_COM", "response": {"value": "1", "comment": "так решил"}},
++        {"type": "SA_COM", "response": {"value": "42", "comment": "посчитал"}},
++    ):
++        assert (await _answer(client, token, student_id, course_id, task_id, answer)).status_code == 200
++    assert await _schedule_row(db, student_id, task_id, course_id) is not None
++
++
++async def test_time_limit_rejection_is_not_a_fail(db, client) -> None:
++    """Ответ после истечения таймлимита (0 баллов от гейта 2.3c), потом верный в
++    новой попытке — на повтор не ставится."""
++    student_id, token, course_id, task_id = await _setup(db)
++    await db.execute(text("UPDATE tasks SET time_limit_sec = 60 WHERE id = :t"), {"t": task_id})
++    await db.commit()
++
++    resp = await client.post(
++        f"/api/v1/learning/tasks/{task_id}/start-or-get-attempt",
++        headers=_bearer(token),
++        json={"student_id": student_id, "root_course_id": course_id, "source_system": "spw_web"},
++    )
++    attempt_id = resp.json()["attempt_id"]
++    await db.execute(
++        text("UPDATE attempts SET created_at = now() - interval '1 hour' WHERE id = :a"),
++        {"a": attempt_id},
++    )
++    await db.commit()
++    resp = await client.post(
++        f"/api/v1/attempts/{attempt_id}/answers",
++        headers=_bearer(token),
++        json={"items": [{"task_id": task_id, "answer": _RIGHT}]},
++    )
++    assert resp.status_code == 200, resp.text
++    late = (
++        await db.execute(
++            text("SELECT score FROM task_results WHERE attempt_id = :a"), {"a": attempt_id}
++        )
++    ).scalar_one()
++    assert late == 0, "предпосылка: просроченный ответ получил 0 от гейта"
++
++    assert (await _answer(client, token, student_id, course_id, task_id, _RIGHT)).status_code == 200
++    assert await _schedule_row(db, student_id, task_id, course_id) is None
++
++
++# ───────── №6: повтор не выдаётся за обычную сдачу ─────────
++
++
++async def _fail_pass_wrong_review(db, client):
++    student_id, token, course_id, task_id = await _setup(db)
++    await _fail_then_pass(client, token, student_id, course_id, task_id)
++    await _make_due(db, student_id, task_id)
++    resp = await _review(client, token, student_id, course_id, task_id, _WRONG)
++    assert resp.status_code == 200, resp.text
++    return student_id, token, course_id, task_id, resp.json()
++
++
++async def test_task_history_marks_review_and_keeps_numbering(db, client) -> None:
++    student_id, token, _, task_id, _ = await _fail_pass_wrong_review(db, client)
++    resp = await client.get(f"/api/v1/me/tasks/{task_id}/history", headers=_bearer(token))
++    assert resp.status_code == 200, resp.text
++    rows = [(a["attempt_no"], a["is_retrieval"]) for a in resp.json()["attempts"]]
++    assert rows == [(1, False), (2, False), (2, True)]
++
++
++async def test_me_history_failed_filter_skips_review(db, client) -> None:
++    student_id, token, _, task_id, review = await _fail_pass_wrong_review(db, client)
++
++    async def _hist(flt: str) -> list[dict]:
++        resp = await client.get(
++            "/api/v1/me/history", headers=_bearer(token), params={"filter": flt}
++        )
++        assert resp.status_code == 200, resp.text
++        return [i for i in resp.json() if i["task_id"] == task_id]
++
++    failed = await _hist("failed")
++    assert [i["task_result_id"] for i in failed] != [] and all(not i["is_retrieval"] for i in failed)
++    assert review["task_result_id"] not in [i["task_result_id"] for i in failed]
++    everything = await _hist("all")
++    marked = {i["task_result_id"]: i["is_retrieval"] for i in everything}
++    assert marked[review["task_result_id"]] is True
++
++
++async def test_attempt_totals_exclude_review(db, client) -> None:
++    _, token, _, task_id, review = await _fail_pass_wrong_review(db, client)
++    resp = await client.get(f"/api/v1/attempts/{review['attempt_id']}", headers=_bearer(token))
++    assert resp.status_code == 200, resp.text
++    body = resp.json()
++    assert len(body["results"]) == 2  # неверная + верная сдача, без повтора
++    assert body["total_score"] == 1 and body["total_max_score"] == 2
++
++
++async def test_review_counts_as_activity_for_streak(db, client) -> None:
++    """День, когда ученик только повторял, — активный день серии."""
++    from app.services.me_service import get_streak
++
++    student_id, *_ = await _fail_pass_wrong_review(db, client)
++    await db.execute(
++        text(
++            "UPDATE task_results SET received_at = received_at - interval '10 days' "
++            "WHERE user_id = :u AND source_system IS DISTINCT FROM :src"
++        ),
++        {"u": student_id, "src": RETRIEVAL_SOURCE},
++    )
++    await db.commit()
++    assert (await get_streak(db, student_id))["today_active"] is True
++
++
++async def test_teacher_feed_says_repeated(db, client) -> None:
++    from app.services.teacher_activity_feed_service import _fetch_task_solved
++
++    student_id, *_ = await _fail_pass_wrong_review(db, client)
++    events = await _fetch_task_solved(db, teacher_id=0, elevated=True, limit=50, before=None)
++    mine = [e for e in events if e["student_id"] == student_id]
++    assert len(mine) == 3
++    assert "повторил задание" in mine[0]["summary"] and "(неверно)" in mine[0]["summary"]
++    assert all("решил задание" in e["summary"] for e in mine[1:])
++
++
++async def test_lesson_summary_last_task_skips_review(db, client) -> None:
++    from app.services.teacher_lesson_summary_service import _load_last_activity
++
++    student_id, token, course_id, task_id = await _setup(db)
++    await _fail_then_pass(client, token, student_id, course_id, task_id)
++    await _make_due(db, student_id, task_id)
++    assert (await _review(client, token, student_id, course_id, task_id, _RIGHT)).status_code == 200
++    real_pass_at = (
++        await db.execute(
++            text(
++                "SELECT max(submitted_at) FROM task_results "
++                "WHERE user_id = :u AND is_correct AND source_system IS DISTINCT FROM :src"
++            ),
++            {"u": student_id, "src": RETRIEVAL_SOURCE},
++        )
++    ).scalar_one()
++    last = await _load_last_activity(db, student_id=student_id)
++    assert last is not None
++    assert last["kind"] == "task" and last["timestamp"] == real_pass_at

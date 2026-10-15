@@ -36,6 +36,7 @@ from app.schemas.checking import StudentAnswer
 from app.schemas.task_content import TaskContent
 from app.services.checking_service import CheckingService
 from app.services.learning_events_service import get_hint_open_counts
+from app.services.learning_gaps_service import RETRIEVAL_SOURCE
 
 logger = logging.getLogger(__name__)
 
@@ -162,11 +163,17 @@ async def _load_attempts(
     )
 
     attempts: List[Dict[str, Any]] = []
-    for idx, r in enumerate(rows, start=1):
+    # tsk-992: повтор пройденного — не попытка: номер не увеличивает и несёт
+    # номер последней настоящей попытки перед ним (клиент пишет «Повтор»).
+    attempt_no = 0
+    for r in rows:
+        is_retrieval = r["source_system"] == RETRIEVAL_SOURCE
+        if not is_retrieval:
+            attempt_no += 1
         attempt: Dict[str, Any] = {
             "task_result_id": int(r["task_result_id"]),
             "attempt_id": int(r["attempt_id"]) if r["attempt_id"] is not None else None,
-            "attempt_no": idx,
+            "attempt_no": attempt_no,
             "submitted_at": r["submitted_at"],
             "score": int(r["score"] or 0),
             "max_score": int(r["max_score"] or 0),
@@ -177,6 +184,7 @@ async def _load_attempts(
             "comment": r["comment"],
             "checked_at": r["checked_at"],
             "manual": (r["source_system"] == _MANUAL_SOURCE),
+            "is_retrieval": is_retrieval,
         }
         if task_meta is not None:
             # Пересчитываем по СЫРОМУ ответу из БД, а не по `attempt["answer_json"]`:

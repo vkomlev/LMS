@@ -76,6 +76,7 @@ from app.services.attempt_attachments import (
 from app.services.learning_engine_service import LearningEngineService
 from app.services import dependency_lock_service
 from app.services import retrieval_service
+from app.services.learning_gaps_service import RETRIEVAL_SOURCE
 from app.services.tasks_acl_service import (
     assert_task_access,
     assert_task_active_for_student,
@@ -216,7 +217,12 @@ async def _build_attempt_with_results(
     Здесь специально не выносим в сервис, чтобы минимально трогать доменную логику,
     как ты просил — «нет только самих эндпойнтов».
     """
-    stmt = select(TaskResults).where(TaskResults.attempt_id == attempt.id)
+    # tsk-992: сдача повтора лежит в курсовой попытке, но к её прохождению
+    # не относится — ни в список результатов, ни в суммы баллов не входит.
+    stmt = select(TaskResults).where(
+        TaskResults.attempt_id == attempt.id,
+        TaskResults.source_system.is_distinct_from(RETRIEVAL_SOURCE),
+    )
     result = await db.execute(stmt)
     rows: List[TaskResults] = result.scalars().all()
 

@@ -65,6 +65,14 @@ class TaskHistoryAttempt(BaseModel):
         default=False,
         description="True — зачтено вручную преподавателем (source_system=manual_teacher)",
     )
+    is_retrieval: bool = Field(
+        default=False,
+        description=(
+            "tsk-992: сдача повтора уже пройденного задания (source_system='retrieval'). "
+            "Попыткой не считается: `attempt_no` повтор не увеличивает и несёт номер "
+            "последней настоящей попытки перед ним"
+        ),
+    )
     review: Optional[str] = Field(
         default=None,
         description=(

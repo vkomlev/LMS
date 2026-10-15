@@ -75,6 +75,35 @@ RETRIEVAL_UNSUPPORTED_CODE = "retrieval_unsupported"
 RETRIEVAL_EVIDENCE_REQUIRED_CODE = "evidence_required"
 
 
+#: Нулевой результат, который поставил ГЕЙТ приёма ответа, а не сверка: такой
+#: «провал» не значит «не справился», и на повтор задание из-за него не встаёт
+#: (решение оператора 2026-10-15, MINOR №5 ревью). Причина отказа в
+#: `task_results` не хранится, поэтому распознаётся по данным:
+#:   - просрочка таймлимита (2.3c): результат записан позже срока попытки —
+#:     `tasks.time_limit_sec` или `attempts.meta.time_limit` от `created_at`;
+#:   - нет комментария у SA_COM/TBL_COM (2.3f, tsk-419): комментарий пуст.
+#:     Неверный ответ с файлом, но без комментария, тоже попадёт сюда — гейт его
+#:     пропустил бы. Ошибка в безопасную сторону: задание не встанет на повтор,
+#:     лишнего повтора не будет. Задания с тестами ввода/вывода гейт не трогает,
+#:     но они и на повтор не идут (`task_supports_review`).
+#: Вложение (2.3e) и пустой TA (2.3g) не нужны: такие задания повтору не подлежат.
+#: Ожидает алиасы `tr` (task_results), `a` (attempts), `t` (tasks).
+_GATE_REJECTION_SQL = """
+    (
+        tr.submitted_at > a.created_at + make_interval(secs => COALESCE(
+            t.time_limit_sec::float,
+            CASE WHEN jsonb_typeof(a.meta) = 'object'
+                      AND jsonb_typeof(a.meta->'time_limit') = 'number'
+                 THEN (a.meta->>'time_limit')::float END
+        ))
+    ) IS TRUE
+    OR (
+        t.task_content->>'type' IN ('SA_COM', 'TBL_COM')
+        AND btrim(COALESCE(tr.answer_json->'response'->>'comment', '')) = ''
+    )
+"""
+
+
 @dataclass(frozen=True)
 class DueReview:
     """Задание, которое пора повторить."""
@@ -219,10 +248,11 @@ async def schedule_after_pass(
     failed_before = (
         await db.execute(
             text(
-                """
+                f"""
                 SELECT 1
                 FROM task_results tr
                 JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
+                JOIN tasks t ON t.id = tr.task_id
                 WHERE tr.user_id = :sid AND tr.task_id = :tid
                   AND tr.id <> :rid
                   AND tr.submitted_at <= :submitted_at
@@ -230,6 +260,7 @@ async def schedule_after_pass(
                   AND tr.source_system IS DISTINCT FROM :retrieval
                   AND tr.max_score > 0
                   AND (tr.score::float / tr.max_score) < :ratio
+                  AND NOT ({_GATE_REJECTION_SQL})
                 LIMIT 1
                 """
             ),
