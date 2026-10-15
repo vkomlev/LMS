@@ -49,3 +49,17 @@ class StudentRequirementOverride(Base):
     revoked_by: Mapped[Optional[int]] = mapped_column(
         Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
+
+
+class StudentRequirementSync(Base):
+    """Когда правила последний раз пересчитали переопределения ученика (фаза Б1)."""
+
+    __tablename__ = "student_requirement_sync"
+    __table_args__ = {
+        "comment": "tsk-1361: момент последнего пересчёта переопределений ученика"
+    }
+
+    student_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    synced_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

@@ -25,7 +25,29 @@ from sqlalchemy import text  # noqa: E402
 
 from app.db.session import async_session_factory
 from app.services.content_grace_service import graced_for_roots, invalidate_grace_cache
-from app.services.requirement_override_service import active_overrides, desired_rule_overrides
+from app.services.program_scope_service import excluded_courses_for  # noqa: E402
+from app.services.requirement_override_service import (  # noqa: E402
+    REQUIRED_LEVELS,
+    active_overrides,
+    desired_rule_overrides,
+    resolve_levels,
+)
+
+# Обязательные элементы поддерева выпавших номеров — как их сегодня вычитает движок.
+_DROPPED_ITEMS_SQL = """
+WITH RECURSIVE sub AS (
+    SELECT unnest(CAST(:ids AS integer[])) AS cid, ARRAY[0] AS path
+    UNION ALL
+    SELECT cp.course_id, s.path || cp.course_id
+      FROM sub s JOIN course_parents cp ON cp.parent_course_id = s.cid
+     WHERE NOT cp.course_id = ANY(s.path)
+)
+SELECT 'task', id FROM tasks
+ WHERE course_id IN (SELECT cid FROM sub) AND is_active AND requirement_level = ANY(:lv)
+UNION
+SELECT 'material', id FROM materials
+ WHERE course_id IN (SELECT cid FROM sub) AND is_active AND requirement_level = ANY(:lv)
+"""
 
 logger = logging.getLogger("tsk1361_reconcile")
 
@@ -50,7 +72,22 @@ async def _run(only_student: int | None) -> int:
             graced = await graced_for_roots(db, int(sid))
             on_the_fly = {("task", i) for i in graced.tasks} | {("material", i) for i in graced.materials}
             stored_grace = {t for t, c in stored.items() if c.startswith("grace_")}
-            if desired != stored or on_the_fly != stored_grace:
+
+            # Б2: то, что увидят экраны при включённом рубильнике, против
+            # того, что они видят сейчас (прощение + выпавшие номера). Цели
+            # под решением человека не сравниваются — там расхождение и есть цель.
+            dropped = sorted(await excluded_courses_for(db, student_id=int(sid)))
+            today = set(on_the_fly)
+            if dropped:
+                rows = await db.execute(text(_DROPPED_ITEMS_SQL), {"ids": dropped, "lv": list(REQUIRED_LEVELS)})
+                today |= {(str(k), int(i)) for k, i in rows.fetchall()}
+            resolved = await resolve_levels(db, int(sid))
+            human = {t for t, v in resolved.reasons.items() if v.source == "human"}
+            resolver_gap = (set(resolved.demoted) ^ today) - human
+            if resolver_gap:
+                logger.warning("ученик %s: резолвер расходится с экранами сегодня %s", sid, sorted(resolver_gap)[:10])
+
+            if desired != stored or on_the_fly != stored_grace or resolver_gap:
                 bad += 1
                 logger.warning(
                     "ученик %s: нет в таблице %s, лишнее в таблице %s, расхождение с расчётом на лету %s",

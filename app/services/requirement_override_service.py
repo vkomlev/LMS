@@ -30,7 +30,8 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import timedelta
 from typing import Dict, Optional, Tuple
 
 from sqlalchemy import text
@@ -40,6 +41,7 @@ from app.services.content_grace_service import (
     REASON_AHEAD,
     REASON_NEW_CONTENT,
     compute_grace_reasons,
+    invalidate_grace_cache,
 )
 from app.services.program_scope_service import excluded_courses_for
 
@@ -66,6 +68,19 @@ REASON_TEXTS: Dict[str, str] = {
 }
 
 Target = Tuple[str, int]
+
+# Пространство ключей advisory-блокировки «ученик» (двухаргументная форма:
+# (пространство, student_id)) — сверка и решения учителя по одному ученику
+# идут строго по очереди, иначе запрос учителя мог упасть на уникальности.
+_LOCK_NAMESPACE = 1361
+
+
+async def _lock_student(db: AsyncSession, student_id: int) -> None:
+    """Транзакционная блокировка изменений переопределений одного ученика."""
+    await db.execute(
+        text("SELECT pg_advisory_xact_lock(:ns, :sid)"),
+        {"ns": _LOCK_NAMESPACE, "sid": student_id},
+    )
 
 
 @dataclass(frozen=True)
@@ -119,6 +134,18 @@ async def sync_rule_overrides(db: AsyncSession, student_id: int) -> SyncResult:
     Строки человека не трогаются. Строка правила, чья причина сменилась,
     отменяется и пишется заново — история показывает, когда сменилась причина.
     """
+    await _lock_student(db, student_id)
+    # Отметка свежести — момент НАЧАЛА транзакции (`now()`), а не конца:
+    # сдача, пришедшая во время расчёта, окажется новее отметки и попадёт в
+    # следующий быстрый тик, а не потеряется.
+    await db.execute(
+        text(
+            "INSERT INTO student_requirement_sync (student_id, synced_at) "
+            "VALUES (:sid, now()) "
+            "ON CONFLICT (student_id) DO UPDATE SET synced_at = EXCLUDED.synced_at"
+        ),
+        {"sid": student_id},
+    )
     desired = await desired_rule_overrides(db, student_id)
     rows = (
         await db.execute(
@@ -214,6 +241,7 @@ async def set_human_override(
         raise ValueError(f"неизвестный уровень: {level!r}")
     note = (reason_text or "").strip() or REASON_TEXTS[REASON_TEACHER]
 
+    await _lock_student(db, student_id)
     await db.execute(
         text(
             "UPDATE student_requirement_override "
@@ -237,6 +265,7 @@ async def set_human_override(
             },
         )
     ).scalar_one()
+    invalidate_grace_cache(db)
     logger.info(
         "tsk-1361: учитель %s задал ученику %s уровень %s для %s %s",
         by_user_id, student_id, level, target_kind, target_id,
@@ -251,6 +280,7 @@ async def revoke_human_override(
 
     Правило восстановит своё переопределение на следующей сверке.
     """
+    await _lock_student(db, student_id)
     res = await db.execute(
         text(
             "UPDATE student_requirement_override "
@@ -260,6 +290,7 @@ async def revoke_human_override(
         ),
         {"by": by_user_id, "sid": student_id, "kind": target_kind, "tid": target_id},
     )
+    invalidate_grace_cache(db)
     return bool(res.rowcount)
 
 
@@ -279,3 +310,198 @@ async def active_overrides(db: AsyncSession, student_id: int) -> Dict[Target, Ov
         (str(k), int(t)): OverrideView(level=str(lvl), reason_code=str(c), reason_text=str(txt), source=str(s))
         for k, t, lvl, c, txt, s in rows
     }
+
+
+# Итоговый уровень элементов ученика, у которых есть хоть одно применимое
+# переопределение. Узел (`course`) раскрывается на поддерево по
+# `course_parents` (`path` — защита от цикла, как в соседних обходах).
+# Порядок (решение оператора 15.10): решение человека главнее правила на
+# любом уровне; внутри одного источника — ближайшее к элементу (сам элемент —
+# глубина 0, его курс — 1, предки — дальше).
+_RESOLVE_SQL = """
+/* tsk1361-resolve */
+WITH RECURSIVE ov AS (
+    SELECT target_kind, target_id, level, source, reason_code, reason_text, created_at
+      FROM student_requirement_override
+     WHERE student_id = :sid AND revoked_at IS NULL
+),
+node AS (
+    SELECT o.target_id AS course_id, o.level, o.source, o.reason_code,
+           o.reason_text, o.created_at, 1 AS depth, ARRAY[o.target_id] AS path
+      FROM ov o WHERE o.target_kind = 'course'
+    UNION ALL
+    SELECT cp.course_id, n.level, n.source, n.reason_code, n.reason_text,
+           n.created_at, n.depth + 1, n.path || cp.course_id
+      FROM node n
+      JOIN course_parents cp ON cp.parent_course_id = n.course_id
+     WHERE NOT cp.course_id = ANY(n.path)
+),
+cand AS (
+    SELECT 'task' AS kind, t.id AS item_id, n.level, n.source, n.reason_code,
+           n.reason_text, n.created_at, n.depth
+      FROM node n JOIN tasks t ON t.course_id = n.course_id AND t.is_active
+    UNION ALL
+    SELECT 'material', m.id, n.level, n.source, n.reason_code, n.reason_text,
+           n.created_at, n.depth
+      FROM node n JOIN materials m ON m.course_id = n.course_id AND m.is_active
+    UNION ALL
+    SELECT o.target_kind, o.target_id, o.level, o.source, o.reason_code,
+           o.reason_text, o.created_at, 0
+      FROM ov o WHERE o.target_kind IN ('task', 'material')
+),
+best AS (
+    SELECT DISTINCT ON (kind, item_id)
+           kind, item_id, level, source, reason_code, reason_text
+      FROM cand
+     -- Ничья (узел на одной глубине по двум путям — подкурс у нескольких
+     -- родителей): побеждает более позднее решение, чтобы выбор не был случайным.
+     ORDER BY kind, item_id, (source = 'human') DESC, depth ASC, created_at DESC
+)
+SELECT b.kind, b.item_id, b.level, b.source, b.reason_code, b.reason_text,
+       COALESCE(t.requirement_level, m.requirement_level) AS base_level
+  FROM best b
+  LEFT JOIN tasks t ON b.kind = 'task' AND t.id = b.item_id AND t.is_active
+  LEFT JOIN materials m ON b.kind = 'material' AND m.id = b.item_id AND m.is_active
+ WHERE COALESCE(t.id, m.id) IS NOT NULL
+"""
+
+
+@dataclass(frozen=True)
+class ResolvedLevels:
+    """Итог по ученику: что понижено, что повышено и почему."""
+
+    # Элементы, обязательные по курсу, но не обязательные ученику.
+    demoted: frozenset[Target] = frozenset()
+    # Элементы, необязательные по курсу, но обязательные ученику (решение учителя).
+    promoted: frozenset[Target] = frozenset()
+    # Причина для каждого элемента, у которого итоговый уровень отличается от курса.
+    reasons: Dict[Target, OverrideView] = field(default_factory=dict)
+
+
+async def resolve_levels(db: AsyncSession, student_id: int) -> ResolvedLevels:
+    """Единый источник персонального уровня (tsk-1361). Один запрос по индексу.
+
+    Возвращает только элементы, у которых итоговый уровень отличается от
+    уровня в курсе; для остальных действует `requirement_level` как раньше.
+    """
+    rows = (await db.execute(text(_RESOLVE_SQL), {"sid": student_id})).fetchall()
+    demoted: set[Target] = set()
+    promoted: set[Target] = set()
+    reasons: Dict[Target, OverrideView] = {}
+    for kind, item_id, level, source, code, reason, base in rows:
+        target = (str(kind), int(item_id))
+        was_required = base in REQUIRED_LEVELS
+        now_required = level in REQUIRED_LEVELS
+        if was_required == now_required:
+            continue
+        (demoted if was_required else promoted).add(target)
+        reasons[target] = OverrideView(
+            level=str(level), reason_code=str(code), reason_text=str(reason), source=str(source)
+        )
+    return ResolvedLevels(
+        demoted=frozenset(demoted), promoted=frozenset(promoted), reasons=reasons
+    )
+
+
+# Ученики с действующим зачислением, чьи строки могли устареть: отметки нет
+# вовсе, либо после неё появилось что-то, от чего зависят правила, — сдача или
+# её проверка, пропуск, зачёт материала, новый план объёма, новое зачисление.
+#
+# Запас `:margin` назад от отметки: время сдачи ставит приложение ДО коммита,
+# и сдача, закоммиченная уже после чтения сверки, иначе оказалась бы «старше
+# отметки» и ждала бы часового прохода. Цена — лишний пересчёт раз-другой.
+_STALE_BY_STUDENT_SQL = """
+/* tsk1361-stale */
+WITH s AS (
+    SELECT DISTINCT uc.user_id AS sid FROM user_courses uc WHERE uc.is_active
+),
+m AS (
+    SELECT s.sid, rs.synced_at - CAST(:margin AS interval) AS since
+      FROM s LEFT JOIN student_requirement_sync rs ON rs.student_id = s.sid
+)
+SELECT m.sid
+  FROM m
+ WHERE m.since IS NULL
+    OR EXISTS (SELECT 1 FROM task_results tr
+                WHERE tr.user_id = m.sid
+                  AND GREATEST(tr.submitted_at, tr.checked_at) > m.since)
+    OR EXISTS (SELECT 1 FROM student_task_progress stp
+                WHERE stp.student_id = m.sid AND stp.updated_at > m.since)
+    OR EXISTS (SELECT 1 FROM student_material_progress smp
+                WHERE smp.student_id = m.sid
+                  AND GREATEST(smp.completed_at, smp.skipped_at) > m.since)
+    OR EXISTS (SELECT 1 FROM student_program_scope sps
+                WHERE sps.student_id = m.sid AND sps.computed_at > m.since)
+    OR EXISTS (SELECT 1 FROM user_courses uc2
+                WHERE uc2.user_id = m.sid AND uc2.added_at > m.since)
+"""
+
+# Ученики, у которых после ИХ отметки правили содержимое их деревьев. Курс с
+# правкой поднимается вверх до корней вместе с моментом правки; сравнение — с
+# отметкой каждого ученика, а не с самой старой (иначе любая правка гоняла бы
+# всё дерево каждую минуту до часового прохода).
+_STALE_BY_CONTENT_SQL = """
+/* tsk1361-stale-content */
+WITH RECURSIVE changed AS (
+    SELECT course_id, max(GREATEST(created_at, updated_at)) AS changed_at
+      FROM (
+        SELECT course_id, created_at, updated_at FROM tasks
+         WHERE GREATEST(created_at, updated_at) > :since
+        UNION ALL
+        SELECT course_id, created_at, updated_at FROM materials
+         WHERE GREATEST(created_at, updated_at) > :since
+      ) x
+     GROUP BY course_id
+),
+up AS (
+    SELECT c.course_id AS node_id, c.changed_at, ARRAY[c.course_id] AS path FROM changed c
+    UNION ALL
+    SELECT cp.parent_course_id, u.changed_at, u.path || cp.parent_course_id
+      FROM up u JOIN course_parents cp ON cp.course_id = u.node_id
+     WHERE NOT cp.parent_course_id = ANY(u.path)
+)
+SELECT DISTINCT uc.user_id
+  FROM user_courses uc
+  JOIN up ON up.node_id = uc.course_id
+  JOIN student_requirement_sync rs ON rs.student_id = uc.user_id
+ WHERE uc.is_active
+   AND up.changed_at > rs.synced_at - CAST(:margin AS interval)
+"""
+
+_STALE_MARGIN = timedelta(minutes=2)
+
+
+async def stale_students(db: AsyncSession) -> list[int]:
+    """Ученики, чьи переопределения надо пересчитать в быстром тике.
+
+    Правка связей подкурсов (`course_parents`) отметки времени не имеет и
+    здесь не видна — её ловит часовая полная сверка.
+    """
+    ids = {
+        int(r)
+        for r in (
+            await db.execute(text(_STALE_BY_STUDENT_SQL), {"margin": _STALE_MARGIN})
+        ).scalars().all()
+    }
+    since = (
+        # Только действующие ученики: отметка отчисленного стоит на месте, и
+        # по ней каждый тик превращался бы в полную сверку.
+        await db.execute(
+            text(
+                "SELECT min(rs.synced_at) FROM student_requirement_sync rs "
+                " WHERE EXISTS (SELECT 1 FROM user_courses uc "
+                "                WHERE uc.user_id = rs.student_id AND uc.is_active)"
+            )
+        )
+    ).scalar()
+    if since is not None:
+        ids |= {
+            int(r)
+            for r in (
+                await db.execute(
+                    text(_STALE_BY_CONTENT_SQL),
+                    {"since": since - _STALE_MARGIN, "margin": _STALE_MARGIN},
+                )
+            ).scalars().all()
+        }
+    return sorted(ids)

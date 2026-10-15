@@ -17,7 +17,7 @@ from app.schemas.task_content import QUIZ_TASK_TYPES
 # tsk-692: правило «добавленное после прохождения темы приходит рекомендуемым»
 # — общая функция для движка и кабинета, чтобы карточка курса, программа курса
 # и «следующий шаг» считали долг одинаково.
-from app.services.content_grace_service import compute_graced_items
+from app.services.content_grace_service import compute_graced_items, done_among
 from app.services.transparent_subcourse import absorbed_in_tree, task_key
 # Y-3.2 (S3-A4): единая точка правды — учебный движок.
 from app.services.learning_engine_service import PASS_THRESHOLD_RATIO, is_mentor_reviewed
@@ -442,8 +442,11 @@ async def get_courses_with_progress(db: AsyncSession, user_id: int) -> list[dict
         graced = await compute_graced_items(db, user_id, int(row["course_id"]))
         tasks_total = max(0, row["tasks_total"] - len(graced.tasks))
         materials_total = max(0, row["materials_total"] - len(graced.materials))
-        tasks_done = row["tasks_done"]
-        materials_done = row["materials_done"]
+        # tsk-1361: понижено может быть и закрытое (решение учителя, выпавший
+        # номер) — из «сделано» вычитаем ровно его, как вычли из «всего».
+        graced_tasks_done, graced_materials_done = await done_among(db, user_id, graced)
+        tasks_done = max(0, row["tasks_done"] - graced_tasks_done)
+        materials_done = max(0, row["materials_done"] - graced_materials_done)
         denominator = tasks_total + materials_total
         if denominator > 0:
             percent = round(((tasks_done + materials_done) / denominator) * 100)

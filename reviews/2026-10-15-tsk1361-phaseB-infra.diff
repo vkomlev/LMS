@@ -1,0 +1,1178 @@
+diff --git a/app/core/config.py b/app/core/config.py
+index c205dc9..c61eb09 100644
+--- a/app/core/config.py
++++ b/app/core/config.py
+@@ -301,6 +301,14 @@ class Settings:
+         self.requirement_override_sync_cron_startup_delay_min: float = float(
+             os.getenv("REQUIREMENT_OVERRIDE_SYNC_CRON_STARTUP_DELAY_MIN", "7")
+         )
++        # Быстрый тик — только ученики с несвежими строками (зачёт, правка курса).
++        self.requirement_override_fast_interval_sec: int = int(
++            os.getenv("REQUIREMENT_OVERRIDE_FAST_INTERVAL_SEC", "60")
++        )
++        # Фаза Б2: REQUIREMENT_OVERRIDE_READ_ENABLED (по умолчанию выкл.) —
++        # потребители берут понижённое из таблицы, а не считают на лету.
++        # Читается в content_grace_service.read_from_overrides_enabled — один
++        # источник; здесь только для справки.
+ 
+         # tsk-302 этап 3: фоновая оценка кода ученика (чистота + признак
+         # ИИ-авторства). Синхронно её делать нельзя — это внешний вызов модели
+diff --git a/app/db/migrations/versions/2026_10_15_tsk1361_requirement_sync.py b/app/db/migrations/versions/2026_10_15_tsk1361_requirement_sync.py
+new file mode 100644
+index 0000000..157dd54
+--- /dev/null
++++ b/app/db/migrations/versions/2026_10_15_tsk1361_requirement_sync.py
+@@ -0,0 +1,43 @@
++"""tsk-1361 (фаза Б1): отметка свежести переопределений ученика.
++
++`student_requirement_sync` — когда правила последний раз пересчитали строки
++ученика в `student_requirement_override`. По ней быстрый тик (раз в минуту)
++находит учеников, у которых с тех пор появились сдачи, проверки, пропуски,
++зачёты материалов, правка плана объёма или правка содержимого их курсов, —
++по данным, а не по вызовам из мест записи (такие вызовы дважды пропускали,
++tsk-495, tsk-669).
++
++Rollback: `alembic downgrade tsk1361_requirement_override` — таблица
++снимается, быстрый тик считает всех учеников «несвежими» до первой сверки.
++
++Revision ID: tsk1361_requirement_sync
++Revises: tsk1361_requirement_override
++Create Date: 2026-10-15
++"""
++from typing import Sequence, Union
++
++import sqlalchemy as sa
++from alembic import op
++
++revision: str = "tsk1361_requirement_sync"
++down_revision: Union[str, None] = "tsk1361_requirement_override"
++branch_labels: Union[str, Sequence[str], None] = None
++depends_on: Union[str, Sequence[str], None] = None
++
++
++def upgrade() -> None:
++    """Создать таблицу отметок свежести."""
++    op.create_table(
++        "student_requirement_sync",
++        sa.Column(
++            "student_id", sa.Integer(),
++            sa.ForeignKey("users.id", ondelete="CASCADE"), primary_key=True,
++        ),
++        sa.Column("synced_at", sa.DateTime(timezone=True), nullable=False),
++        comment="tsk-1361: момент последнего пересчёта переопределений ученика",
++    )
++
++
++def downgrade() -> None:
++    """Снять таблицу."""
++    op.drop_table("student_requirement_sync")
+diff --git a/app/models/requirement_override.py b/app/models/requirement_override.py
+index b1b9158..6f3161d 100644
+--- a/app/models/requirement_override.py
++++ b/app/models/requirement_override.py
+@@ -49,3 +49,17 @@ class StudentRequirementOverride(Base):
+     revoked_by: Mapped[Optional[int]] = mapped_column(
+         Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+     )
++
++
++class StudentRequirementSync(Base):
++    """Когда правила последний раз пересчитали переопределения ученика (фаза Б1)."""
++
++    __tablename__ = "student_requirement_sync"
++    __table_args__ = {
++        "comment": "tsk-1361: момент последнего пересчёта переопределений ученика"
++    }
++
++    student_id: Mapped[int] = mapped_column(
++        Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
++    )
++    synced_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+diff --git a/app/services/content_grace_service.py b/app/services/content_grace_service.py
+index d3db498..bd362f1 100644
+--- a/app/services/content_grace_service.py
++++ b/app/services/content_grace_service.py
+@@ -83,6 +83,7 @@ tsk-1294: «после него» — только в том же узле (ку
+ from __future__ import annotations
+ 
+ import logging
++import os
+ from dataclasses import dataclass, field
+ from datetime import datetime
+ from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
+@@ -312,7 +313,10 @@ async def compute_graced_items(
+     if cached is not None:
+         return cached
+ 
+-    result = await _compute(db, student_id, root_course_id)
++    if read_from_overrides_enabled():
++        result = await _from_overrides(db, student_id, root_course_id)
++    else:
++        result = await _compute(db, student_id, root_course_id)
+     cache[(student_id, root_course_id)] = result
+     return result
+ 
+@@ -355,6 +359,121 @@ REASON_NEW_CONTENT = "grace_new_content"
+ REASON_AHEAD = "grace_ahead"
+ 
+ 
++def read_from_overrides_enabled() -> bool:
++    """tsk-1361 Б2: брать понижённое из таблицы переопределений, а не считать.
++
++    Рубильник `REQUIREMENT_OVERRIDE_READ_ENABLED` (по умолчанию выключен).
++    Читается из окружения на каждый вызов: `Settings()` целиком здесь не нужен.
++    """
++    return os.getenv("REQUIREMENT_OVERRIDE_READ_ENABLED", "false").lower() in ("true", "1", "yes")
++
++
++async def _from_overrides(
++    db: AsyncSession, student_id: int, root_course_id: int
++) -> GracedItems:
++    """Понижённое ученику по единому источнику (tsk-1361), в пределах дерева корня.
++
++    Строки в таблице общие для всех корней (решение оператора 15.10: прошёл
++    тему в одном курсе — необязательно везде), но выдача — только элементы
++    ЭТОГО дерева: движок и карточка курса вычитают из «всего» количество, и
++    понижение из соседнего курса занизило бы их знаменатель. В набор входят и
++    выпавшие номера программы (`program_trim`), и решения учителя.
++
++    Индивидуальный курс (`ind:`) — как и при расчёте на лету, без понижений:
++    иначе решение по основному курсу снимало бы замок tsk-1276.
++    """
++    # Отложенный импорт: requirement_override_service сам импортирует этот модуль.
++    from app.services.requirement_override_service import resolve_levels
++
++    root_uid = (
++        await db.execute(
++            text("SELECT course_uid FROM courses WHERE id = :root_id"),
++            {"root_id": root_course_id},
++        )
++    ).scalar()
++    if root_uid and root_uid.startswith(INDIVIDUAL_UID_PREFIX):
++        return EMPTY_GRACE
++
++    resolved = await resolve_levels(db, student_id)
++    if not resolved.demoted:
++        return EMPTY_GRACE
++    tree_ids = [
++        int(r[0])
++        for r in (
++            await db.execute(text(_TREE_NODES_SQL), {"root_id": root_course_id})
++        ).fetchall()
++    ]
++    task_ids = [i for k, i in resolved.demoted if k == "task"]
++    material_ids = [i for k, i in resolved.demoted if k == "material"]
++    in_tree = (
++        await db.execute(
++            text(
++                "SELECT 'task', id FROM tasks "
++                " WHERE id = ANY(CAST(:t AS int[])) AND course_id = ANY(CAST(:tree AS int[])) "
++                "UNION ALL "
++                "SELECT 'material', id FROM materials "
++                " WHERE id = ANY(CAST(:m AS int[])) AND course_id = ANY(CAST(:tree AS int[]))"
++            ),
++            {"t": task_ids, "m": material_ids, "tree": tree_ids},
++        )
++    ).fetchall()
++    if not in_tree:
++        return EMPTY_GRACE
++    return GracedItems(
++        tasks=frozenset(int(i) for k, i in in_tree if k == "task"),
++        materials=frozenset(int(i) for k, i in in_tree if k == "material"),
++    )
++
++
++# Сколько из понижённого ученик уже закрыл — тем же признаком «закрыто», что
++# и счётчики «сделано» (последний результат проходной либо пропуск; материал
++# пройден или пропущен). Расчёт на лету закрытое не прощает никогда, а решение
++# учителя и выпавший номер могут понизить и закрытое — без вычета «сделано»
++# обогнало бы «всего».
++_DONE_AMONG_SQL = f"""
++/* tsk1361-done-among */
++WITH last_per_task AS (
++    SELECT DISTINCT ON (tr.task_id) tr.task_id, tr.score, tr.max_score
++    FROM task_results tr
++    INNER JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
++    WHERE tr.user_id = :student_id
++      AND {learning_path_results_filter('tr')}
++      AND tr.task_id = ANY(CAST(:t AS int[]))
++    ORDER BY tr.task_id, tr.submitted_at DESC, tr.id DESC
++)
++SELECT
++    (SELECT count(*) FROM (
++        SELECT task_id FROM last_per_task
++         WHERE max_score > 0 AND score::float / max_score >= :pass_threshold
++        UNION
++        SELECT task_id FROM student_task_progress
++         WHERE student_id = :student_id AND status = 'skipped'
++           AND task_id = ANY(CAST(:t AS int[]))
++    ) d) AS tasks_done,
++    (SELECT count(*) FROM student_material_progress
++      WHERE student_id = :student_id AND status IN ('completed', 'skipped')
++        AND material_id = ANY(CAST(:m AS int[]))) AS materials_done
++"""
++
++
++async def done_among(db: AsyncSession, student_id: int, graced: GracedItems) -> Tuple[int, int]:
++    """(заданий, материалов) из `graced`, которые ученик уже закрыл."""
++    if not graced:
++        return 0, 0
++    row = (
++        await db.execute(
++            text(_DONE_AMONG_SQL),
++            {
++                "student_id": student_id,
++                "t": sorted(graced.tasks),
++                "m": sorted(graced.materials),
++                "pass_threshold": _PASS_THRESHOLD_RATIO,
++            },
++        )
++    ).one()
++    return int(row[0] or 0), int(row[1] or 0)
++
++
+ async def _compute(
+     db: AsyncSession, student_id: int, root_course_id: int
+ ) -> GracedItems:
+diff --git a/app/services/learning_engine_service.py b/app/services/learning_engine_service.py
+index a93fb2b..6861eb1 100644
+--- a/app/services/learning_engine_service.py
++++ b/app/services/learning_engine_service.py
+@@ -987,6 +987,7 @@ class LearningEngineService:
+                    AND t.course_id = ANY(:course_ids)
+                    AND t.is_active = true
+                    AND t.requirement_level IN ('required', 'skippable')
++                   AND NOT (t.id = ANY(:excluded_tasks))
+                 WHERE tr.user_id = :student_id
+                   AND {_LEARNING_PATH}
+                 ORDER BY tr.task_id, tr.submitted_at DESC, tr.id DESC
+@@ -1002,13 +1003,22 @@ class LearningEngineService:
+                    AND t.course_id = ANY(:course_ids)
+                    AND t.is_active = true
+                    AND t.requirement_level IN ('required', 'skippable')
++                   AND NOT (t.id = ANY(:excluded_tasks))
+                 WHERE stp.student_id = :student_id
+                   AND stp.status = 'skipped'
+             ) done_tasks
+         """)
+         r = await db.execute(
+             tasks_with_last_pass_stmt,
+-            {"student_id": student_id, "course_ids": tree_ids, "pass_threshold": PASS_THRESHOLD_RATIO},
++            {
++                "student_id": student_id,
++                "course_ids": tree_ids,
++                "pass_threshold": PASS_THRESHOLD_RATIO,
++                # tsk-1361: исключённое из знаменателя исключается и из
++                # числителя — понижено может быть и закрытое (решение учителя,
++                # выпавший номер), иначе «сделано» обгоняло бы «всего».
++                "excluded_tasks": sorted(excluded_tasks),
++            },
+         )
+         tasks_with_last_pass = r.scalar() or 0
+ 
+@@ -1020,12 +1030,17 @@ class LearningEngineService:
+                AND m.course_id = ANY(:course_ids)
+                AND m.is_active = true
+                AND m.requirement_level IN ('required', 'skippable')
++               AND NOT (m.id = ANY(:excluded_materials))
+             WHERE smp.student_id = :student_id
+               AND smp.status IN ('completed', 'skipped')
+         """)
+         r = await db.execute(
+             materials_done_stmt,
+-            {"student_id": student_id, "course_ids": tree_ids},
++            {
++                "student_id": student_id,
++                "course_ids": tree_ids,
++                "excluded_materials": sorted(excluded_materials),
++            },
+         )
+         materials_done = r.scalar() or 0
+ 
+diff --git a/app/services/me_service.py b/app/services/me_service.py
+index dca0b62..fb117f5 100644
+--- a/app/services/me_service.py
++++ b/app/services/me_service.py
+@@ -17,7 +17,7 @@ from app.schemas.task_content import QUIZ_TASK_TYPES
+ # tsk-692: правило «добавленное после прохождения темы приходит рекомендуемым»
+ # — общая функция для движка и кабинета, чтобы карточка курса, программа курса
+ # и «следующий шаг» считали долг одинаково.
+-from app.services.content_grace_service import compute_graced_items
++from app.services.content_grace_service import compute_graced_items, done_among
+ from app.services.transparent_subcourse import absorbed_in_tree, task_key
+ # Y-3.2 (S3-A4): единая точка правды — учебный движок.
+ from app.services.learning_engine_service import PASS_THRESHOLD_RATIO, is_mentor_reviewed
+@@ -442,8 +442,11 @@ async def get_courses_with_progress(db: AsyncSession, user_id: int) -> list[dict
+         graced = await compute_graced_items(db, user_id, int(row["course_id"]))
+         tasks_total = max(0, row["tasks_total"] - len(graced.tasks))
+         materials_total = max(0, row["materials_total"] - len(graced.materials))
+-        tasks_done = row["tasks_done"]
+-        materials_done = row["materials_done"]
++        # tsk-1361: понижено может быть и закрытое (решение учителя, выпавший
++        # номер) — из «сделано» вычитаем ровно его, как вычли из «всего».
++        graced_tasks_done, graced_materials_done = await done_among(db, user_id, graced)
++        tasks_done = max(0, row["tasks_done"] - graced_tasks_done)
++        materials_done = max(0, row["materials_done"] - graced_materials_done)
+         denominator = tasks_total + materials_total
+         if denominator > 0:
+             percent = round(((tasks_done + materials_done) / denominator) * 100)
+diff --git a/app/services/requirement_override_service.py b/app/services/requirement_override_service.py
+index 5f67c6a..f581eb6 100644
+--- a/app/services/requirement_override_service.py
++++ b/app/services/requirement_override_service.py
+@@ -30,7 +30,8 @@
+ from __future__ import annotations
+ 
+ import logging
+-from dataclasses import dataclass
++from dataclasses import dataclass, field
++from datetime import timedelta
+ from typing import Dict, Optional, Tuple
+ 
+ from sqlalchemy import text
+@@ -40,6 +41,7 @@ from app.services.content_grace_service import (
+     REASON_AHEAD,
+     REASON_NEW_CONTENT,
+     compute_grace_reasons,
++    invalidate_grace_cache,
+ )
+ from app.services.program_scope_service import excluded_courses_for
+ 
+@@ -67,6 +69,19 @@ REASON_TEXTS: Dict[str, str] = {
+ 
+ Target = Tuple[str, int]
+ 
++# Пространство ключей advisory-блокировки «ученик» (двухаргументная форма:
++# (пространство, student_id)) — сверка и решения учителя по одному ученику
++# идут строго по очереди, иначе запрос учителя мог упасть на уникальности.
++_LOCK_NAMESPACE = 1361
++
++
++async def _lock_student(db: AsyncSession, student_id: int) -> None:
++    """Транзакционная блокировка изменений переопределений одного ученика."""
++    await db.execute(
++        text("SELECT pg_advisory_xact_lock(:ns, :sid)"),
++        {"ns": _LOCK_NAMESPACE, "sid": student_id},
++    )
++
+ 
+ @dataclass(frozen=True)
+ class OverrideView:
+@@ -119,6 +134,18 @@ async def sync_rule_overrides(db: AsyncSession, student_id: int) -> SyncResult:
+     Строки человека не трогаются. Строка правила, чья причина сменилась,
+     отменяется и пишется заново — история показывает, когда сменилась причина.
+     """
++    await _lock_student(db, student_id)
++    # Отметка свежести — момент НАЧАЛА транзакции (`now()`), а не конца:
++    # сдача, пришедшая во время расчёта, окажется новее отметки и попадёт в
++    # следующий быстрый тик, а не потеряется.
++    await db.execute(
++        text(
++            "INSERT INTO student_requirement_sync (student_id, synced_at) "
++            "VALUES (:sid, now()) "
++            "ON CONFLICT (student_id) DO UPDATE SET synced_at = EXCLUDED.synced_at"
++        ),
++        {"sid": student_id},
++    )
+     desired = await desired_rule_overrides(db, student_id)
+     rows = (
+         await db.execute(
+@@ -214,6 +241,7 @@ async def set_human_override(
+         raise ValueError(f"неизвестный уровень: {level!r}")
+     note = (reason_text or "").strip() or REASON_TEXTS[REASON_TEACHER]
+ 
++    await _lock_student(db, student_id)
+     await db.execute(
+         text(
+             "UPDATE student_requirement_override "
+@@ -237,6 +265,7 @@ async def set_human_override(
+             },
+         )
+     ).scalar_one()
++    invalidate_grace_cache(db)
+     logger.info(
+         "tsk-1361: учитель %s задал ученику %s уровень %s для %s %s",
+         by_user_id, student_id, level, target_kind, target_id,
+@@ -251,6 +280,7 @@ async def revoke_human_override(
+ 
+     Правило восстановит своё переопределение на следующей сверке.
+     """
++    await _lock_student(db, student_id)
+     res = await db.execute(
+         text(
+             "UPDATE student_requirement_override "
+@@ -260,6 +290,7 @@ async def revoke_human_override(
+         ),
+         {"by": by_user_id, "sid": student_id, "kind": target_kind, "tid": target_id},
+     )
++    invalidate_grace_cache(db)
+     return bool(res.rowcount)
+ 
+ 
+@@ -279,3 +310,198 @@ async def active_overrides(db: AsyncSession, student_id: int) -> Dict[Target, Ov
+         (str(k), int(t)): OverrideView(level=str(lvl), reason_code=str(c), reason_text=str(txt), source=str(s))
+         for k, t, lvl, c, txt, s in rows
+     }
++
++
++# Итоговый уровень элементов ученика, у которых есть хоть одно применимое
++# переопределение. Узел (`course`) раскрывается на поддерево по
++# `course_parents` (`path` — защита от цикла, как в соседних обходах).
++# Порядок (решение оператора 15.10): решение человека главнее правила на
++# любом уровне; внутри одного источника — ближайшее к элементу (сам элемент —
++# глубина 0, его курс — 1, предки — дальше).
++_RESOLVE_SQL = """
++/* tsk1361-resolve */
++WITH RECURSIVE ov AS (
++    SELECT target_kind, target_id, level, source, reason_code, reason_text, created_at
++      FROM student_requirement_override
++     WHERE student_id = :sid AND revoked_at IS NULL
++),
++node AS (
++    SELECT o.target_id AS course_id, o.level, o.source, o.reason_code,
++           o.reason_text, o.created_at, 1 AS depth, ARRAY[o.target_id] AS path
++      FROM ov o WHERE o.target_kind = 'course'
++    UNION ALL
++    SELECT cp.course_id, n.level, n.source, n.reason_code, n.reason_text,
++           n.created_at, n.depth + 1, n.path || cp.course_id
++      FROM node n
++      JOIN course_parents cp ON cp.parent_course_id = n.course_id
++     WHERE NOT cp.course_id = ANY(n.path)
++),
++cand AS (
++    SELECT 'task' AS kind, t.id AS item_id, n.level, n.source, n.reason_code,
++           n.reason_text, n.created_at, n.depth
++      FROM node n JOIN tasks t ON t.course_id = n.course_id AND t.is_active
++    UNION ALL
++    SELECT 'material', m.id, n.level, n.source, n.reason_code, n.reason_text,
++           n.created_at, n.depth
++      FROM node n JOIN materials m ON m.course_id = n.course_id AND m.is_active
++    UNION ALL
++    SELECT o.target_kind, o.target_id, o.level, o.source, o.reason_code,
++           o.reason_text, o.created_at, 0
++      FROM ov o WHERE o.target_kind IN ('task', 'material')
++),
++best AS (
++    SELECT DISTINCT ON (kind, item_id)
++           kind, item_id, level, source, reason_code, reason_text
++      FROM cand
++     -- Ничья (узел на одной глубине по двум путям — подкурс у нескольких
++     -- родителей): побеждает более позднее решение, чтобы выбор не был случайным.
++     ORDER BY kind, item_id, (source = 'human') DESC, depth ASC, created_at DESC
++)
++SELECT b.kind, b.item_id, b.level, b.source, b.reason_code, b.reason_text,
++       COALESCE(t.requirement_level, m.requirement_level) AS base_level
++  FROM best b
++  LEFT JOIN tasks t ON b.kind = 'task' AND t.id = b.item_id AND t.is_active
++  LEFT JOIN materials m ON b.kind = 'material' AND m.id = b.item_id AND m.is_active
++ WHERE COALESCE(t.id, m.id) IS NOT NULL
++"""
++
++
++@dataclass(frozen=True)
++class ResolvedLevels:
++    """Итог по ученику: что понижено, что повышено и почему."""
++
++    # Элементы, обязательные по курсу, но не обязательные ученику.
++    demoted: frozenset[Target] = frozenset()
++    # Элементы, необязательные по курсу, но обязательные ученику (решение учителя).
++    promoted: frozenset[Target] = frozenset()
++    # Причина для каждого элемента, у которого итоговый уровень отличается от курса.
++    reasons: Dict[Target, OverrideView] = field(default_factory=dict)
++
++
++async def resolve_levels(db: AsyncSession, student_id: int) -> ResolvedLevels:
++    """Единый источник персонального уровня (tsk-1361). Один запрос по индексу.
++
++    Возвращает только элементы, у которых итоговый уровень отличается от
++    уровня в курсе; для остальных действует `requirement_level` как раньше.
++    """
++    rows = (await db.execute(text(_RESOLVE_SQL), {"sid": student_id})).fetchall()
++    demoted: set[Target] = set()
++    promoted: set[Target] = set()
++    reasons: Dict[Target, OverrideView] = {}
++    for kind, item_id, level, source, code, reason, base in rows:
++        target = (str(kind), int(item_id))
++        was_required = base in REQUIRED_LEVELS
++        now_required = level in REQUIRED_LEVELS
++        if was_required == now_required:
++            continue
++        (demoted if was_required else promoted).add(target)
++        reasons[target] = OverrideView(
++            level=str(level), reason_code=str(code), reason_text=str(reason), source=str(source)
++        )
++    return ResolvedLevels(
++        demoted=frozenset(demoted), promoted=frozenset(promoted), reasons=reasons
++    )
++
++
++# Ученики с действующим зачислением, чьи строки могли устареть: отметки нет
++# вовсе, либо после неё появилось что-то, от чего зависят правила, — сдача или
++# её проверка, пропуск, зачёт материала, новый план объёма, новое зачисление.
++#
++# Запас `:margin` назад от отметки: время сдачи ставит приложение ДО коммита,
++# и сдача, закоммиченная уже после чтения сверки, иначе оказалась бы «старше
++# отметки» и ждала бы часового прохода. Цена — лишний пересчёт раз-другой.
++_STALE_BY_STUDENT_SQL = """
++/* tsk1361-stale */
++WITH s AS (
++    SELECT DISTINCT uc.user_id AS sid FROM user_courses uc WHERE uc.is_active
++),
++m AS (
++    SELECT s.sid, rs.synced_at - CAST(:margin AS interval) AS since
++      FROM s LEFT JOIN student_requirement_sync rs ON rs.student_id = s.sid
++)
++SELECT m.sid
++  FROM m
++ WHERE m.since IS NULL
++    OR EXISTS (SELECT 1 FROM task_results tr
++                WHERE tr.user_id = m.sid
++                  AND GREATEST(tr.submitted_at, tr.checked_at) > m.since)
++    OR EXISTS (SELECT 1 FROM student_task_progress stp
++                WHERE stp.student_id = m.sid AND stp.updated_at > m.since)
++    OR EXISTS (SELECT 1 FROM student_material_progress smp
++                WHERE smp.student_id = m.sid
++                  AND GREATEST(smp.completed_at, smp.skipped_at) > m.since)
++    OR EXISTS (SELECT 1 FROM student_program_scope sps
++                WHERE sps.student_id = m.sid AND sps.computed_at > m.since)
++    OR EXISTS (SELECT 1 FROM user_courses uc2
++                WHERE uc2.user_id = m.sid AND uc2.added_at > m.since)
++"""
++
++# Ученики, у которых после ИХ отметки правили содержимое их деревьев. Курс с
++# правкой поднимается вверх до корней вместе с моментом правки; сравнение — с
++# отметкой каждого ученика, а не с самой старой (иначе любая правка гоняла бы
++# всё дерево каждую минуту до часового прохода).
++_STALE_BY_CONTENT_SQL = """
++/* tsk1361-stale-content */
++WITH RECURSIVE changed AS (
++    SELECT course_id, max(GREATEST(created_at, updated_at)) AS changed_at
++      FROM (
++        SELECT course_id, created_at, updated_at FROM tasks
++         WHERE GREATEST(created_at, updated_at) > :since
++        UNION ALL
++        SELECT course_id, created_at, updated_at FROM materials
++         WHERE GREATEST(created_at, updated_at) > :since
++      ) x
++     GROUP BY course_id
++),
++up AS (
++    SELECT c.course_id AS node_id, c.changed_at, ARRAY[c.course_id] AS path FROM changed c
++    UNION ALL
++    SELECT cp.parent_course_id, u.changed_at, u.path || cp.parent_course_id
++      FROM up u JOIN course_parents cp ON cp.course_id = u.node_id
++     WHERE NOT cp.parent_course_id = ANY(u.path)
++)
++SELECT DISTINCT uc.user_id
++  FROM user_courses uc
++  JOIN up ON up.node_id = uc.course_id
++  JOIN student_requirement_sync rs ON rs.student_id = uc.user_id
++ WHERE uc.is_active
++   AND up.changed_at > rs.synced_at - CAST(:margin AS interval)
++"""
++
++_STALE_MARGIN = timedelta(minutes=2)
++
++
++async def stale_students(db: AsyncSession) -> list[int]:
++    """Ученики, чьи переопределения надо пересчитать в быстром тике.
++
++    Правка связей подкурсов (`course_parents`) отметки времени не имеет и
++    здесь не видна — её ловит часовая полная сверка.
++    """
++    ids = {
++        int(r)
++        for r in (
++            await db.execute(text(_STALE_BY_STUDENT_SQL), {"margin": _STALE_MARGIN})
++        ).scalars().all()
++    }
++    since = (
++        # Только действующие ученики: отметка отчисленного стоит на месте, и
++        # по ней каждый тик превращался бы в полную сверку.
++        await db.execute(
++            text(
++                "SELECT min(rs.synced_at) FROM student_requirement_sync rs "
++                " WHERE EXISTS (SELECT 1 FROM user_courses uc "
++                "                WHERE uc.user_id = rs.student_id AND uc.is_active)"
++            )
++        )
++    ).scalar()
++    if since is not None:
++        ids |= {
++            int(r)
++            for r in (
++                await db.execute(
++                    text(_STALE_BY_CONTENT_SQL),
++                    {"since": since - _STALE_MARGIN, "margin": _STALE_MARGIN},
++                )
++            ).scalars().all()
++        }
++    return sorted(ids)
+diff --git a/app/services/requirement_override_sync_cron_service.py b/app/services/requirement_override_sync_cron_service.py
+index a0018b6..d36c1c5 100644
+--- a/app/services/requirement_override_sync_cron_service.py
++++ b/app/services/requirement_override_sync_cron_service.py
+@@ -1,19 +1,27 @@
+ """tsk-1361: фоновая сверка переопределений обязательности по правилам.
+ 
+-Раз в интервал для каждого ученика с действующим зачислением правила
+-(прощение нового, сокращение программы) приводят его строки в
+-`student_requirement_override` к текущему расчёту.
+-
+-Паттерн тот же, что у `course_dependency_state_cron_service` (tsk-541/626):
+-сторож одного worker'а — отдельная сессия с транзакционной advisory-блокировкой,
+-работа — в своей сессии с коммитом после каждого ученика, ученики по
+-возрастанию id. Соединение не держится во время ожидания: тик идёт подряд и
+-закрывается (урок tsk-1250 — пул соединений).
++Два тика:
++
++* **быстрый** (раз в минуту) — только ученики, у которых после последнего
++  пересчёта появились сдачи, проверки, пропуски, зачёты материалов, новый план
++  объёма, новое зачисление или правка содержимого их курсов
++  (`requirement_override_service.stale_students`). Решение оператора 15.10:
++  экран должен отражать зачёт сразу, а не через час;
++* **полный** (раз в час) — все ученики с действующим зачислением. Страховка
++  для того, что по данным не видно: правка связей подкурсов (`course_parents`
++  без отметки времени) и правка задания прямым SQL мимо `updated_at`.
++
++Паттерн одного worker'а — как у `course_dependency_state_cron_service`
++(tsk-541/626): сторож — отдельная сессия с транзакционной advisory-блокировкой.
++Работа — **своя короткая сессия на каждого ученика** с коммитом: соединение
++возвращается в пул между учениками (урок tsk-1250 — пул соединений). Итого
++сторож держит одно соединение на время прохода (полный — около 8 с на 140
++учеников на проде 15.10), работа — одно на время одного ученика.
+ """
+ from __future__ import annotations
+ 
+ import logging
+-from typing import Optional
++from typing import Optional, Sequence
+ 
+ from apscheduler.schedulers.asyncio import AsyncIOScheduler
+ from sqlalchemy import text
+@@ -22,70 +30,90 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+ from app.core.config import Settings
+ from app.core.cron_registry import register_interval_job
+ from app.db.session import async_session_factory
+-from app.services.content_grace_service import invalidate_grace_cache
+-from app.services.requirement_override_service import sync_rule_overrides
++from app.services.requirement_override_service import stale_students, sync_rule_overrides
+ 
+ logger = logging.getLogger("app.requirement_override_sync_cron")
+ 
+ # ascii "RQOV" — не пересекается с соседними ключами (CDST 0x43445354 и др.).
++# Один ключ на оба тика: полный и быстрый не идут одновременно.
+ _LOCK_KEY = 0x52514F56
+ 
+ _scheduler: Optional[AsyncIOScheduler] = None
+ 
++_ALL_ACTIVE_SQL = "SELECT DISTINCT user_id FROM user_courses WHERE is_active = true ORDER BY user_id"
+ 
+-async def requirement_override_sync_tick(
+-    session_factory: Optional[async_sessionmaker[AsyncSession]] = None,
++
++async def _sync_students(
++    factory: async_sessionmaker[AsyncSession], student_ids: Sequence[int], summary: dict
++) -> None:
++    """Пересчитать учеников по одному, каждого в своей сессии."""
++    for student_id in student_ids:
++        async with factory() as db:
++            try:
++                res = await sync_rule_overrides(db, int(student_id))
++                await db.commit()
++            except Exception:
++                # Сбой одного ученика не останавливает остальных; следующий
++                # тик повторит его (отметка свежести откатилась вместе с ним).
++                await db.rollback()
++                summary["failed"] += 1
++                logger.exception("tsk-1361: сверка ученика %s упала", student_id)
++                continue
++        summary["students"] += 1
++        summary["inserted"] += res.inserted
++        summary["revoked"] += res.revoked
++
++
++async def _tick(
++    session_factory: Optional[async_sessionmaker[AsyncSession]], *, full: bool
+ ) -> dict:
+-    """Один проход по всем ученикам с действующими зачислениями."""
++    """Общий проход: под блокировкой сторожа выбрать учеников и пересчитать."""
+     factory = session_factory or async_session_factory
+-    summary = {"locked": False, "students": 0, "inserted": 0, "revoked": 0, "failed": 0}
+-
++    summary = {
++        "locked": False, "full": full, "students": 0,
++        "inserted": 0, "revoked": 0, "failed": 0,
++    }
+     async with factory() as guard:
+-        got = await guard.execute(
+-            text("SELECT pg_try_advisory_xact_lock(:k)"), {"k": _LOCK_KEY}
+-        )
++        got = await guard.execute(text("SELECT pg_try_advisory_xact_lock(:k)"), {"k": _LOCK_KEY})
+         if not bool(got.scalar()):
+             logger.debug("tsk-1361: тик пропущен — работу делает другой worker")
+             return summary
+         summary["locked"] = True
+ 
+         async with factory() as db:
+-            student_ids = (
+-                await db.execute(
+-                    text(
+-                        "SELECT DISTINCT user_id FROM user_courses "
+-                        " WHERE is_active = true ORDER BY user_id"
+-                    )
+-                )
+-            ).scalars().all()
+-            for student_id in student_ids:
+-                try:
+-                    res = await sync_rule_overrides(db, int(student_id))
+-                    await db.commit()
+-                except Exception:
+-                    # Сбой одного ученика не должен останавливать остальных;
+-                    # следующий тик повторит его.
+-                    await db.rollback()
+-                    summary["failed"] += 1
+-                    logger.exception("tsk-1361: сверка ученика %s упала", student_id)
+-                    continue
+-                finally:
+-                    invalidate_grace_cache(db)
+-                summary["students"] += 1
+-                summary["inserted"] += res.inserted
+-                summary["revoked"] += res.revoked
+-
+-        logger.info(
+-            "tsk-1361 requirement_override_sync done students=%s inserted=%s revoked=%s failed=%s",
+-            summary["students"], summary["inserted"], summary["revoked"], summary["failed"],
+-        )
++            if full:
++                student_ids = [int(r) for r in (await db.execute(text(_ALL_ACTIVE_SQL))).scalars().all()]
++            else:
++                student_ids = await stale_students(db)
++        await _sync_students(factory, student_ids, summary)
++
++        if full or summary["students"] or summary["failed"]:
++            logger.info(
++                "tsk-1361 requirement_override_sync done full=%s students=%s inserted=%s "
++                "revoked=%s failed=%s",
++                full, summary["students"], summary["inserted"], summary["revoked"], summary["failed"],
++            )
+         # Коммит, а не откат сторожа — см. course_dependency_state_cron_service.
+         await guard.commit()
+     return summary
+ 
+ 
++async def requirement_override_sync_tick(
++    session_factory: Optional[async_sessionmaker[AsyncSession]] = None,
++) -> dict:
++    """Полный проход по всем ученикам с действующими зачислениями."""
++    return await _tick(session_factory, full=True)
++
++
++async def requirement_override_fast_tick(
++    session_factory: Optional[async_sessionmaker[AsyncSession]] = None,
++) -> dict:
++    """Быстрый проход — только ученики с несвежими строками."""
++    return await _tick(session_factory, full=False)
++
++
+ def start_scheduler() -> Optional[AsyncIOScheduler]:
+-    """Поднять периодический тик (если включён настройкой)."""
++    """Поднять оба тика (если включены настройкой)."""
+     global _scheduler
+     settings = Settings()
+     if not settings.requirement_override_sync_cron_enabled:
+@@ -102,17 +130,25 @@ def start_scheduler() -> Optional[AsyncIOScheduler]:
+         startup_delay_min=settings.requirement_override_sync_cron_startup_delay_min,
+         minutes=int(settings.requirement_override_sync_cron_interval_min),
+     )
++    register_interval_job(
++        scheduler,
++        requirement_override_fast_tick,
++        job_id="tsk1361_requirement_override_fast",
++        startup_delay_min=settings.requirement_override_sync_cron_startup_delay_min + 1,
++        seconds=int(settings.requirement_override_fast_interval_sec),
++    )
+     scheduler.start()
+     _scheduler = scheduler
+     logger.info(
+-        "tsk-1361 requirement_override_sync scheduler started: interval=%smin",
++        "tsk-1361 requirement_override_sync scheduler started: full=%smin fast=%ss",
+         settings.requirement_override_sync_cron_interval_min,
++        settings.requirement_override_fast_interval_sec,
+     )
+     return scheduler
+ 
+ 
+ def stop_scheduler() -> None:
+-    """Остановить тик."""
++    """Остановить тики."""
+     global _scheduler
+     if _scheduler is not None and _scheduler.running:
+         _scheduler.shutdown(wait=False)
+diff --git a/docs/specs/2026-10-15-plan-tsk1361-requirement-overrides.md b/docs/specs/2026-10-15-plan-tsk1361-requirement-overrides.md
+index 6ef4cd3..b1fa9ca 100644
+--- a/docs/specs/2026-10-15-plan-tsk1361-requirement-overrides.md
++++ b/docs/specs/2026-10-15-plan-tsk1361-requirement-overrides.md
+@@ -99,3 +99,42 @@
+ | Правило отменило решение учителя | инвариант human > rule + тест |
+ | Устаревшие строки после правки курса | события + ночная сверка + `rule_version` |
+ | Экраны поменяли цифры у учеников без согласия оператора | `Hold-For-Operator` на коммитах SPW/экранной части |
++
++## 5. Второе мнение Codex (15.10, после фазы А) и решения оператора
++
++Codex (`reviews/codex-tsk1361-phaseA-diff-*.json`, `reviews/codex-tsk1361-design-*.json`) — оба FAIL. Сверено с кодом и данными:
++
++| Находка | Вердикт | Что делаем |
++|---|---|---|
++| Человек на узле против правила на элементе — порядок не определён | подтверждено | **Оператор: человек всегда главнее**; внутри одного источника — ближайшее к элементу |
++| Подкурс в нескольких деревьях (на проде 114) | подтверждено | **Оператор: необязательно везде** — строка на элемент без привязки к корню (как сейчас) |
++| Свежесть: зачёт может вернуть прощённое в долг, сверка раз в час | подтверждено | **Оператор: сразу** — см. Б1 |
++| Гонка учитель ↔ сверка | частично: приоритет не переворачивается, но запрос учителя может упасть на уникальности | блокировка на ученика в обоих путях |
++| Одна рабочая сессия на весь проход | подтверждено | сессия на ученика |
++| Решение по каждому потребителю, кнопки учителя (охват, отмена) | подтверждено | таблица ниже, Б3 |
++| Нет начального заполнения | не подтверждено | первый проход заполнил 2495 строк, сверка 0 расхождений |
++
++Порядок разрешения уровня элемента: (1) решение человека — ближайшее из «элемент → его курс → предки»; (2) иначе правило — ближайшее; (3) иначе `requirement_level` элемента.
++
++## 6. Фаза Б — план
++
++**Б1 (инфраструктура, поведение не меняется):**
++- таблица `student_requirement_sync(student_id, synced_at)`;
++- быстрый тик раз в минуту: ученики, у которых после `synced_at` появились сдачи/проверки/пропуски/зачёты материалов, и зачисленные на деревья, где правились задания/материалы; часовая полная сверка остаётся (ловит правку связей подкурсов — у `course_parents` нет отметки времени);
++- сессия на ученика, `pg_advisory_xact_lock` на ученика в сверке и в решениях учителя;
++- резолвер `resolve_levels` — один SQL: строки ученика + раскрытие узлов на поддерево + порядок выше → понижённые, повышенные, причины.
++
++**Б2 (переключение за рубильником `REQUIREMENT_OVERRIDE_READ_ENABLED`, по умолчанию выкл.):** `compute_graced_items`/`graced_for_roots` берут понижённое из резолвера вместо расчёта на лету — это одна точка, через которую уже идут почти все потребители. Включение — правка `.env` + рестарт, после сверки «резолвер = расчёт на лету».
++
++| Потребитель | Решение |
++|---|---|
++| next-item, `compute_course_state` (знаменатель), замки, ДЗ (состав, норма), карточка и программа ученика, дашборд, сводка урока | через точку Б2 |
++| числитель `compute_course_state` | вычитать понижённое — убрать перекос «сделано > всего» |
++| состав ДЗ — выпавшие номера tsk-798 | через строки `program_trim` в резолвере |
++| `manual_progress_service` | без изменений: прощение накладывают вызывающие |
++| предпросмотр персонала | без изменений (не ученик) |
++| кнопка «Пропустить» | по итоговому уровню |
++| лента, уведомления, отчёты | вне охвата: обязательность не читают |
++| выборка тренажёра по сложности (tsk-798) | вне таблицы: это отбор, не уровень |
++
++**Б3 (экраны, `Hold-For-Operator`):** повышение (учитель сделал обязательным), поле `requirement_reason` в API, эндпоинты учителя (элемент или подкурс; перед сохранением — число затронутых элементов; отмена = возврат к правилам), SPW: причина у ученика, причина + кнопки у учителя, SPW перестаёт сам повторять правило уровней.
+diff --git a/scripts/tsk1361_reconcile_overrides.py b/scripts/tsk1361_reconcile_overrides.py
+index c75cf09..e477cd6 100644
+--- a/scripts/tsk1361_reconcile_overrides.py
++++ b/scripts/tsk1361_reconcile_overrides.py
+@@ -25,7 +25,29 @@ from sqlalchemy import text  # noqa: E402
+ 
+ from app.db.session import async_session_factory
+ from app.services.content_grace_service import graced_for_roots, invalidate_grace_cache
+-from app.services.requirement_override_service import active_overrides, desired_rule_overrides
++from app.services.program_scope_service import excluded_courses_for  # noqa: E402
++from app.services.requirement_override_service import (  # noqa: E402
++    REQUIRED_LEVELS,
++    active_overrides,
++    desired_rule_overrides,
++    resolve_levels,
++)
++
++# Обязательные элементы поддерева выпавших номеров — как их сегодня вычитает движок.
++_DROPPED_ITEMS_SQL = """
++WITH RECURSIVE sub AS (
++    SELECT unnest(CAST(:ids AS integer[])) AS cid, ARRAY[0] AS path
++    UNION ALL
++    SELECT cp.course_id, s.path || cp.course_id
++      FROM sub s JOIN course_parents cp ON cp.parent_course_id = s.cid
++     WHERE NOT cp.course_id = ANY(s.path)
++)
++SELECT 'task', id FROM tasks
++ WHERE course_id IN (SELECT cid FROM sub) AND is_active AND requirement_level = ANY(:lv)
++UNION
++SELECT 'material', id FROM materials
++ WHERE course_id IN (SELECT cid FROM sub) AND is_active AND requirement_level = ANY(:lv)
++"""
+ 
+ logger = logging.getLogger("tsk1361_reconcile")
+ 
+@@ -50,7 +72,22 @@ async def _run(only_student: int | None) -> int:
+             graced = await graced_for_roots(db, int(sid))
+             on_the_fly = {("task", i) for i in graced.tasks} | {("material", i) for i in graced.materials}
+             stored_grace = {t for t, c in stored.items() if c.startswith("grace_")}
+-            if desired != stored or on_the_fly != stored_grace:
++
++            # Б2: то, что увидят экраны при включённом рубильнике, против
++            # того, что они видят сейчас (прощение + выпавшие номера). Цели
++            # под решением человека не сравниваются — там расхождение и есть цель.
++            dropped = sorted(await excluded_courses_for(db, student_id=int(sid)))
++            today = set(on_the_fly)
++            if dropped:
++                rows = await db.execute(text(_DROPPED_ITEMS_SQL), {"ids": dropped, "lv": list(REQUIRED_LEVELS)})
++                today |= {(str(k), int(i)) for k, i in rows.fetchall()}
++            resolved = await resolve_levels(db, int(sid))
++            human = {t for t, v in resolved.reasons.items() if v.source == "human"}
++            resolver_gap = (set(resolved.demoted) ^ today) - human
++            if resolver_gap:
++                logger.warning("ученик %s: резолвер расходится с экранами сегодня %s", sid, sorted(resolver_gap)[:10])
++
++            if desired != stored or on_the_fly != stored_grace or resolver_gap:
+                 bad += 1
+                 logger.warning(
+                     "ученик %s: нет в таблице %s, лишнее в таблице %s, расхождение с расчётом на лету %s",
+diff --git a/tests/test_tsk1361_phase_b.py b/tests/test_tsk1361_phase_b.py
+new file mode 100644
+index 0000000..5f6f087
+--- /dev/null
++++ b/tests/test_tsk1361_phase_b.py
+@@ -0,0 +1,255 @@
++"""tsk-1361 фаза Б: единый источник уровня, порядок разрешения, свежесть.
++
++Порядок (решение оператора 15.10): решение человека главнее правила на любом
++уровне дерева; внутри одного источника — ближайшее к элементу. Прошёл тему в
++одном курсе — необязательно везде. Экран отражает зачёт сразу: быстрый тик
++находит несвежих учеников по данным.
++"""
++from __future__ import annotations
++
++from datetime import datetime, timedelta, timezone
++
++import pytest
++from sqlalchemy import text
++
++from app.services.content_grace_service import compute_graced_items, invalidate_grace_cache
++from app.services.requirement_override_service import (
++    resolve_levels,
++    set_human_override,
++    stale_students,
++)
++from tests.test_tsk1261_grace_by_position import _link, _pass, _task
++from tests.test_tsk1361_requirement_override import INSERTED, LONG_AGO, _scope, _sync
++from tests.test_tsk692_content_grace import _enroll, _new_course, _new_student
++
++
++async def _graced_topic(db):
++    """Тема, где ученик ушёл вперёд, а позади вставили задание (правило его прощает)."""
++    topic = await _new_course(db, "tsk1361Б тема")
++    done = await _task(db, course_id=topic, position=5, created_at=None)
++    student = await _new_student(db, "Б")
++    await _enroll(db, student, topic)
++    await _pass(db, student, done, topic, topic, LONG_AGO)
++    inserted = await _task(db, course_id=topic, position=2, created_at=INSERTED)
++    await db.commit()
++    await _sync(db, student)
++    return topic, student, inserted
++
++
++@pytest.mark.asyncio
++async def test_human_on_node_beats_rule_on_element(db):
++    """Учитель сделал тему обязательной целиком — правило на задании внутри не побеждает."""
++    topic, student, inserted = await _graced_topic(db)
++    assert ("task", inserted) in (await resolve_levels(db, student)).demoted
++
++    teacher = await _new_student(db, "учитель Б")
++    await set_human_override(
++        db, student_id=student, target_kind="course", target_id=topic,
++        level="required", by_user_id=teacher,
++    )
++    await db.commit()
++    await _sync(db, student)  # правило на элементе остаётся в таблице
++    resolved = await resolve_levels(db, student)
++    assert ("task", inserted) not in resolved.demoted
++
++
++@pytest.mark.asyncio
++async def test_program_trim_node_expands_to_nested_subtree(db):
++    """Выпавший номер понижает и задания вложенных подкурсов."""
++    root = await _new_course(db, "tsk1361Б ЕГЭ")
++    number = await _new_course(db, "tsk1361Б номер")
++    nested = await _new_course(db, "tsk1361Б подтема")
++    await _link(db, root, number, 1)
++    await _link(db, number, nested, 1)
++    deep = await _task(db, course_id=nested, position=1, created_at=None)
++    student = await _new_student(db, "сокращение Б")
++    await _enroll(db, student, root)
++    await _scope(db, student, [number])
++    await db.commit()
++    await _sync(db, student)
++
++    resolved = await resolve_levels(db, student)
++    assert ("task", deep) in resolved.demoted
++    assert resolved.reasons[("task", deep)].reason_code == "program_trim"
++
++
++@pytest.mark.asyncio
++async def test_teacher_promotes_recommended_task(db):
++    """Учитель делает необязательное по курсу задание обязательным ученику."""
++    topic = await _new_course(db, "tsk1361Б повышение")
++    task = await _task(db, course_id=topic, position=1, created_at=None)
++    await db.execute(
++        text("UPDATE tasks SET requirement_level = 'recommended' WHERE id = :t"), {"t": task}
++    )
++    student = await _new_student(db, "повышение")
++    teacher = await _new_student(db, "учитель повышение")
++    await _enroll(db, student, topic)
++    await set_human_override(
++        db, student_id=student, target_kind="task", target_id=task,
++        level="required", by_user_id=teacher, reason_text="к пробнику",
++    )
++    await db.commit()
++
++    resolved = await resolve_levels(db, student)
++    assert ("task", task) in resolved.promoted
++    assert resolved.reasons[("task", task)].reason_text == "к пробнику"
++
++
++@pytest.mark.asyncio
++async def test_read_switch_off_and_on_give_same_grace(db, monkeypatch):
++    """Рубильник Б2: выключен — расчёт на лету, включён — таблица; результат один."""
++    topic, student, inserted = await _graced_topic(db)
++
++    monkeypatch.setenv("REQUIREMENT_OVERRIDE_READ_ENABLED", "false")
++    invalidate_grace_cache(db)
++    off = await compute_graced_items(db, student, topic)
++
++    monkeypatch.setenv("REQUIREMENT_OVERRIDE_READ_ENABLED", "true")
++    invalidate_grace_cache(db)
++    on = await compute_graced_items(db, student, topic)
++    invalidate_grace_cache(db)
++
++    assert off.tasks == on.tasks == frozenset({inserted})
++
++
++@pytest.mark.asyncio
++async def test_stale_detection_by_submission_and_content_change(db):
++    """После пересчёта ученик свеж; новая сдача или правка его курса — снова к пересчёту."""
++    topic, student, _ = await _graced_topic(db)
++    # Отметка свежести — начало транзакции; отодвигаем её в прошлое явно,
++    # чтобы данные «после отметки» были однозначными.
++    mark = datetime.now(timezone.utc) - timedelta(minutes=10)
++    await db.execute(
++        text("UPDATE student_requirement_sync SET synced_at = :m WHERE student_id = :s"),
++        {"m": mark, "s": student},
++    )
++    await db.execute(
++        text(
++            "UPDATE task_results SET submitted_at = :old, checked_at = NULL WHERE user_id = :s"
++        ),
++        {"old": mark - timedelta(days=1), "s": student},
++    )
++    await db.execute(
++        text("UPDATE tasks SET created_at = :old, updated_at = :old WHERE course_id = :c"),
++        {"old": mark - timedelta(days=1), "c": topic},
++    )
++    await db.execute(
++        text("UPDATE user_courses SET added_at = :old WHERE user_id = :s"),
++        {"old": mark - timedelta(days=1), "s": student},
++    )
++    await db.commit()
++    assert student not in await stale_students(db)
++
++    later = await _task(db, course_id=topic, position=9, created_at=datetime.now(timezone.utc))
++    await db.commit()
++    assert student in await stale_students(db), "Правка курса делает ученика несвежим"
++
++    await db.execute(
++        text("UPDATE tasks SET created_at = :old, updated_at = :old WHERE id = :t"),
++        {"old": mark - timedelta(days=1), "t": later},
++    )
++    await _pass(db, student, later, topic, topic, datetime.now(timezone.utc))
++    await db.commit()
++    assert student in await stale_students(db), "Новая сдача делает ученика несвежим"
++
++
++@pytest.mark.asyncio
++async def test_tie_between_two_parents_latest_decision_wins(db):
++    """Подкурс у двух родителей с разными решениями на одной глубине — побеждает позднее."""
++    parent_a = await _new_course(db, "tsk1361Б родитель А")
++    parent_b = await _new_course(db, "tsk1361Б родитель Б")
++    shared = await _new_course(db, "tsk1361Б общий подкурс")
++    await _link(db, parent_a, shared, 1)
++    await _link(db, parent_b, shared, 1)
++    task = await _task(db, course_id=shared, position=1, created_at=None)
++    student = await _new_student(db, "ничья")
++    teacher = await _new_student(db, "учитель ничья")
++    await _enroll(db, student, parent_a)
++    await _enroll(db, student, parent_b)
++    await set_human_override(
++        db, student_id=student, target_kind="course", target_id=parent_a,
++        level="recommended", by_user_id=teacher,
++    )
++    await db.execute(
++        text("UPDATE student_requirement_override SET created_at = now() - interval '1 day' "
++             " WHERE student_id = :s"),
++        {"s": student},
++    )
++    await set_human_override(
++        db, student_id=student, target_kind="course", target_id=parent_b,
++        level="required", by_user_id=teacher,
++    )
++    await db.commit()
++
++    for _ in range(3):  # результат не должен «плавать» от прогона к прогону
++        assert ("task", task) not in (await resolve_levels(db, student)).demoted
++
++
++@pytest.mark.asyncio
++async def test_switch_on_scopes_demotion_to_root_tree(db, monkeypatch):
++    """Понижение в одном курсе не попадает в набор соседнего курса ученика."""
++    topic_a, student, inserted = await _graced_topic(db)
++    other = await _new_course(db, "tsk1361Б соседний курс")
++    await _task(db, course_id=other, position=1, created_at=None)
++    await _enroll(db, student, other)
++    await db.commit()
++
++    monkeypatch.setenv("REQUIREMENT_OVERRIDE_READ_ENABLED", "true")
++    invalidate_grace_cache(db)
++    assert (await compute_graced_items(db, student, other)).tasks == frozenset()
++    assert inserted in (await compute_graced_items(db, student, topic_a)).tasks
++    invalidate_grace_cache(db)
++
++
++@pytest.mark.asyncio
++async def test_switch_on_individual_course_gets_no_demotion(db, monkeypatch):
++    """Индивидуальный курс — без понижений, даже если общий подкурс понижен (tsk-1276)."""
++    shared = await _new_course(db, "tsk1361Б общая тема")
++    task = await _task(db, course_id=shared, position=1, created_at=None)
++    ind_root = await _new_course(db, "tsk1361Б индивидуальный")
++    await db.execute(
++        text("UPDATE courses SET course_uid = :u WHERE id = :c"),
++        {"u": f"ind:tsk1361-{ind_root}", "c": ind_root},
++    )
++    await _link(db, ind_root, shared, 1)
++    student = await _new_student(db, "инд")
++    teacher = await _new_student(db, "учитель инд")
++    await _enroll(db, student, ind_root)
++    await set_human_override(
++        db, student_id=student, target_kind="task", target_id=task,
++        level="recommended", by_user_id=teacher,
++    )
++    await db.commit()
++
++    monkeypatch.setenv("REQUIREMENT_OVERRIDE_READ_ENABLED", "true")
++    invalidate_grace_cache(db)
++    assert (await compute_graced_items(db, student, ind_root)).tasks == frozenset()
++    assert (await compute_graced_items(db, student, shared)).tasks == frozenset({task})
++    invalidate_grace_cache(db)
++
++
++@pytest.mark.asyncio
++async def test_switch_on_card_done_never_exceeds_total(db, monkeypatch):
++    """Учитель понизил уже решённое задание — на карточке «сделано» не больше «всего»."""
++    from app.services.me_service import get_courses_with_progress
++
++    topic = await _new_course(db, "tsk1361Б карточка")
++    solved = await _task(db, course_id=topic, position=1, created_at=None)
++    await _task(db, course_id=topic, position=2, created_at=None)
++    student = await _new_student(db, "карточка")
++    teacher = await _new_student(db, "учитель карточка")
++    await _enroll(db, student, topic)
++    await _pass(db, student, solved, topic, topic, LONG_AGO)
++    await set_human_override(
++        db, student_id=student, target_kind="task", target_id=solved,
++        level="recommended", by_user_id=teacher,
++    )
++    await db.commit()
++
++    monkeypatch.setenv("REQUIREMENT_OVERRIDE_READ_ENABLED", "true")
++    invalidate_grace_cache(db)
++    card = next(c for c in await get_courses_with_progress(db, student) if c["course_id"] == topic)
++    invalidate_grace_cache(db)
++    assert card["progress"]["tasks_total"] == 1
++    assert card["progress"]["tasks_done"] == 0
++    assert card["progress"]["percent"] == 0

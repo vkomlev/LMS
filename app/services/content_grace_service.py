@@ -83,6 +83,7 @@ tsk-1294: «после него» — только в том же узле (ку
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
@@ -312,7 +313,10 @@ async def compute_graced_items(
     if cached is not None:
         return cached
 
-    result = await _compute(db, student_id, root_course_id)
+    if read_from_overrides_enabled():
+        result = await _from_overrides(db, student_id, root_course_id)
+    else:
+        result = await _compute(db, student_id, root_course_id)
     cache[(student_id, root_course_id)] = result
     return result
 
@@ -353,6 +357,121 @@ async def graced_for_roots(
 
 REASON_NEW_CONTENT = "grace_new_content"
 REASON_AHEAD = "grace_ahead"
+
+
+def read_from_overrides_enabled() -> bool:
+    """tsk-1361 Б2: брать понижённое из таблицы переопределений, а не считать.
+
+    Рубильник `REQUIREMENT_OVERRIDE_READ_ENABLED` (по умолчанию выключен).
+    Читается из окружения на каждый вызов: `Settings()` целиком здесь не нужен.
+    """
+    return os.getenv("REQUIREMENT_OVERRIDE_READ_ENABLED", "false").lower() in ("true", "1", "yes")
+
+
+async def _from_overrides(
+    db: AsyncSession, student_id: int, root_course_id: int
+) -> GracedItems:
+    """Понижённое ученику по единому источнику (tsk-1361), в пределах дерева корня.
+
+    Строки в таблице общие для всех корней (решение оператора 15.10: прошёл
+    тему в одном курсе — необязательно везде), но выдача — только элементы
+    ЭТОГО дерева: движок и карточка курса вычитают из «всего» количество, и
+    понижение из соседнего курса занизило бы их знаменатель. В набор входят и
+    выпавшие номера программы (`program_trim`), и решения учителя.
+
+    Индивидуальный курс (`ind:`) — как и при расчёте на лету, без понижений:
+    иначе решение по основному курсу снимало бы замок tsk-1276.
+    """
+    # Отложенный импорт: requirement_override_service сам импортирует этот модуль.
+    from app.services.requirement_override_service import resolve_levels
+
+    root_uid = (
+        await db.execute(
+            text("SELECT course_uid FROM courses WHERE id = :root_id"),
+            {"root_id": root_course_id},
+        )
+    ).scalar()
+    if root_uid and root_uid.startswith(INDIVIDUAL_UID_PREFIX):
+        return EMPTY_GRACE
+
+    resolved = await resolve_levels(db, student_id)
+    if not resolved.demoted:
+        return EMPTY_GRACE
+    tree_ids = [
+        int(r[0])
+        for r in (
+            await db.execute(text(_TREE_NODES_SQL), {"root_id": root_course_id})
+        ).fetchall()
+    ]
+    task_ids = [i for k, i in resolved.demoted if k == "task"]
+    material_ids = [i for k, i in resolved.demoted if k == "material"]
+    in_tree = (
+        await db.execute(
+            text(
+                "SELECT 'task', id FROM tasks "
+                " WHERE id = ANY(CAST(:t AS int[])) AND course_id = ANY(CAST(:tree AS int[])) "
+                "UNION ALL "
+                "SELECT 'material', id FROM materials "
+                " WHERE id = ANY(CAST(:m AS int[])) AND course_id = ANY(CAST(:tree AS int[]))"
+            ),
+            {"t": task_ids, "m": material_ids, "tree": tree_ids},
+        )
+    ).fetchall()
+    if not in_tree:
+        return EMPTY_GRACE
+    return GracedItems(
+        tasks=frozenset(int(i) for k, i in in_tree if k == "task"),
+        materials=frozenset(int(i) for k, i in in_tree if k == "material"),
+    )
+
+
+# Сколько из понижённого ученик уже закрыл — тем же признаком «закрыто», что
+# и счётчики «сделано» (последний результат проходной либо пропуск; материал
+# пройден или пропущен). Расчёт на лету закрытое не прощает никогда, а решение
+# учителя и выпавший номер могут понизить и закрытое — без вычета «сделано»
+# обогнало бы «всего».
+_DONE_AMONG_SQL = f"""
+/* tsk1361-done-among */
+WITH last_per_task AS (
+    SELECT DISTINCT ON (tr.task_id) tr.task_id, tr.score, tr.max_score
+    FROM task_results tr
+    INNER JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
+    WHERE tr.user_id = :student_id
+      AND {learning_path_results_filter('tr')}
+      AND tr.task_id = ANY(CAST(:t AS int[]))
+    ORDER BY tr.task_id, tr.submitted_at DESC, tr.id DESC
+)
+SELECT
+    (SELECT count(*) FROM (
+        SELECT task_id FROM last_per_task
+         WHERE max_score > 0 AND score::float / max_score >= :pass_threshold
+        UNION
+        SELECT task_id FROM student_task_progress
+         WHERE student_id = :student_id AND status = 'skipped'
+           AND task_id = ANY(CAST(:t AS int[]))
+    ) d) AS tasks_done,
+    (SELECT count(*) FROM student_material_progress
+      WHERE student_id = :student_id AND status IN ('completed', 'skipped')
+        AND material_id = ANY(CAST(:m AS int[]))) AS materials_done
+"""
+
+
+async def done_among(db: AsyncSession, student_id: int, graced: GracedItems) -> Tuple[int, int]:
+    """(заданий, материалов) из `graced`, которые ученик уже закрыл."""
+    if not graced:
+        return 0, 0
+    row = (
+        await db.execute(
+            text(_DONE_AMONG_SQL),
+            {
+                "student_id": student_id,
+                "t": sorted(graced.tasks),
+                "m": sorted(graced.materials),
+                "pass_threshold": _PASS_THRESHOLD_RATIO,
+            },
+        )
+    ).one()
+    return int(row[0] or 0), int(row[1] or 0)
 
 
 async def _compute(

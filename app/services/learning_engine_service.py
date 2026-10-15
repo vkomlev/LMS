@@ -987,6 +987,7 @@ class LearningEngineService:
                    AND t.course_id = ANY(:course_ids)
                    AND t.is_active = true
                    AND t.requirement_level IN ('required', 'skippable')
+                   AND NOT (t.id = ANY(:excluded_tasks))
                 WHERE tr.user_id = :student_id
                   AND {_LEARNING_PATH}
                 ORDER BY tr.task_id, tr.submitted_at DESC, tr.id DESC
@@ -1002,13 +1003,22 @@ class LearningEngineService:
                    AND t.course_id = ANY(:course_ids)
                    AND t.is_active = true
                    AND t.requirement_level IN ('required', 'skippable')
+                   AND NOT (t.id = ANY(:excluded_tasks))
                 WHERE stp.student_id = :student_id
                   AND stp.status = 'skipped'
             ) done_tasks
         """)
         r = await db.execute(
             tasks_with_last_pass_stmt,
-            {"student_id": student_id, "course_ids": tree_ids, "pass_threshold": PASS_THRESHOLD_RATIO},
+            {
+                "student_id": student_id,
+                "course_ids": tree_ids,
+                "pass_threshold": PASS_THRESHOLD_RATIO,
+                # tsk-1361: исключённое из знаменателя исключается и из
+                # числителя — понижено может быть и закрытое (решение учителя,
+                # выпавший номер), иначе «сделано» обгоняло бы «всего».
+                "excluded_tasks": sorted(excluded_tasks),
+            },
         )
         tasks_with_last_pass = r.scalar() or 0
 
@@ -1020,12 +1030,17 @@ class LearningEngineService:
                AND m.course_id = ANY(:course_ids)
                AND m.is_active = true
                AND m.requirement_level IN ('required', 'skippable')
+               AND NOT (m.id = ANY(:excluded_materials))
             WHERE smp.student_id = :student_id
               AND smp.status IN ('completed', 'skipped')
         """)
         r = await db.execute(
             materials_done_stmt,
-            {"student_id": student_id, "course_ids": tree_ids},
+            {
+                "student_id": student_id,
+                "course_ids": tree_ids,
+                "excluded_materials": sorted(excluded_materials),
+            },
         )
         materials_done = r.scalar() or 0
 

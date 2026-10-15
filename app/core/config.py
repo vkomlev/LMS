@@ -301,6 +301,14 @@ class Settings:
         self.requirement_override_sync_cron_startup_delay_min: float = float(
             os.getenv("REQUIREMENT_OVERRIDE_SYNC_CRON_STARTUP_DELAY_MIN", "7")
         )
+        # Быстрый тик — только ученики с несвежими строками (зачёт, правка курса).
+        self.requirement_override_fast_interval_sec: int = int(
+            os.getenv("REQUIREMENT_OVERRIDE_FAST_INTERVAL_SEC", "60")
+        )
+        # Фаза Б2: REQUIREMENT_OVERRIDE_READ_ENABLED (по умолчанию выкл.) —
+        # потребители берут понижённое из таблицы, а не считают на лету.
+        # Читается в content_grace_service.read_from_overrides_enabled — один
+        # источник; здесь только для справки.
 
         # tsk-302 этап 3: фоновая оценка кода ученика (чистота + признак
         # ИИ-авторства). Синхронно её делать нельзя — это внешний вызов модели
