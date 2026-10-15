@@ -43,6 +43,13 @@ from app.schemas.learning_api import (
     MaterialRequestHelpResponse,
 )
 from app.schemas.learning_engine import NextItemResult
+from app.schemas.final_check import (
+    FinalCheckAnswerRequest,
+    FinalCheckAnswerResponse,
+    FinalCheckRun,
+    FinalCheckStartRequest,
+    FinalCheckStatusResponse,
+)
 from app.schemas.retrieval import (
     ReviewAnswerRequest,
     ReviewAnswerResponse,
@@ -79,6 +86,7 @@ from app.services import lesson_attendance_service
 from app.services import entitlements_service
 from app.services import help_attempt_gate
 from app.services import retrieval_service
+from app.services import final_check_service
 from app.services import course_activity_service
 from app.services.attempts_service import AttemptsService
 from app.services.tasks_service import TasksService
@@ -1400,3 +1408,165 @@ async def submit_review_answer(
         next_due_at=outcome.next_due_at,
         completed=outcome.completed,
     )
+
+
+# ----- tsk-994 (П5): итоговый срез после курса -----
+
+#: Отказы среза, общие для старта и ответа.
+_FINAL_CHECK_409 = (
+    "`final_check_locked` — срез на курсе выключен или курс ещё не завершён "
+    "(`compute_course_state != COMPLETED`)"
+)
+
+
+def _assert_own_student(current_user: CurrentUser, student_id: int) -> None:
+    """Ученик видит и проходит только свой срез; сервисный ключ — за любого."""
+    if not current_user.is_service and current_user.id != student_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
+
+
+@router.get(
+    "/courses/{course_id}/final-check",
+    response_model=FinalCheckStatusResponse,
+    responses=_PAYMENT_403,
+    summary="Состояние итогового среза по курсу (tsk-994)",
+    description=(
+        "Для карточки «Итоговый срез» на странице курса. `course_id` — корневой "
+        "курс. Ничего не пишет. `disabled` — срез на курсе выключен (по "
+        "умолчанию), карточку не показывать; `locked` — курс не завершён; "
+        "`closed` — тариф закрывает работу в курсе (выпускник), карточку не "
+        "показывать; "
+        "`ready` / `in_progress` / `finished` — срез доступен, начат, пройден. "
+        "Срез — только диагностика: статус курса, зависимости и выпуск не меняет."
+    ),
+)
+async def get_final_check(
+    course_id: int = Path(..., description="ID корневого курса"),
+    student_id: int = Query(..., description="ID студента"),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_bare_db),
+) -> FinalCheckStatusResponse:
+    """Состояние среза ученика по корневому курсу.
+
+    :raises HTTPException: 403 — чужой `student_id`.
+    """
+    _assert_own_student(current_user, student_id)
+    await payment_access_service.assert_content_allowed(db, student_id)
+    status_, size, run = await final_check_service.get_status(
+        db, student_id=student_id, course_id=course_id
+    )
+    return FinalCheckStatusResponse(
+        course_id=course_id,
+        status=status_,  # type: ignore[arg-type]
+        size=size,
+        run=(
+            FinalCheckRun(**await final_check_service.serialize_run(db, run))
+            if run is not None
+            else None
+        ),
+    )
+
+
+@router.post(
+    "/courses/{course_id}/final-check/start",
+    response_model=FinalCheckRun,
+    responses={
+        **_PAYMENT_403,
+        409: {
+            "description": (
+                f"{_FINAL_CHECK_409}; `final_check_empty` — нет пройденных "
+                "заданий с автопроверкой"
+            )
+        },
+    },
+    summary="Открыть итоговый срез (tsk-994)",
+    description=(
+        "При первом открытии выбирает и сохраняет состав: `size` заданий из "
+        "пройденных учеником заданий курса и подкурсов, равномерно по главам, "
+        "детерминированно. Повторное открытие возвращает тот же набор."
+    ),
+)
+async def start_final_check(
+    course_id: int = Path(..., description="ID корневого курса"),
+    body: FinalCheckStartRequest = Body(...),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_bare_db),
+) -> FinalCheckRun:
+    """Открыть срез (или вернуть уже открытый).
+
+    :raises HTTPException: 403 — чужой `student_id`.
+    :raises DomainError: 403 `payment_overdue` / `course_work_closed`; 409 —
+        см. `final_check_service.start`.
+    """
+    _assert_own_student(current_user, body.student_id)
+    # Те же гейты, что у обычной сдачи и у повтора: просроченная оплата и
+    # тариф «Выпускник» закрывают работу в курсе — по УЧЕНИКУ.
+    await payment_access_service.assert_content_allowed(db, body.student_id)
+    await graduation_service.assert_course_work_allowed(db, body.student_id)
+    run = await final_check_service.start(db, student_id=body.student_id, course_id=course_id)
+    return FinalCheckRun(**await final_check_service.serialize_run(db, run))
+
+
+@router.post(
+    "/courses/{course_id}/final-check/{task_id}/answer",
+    response_model=FinalCheckAnswerResponse,
+    responses={
+        **_PAYMENT_403,
+        404: {
+            "description": (
+                "Срез не начат (`final_check_not_started`) или задания нет в "
+                "срезе (`final_check_task_not_in_run`)"
+            )
+        },
+        409: {
+            "description": (
+                f"{_FINAL_CHECK_409}; `final_check_finished` — срез уже пройден; "
+                "`final_check_already_answered` — на задание уже ответили; "
+                "`final_check_unsupported` — задание перестало проверяться "
+                "автоматически и исключено из среза"
+            )
+        },
+        422: {"description": "SA_COM/TBL_COM без комментария (`payload.code = evidence_required`)"},
+    },
+    summary="Ответить на задание итогового среза (tsk-994)",
+    description=(
+        "Ответ проверяется той же автоматикой, что и обычная сдача, и пишется в "
+        "`task_results` с `source_system='final_check'` в курсовую попытку. "
+        "Статус задания и курса, счёт и лимит попыток срез не меняет. Один "
+        "ответ на задание. После последнего — итог: доля верных, главы с "
+        "ошибками; ошибочные задания при включённом повторении (tsk-992) "
+        "ставятся в повторение."
+    ),
+)
+async def answer_final_check(
+    course_id: int = Path(..., description="ID корневого курса"),
+    task_id: int = Path(..., description="ID задания"),
+    body: FinalCheckAnswerRequest = Body(...),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_bare_db),
+) -> FinalCheckAnswerResponse:
+    """Принять ответ на задание среза.
+
+    :raises HTTPException: 403 — чужой `student_id` или вызывающий не записан
+        на курс задания (tsk-272).
+    :raises DomainError: 403/404/409/422 — см. `final_check_service.answer`.
+    """
+    _assert_own_student(current_user, body.student_id)
+    await payment_access_service.assert_content_allowed(db, body.student_id)
+    await graduation_service.assert_course_work_allowed(db, body.student_id)
+    outcome = await final_check_service.answer(
+        db,
+        student_id=body.student_id,
+        course_id=course_id,
+        task_id=task_id,
+        answer=body.answer,
+        current_user=current_user,
+    )
+    return FinalCheckAnswerResponse(
+        task_id=outcome.task_id,
+        task_result_id=outcome.task_result_id,
+        check_result=outcome.check_result,
+        is_correct=outcome.is_correct,
+        run=FinalCheckRun(**await final_check_service.serialize_run(db, outcome.run)),
+    )
+

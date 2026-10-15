@@ -3892,6 +3892,223 @@
         }
       }
     },
+    "/api/v1/courses/{course_id}/final-check": {
+      "get": {
+        "tags": [
+          "courses"
+        ],
+        "summary": "Рубильник итогового среза на курсе (tsk-994)",
+        "description": "`{enabled, size}` из `courses.final_check_config`. Пустое поле читается как `enabled=false, size=10`. Действует на КОРНЕВОМ курсе.",
+        "operationId": "get_course_final_check_endpoint_api_v1_courses__course_id__final_check_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "course_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Course Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Настройка отдана",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CourseFinalCheckConfig"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Не аутентифицирован"
+          },
+          "403": {
+            "description": "Роль не позволяет менять настройки курса"
+          },
+          "404": {
+            "description": "Курс не найден"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "courses"
+        ],
+        "summary": "Включить/выключить итоговый срез на курсе (tsk-994)",
+        "description": "Полная замена `courses.final_check_config`. По умолчанию срез выключен; включение на курсе — решение оператора. Срез — только диагностика: статус курса, зависимости и выпуск он не меняет (Р4). Выключение прячет карточку среза, пройденные срезы сохраняются.",
+        "operationId": "put_course_final_check_endpoint_api_v1_courses__course_id__final_check_put",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "course_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Course Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CourseFinalCheckConfig"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Настройка записана",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CourseFinalCheckConfig"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Не аутентифицирован"
+          },
+          "403": {
+            "description": "Роль не позволяет менять настройки курса"
+          },
+          "404": {
+            "description": "Курс не найден"
+          },
+          "422": {
+            "description": "Размер вне 1…50"
+          }
+        }
+      }
+    },
     "/api/v1/courses/": {
       "post": {
         "tags": [
@@ -21141,6 +21358,362 @@
           },
           "409": {
             "description": "Повтор не принят: повторение на курсе выключено (`retrieval_disabled`), срок ещё не подошёл (`retrieval_not_due`, `payload.due_at`) либо задание не проверяется автоматически (`retrieval_unsupported`)"
+          },
+          "422": {
+            "description": "SA_COM/TBL_COM без комментария (`payload.code = evidence_required`)"
+          }
+        }
+      }
+    },
+    "/api/v1/learning/courses/{course_id}/final-check": {
+      "get": {
+        "tags": [
+          "learning"
+        ],
+        "summary": "Состояние итогового среза по курсу (tsk-994)",
+        "description": "Для карточки «Итоговый срез» на странице курса. `course_id` — корневой курс. Ничего не пишет. `disabled` — срез на курсе выключен (по умолчанию), карточку не показывать; `locked` — курс не завершён; `closed` — тариф закрывает работу в курсе (выпускник), карточку не показывать; `ready` / `in_progress` / `finished` — срез доступен, начат, пройден. Срез — только диагностика: статус курса, зависимости и выпуск не меняет.",
+        "operationId": "get_final_check_api_v1_learning_courses__course_id__final_check_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "course_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "description": "ID корневого курса",
+              "title": "Course Id"
+            },
+            "description": "ID корневого курса"
+          },
+          {
+            "name": "student_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "description": "ID студента",
+              "title": "Student Id"
+            },
+            "description": "ID студента"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FinalCheckStatusResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "tsk-010: занятия закрыты за просроченную оплату — `payload.code = payment_overdue` (сумма, месяцы, `payments_url`); tsk-673: тариф закрывает работу в курсе — `payload.code = course_work_closed` (так устроен «Выпускник»: материалы читаются, ответы не принимаются); либо чужой `student_id`."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/learning/courses/{course_id}/final-check/start": {
+      "post": {
+        "tags": [
+          "learning"
+        ],
+        "summary": "Открыть итоговый срез (tsk-994)",
+        "description": "При первом открытии выбирает и сохраняет состав: `size` заданий из пройденных учеником заданий курса и подкурсов, равномерно по главам, детерминированно. Повторное открытие возвращает тот же набор.",
+        "operationId": "start_final_check_api_v1_learning_courses__course_id__final_check_start_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "course_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "description": "ID корневого курса",
+              "title": "Course Id"
+            },
+            "description": "ID корневого курса"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FinalCheckStartRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FinalCheckRun"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "tsk-010: занятия закрыты за просроченную оплату — `payload.code = payment_overdue` (сумма, месяцы, `payments_url`); tsk-673: тариф закрывает работу в курсе — `payload.code = course_work_closed` (так устроен «Выпускник»: материалы читаются, ответы не принимаются); либо чужой `student_id`."
+          },
+          "409": {
+            "description": "`final_check_locked` — срез на курсе выключен или курс ещё не завершён (`compute_course_state != COMPLETED`); `final_check_empty` — нет пройденных заданий с автопроверкой"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/learning/courses/{course_id}/final-check/{task_id}/answer": {
+      "post": {
+        "tags": [
+          "learning"
+        ],
+        "summary": "Ответить на задание итогового среза (tsk-994)",
+        "description": "Ответ проверяется той же автоматикой, что и обычная сдача, и пишется в `task_results` с `source_system='final_check'` в курсовую попытку. Статус задания и курса, счёт и лимит попыток срез не меняет. Один ответ на задание. После последнего — итог: доля верных, главы с ошибками; ошибочные задания при включённом повторении (tsk-992) ставятся в повторение.",
+        "operationId": "answer_final_check_api_v1_learning_courses__course_id__final_check__task_id__answer_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "course_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "description": "ID корневого курса",
+              "title": "Course Id"
+            },
+            "description": "ID корневого курса"
+          },
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "description": "ID задания",
+              "title": "Task Id"
+            },
+            "description": "ID задания"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FinalCheckAnswerRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FinalCheckAnswerResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "tsk-010: занятия закрыты за просроченную оплату — `payload.code = payment_overdue` (сумма, месяцы, `payments_url`); tsk-673: тариф закрывает работу в курсе — `payload.code = course_work_closed` (так устроен «Выпускник»: материалы читаются, ответы не принимаются); либо чужой `student_id`."
+          },
+          "404": {
+            "description": "Срез не начат (`final_check_not_started`) или задания нет в срезе (`final_check_task_not_in_run`)"
+          },
+          "409": {
+            "description": "`final_check_locked` — срез на курсе выключен или курс ещё не завершён (`compute_course_state != COMPLETED`); `final_check_finished` — срез уже пройден; `final_check_already_answered` — на задание уже ответили; `final_check_unsupported` — задание перестало проверяться автоматически и исключено из среза"
           },
           "422": {
             "description": "SA_COM/TBL_COM без комментария (`payload.code = evidence_required`)"
@@ -54590,6 +55163,37 @@
         "title": "CourseDependencyImpact",
         "description": "tsk-231: превью влияния ДО добавления зависимости (для confirm-диалога методиста).\n\nБлокировка через course_dependencies с `auto_assign=true` глобальная и\nмгновенная — действует на ВСЕХ уже зачисленных на course_id учеников, не\nтолько на тех, кто провалил задание (решение оператора, план tsk-231).\nПрецедент случайной массовой блокировки — tsk-523. У точечной зависимости\n(`auto_assign=false`, фаза 6) мгновенно заблокированных нет."
       },
+      "CourseFinalCheckConfig": {
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "description": "Включён ли итоговый срез на курсе",
+            "default": false
+          },
+          "size": {
+            "type": "integer",
+            "maximum": 50.0,
+            "minimum": 1.0,
+            "title": "Size",
+            "description": "Сколько заданий в срезе (из пройденных учеником)",
+            "default": 10
+          }
+        },
+        "type": "object",
+        "title": "CourseFinalCheckConfig",
+        "description": "Формат `courses.final_check_config` (JSONB) и тело `PUT /courses/{id}/final-check`.\n\nДействует на КОРНЕВОМ курсе. Пустое поле (NULL) читается как\n`{\"enabled\": false, \"size\": 10}`.",
+        "examples": [
+          {
+            "enabled": true,
+            "size": 10
+          },
+          {
+            "enabled": false,
+            "size": 10
+          }
+        ]
+      },
       "CourseMoveRequest": {
         "properties": {
           "new_parent_ids": {
@@ -58540,6 +59144,354 @@
         "title": "FeedbackReportListResponse",
         "description": "Список обращений."
       },
+      "FinalCheckAnswerRequest": {
+        "properties": {
+          "student_id": {
+            "type": "integer",
+            "title": "Student Id",
+            "description": "ID ученика"
+          },
+          "answer": {
+            "$ref": "#/components/schemas/StudentAnswer",
+            "description": "Ответ ученика"
+          }
+        },
+        "type": "object",
+        "required": [
+          "student_id",
+          "answer"
+        ],
+        "title": "FinalCheckAnswerRequest",
+        "description": "Тело `POST /learning/courses/{course_id}/final-check/{task_id}/answer`."
+      },
+      "FinalCheckAnswerResponse": {
+        "properties": {
+          "task_id": {
+            "type": "integer",
+            "title": "Task Id",
+            "description": "ID задания"
+          },
+          "task_result_id": {
+            "type": "integer",
+            "title": "Task Result Id",
+            "description": "Записанный результат (source_system=final_check)"
+          },
+          "check_result": {
+            "$ref": "#/components/schemas/CheckResult",
+            "description": "Результат проверки ответа"
+          },
+          "is_correct": {
+            "type": "boolean",
+            "title": "Is Correct",
+            "description": "Ответ верный"
+          },
+          "run": {
+            "$ref": "#/components/schemas/FinalCheckRun",
+            "description": "Прогон после ответа (с итогом, если это был последний)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "task_id",
+          "task_result_id",
+          "check_result",
+          "is_correct",
+          "run"
+        ],
+        "title": "FinalCheckAnswerResponse",
+        "description": "Итог ответа на задание среза."
+      },
+      "FinalCheckChapterErrors": {
+        "properties": {
+          "course_id": {
+            "type": "integer",
+            "title": "Course Id",
+            "description": "ID главы (курса)"
+          },
+          "course_uid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Course Uid",
+            "description": "Код главы"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title",
+            "description": "Название главы"
+          },
+          "task_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Task Ids",
+            "description": "Ошибочные задания главы"
+          }
+        },
+        "type": "object",
+        "required": [
+          "course_id",
+          "title"
+        ],
+        "title": "FinalCheckChapterErrors",
+        "description": "Глава, в которой в срезе есть ошибки."
+      },
+      "FinalCheckItem": {
+        "properties": {
+          "task_id": {
+            "type": "integer",
+            "title": "Task Id",
+            "description": "ID задания"
+          },
+          "external_uid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Uid",
+            "description": "Внешний код задания"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title",
+            "description": "Название задания (или начало условия)"
+          },
+          "task_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Type",
+            "description": "Тип задания (SA, SC, …)"
+          },
+          "chapter_id": {
+            "type": "integer",
+            "title": "Chapter Id",
+            "description": "Глава курса (подкурс первого уровня или сам корень)"
+          },
+          "chapter_title": {
+            "type": "string",
+            "title": "Chapter Title",
+            "description": "Название главы"
+          },
+          "answered": {
+            "type": "boolean",
+            "title": "Answered",
+            "description": "Ответ на задание в срезе уже дан",
+            "default": false
+          },
+          "is_correct": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Correct",
+            "description": "Верно ли отвечено; null — ещё не отвечено"
+          }
+        },
+        "type": "object",
+        "required": [
+          "task_id",
+          "title",
+          "chapter_id",
+          "chapter_title"
+        ],
+        "title": "FinalCheckItem",
+        "description": "Задание среза."
+      },
+      "FinalCheckResult": {
+        "properties": {
+          "total": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Total",
+            "description": "Заданий в срезе"
+          },
+          "correct": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Correct",
+            "description": "Верных ответов"
+          },
+          "ratio": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Ratio",
+            "description": "Доля верных"
+          },
+          "skill_retained": {
+            "type": "boolean",
+            "title": "Skill Retained",
+            "description": "«Навык сохранился» — верных не меньше 80 %"
+          },
+          "chapters_with_errors": {
+            "items": {
+              "$ref": "#/components/schemas/FinalCheckChapterErrors"
+            },
+            "type": "array",
+            "title": "Chapters With Errors",
+            "description": "Главы с ошибками, в порядке программы"
+          },
+          "scheduled_for_review": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Scheduled For Review",
+            "description": "Ошибочные задания, поставленные на повторение (если на курсе включено повторение tsk-992)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "total",
+          "correct",
+          "ratio",
+          "skill_retained"
+        ],
+        "title": "FinalCheckResult",
+        "description": "Итог среза — только диагностика (Р4): статус курса он не меняет."
+      },
+      "FinalCheckRun": {
+        "properties": {
+          "run_id": {
+            "type": "integer",
+            "title": "Run Id",
+            "description": "ID прогона"
+          },
+          "course_id": {
+            "type": "integer",
+            "title": "Course Id",
+            "description": "Корневой курс"
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Started At",
+            "description": "Когда срез открыт впервые"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At",
+            "description": "Когда отвечено последнее задание"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/FinalCheckItem"
+            },
+            "type": "array",
+            "title": "Items",
+            "description": "Задания среза"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FinalCheckResult"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Итог; null — срез не окончен"
+          }
+        },
+        "type": "object",
+        "required": [
+          "run_id",
+          "course_id",
+          "started_at"
+        ],
+        "title": "FinalCheckRun",
+        "description": "Прогон среза: зафиксированный состав, ответы и итог."
+      },
+      "FinalCheckStartRequest": {
+        "properties": {
+          "student_id": {
+            "type": "integer",
+            "title": "Student Id",
+            "description": "ID ученика"
+          }
+        },
+        "type": "object",
+        "required": [
+          "student_id"
+        ],
+        "title": "FinalCheckStartRequest",
+        "description": "Тело `POST /learning/courses/{course_id}/final-check/start`."
+      },
+      "FinalCheckStatusResponse": {
+        "properties": {
+          "course_id": {
+            "type": "integer",
+            "title": "Course Id",
+            "description": "Корневой курс"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "disabled",
+              "locked",
+              "closed",
+              "ready",
+              "in_progress",
+              "finished"
+            ],
+            "title": "Status",
+            "description": "disabled — срез на курсе выключен; locked — курс ещё не завершён; closed — тариф закрывает работу в курсе (выпускник, tsk-673); ready — можно начать; in_progress — начат; finished — пройден"
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Size",
+            "description": "Размер среза по настройке курса"
+          },
+          "run": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FinalCheckRun"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Прогон, если срез уже открывали"
+          }
+        },
+        "type": "object",
+        "required": [
+          "course_id",
+          "status",
+          "size"
+        ],
+        "title": "FinalCheckStatusResponse",
+        "description": "Ответ `GET /learning/courses/{course_id}/final-check`."
+      },
       "FreeEnrollmentResponse": {
         "properties": {
           "course_id": {
@@ -62200,6 +63152,12 @@
             "type": "boolean",
             "title": "Is Retrieval",
             "description": "tsk-992: сдача повтора уже пройденного задания (source_system='retrieval'). Статус задания она не меняет; в фильтр `failed` неверный повтор не попадает",
+            "default": false
+          },
+          "is_final_check": {
+            "type": "boolean",
+            "title": "Is Final Check",
+            "description": "tsk-994: сдача задания итогового среза после курса (source_system='final_check'). Статус задания она не меняет; в фильтр `failed` неверный ответ среза не попадает",
             "default": false
           }
         },
@@ -78812,6 +79770,12 @@
             "type": "boolean",
             "title": "Is Retrieval",
             "description": "tsk-992: сдача повтора уже пройденного задания (source_system='retrieval'). Попыткой не считается: `attempt_no` повтор не увеличивает и несёт номер последней настоящей попытки перед ним",
+            "default": false
+          },
+          "is_final_check": {
+            "type": "boolean",
+            "title": "Is Final Check",
+            "description": "tsk-994: сдача задания итогового среза после курса (source_system='final_check'). Диагностика: попыткой не считается, `attempt_no` не увеличивает, статус задания не меняет",
             "default": false
           },
           "review": {

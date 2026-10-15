@@ -410,6 +410,14 @@ class HistoryItem(BaseModel):
             "Статус задания она не меняет; в фильтр `failed` неверный повтор не попадает"
         ),
     )
+    is_final_check: bool = Field(
+        default=False,
+        description=(
+            "tsk-994: сдача задания итогового среза после курса "
+            "(source_system='final_check'). Статус задания она не меняет; "
+            "в фильтр `failed` неверный ответ среза не попадает"
+        ),
+    )
 
 
 # ── Phase Y-6.2: /me/courses/{course_id}/syllabus-states ─────────────────────

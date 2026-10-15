@@ -754,6 +754,20 @@ Stateless-проверка одной задачи без сохранения �
 
 **Ошибки:** `404` — задание/студент/попытка не найдены; `409` — попытка не принадлежит студенту или не в контексте задания/курса.
 
+### Итоговый срез после курса (tsk-994, П5)
+
+Только диагностика (решение оператора Р4): статус курса, зависимости и выпуск срез не меняет. По умолчанию выключен.
+
+| Метод | Путь | Кто | Описание |
+|-------|------|-----|----------|
+| GET | `/courses/{course_id}/final-check` | методист, админ | Рубильник `{enabled, size}` из `courses.final_check_config`; NULL читается как `{"enabled": false, "size": 10}`. 404 — курса нет. |
+| PUT | `/courses/{course_id}/final-check` | методист, админ | Полная замена рубильника. Тело `{enabled: bool, size: 1…50}`; 422 — размер вне пределов. |
+| GET | `/learning/courses/{course_id}/final-check?student_id=` | ученик (свой), сервис | Состояние для карточки: `status` = `disabled` (карточку не показывать) \| `locked` (курс не завершён) \| `ready` \| `in_progress` \| `finished`; `size`; `run` — прогон, если срез открывали. Ничего не пишет. 403 — чужой `student_id`, `payment_overdue`. |
+| POST | `/learning/courses/{course_id}/final-check/start` | ученик (свой), сервис | Тело `{student_id}`. При первом открытии выбирает `size` заданий из пройденных учеником заданий курса и подкурсов (только с автопроверкой), равномерно по главам, детерминированно; состав сохраняется в `final_check_runs`. Повторный вызов — тот же набор. 409 `final_check_locked` — срез выключен или `compute_course_state != COMPLETED`; 409 `final_check_empty` — нечего выбрать; 403 `payment_overdue` / `course_work_closed` (выпускник). |
+| POST | `/learning/courses/{course_id}/final-check/{task_id}/answer` | ученик (свой), сервис | Тело `{student_id, answer}`. Ответ проверяется автоматикой и пишется в `task_results` с `source_system='final_check'`; статус задания и курса, счёт и лимит попыток не меняются. Один ответ на задание. После последнего — `run.result`: `total`, `correct`, `ratio`, `skill_retained` (≥ 80 % верных), `chapters_with_errors[]` (`course_id`, `course_uid`, `title`, `task_ids`), `scheduled_for_review[]` (ошибки, поставленные в повторение tsk-992, если оно включено на курсе). Ошибки: 404 `final_check_not_started` / `final_check_task_not_in_run`; 409 `final_check_locked` / `final_check_finished` / `final_check_already_answered` / `final_check_unsupported` (задание перестало проверяться автоматически — исключено из среза); 400 — тип ответа не совпадает; 422 `evidence_required` — SA_COM/TBL_COM без комментария; 403 — как у `start`. |
+
+Сдачи среза помечены в истории: `is_final_check` в `GET /me/tasks/{task_id}/history` (номер попытки не увеличивают) и в `GET /me/history` (в фильтр `failed` не попадают); в ленте преподавателя — «проверил в итоговом срезе».
+
 ---
 
 ## Эндпойнты статистики

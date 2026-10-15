@@ -33,7 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.current_user import CurrentUser
 from app.schemas.code_review import build_code_review_badge
 from app.services import roles_service
-from app.services.learning_gaps_service import RETRIEVAL_SOURCE
+from app.services.learning_gaps_service import FINAL_CHECK_SOURCE, RETRIEVAL_SOURCE
 from app.services.teacher_queue_service import teacher_course_acl
 from app.utils.task_title import humanize_task_title
 
@@ -128,6 +128,10 @@ async def _fetch_task_solved(
             # tsk-992: повтор уже пройденного задания — «решил неверно» читалось
             # бы как провал по учебному пути, а статус задания не меняется.
             verb = "повторил"
+        elif r["source_system"] == FINAL_CHECK_SOURCE:
+            # tsk-994: итоговый срез после курса — диагностика, статус задания
+            # и курса он не меняет (решение Р4).
+            verb = "проверил в итоговом срезе"
         events.append({
             "type": "task_solved",
             "student_id": int(r["student_id"]),

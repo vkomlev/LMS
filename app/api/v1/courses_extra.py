@@ -23,6 +23,7 @@ from app.schemas.courses import (
 )
 from app.schemas.course_parents import CourseParentOrderUpdate
 from app.schemas.retrieval import CourseRetrievalConfig
+from app.schemas.final_check import CourseFinalCheckConfig
 from app.schemas.course_sampling import (
     CourseSamplingSettingsRequest,
     CourseSamplingSettingsResponse,
@@ -1463,6 +1464,86 @@ async def put_course_retrieval_endpoint(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Курс не найден")
     logging.getLogger("api.courses_extra").info(
         "tsk-992: retrieval_config курса %s изменён пользователем %s -> %r",
+        course_id, current_user.id, config,
+    )
+    return result
+
+
+# ---------------------------------------------------------------------------
+# tsk-994 (П5): рубильник итогового среза на корневом курсе
+# (по образцу /courses/{id}/retrieval; поле courses.final_check_config)
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/courses/{course_id}/final-check",
+    response_model=CourseFinalCheckConfig,
+    summary="Рубильник итогового среза на курсе (tsk-994)",
+    description=(
+        "`{enabled, size}` из `courses.final_check_config`. Пустое поле читается "
+        "как `enabled=false, size=10`. Действует на КОРНЕВОМ курсе."
+    ),
+    responses={
+        200: {"description": "Настройка отдана"},
+        401: {"description": "Не аутентифицирован"},
+        403: {"description": "Роль не позволяет менять настройки курса"},
+        404: {"description": "Курс не найден"},
+    },
+)
+async def get_course_final_check_endpoint(
+    course_id: int,
+    db: AsyncSession = Depends(get_bare_db),
+    current_user: CurrentUser = Depends(_STRUCTURE_GATE),
+) -> Any:
+    """Прочитать рубильник итогового среза курса.
+
+    :param course_id: идентификатор курса.
+    :returns: `{enabled, size}`.
+    :raises HTTPException: 404 — курса нет.
+    """
+    result = await CoursesService().get_final_check_config(db, course_id)
+    if result is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Курс не найден")
+    return result
+
+
+@router.put(
+    "/courses/{course_id}/final-check",
+    response_model=CourseFinalCheckConfig,
+    summary="Включить/выключить итоговый срез на курсе (tsk-994)",
+    description=(
+        "Полная замена `courses.final_check_config`. По умолчанию срез выключен; "
+        "включение на курсе — решение оператора. Срез — только диагностика: "
+        "статус курса, зависимости и выпуск он не меняет (Р4). Выключение прячет "
+        "карточку среза, пройденные срезы сохраняются."
+    ),
+    responses={
+        200: {"description": "Настройка записана"},
+        401: {"description": "Не аутентифицирован"},
+        403: {"description": "Роль не позволяет менять настройки курса"},
+        404: {"description": "Курс не найден"},
+        422: {"description": "Размер вне 1…50"},
+    },
+)
+async def put_course_final_check_endpoint(
+    course_id: int,
+    payload: CourseFinalCheckConfig = Body(...),
+    db: AsyncSession = Depends(get_bare_db),
+    current_user: CurrentUser = Depends(_STRUCTURE_GATE),
+) -> Any:
+    """Записать рубильник итогового среза курса.
+
+    :param course_id: идентификатор курса.
+    :param payload: `{enabled, size}`.
+    :returns: записанный `{enabled, size}`.
+    :raises HTTPException: 404 — курса нет.
+    """
+    config = payload.model_dump()
+    result = await CoursesService().set_final_check_config(db, course_id, config)
+    if result is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Курс не найден")
+    logging.getLogger("api.courses_extra").info(
+        "tsk-994: final_check_config курса %s изменён пользователем %s -> %r",
         course_id, current_user.id, config,
     )
     return result

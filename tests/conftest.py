@@ -335,6 +335,9 @@ SELF_MANAGED_CONNECTION_MODULES: frozenset[str] = frozenset(
         # tsk-992: две одновременные сдачи повтора — замок строки расписания
         # проверяется только двумя настоящими параллельными транзакциями.
         "test_tsk992_retrieval_race.py",
+        # tsk-994: одновременные ответы на задание итогового среза — замок
+        # строки прогона проверяется только параллельными транзакциями.
+        "test_tsk994_final_check_race.py",
         "test_teacher_courses_triggers_smoke.py",
         "test_teacher_help_requests_overdue_tsk312.py",
         "test_teacher_help_requests_stage38.py",

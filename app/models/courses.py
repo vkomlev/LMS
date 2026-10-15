@@ -85,6 +85,14 @@ class Courses(Base):
             "NULL/enabled=false — выключено."
         ),
     )
+    final_check_config: Mapped[Optional[dict]] = mapped_column(
+        JSONB,
+        nullable=True,
+        comment=(
+            "Итоговый срез после курса (tsk-994): {enabled, size}. "
+            "NULL/enabled=false — выключено."
+        ),
+    )
     is_exam: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,

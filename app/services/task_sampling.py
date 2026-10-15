@@ -25,9 +25,15 @@ import random
 from typing import Iterable, Optional, Sequence
 
 
-def deterministic_seed(student_id: int, course_id: int) -> int:
-    """Стабильный (между процессами и рестартами) сид для пары студент+подкурс."""
-    digest = hashlib.sha256(f"{student_id}:{course_id}".encode("utf-8")).hexdigest()
+def deterministic_seed(student_id: int, course_id: int, salt: str = "") -> int:
+    """Стабильный (между процессами и рестартами) сид для пары студент+подкурс.
+
+    `salt` (tsk-994) разводит независимые выборки по одной паре: итоговый срез
+    берёт соль «final», чтобы его набор не повторял порядок выборки по
+    сложности. Без соли ключ прежний — существующие наборы не меняются.
+    """
+    key = f"{student_id}:{course_id}" if not salt else f"{salt}:{student_id}:{course_id}"
+    digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
     return int(digest[:16], 16)
 
 

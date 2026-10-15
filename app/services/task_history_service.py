@@ -36,7 +36,7 @@ from app.schemas.checking import StudentAnswer
 from app.schemas.task_content import TaskContent
 from app.services.checking_service import CheckingService
 from app.services.learning_events_service import get_hint_open_counts
-from app.services.learning_gaps_service import RETRIEVAL_SOURCE
+from app.services.learning_gaps_service import FINAL_CHECK_SOURCE, RETRIEVAL_SOURCE
 
 logger = logging.getLogger(__name__)
 
@@ -168,7 +168,9 @@ async def _load_attempts(
     attempt_no = 0
     for r in rows:
         is_retrieval = r["source_system"] == RETRIEVAL_SOURCE
-        if not is_retrieval:
+        # tsk-994: сдача итогового среза — тоже не попытка учебного пути.
+        is_final_check = r["source_system"] == FINAL_CHECK_SOURCE
+        if not (is_retrieval or is_final_check):
             attempt_no += 1
         attempt: Dict[str, Any] = {
             "task_result_id": int(r["task_result_id"]),
@@ -185,6 +187,7 @@ async def _load_attempts(
             "checked_at": r["checked_at"],
             "manual": (r["source_system"] == _MANUAL_SOURCE),
             "is_retrieval": is_retrieval,
+            "is_final_check": is_final_check,
         }
         if task_meta is not None:
             # Пересчитываем по СЫРОМУ ответу из БД, а не по `attempt["answer_json"]`:

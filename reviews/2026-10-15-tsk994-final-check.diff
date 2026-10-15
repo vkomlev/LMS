@@ -1,0 +1,2929 @@
+diff --git a/app/api/v1/attempts.py b/app/api/v1/attempts.py
+index 89f21a7..8671fff 100644
+--- a/app/api/v1/attempts.py
++++ b/app/api/v1/attempts.py
+@@ -76,7 +76,7 @@ from app.services.attempt_attachments import (
+ from app.services.learning_engine_service import LearningEngineService
+ from app.services import dependency_lock_service
+ from app.services import retrieval_service
+-from app.services.learning_gaps_service import RETRIEVAL_SOURCE
++from app.services.learning_gaps_service import learning_path_results_clause
+ from app.services.tasks_acl_service import (
+     assert_task_access,
+     assert_task_active_for_student,
+@@ -217,11 +217,12 @@ async def _build_attempt_with_results(
+     Здесь специально не выносим в сервис, чтобы минимально трогать доменную логику,
+     как ты просил — «нет только самих эндпойнтов».
+     """
+-    # tsk-992: сдача повтора лежит в курсовой попытке, но к её прохождению
+-    # не относится — ни в список результатов, ни в суммы баллов не входит.
++    # tsk-992/tsk-994: сдачи повтора и итогового среза лежат в курсовой
++    # попытке, но к её прохождению не относятся — ни в список результатов, ни
++    # в суммы баллов не входят.
+     stmt = select(TaskResults).where(
+         TaskResults.attempt_id == attempt.id,
+-        TaskResults.source_system.is_distinct_from(RETRIEVAL_SOURCE),
++        learning_path_results_clause(TaskResults.source_system),
+     )
+     result = await db.execute(stmt)
+     rows: List[TaskResults] = result.scalars().all()
+diff --git a/app/api/v1/courses_extra.py b/app/api/v1/courses_extra.py
+index 5984876..dc48848 100644
+--- a/app/api/v1/courses_extra.py
++++ b/app/api/v1/courses_extra.py
+@@ -23,6 +23,7 @@ from app.schemas.courses import (
+ )
+ from app.schemas.course_parents import CourseParentOrderUpdate
+ from app.schemas.retrieval import CourseRetrievalConfig
++from app.schemas.final_check import CourseFinalCheckConfig
+ from app.schemas.course_sampling import (
+     CourseSamplingSettingsRequest,
+     CourseSamplingSettingsResponse,
+@@ -1466,3 +1467,83 @@ async def put_course_retrieval_endpoint(
+         course_id, current_user.id, config,
+     )
+     return result
++
++
++# ---------------------------------------------------------------------------
++# tsk-994 (П5): рубильник итогового среза на корневом курсе
++# (по образцу /courses/{id}/retrieval; поле courses.final_check_config)
++# ---------------------------------------------------------------------------
++
++
++@router.get(
++    "/courses/{course_id}/final-check",
++    response_model=CourseFinalCheckConfig,
++    summary="Рубильник итогового среза на курсе (tsk-994)",
++    description=(
++        "`{enabled, size}` из `courses.final_check_config`. Пустое поле читается "
++        "как `enabled=false, size=10`. Действует на КОРНЕВОМ курсе."
++    ),
++    responses={
++        200: {"description": "Настройка отдана"},
++        401: {"description": "Не аутентифицирован"},
++        403: {"description": "Роль не позволяет менять настройки курса"},
++        404: {"description": "Курс не найден"},
++    },
++)
++async def get_course_final_check_endpoint(
++    course_id: int,
++    db: AsyncSession = Depends(get_bare_db),
++    current_user: CurrentUser = Depends(_STRUCTURE_GATE),
++) -> Any:
++    """Прочитать рубильник итогового среза курса.
++
++    :param course_id: идентификатор курса.
++    :returns: `{enabled, size}`.
++    :raises HTTPException: 404 — курса нет.
++    """
++    result = await CoursesService().get_final_check_config(db, course_id)
++    if result is None:
++        raise HTTPException(status.HTTP_404_NOT_FOUND, "Курс не найден")
++    return result
++
++
++@router.put(
++    "/courses/{course_id}/final-check",
++    response_model=CourseFinalCheckConfig,
++    summary="Включить/выключить итоговый срез на курсе (tsk-994)",
++    description=(
++        "Полная замена `courses.final_check_config`. По умолчанию срез выключен; "
++        "включение на курсе — решение оператора. Срез — только диагностика: "
++        "статус курса, зависимости и выпуск он не меняет (Р4). Выключение прячет "
++        "карточку среза, пройденные срезы сохраняются."
++    ),
++    responses={
++        200: {"description": "Настройка записана"},
++        401: {"description": "Не аутентифицирован"},
++        403: {"description": "Роль не позволяет менять настройки курса"},
++        404: {"description": "Курс не найден"},
++        422: {"description": "Размер вне 1…50"},
++    },
++)
++async def put_course_final_check_endpoint(
++    course_id: int,
++    payload: CourseFinalCheckConfig = Body(...),
++    db: AsyncSession = Depends(get_bare_db),
++    current_user: CurrentUser = Depends(_STRUCTURE_GATE),
++) -> Any:
++    """Записать рубильник итогового среза курса.
++
++    :param course_id: идентификатор курса.
++    :param payload: `{enabled, size}`.
++    :returns: записанный `{enabled, size}`.
++    :raises HTTPException: 404 — курса нет.
++    """
++    config = payload.model_dump()
++    result = await CoursesService().set_final_check_config(db, course_id, config)
++    if result is None:
++        raise HTTPException(status.HTTP_404_NOT_FOUND, "Курс не найден")
++    logging.getLogger("api.courses_extra").info(
++        "tsk-994: final_check_config курса %s изменён пользователем %s -> %r",
++        course_id, current_user.id, config,
++    )
++    return result
+diff --git a/app/api/v1/learning.py b/app/api/v1/learning.py
+index 3c971af..3cd7951 100644
+--- a/app/api/v1/learning.py
++++ b/app/api/v1/learning.py
+@@ -43,6 +43,13 @@ from app.schemas.learning_api import (
+     MaterialRequestHelpResponse,
+ )
+ from app.schemas.learning_engine import NextItemResult
++from app.schemas.final_check import (
++    FinalCheckAnswerRequest,
++    FinalCheckAnswerResponse,
++    FinalCheckRun,
++    FinalCheckStartRequest,
++    FinalCheckStatusResponse,
++)
+ from app.schemas.retrieval import (
+     ReviewAnswerRequest,
+     ReviewAnswerResponse,
+@@ -79,6 +86,7 @@ from app.services import lesson_attendance_service
+ from app.services import entitlements_service
+ from app.services import help_attempt_gate
+ from app.services import retrieval_service
++from app.services import final_check_service
+ from app.services import course_activity_service
+ from app.services.attempts_service import AttemptsService
+ from app.services.tasks_service import TasksService
+@@ -1400,3 +1408,165 @@ async def submit_review_answer(
+         next_due_at=outcome.next_due_at,
+         completed=outcome.completed,
+     )
++
++
++# ----- tsk-994 (П5): итоговый срез после курса -----
++
++#: Отказы среза, общие для старта и ответа.
++_FINAL_CHECK_409 = (
++    "`final_check_locked` — срез на курсе выключен или курс ещё не завершён "
++    "(`compute_course_state != COMPLETED`)"
++)
++
++
++def _assert_own_student(current_user: CurrentUser, student_id: int) -> None:
++    """Ученик видит и проходит только свой срез; сервисный ключ — за любого."""
++    if not current_user.is_service and current_user.id != student_id:
++        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
++
++
++@router.get(
++    "/courses/{course_id}/final-check",
++    response_model=FinalCheckStatusResponse,
++    responses=_PAYMENT_403,
++    summary="Состояние итогового среза по курсу (tsk-994)",
++    description=(
++        "Для карточки «Итоговый срез» на странице курса. `course_id` — корневой "
++        "курс. Ничего не пишет. `disabled` — срез на курсе выключен (по "
++        "умолчанию), карточку не показывать; `locked` — курс не завершён; "
++        "`closed` — тариф закрывает работу в курсе (выпускник), карточку не "
++        "показывать; "
++        "`ready` / `in_progress` / `finished` — срез доступен, начат, пройден. "
++        "Срез — только диагностика: статус курса, зависимости и выпуск не меняет."
++    ),
++)
++async def get_final_check(
++    course_id: int = Path(..., description="ID корневого курса"),
++    student_id: int = Query(..., description="ID студента"),
++    current_user: CurrentUser = Depends(get_current_user),
++    db: AsyncSession = Depends(get_bare_db),
++) -> FinalCheckStatusResponse:
++    """Состояние среза ученика по корневому курсу.
++
++    :raises HTTPException: 403 — чужой `student_id`.
++    """
++    _assert_own_student(current_user, student_id)
++    await payment_access_service.assert_content_allowed(db, student_id)
++    status_, size, run = await final_check_service.get_status(
++        db, student_id=student_id, course_id=course_id
++    )
++    return FinalCheckStatusResponse(
++        course_id=course_id,
++        status=status_,  # type: ignore[arg-type]
++        size=size,
++        run=(
++            FinalCheckRun(**await final_check_service.serialize_run(db, run))
++            if run is not None
++            else None
++        ),
++    )
++
++
++@router.post(
++    "/courses/{course_id}/final-check/start",
++    response_model=FinalCheckRun,
++    responses={
++        **_PAYMENT_403,
++        409: {
++            "description": (
++                f"{_FINAL_CHECK_409}; `final_check_empty` — нет пройденных "
++                "заданий с автопроверкой"
++            )
++        },
++    },
++    summary="Открыть итоговый срез (tsk-994)",
++    description=(
++        "При первом открытии выбирает и сохраняет состав: `size` заданий из "
++        "пройденных учеником заданий курса и подкурсов, равномерно по главам, "
++        "детерминированно. Повторное открытие возвращает тот же набор."
++    ),
++)
++async def start_final_check(
++    course_id: int = Path(..., description="ID корневого курса"),
++    body: FinalCheckStartRequest = Body(...),
++    current_user: CurrentUser = Depends(get_current_user),
++    db: AsyncSession = Depends(get_bare_db),
++) -> FinalCheckRun:
++    """Открыть срез (или вернуть уже открытый).
++
++    :raises HTTPException: 403 — чужой `student_id`.
++    :raises DomainError: 403 `payment_overdue` / `course_work_closed`; 409 —
++        см. `final_check_service.start`.
++    """
++    _assert_own_student(current_user, body.student_id)
++    # Те же гейты, что у обычной сдачи и у повтора: просроченная оплата и
++    # тариф «Выпускник» закрывают работу в курсе — по УЧЕНИКУ.
++    await payment_access_service.assert_content_allowed(db, body.student_id)
++    await graduation_service.assert_course_work_allowed(db, body.student_id)
++    run = await final_check_service.start(db, student_id=body.student_id, course_id=course_id)
++    return FinalCheckRun(**await final_check_service.serialize_run(db, run))
++
++
++@router.post(
++    "/courses/{course_id}/final-check/{task_id}/answer",
++    response_model=FinalCheckAnswerResponse,
++    responses={
++        **_PAYMENT_403,
++        404: {
++            "description": (
++                "Срез не начат (`final_check_not_started`) или задания нет в "
++                "срезе (`final_check_task_not_in_run`)"
++            )
++        },
++        409: {
++            "description": (
++                f"{_FINAL_CHECK_409}; `final_check_finished` — срез уже пройден; "
++                "`final_check_already_answered` — на задание уже ответили; "
++                "`final_check_unsupported` — задание перестало проверяться "
++                "автоматически и исключено из среза"
++            )
++        },
++        422: {"description": "SA_COM/TBL_COM без комментария (`payload.code = evidence_required`)"},
++    },
++    summary="Ответить на задание итогового среза (tsk-994)",
++    description=(
++        "Ответ проверяется той же автоматикой, что и обычная сдача, и пишется в "
++        "`task_results` с `source_system='final_check'` в курсовую попытку. "
++        "Статус задания и курса, счёт и лимит попыток срез не меняет. Один "
++        "ответ на задание. После последнего — итог: доля верных, главы с "
++        "ошибками; ошибочные задания при включённом повторении (tsk-992) "
++        "ставятся в повторение."
++    ),
++)
++async def answer_final_check(
++    course_id: int = Path(..., description="ID корневого курса"),
++    task_id: int = Path(..., description="ID задания"),
++    body: FinalCheckAnswerRequest = Body(...),
++    current_user: CurrentUser = Depends(get_current_user),
++    db: AsyncSession = Depends(get_bare_db),
++) -> FinalCheckAnswerResponse:
++    """Принять ответ на задание среза.
++
++    :raises HTTPException: 403 — чужой `student_id` или вызывающий не записан
++        на курс задания (tsk-272).
++    :raises DomainError: 403/404/409/422 — см. `final_check_service.answer`.
++    """
++    _assert_own_student(current_user, body.student_id)
++    await payment_access_service.assert_content_allowed(db, body.student_id)
++    await graduation_service.assert_course_work_allowed(db, body.student_id)
++    outcome = await final_check_service.answer(
++        db,
++        student_id=body.student_id,
++        course_id=course_id,
++        task_id=task_id,
++        answer=body.answer,
++        current_user=current_user,
++    )
++    return FinalCheckAnswerResponse(
++        task_id=outcome.task_id,
++        task_result_id=outcome.task_result_id,
++        check_result=outcome.check_result,
++        is_correct=outcome.is_correct,
++        run=FinalCheckRun(**await final_check_service.serialize_run(db, outcome.run)),
++    )
++
+diff --git a/app/api/v1/task_results_extra.py b/app/api/v1/task_results_extra.py
+index d3d6ec0..9a94918 100644
+--- a/app/api/v1/task_results_extra.py
++++ b/app/api/v1/task_results_extra.py
+@@ -12,6 +12,7 @@ from app.auth.current_user import CurrentUser
+ from fastapi import HTTPException, status as http_status
+ from app.schemas.task_results import TaskResultRead, TaskResultUpdate, TaskResultManualCheckRequest
+ from app.services.task_results_service import TaskResultsService
++from app.services.learning_gaps_service import learning_path_results_clause
+ 
+ 
+ router = APIRouter(tags=["task_results"])
+@@ -644,8 +645,9 @@ async def get_pending_review_results(
+             TaskResults.checked_at.is_(None),
+             TaskResults.is_correct.isnot(None),
+             sa_text(optional_review_sql("tasks")),
+-            # tsk-992: сдача повтора на просмотр преподавателю не выносится.
+-            TaskResults.source_system.is_distinct_from("retrieval"),
++            # tsk-992/tsk-994: сдачи повтора и итогового среза на просмотр
++            # преподавателю не выносятся.
++            learning_path_results_clause(TaskResults.source_system),
+         ]
+     else:
+         # mandatory (default): очередь обязательной ручной проверки. tsk-247:
+diff --git a/app/db/base.py b/app/db/base.py
+index 9f831a9..b22183f 100644
+--- a/app/db/base.py
++++ b/app/db/base.py
+@@ -63,3 +63,4 @@ import app.models.student_curator      # закрепление ученика 
+ import app.models.lesson_absence_followup  # «про пропуск уже спросили» (tsk-743)
+ 
+ import app.models.task_review_schedule  # расписание повторов заданий (tsk-992)
++import app.models.final_check_runs  # итоговый срез после курса (tsk-994)
+diff --git a/app/db/migrations/versions/2026_10_15_tsk994_final_check.py b/app/db/migrations/versions/2026_10_15_tsk994_final_check.py
+new file mode 100644
+index 0000000..9d0c188
+--- /dev/null
++++ b/app/db/migrations/versions/2026_10_15_tsk994_final_check.py
+@@ -0,0 +1,106 @@
++"""tsk-994 (П5): итоговый срез после курса — рубильник и прогоны.
++
++Решение оператора Р4: срез — только диагностика. Статус курса, зависимости и
++выпуск он не меняет; ответы пишутся в `task_results` с
++`source_system='final_check'` и из расчётов учебного пути исключены.
++
++- `courses.final_check_config JSONB NULL` — рубильник на корневом курсе по
++  образцу `retrieval_config`: `{"enabled": false, "size": 10}`. NULL и
++  `enabled=false` значат одно и то же — среза нет, поведение прежнее.
++- `final_check_runs` — одна строка на (ученик, корневой курс): состав
++  заданий (фиксируется при первом открытии), ответы, итог.
++
++Обе части только добавляются: старые строки и старые клиенты не затронуты.
++
++Rollback: `alembic downgrade tsk992_task_review_schedule` — таблица и колонка
++снимаются, прогоны срезов теряются (сами ответы в `task_results` с
++`source_system='final_check'` остаются и по-прежнему не входят в учебный путь).
++
++Revision ID: tsk994_final_check
++Revises: tsk992_task_review_schedule
++Create Date: 2026-10-15
++"""
++from typing import Sequence, Union
++
++import sqlalchemy as sa
++from alembic import op
++from sqlalchemy.dialects import postgresql
++
++revision: str = "tsk994_final_check"
++down_revision: Union[str, None] = "tsk992_task_review_schedule"
++branch_labels: Union[str, Sequence[str], None] = None
++depends_on: Union[str, Sequence[str], None] = None
++
++
++def upgrade() -> None:
++    """Создать `final_check_runs` и колонку `courses.final_check_config`."""
++    op.add_column(
++        "courses",
++        sa.Column(
++            "final_check_config",
++            postgresql.JSONB(),
++            nullable=True,
++            comment=(
++                "Итоговый срез после курса (tsk-994): {enabled, size}. "
++                "NULL/enabled=false — выключено."
++            ),
++        ),
++    )
++    op.create_table(
++        "final_check_runs",
++        sa.Column("id", sa.BigInteger(), primary_key=True, autoincrement=True),
++        sa.Column(
++            "student_id",
++            sa.Integer(),
++            sa.ForeignKey("users.id", ondelete="CASCADE"),
++            nullable=False,
++        ),
++        sa.Column(
++            "course_id",
++            sa.Integer(),
++            sa.ForeignKey("courses.id", ondelete="CASCADE"),
++            nullable=False,
++            comment="Корневой курс, по которому проходит срез",
++        ),
++        sa.Column(
++            "task_ids",
++            postgresql.JSONB(),
++            nullable=False,
++            comment="Состав среза — id заданий в порядке показа",
++        ),
++        sa.Column(
++            "answers",
++            postgresql.JSONB(),
++            nullable=False,
++            server_default=sa.text("'{}'::jsonb"),
++            comment="Ответы среза: {task_id: {result_id, is_correct}}",
++        ),
++        sa.Column(
++            "started_at",
++            sa.DateTime(timezone=True),
++            nullable=False,
++            server_default=sa.text("now()"),
++        ),
++        sa.Column(
++            "finished_at",
++            sa.DateTime(timezone=True),
++            nullable=True,
++            comment="Когда отвечено последнее задание среза",
++        ),
++        sa.Column(
++            "result",
++            postgresql.JSONB(),
++            nullable=True,
++            comment="Итог: доля верных, главы с ошибками, что поставлено на повтор",
++        ),
++        sa.UniqueConstraint(
++            "student_id", "course_id", name="uq_final_check_runs_student_course"
++        ),
++        comment="Итоговый срез после курса: состав заданий и итог (tsk-994)",
++    )
++
++
++def downgrade() -> None:
++    """Снять таблицу прогонов среза и рубильник курса."""
++    op.drop_table("final_check_runs")
++    op.drop_column("courses", "final_check_config")
+diff --git a/app/models/courses.py b/app/models/courses.py
+index d2f856e..cb89729 100644
+--- a/app/models/courses.py
++++ b/app/models/courses.py
+@@ -85,6 +85,14 @@ class Courses(Base):
+             "NULL/enabled=false — выключено."
+         ),
+     )
++    final_check_config: Mapped[Optional[dict]] = mapped_column(
++        JSONB,
++        nullable=True,
++        comment=(
++            "Итоговый срез после курса (tsk-994): {enabled, size}. "
++            "NULL/enabled=false — выключено."
++        ),
++    )
+     is_exam: Mapped[bool] = mapped_column(
+         Boolean,
+         nullable=False,
+diff --git a/app/models/final_check_runs.py b/app/models/final_check_runs.py
+new file mode 100644
+index 0000000..e27fe62
+--- /dev/null
++++ b/app/models/final_check_runs.py
+@@ -0,0 +1,64 @@
++"""Модель итогового среза после курса (tsk-994, П5)."""
++from __future__ import annotations
++
++from datetime import datetime
++from typing import Any, Optional
++
++from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, UniqueConstraint
++from sqlalchemy import text as sql_text
++from sqlalchemy.dialects.postgresql import JSONB
++from sqlalchemy.orm import Mapped, mapped_column
++
++from app.db.base import Base
++
++
++class FinalCheckRuns(Base):
++    """Итоговый срез ученика по корневому курсу.
++
++    Одна строка на (ученик, корневой курс): состав заданий выбирается один раз
++    при первом открытии и дальше не меняется — повторное открытие показывает
++    тот же набор. Итог (`result`) пишется, когда отвечены все задания.
++    """
++
++    __tablename__ = "final_check_runs"
++    __table_args__ = (
++        UniqueConstraint(
++            "student_id", "course_id", name="uq_final_check_runs_student_course"
++        ),
++        {"comment": "Итоговый срез после курса: состав заданий и итог (tsk-994)"},
++    )
++
++    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
++    student_id: Mapped[int] = mapped_column(
++        Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
++    )
++    course_id: Mapped[int] = mapped_column(
++        Integer,
++        ForeignKey("courses.id", ondelete="CASCADE"),
++        nullable=False,
++        comment="Корневой курс, по которому проходит срез",
++    )
++    task_ids: Mapped[list[int]] = mapped_column(
++        JSONB,
++        nullable=False,
++        comment="Состав среза — id заданий в порядке показа",
++    )
++    answers: Mapped[dict[str, Any]] = mapped_column(
++        JSONB,
++        nullable=False,
++        server_default=sql_text("'{}'::jsonb"),
++        comment="Ответы среза: {task_id: {result_id, is_correct}}",
++    )
++    started_at: Mapped[datetime] = mapped_column(
++        DateTime(timezone=True), nullable=False, server_default=sql_text("now()")
++    )
++    finished_at: Mapped[Optional[datetime]] = mapped_column(
++        DateTime(timezone=True),
++        nullable=True,
++        comment="Когда отвечено последнее задание среза",
++    )
++    result: Mapped[Optional[dict[str, Any]]] = mapped_column(
++        JSONB,
++        nullable=True,
++        comment="Итог: доля верных, главы с ошибками, что поставлено на повтор",
++    )
+diff --git a/app/schemas/final_check.py b/app/schemas/final_check.py
+new file mode 100644
+index 0000000..92c5012
+--- /dev/null
++++ b/app/schemas/final_check.py
+@@ -0,0 +1,134 @@
++"""tsk-994 (П5): контракт итогового среза после курса — рубильник курса,
++состояние среза, старт и ответ на задание среза."""
++from __future__ import annotations
++
++from datetime import datetime
++from typing import List, Literal, Optional
++
++from pydantic import BaseModel, ConfigDict, Field
++
++from app.schemas.checking import CheckResult, StudentAnswer
++
++#: Размер среза по умолчанию и пределы, которые принимает рубильник.
++DEFAULT_FINAL_CHECK_SIZE = 10
++MAX_FINAL_CHECK_SIZE = 50
++
++
++class CourseFinalCheckConfig(BaseModel):
++    """Формат `courses.final_check_config` (JSONB) и тело `PUT /courses/{id}/final-check`.
++
++    Действует на КОРНЕВОМ курсе. Пустое поле (NULL) читается как
++    `{"enabled": false, "size": 10}`.
++    """
++
++    enabled: bool = Field(False, description="Включён ли итоговый срез на курсе")
++    size: int = Field(
++        DEFAULT_FINAL_CHECK_SIZE,
++        ge=1,
++        le=MAX_FINAL_CHECK_SIZE,
++        description="Сколько заданий в срезе (из пройденных учеником)",
++    )
++
++    model_config = ConfigDict(
++        json_schema_extra={
++            "examples": [{"enabled": True, "size": 10}, {"enabled": False, "size": 10}]
++        }
++    )
++
++
++class FinalCheckItem(BaseModel):
++    """Задание среза."""
++
++    task_id: int = Field(..., description="ID задания")
++    external_uid: Optional[str] = Field(None, description="Внешний код задания")
++    title: str = Field(..., description="Название задания (или начало условия)")
++    task_type: Optional[str] = Field(None, description="Тип задания (SA, SC, …)")
++    chapter_id: int = Field(..., description="Глава курса (подкурс первого уровня или сам корень)")
++    chapter_title: str = Field(..., description="Название главы")
++    answered: bool = Field(False, description="Ответ на задание в срезе уже дан")
++    is_correct: Optional[bool] = Field(
++        None, description="Верно ли отвечено; null — ещё не отвечено"
++    )
++
++
++class FinalCheckChapterErrors(BaseModel):
++    """Глава, в которой в срезе есть ошибки."""
++
++    course_id: int = Field(..., description="ID главы (курса)")
++    course_uid: Optional[str] = Field(None, description="Код главы")
++    title: str = Field(..., description="Название главы")
++    task_ids: List[int] = Field(default_factory=list, description="Ошибочные задания главы")
++
++
++class FinalCheckResult(BaseModel):
++    """Итог среза — только диагностика (Р4): статус курса он не меняет."""
++
++    total: int = Field(..., ge=0, description="Заданий в срезе")
++    correct: int = Field(..., ge=0, description="Верных ответов")
++    ratio: float = Field(..., ge=0, le=1, description="Доля верных")
++    skill_retained: bool = Field(
++        ..., description="«Навык сохранился» — верных не меньше 80 %"
++    )
++    chapters_with_errors: List[FinalCheckChapterErrors] = Field(
++        default_factory=list, description="Главы с ошибками, в порядке программы"
++    )
++    scheduled_for_review: List[int] = Field(
++        default_factory=list,
++        description=(
++            "Ошибочные задания, поставленные на повторение (если на курсе включено "
++            "повторение tsk-992)"
++        ),
++    )
++
++
++class FinalCheckRun(BaseModel):
++    """Прогон среза: зафиксированный состав, ответы и итог."""
++
++    run_id: int = Field(..., description="ID прогона")
++    course_id: int = Field(..., description="Корневой курс")
++    started_at: datetime = Field(..., description="Когда срез открыт впервые")
++    finished_at: Optional[datetime] = Field(None, description="Когда отвечено последнее задание")
++    items: List[FinalCheckItem] = Field(default_factory=list, description="Задания среза")
++    result: Optional[FinalCheckResult] = Field(None, description="Итог; null — срез не окончен")
++
++
++FinalCheckStatus = Literal["disabled", "locked", "closed", "ready", "in_progress", "finished"]
++
++
++class FinalCheckStatusResponse(BaseModel):
++    """Ответ `GET /learning/courses/{course_id}/final-check`."""
++
++    course_id: int = Field(..., description="Корневой курс")
++    status: FinalCheckStatus = Field(
++        ...,
++        description=(
++            "disabled — срез на курсе выключен; locked — курс ещё не завершён; "
++            "closed — тариф закрывает работу в курсе (выпускник, tsk-673); "
++            "ready — можно начать; in_progress — начат; finished — пройден"
++        ),
++    )
++    size: int = Field(..., ge=0, description="Размер среза по настройке курса")
++    run: Optional[FinalCheckRun] = Field(None, description="Прогон, если срез уже открывали")
++
++
++class FinalCheckStartRequest(BaseModel):
++    """Тело `POST /learning/courses/{course_id}/final-check/start`."""
++
++    student_id: int = Field(..., description="ID ученика")
++
++
++class FinalCheckAnswerRequest(BaseModel):
++    """Тело `POST /learning/courses/{course_id}/final-check/{task_id}/answer`."""
++
++    student_id: int = Field(..., description="ID ученика")
++    answer: StudentAnswer = Field(..., description="Ответ ученика")
++
++
++class FinalCheckAnswerResponse(BaseModel):
++    """Итог ответа на задание среза."""
++
++    task_id: int = Field(..., description="ID задания")
++    task_result_id: int = Field(..., description="Записанный результат (source_system=final_check)")
++    check_result: CheckResult = Field(..., description="Результат проверки ответа")
++    is_correct: bool = Field(..., description="Ответ верный")
++    run: FinalCheckRun = Field(..., description="Прогон после ответа (с итогом, если это был последний)")
+diff --git a/app/schemas/me.py b/app/schemas/me.py
+index 792d889..3cc8b62 100644
+--- a/app/schemas/me.py
++++ b/app/schemas/me.py
+@@ -410,6 +410,14 @@ class HistoryItem(BaseModel):
+             "Статус задания она не меняет; в фильтр `failed` неверный повтор не попадает"
+         ),
+     )
++    is_final_check: bool = Field(
++        default=False,
++        description=(
++            "tsk-994: сдача задания итогового среза после курса "
++            "(source_system='final_check'). Статус задания она не меняет; "
++            "в фильтр `failed` неверный ответ среза не попадает"
++        ),
++    )
+ 
+ 
+ # ── Phase Y-6.2: /me/courses/{course_id}/syllabus-states ─────────────────────
+diff --git a/app/schemas/task_history.py b/app/schemas/task_history.py
+index aeb9e77..e89889a 100644
+--- a/app/schemas/task_history.py
++++ b/app/schemas/task_history.py
+@@ -73,6 +73,14 @@ class TaskHistoryAttempt(BaseModel):
+             "последней настоящей попытки перед ним"
+         ),
+     )
++    is_final_check: bool = Field(
++        default=False,
++        description=(
++            "tsk-994: сдача задания итогового среза после курса "
++            "(source_system='final_check'). Диагностика: попыткой не считается, "
++            "`attempt_no` не увеличивает, статус задания не меняет"
++        ),
++    )
+     review: Optional[str] = Field(
+         default=None,
+         description=(
+diff --git a/app/services/courses_service.py b/app/services/courses_service.py
+index df2614f..8bb294b 100644
+--- a/app/services/courses_service.py
++++ b/app/services/courses_service.py
+@@ -689,6 +689,44 @@ class CoursesService(BaseService[Courses]):
+         await db.refresh(course)
+         return dict(course.retrieval_config or {})
+ 
++    async def get_final_check_config(
++        self, db: AsyncSession, course_id: int
++    ) -> Optional[Dict[str, Any]]:
++        """Прочитать рубильник итогового среза `courses.final_check_config` (tsk-994).
++
++        Returns:
++            `None`, если курса нет. Иначе `{"enabled": bool, "size": int}` —
++            пустое поле читается как выключенное с размером по умолчанию.
++        """
++        from app.services.final_check_service import parse_config
++
++        course = await self.get_by_id(db, course_id)
++        if course is None:
++            return None
++        enabled, size = parse_config(course.final_check_config)
++        return {"enabled": enabled, "size": size}
++
++    async def set_final_check_config(
++        self, db: AsyncSession, course_id: int, config: Dict[str, Any]
++    ) -> Optional[Dict[str, Any]]:
++        """Записать рубильник итогового среза `courses.final_check_config` (tsk-994).
++
++        Полная замена конфига (как у `retrieval_config`). Выключение прячет
++        карточку среза; уже пройденные срезы и их итоги сохраняются. Новый
++        размер действует на срезы, которые ещё не открывали: состав открытого
++        среза зафиксирован.
++
++        Returns:
++            Записанный конфиг либо `None`, если курса нет.
++        """
++        course = await self.get_by_id(db, course_id)
++        if course is None:
++            return None
++        course.final_check_config = config
++        await db.commit()
++        await db.refresh(course)
++        return dict(course.final_check_config or {})
++
+     async def set_sampling_config(
+         self, db: AsyncSession, course_id: int, config: Optional[Dict[str, Any]]
+     ) -> Optional[Courses]:
+diff --git a/app/services/final_check_service.py b/app/services/final_check_service.py
+new file mode 100644
+index 0000000..b09639b
+--- /dev/null
++++ b/app/services/final_check_service.py
+@@ -0,0 +1,775 @@
++"""Итоговый срез после курса (tsk-994, П5).
++
++Решение оператора Р4: срез — ТОЛЬКО диагностика. Статус курса, зависимости и
++выпуск он не меняет; ответы пишутся в `task_results` с
++`source_system='final_check'`, а этот источник исключён из учебного пути тем же
++правилом, что и повтор (`learning_gaps_service.NON_LEARNING_PATH_SOURCES`):
++статус задания, счёт и лимит попыток, «пройдено», статус курса его не видят,
++аналитика пробелов — тоже (белый список `REAL_STUDENT_SOURCES`).
++
++Устройство:
++
++- рубильник — `courses.final_check_config = {"enabled": bool, "size": int}` на
++  КОРНЕВОМ курсе; NULL и `enabled=false` — выключено;
++- доступ — только после завершения курса (`compute_course_state == COMPLETED`)
++  при включённом рубильнике, иначе 409 `final_check_locked`;
++- состав — `size` заданий из ПРОЙДЕННЫХ учеником заданий курса и подкурсов,
++  равномерно по главам (подкурсы первого уровня), детерминированно (сид
++  `task_sampling.deterministic_seed` с солью «final»); выбирается один раз при
++  первом открытии и хранится в `final_check_runs`;
++- в срез идут только задания с автопроверкой целиком — тем же условием, что у
++  повтора (`retrieval_service.task_supports_review`): без вердикта автоматики
++  итог среза не посчитать, а ручной проверке после курса проверять некому;
++- итог — доля верных и главы с ошибками; «Навык сохранился» — от 80 % верных.
++  Ошибочные задания при включённом на курсе повторении (П3) ставятся в
++  повторение на стадию 0 (`retrieval_service.schedule_forgotten`).
++
++Срез один на (ученик, корневой курс): пройденный срез показывает свой итог,
++повторно его не пройти.
++"""
++from __future__ import annotations
++
++import asyncio
++import logging
++import random
++from dataclasses import dataclass, field
++from datetime import datetime, timezone
++from typing import TYPE_CHECKING, Any, NoReturn, Optional, Sequence
++
++from sqlalchemy import select, text
++from sqlalchemy.ext.asyncio import AsyncSession
++
++from app.models.courses import Courses
++from app.models.final_check_runs import FinalCheckRuns
++from app.schemas.checking import CheckResult, StudentAnswer
++from app.schemas.final_check import DEFAULT_FINAL_CHECK_SIZE, MAX_FINAL_CHECK_SIZE
++from app.schemas.task_content import COMMENT_TASK_TYPES, TaskContent
++from app.services import retrieval_service
++from app.services.learning_engine_service import PASS_THRESHOLD_RATIO, LearningEngineService
++from app.services.learning_gaps_service import (
++    FINAL_CHECK_SOURCE,
++    MANUAL_TEACHER_SOURCE,
++    learning_path_results_filter,
++)
++from app.services.task_sampling import deterministic_seed
++from app.utils.exceptions import DomainError
++
++if TYPE_CHECKING:
++    from app.auth.current_user import CurrentUser
++
++logger = logging.getLogger(__name__)
++
++#: «Навык сохранился» — доля верных не ниже этой (постановка, шаг 17).
++SKILL_RETAINED_RATIO = 0.8
++
++#: Соль сида выборки: отдельная от выборки по сложности (tsk-314).
++SEED_SALT = "final"
++
++#: Коды отказов — клиент различает их по `payload.code`.
++FINAL_CHECK_LOCKED_CODE = "final_check_locked"
++FINAL_CHECK_EMPTY_CODE = "final_check_empty"
++FINAL_CHECK_NOT_STARTED_CODE = "final_check_not_started"
++FINAL_CHECK_FINISHED_CODE = "final_check_finished"
++FINAL_CHECK_NOT_IN_RUN_CODE = "final_check_task_not_in_run"
++FINAL_CHECK_ANSWERED_CODE = "final_check_already_answered"
++FINAL_CHECK_UNSUPPORTED_CODE = "final_check_unsupported"
++FINAL_CHECK_EVIDENCE_REQUIRED_CODE = "evidence_required"
++
++
++@dataclass(frozen=True)
++class Chapter:
++    """Глава курса: подкурс первого уровня либо сам корень."""
++
++    course_id: int
++    course_uid: Optional[str]
++    title: str
++
++
++@dataclass
++class CourseLayout:
++    """Курсы дерева и их главы — в порядке программы."""
++
++    tree_ids: list[int]
++    chapters: list[Chapter]
++    chapter_of: dict[int, int] = field(default_factory=dict)
++
++    def chapter(self, course_id: Optional[int]) -> Chapter:
++        """Глава курса задания; неизвестный курс относится к корню."""
++        root = self.chapters[-1]
++        cid = self.chapter_of.get(int(course_id)) if course_id is not None else None
++        for ch in self.chapters:
++            if ch.course_id == cid:
++                return ch
++        return root
++
++
++@dataclass(frozen=True)
++class AnswerOutcome:
++    """Итог ответа на задание среза."""
++
++    task_id: int
++    task_result_id: int
++    check_result: CheckResult
++    is_correct: bool
++    run: FinalCheckRuns
++
++
++def _now() -> datetime:
++    """Текущее время, всегда с часовым поясом (UTC)."""
++    return datetime.now(timezone.utc)
++
++
++def parse_config(config: Any) -> tuple[bool, int]:
++    """Разобрать `courses.final_check_config` в (включён, размер).
++
++    NULL, не-объект и объект без `enabled=true` — выключено: рубильник
++    включается только явно. Размер вне пределов — значение по умолчанию.
++    """
++    if not isinstance(config, dict):
++        return False, DEFAULT_FINAL_CHECK_SIZE
++    size = config.get("size")
++    if not isinstance(size, int) or isinstance(size, bool) or not 1 <= size <= MAX_FINAL_CHECK_SIZE:
++        size = DEFAULT_FINAL_CHECK_SIZE
++    return config.get("enabled") is True, size
++
++
++async def read_config(db: AsyncSession, course_id: int) -> tuple[bool, int]:
++    """Рубильник среза курса: (включён, размер)."""
++    config = (
++        await db.execute(
++            select(Courses.final_check_config).where(Courses.id == course_id)
++        )
++    ).scalar_one_or_none()
++    return parse_config(config)
++
++
++def select_task_ids(
++    pools: Sequence[tuple[int, Sequence[int]]],
++    *,
++    size: int,
++    student_id: int,
++    course_id: int,
++) -> list[int]:
++    """Детерминированно выбрать `size` заданий, равномерно по главам.
++
++    Args:
++        pools: `(id главы, id пройденных заданий главы)` в порядке программы.
++        size: размер среза.
++        student_id: ученик (часть сида).
++        course_id: корневой курс (часть сида).
++
++    Returns:
++        id заданий в порядке показа: по главам в порядке программы.
++
++    Каждая глава получает задания по кругу, по одному за проход, — так при
++    глав ≤ `size` в срез попадает хотя бы одно задание каждой главы, а остаток
++    делится поровну (недостача одной главы добирается из остальных). Если глав
++    больше, чем `size`, порядок обхода глав перемешивается тем же сидом —
++    иначе срез всегда брал бы первые главы курса.
++    """
++    rng = random.Random(deterministic_seed(student_id, course_id, salt=SEED_SALT))
++    shuffled: list[tuple[int, list[int]]] = []
++    for chapter_id, ids in pools:
++        pool = sorted({int(i) for i in ids})
++        if not pool:
++            continue
++        rng.shuffle(pool)
++        shuffled.append((chapter_id, pool))
++    if size <= 0 or not shuffled:
++        return []
++
++    order = list(range(len(shuffled)))
++    if len(shuffled) > size:
++        rng.shuffle(order)
++    picked: dict[int, list[int]] = {i: [] for i in order}
++    taken = 0
++    depth = 0
++    while taken < size:
++        progressed = False
++        for i in order:
++            pool = shuffled[i][1]
++            if depth < len(pool) and taken < size:
++                picked[i].append(pool[depth])
++                taken += 1
++                progressed = True
++        if not progressed:
++            break
++        depth += 1
++    return [tid for i in range(len(shuffled)) for tid in picked[i]]
++
++
++async def course_layout(db: AsyncSession, root_course_id: int) -> CourseLayout:
++    """Курсы дерева и главы корня — в порядке программы.
++
++    Глава — подкурс первого уровня (`course_parents`, порядок `order_number`)
++    со всем своим поддеревом. Задания самого корня и «прозрачных» подкурсов
++    (tsk-1198: их задания и так стоят в списке родителя) относятся к корню.
++    Подкурс, висящий под несколькими главами, относится к первой из них.
++    """
++    engine = LearningEngineService()
++    tree_ids = await engine._collect_courses_in_order(db, root_course_id)
++    if root_course_id not in tree_ids:
++        tree_ids = [*tree_ids, root_course_id]
++    tree = set(tree_ids)
++    rows = (
++        await db.execute(
++            text(
++                """
++                SELECT c.id, c.course_uid, c.title
++                FROM course_parents cp
++                JOIN courses c ON c.id = cp.course_id
++                WHERE cp.parent_course_id = :root
++                  AND NOT cp.is_transparent
++                ORDER BY cp.order_number NULLS LAST, cp.course_id
++                """
++            ),
++            {"root": root_course_id},
++        )
++    ).mappings().all()
++    root_row = (
++        await db.execute(
++            text("SELECT id, course_uid, title FROM courses WHERE id = :id"),
++            {"id": root_course_id},
++        )
++    ).mappings().first()
++    chapters: list[Chapter] = []
++    chapter_of: dict[int, int] = {}
++    for r in rows:
++        cid = int(r["id"])
++        if cid not in tree:
++            continue
++        chapters.append(Chapter(cid, r["course_uid"], r["title"] or f"Глава #{cid}"))
++        for sub in await engine._collect_courses_in_order(db, cid):
++            chapter_of.setdefault(int(sub), cid)
++    # Корень — последняя «глава»: его задания в программе идут после подкурсов.
++    chapters.append(
++        Chapter(
++            root_course_id,
++            root_row["course_uid"] if root_row else None,
++            (root_row["title"] if root_row else None) or f"Курс #{root_course_id}",
++        )
++    )
++    for cid in tree_ids:
++        chapter_of.setdefault(int(cid), root_course_id)
++    return CourseLayout(tree_ids=list(tree_ids), chapters=chapters, chapter_of=chapter_of)
++
++
++async def eligible_task_ids(
++    db: AsyncSession, *, student_id: int, layout: CourseLayout
++) -> dict[int, list[int]]:
++    """Пройденные учеником задания дерева, годные для среза, — по главам.
++
++    «Пройдено» — как в `compute_task_state`: последний результат учебного пути
++    (повтор и сам срез не в счёт) в не отменённой попытке проходной. Сверх того
++    последний результат должен быть СВОЕЙ сдачей: ручной зачёт преподавателя
++    (`manual_teacher`) — не решение ученика, проверять «сохранился ли навык»
++    по нему нечего. И задание должно проверяться автоматически целиком
++    (`retrieval_service.task_supports_review`).
++    """
++    from app.services.checking_service import CheckingService
++
++    rows = (
++        await db.execute(
++            text(
++                f"""
++                WITH last_per_task AS (
++                    SELECT DISTINCT ON (tr.task_id)
++                        tr.task_id, tr.score, tr.max_score, tr.source_system
++                    FROM task_results tr
++                    JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
++                    JOIN tasks t
++                      ON t.id = tr.task_id
++                     AND t.course_id = ANY(:course_ids)
++                     AND t.is_active = true
++                    WHERE tr.user_id = :sid
++                      AND {learning_path_results_filter('tr')}
++                    ORDER BY tr.task_id, tr.submitted_at DESC, tr.id DESC
++                )
++                SELECT l.task_id, t.course_id, t.task_content, t.solution_rules,
++                       t.max_score AS task_max_score
++                FROM last_per_task l
++                JOIN tasks t ON t.id = l.task_id
++                WHERE l.max_score > 0
++                  AND (l.score::float / l.max_score) >= :ratio
++                  AND l.source_system IS DISTINCT FROM :manual
++                ORDER BY l.task_id
++                """
++            ),
++            {
++                "sid": student_id,
++                "course_ids": layout.tree_ids,
++                "ratio": PASS_THRESHOLD_RATIO,
++                "manual": MANUAL_TEACHER_SOURCE,
++            },
++        )
++    ).mappings().all()
++    by_chapter: dict[int, list[int]] = {}
++    for r in rows:
++        rules = CheckingService.build_solution_rules(r["solution_rules"], r["task_max_score"])
++        if not retrieval_service.task_supports_review(r["task_content"], rules):
++            continue
++        chapter = layout.chapter(r["course_id"])
++        by_chapter.setdefault(chapter.course_id, []).append(int(r["task_id"]))
++    return by_chapter
++
++
++async def course_completed(db: AsyncSession, *, student_id: int, course_id: int) -> bool:
++    """Завершён ли курс учеником (`compute_course_state == COMPLETED`).
++
++    Кеш состояния (`student_course_state`) не обновляется — срез ничего не
++    меняет в учебном пути (Р4). Оговорка: при COMPLETED сам
++    `compute_course_state` запускает свою идемпотентную эскалацию «курс
++    завершён, есть непроверенные» — так же, как при любом его вызове.
++    """
++    state = await LearningEngineService().compute_course_state(
++        db, student_id, course_id, update_state_table=False
++    )
++    return state.state == "COMPLETED"
++
++
++async def get_run(
++    db: AsyncSession, *, student_id: int, course_id: int, lock: bool = False
++) -> Optional[FinalCheckRuns]:
++    """Прогон среза ученика по курсу (или None)."""
++    stmt = select(FinalCheckRuns).where(
++        FinalCheckRuns.student_id == student_id,
++        FinalCheckRuns.course_id == course_id,
++    )
++    if lock:
++        stmt = stmt.with_for_update().execution_options(populate_existing=True)
++    return (await db.execute(stmt)).scalar_one_or_none()
++
++
++async def get_status(
++    db: AsyncSession, *, student_id: int, course_id: int
++) -> tuple[str, int, Optional[FinalCheckRuns]]:
++    """Состояние среза для карточки на странице курса. Ничего не пишет.
++
++    Returns:
++        (статус, размер по настройке, прогон или None). Статус:
++        `disabled` — рубильник выключен (карточки нет); `finished` — срез
++        пройден; `locked` — курс не завершён; `closed` — тариф закрывает
++        работу в курсе (выпускник); `in_progress` / `ready`.
++    """
++    enabled, size = await read_config(db, course_id)
++    if not enabled:
++        return "disabled", size, None
++    run = await get_run(db, student_id=student_id, course_id=course_id)
++    if run is not None and run.finished_at is not None:
++        return "finished", size, run
++    if not await course_completed(db, student_id=student_id, course_id=course_id):
++        return "locked", size, run
++    # Тариф закрывает работу в курсе (tsk-673, «Выпускник»): начать срез и
++    # ответить нельзя — карточку «Пройти срез» не показываем вовсе.
++    from app.services import graduation_service
++
++    try:
++        await graduation_service.assert_course_work_allowed(db, student_id)
++    except DomainError:
++        return "closed", size, run
++    return ("in_progress" if run is not None else "ready"), size, run
++
++
++async def _assert_open(db: AsyncSession, *, student_id: int, course_id: int) -> int:
++    """Рубильник включён и курс завершён — иначе 409 `final_check_locked`.
++
++    Returns:
++        Размер среза по настройке курса.
++    """
++    enabled, size = await read_config(db, course_id)
++    if not enabled or not await course_completed(
++        db, student_id=student_id, course_id=course_id
++    ):
++        raise DomainError(
++            "Итоговый срез откроется, когда курс будет пройден целиком.",
++            status_code=409,
++            payload={"code": FINAL_CHECK_LOCKED_CODE},
++        )
++    return size
++
++
++async def start(db: AsyncSession, *, student_id: int, course_id: int) -> FinalCheckRuns:
++    """Открыть срез: при первом открытии выбрать и сохранить состав.
++
++    Повторное открытие возвращает тот же прогон (состав не пересобирается).
++    Гонка двух первых открытий решается уникальностью (ученик, курс):
++    проигравший получает строку победителя.
++
++    Raises:
++        DomainError: 409 `final_check_locked` — срез выключен или курс не
++            завершён; 409 `final_check_empty` — нет пройденных заданий с
++            автопроверкой.
++    """
++    size = await _assert_open(db, student_id=student_id, course_id=course_id)
++    run = await get_run(db, student_id=student_id, course_id=course_id)
++    if run is not None:
++        if run.finished_at is None:
++            await _skip_deleted(db, student_id=student_id, course_id=course_id)
++            run = await get_run(db, student_id=student_id, course_id=course_id)
++        assert run is not None
++        return run
++
++    layout = await course_layout(db, course_id)
++    by_chapter = await eligible_task_ids(db, student_id=student_id, layout=layout)
++    pools = [
++        (ch.course_id, by_chapter.get(ch.course_id, [])) for ch in layout.chapters
++    ]
++    task_ids = select_task_ids(pools, size=size, student_id=student_id, course_id=course_id)
++    if not task_ids:
++        raise DomainError(
++            "В курсе нет пройденных заданий, по которым можно собрать срез.",
++            status_code=409,
++            payload={"code": FINAL_CHECK_EMPTY_CODE},
++        )
++    from sqlalchemy.dialects.postgresql import insert as pg_insert
++
++    await db.execute(
++        pg_insert(FinalCheckRuns)
++        .values(student_id=student_id, course_id=course_id, task_ids=task_ids, answers={})
++        .on_conflict_do_nothing(constraint="uq_final_check_runs_student_course")
++    )
++    await db.commit()
++    run = await get_run(db, student_id=student_id, course_id=course_id)
++    assert run is not None  # строка есть: вставлена здесь или конкурентом
++    logger.info(
++        "tsk-994: срез открыт student_id=%s course_id=%s run_id=%s task_ids=%s",
++        student_id, course_id, run.id, run.task_ids,
++    )
++    return run
++
++
++def build_result(
++    run_task_ids: Sequence[int],
++    answers: dict[str, Any],
++    layout: CourseLayout,
++    task_courses: dict[int, Optional[int]],
++    scheduled: Sequence[int],
++) -> dict[str, Any]:
++    """Итог среза: доля верных, главы с ошибками (в порядке программы).
++
++    Задания, пропущенные сервером (перестали проверяться автоматически, см.
++    `answer`), в счёт не входят.
++    """
++    scored = [
++        int(t) for t in run_task_ids
++        if isinstance(answers.get(str(t)), dict) and not answers[str(t)].get("skipped")
++    ]
++    correct = [t for t in scored if answers[str(t)].get("is_correct") is True]
++    wrong = [t for t in scored if answers[str(t)].get("is_correct") is not True]
++    total = len(scored)
++    ratio = (len(correct) / total) if total else 0.0
++    errors: list[dict[str, Any]] = []
++    for ch in layout.chapters:
++        ids = [t for t in wrong if layout.chapter(task_courses.get(t)).course_id == ch.course_id]
++        if ids:
++            errors.append(
++                {
++                    "course_id": ch.course_id,
++                    "course_uid": ch.course_uid,
++                    "title": ch.title,
++                    "task_ids": ids,
++                }
++            )
++    return {
++        "total": total,
++        "correct": len(correct),
++        "ratio": round(ratio, 4),
++        "skill_retained": total > 0 and ratio >= SKILL_RETAINED_RATIO,
++        "chapters_with_errors": errors,
++        "scheduled_for_review": sorted(int(t) for t in scheduled),
++    }
++
++
++async def _task_courses(db: AsyncSession, task_ids: Sequence[int]) -> dict[int, Optional[int]]:
++    rows = (
++        await db.execute(
++            text("SELECT id, course_id FROM tasks WHERE id = ANY(:ids)"),
++            {"ids": [int(t) for t in task_ids]},
++        )
++    ).all()
++    return {int(r[0]): (int(r[1]) if r[1] is not None else None) for r in rows}
++
++
++async def _finish_if_complete(
++    db: AsyncSession, run: FinalCheckRuns, *, student_id: int, course_id: int
++) -> None:
++    """Если отвечены (или пропущены) все задания — посчитать итог и закрыть срез."""
++    answers = dict(run.answers or {})
++    if any(str(t) not in answers for t in run.task_ids):
++        return
++    wrong_results = {
++        int(t): int(answers[str(t)]["result_id"])
++        for t in run.task_ids
++        if not answers[str(t)].get("skipped")
++        and answers[str(t)].get("is_correct") is not True
++        and answers[str(t)].get("result_id") is not None
++    }
++    # Ошибочные — в повторение (П3), если оно включено на курсе. Логика
++    # расписания живёт в retrieval_service, здесь только вызов.
++    scheduled = await retrieval_service.schedule_forgotten(
++        db, student_id=student_id, root_course_id=course_id, results=wrong_results
++    )
++    layout = await course_layout(db, course_id)
++    task_courses = await _task_courses(db, run.task_ids)
++    run.result = build_result(run.task_ids, answers, layout, task_courses, scheduled)
++    run.finished_at = _now()
++    logger.info(
++        "tsk-994: срез окончен student_id=%s course_id=%s run_id=%s correct=%s/%s",
++        student_id, course_id, run.id, run.result["correct"], run.result["total"],
++    )
++
++
++async def answer(
++    db: AsyncSession,
++    *,
++    student_id: int,
++    course_id: int,
++    task_id: int,
++    answer: StudentAnswer,
++    attempt_source_system: str = "spw_web",
++    current_user: Optional["CurrentUser"] = None,
++) -> AnswerOutcome:
++    """Принять ответ на задание среза; на последнем — посчитать итог.
++
++    Ответ проверяется той же автоматикой, что и обычная сдача, и пишется в
++    `task_results` с `source_system='final_check'` в курсовую попытку (та же
++    механика, что у повтора, `retrieval_service._course_attempt`). Статус
++    задания и курса, счёт и лимит попыток он не меняет.
++
++    Один ответ на задание: срез — снимок «помню ли», а не тренировка.
++
++    Raises:
++        DomainError: 409 `final_check_locked` / `final_check_finished` /
++            `final_check_already_answered` / `final_check_unsupported`;
++            404 `final_check_not_started` / `final_check_task_not_in_run`;
++            400 — тип ответа не совпадает с типом задания; 422
++            `evidence_required` — SA_COM/TBL_COM без комментария.
++            HTTPException 403 — не записан на курс задания (tsk-272).
++    """
++    from app.services import course_activity_service, dependency_lock_service
++    from app.services.checking_service import CheckingService
++    from app.services.task_results_service import TaskResultsService
++    from app.services.tasks_acl_service import assert_task_access
++    from app.services.tasks_service import TasksService
++
++    await _assert_open(db, student_id=student_id, course_id=course_id)
++
++    # Строка прогона под замком СРАЗУ и до единственной фиксации в конце
++    # (попытка ниже заводится без commit): два одновременных ответа на одно
++    # задание сериализуются, второй увидит его отвеченным и получит 409.
++    run = await get_run(db, student_id=student_id, course_id=course_id, lock=True)
++    if run is None:
++        raise DomainError(
++            "Итоговый срез ещё не начат.",
++            status_code=404,
++            payload={"code": FINAL_CHECK_NOT_STARTED_CODE},
++        )
++    if run.finished_at is not None:
++        raise DomainError(
++            "Итоговый срез уже пройден.",
++            status_code=409,
++            payload={"code": FINAL_CHECK_FINISHED_CODE},
++        )
++    if task_id not in [int(t) for t in run.task_ids]:
++        raise DomainError(
++            "Этого задания нет в итоговом срезе.",
++            status_code=404,
++            payload={"code": FINAL_CHECK_NOT_IN_RUN_CODE},
++        )
++    answers = dict(run.answers or {})
++    if str(task_id) in answers:
++        raise DomainError(
++            "На это задание в срезе уже есть ответ.",
++            status_code=409,
++            payload={"code": FINAL_CHECK_ANSWERED_CODE},
++        )
++
++    task = await TasksService().get_by_id(db, task_id)
++    checking = CheckingService()
++    supported = task is not None and task.is_active and task.course_id is not None
++    if supported:
++        # Те же гейты, что у обычного приёма ответа и у повтора: запись на курс
++        # задания (tsk-272, по вызывающему), курс выведен из работы (tsk-886) и
++        # закрыт зависимостью (tsk-1276) — по УЧЕНИКУ.
++        if current_user is not None:
++            await assert_task_access(db, current_user=current_user, task_course_id=task.course_id)
++        await dependency_lock_service.assert_course_not_locked(
++            db, student_id=student_id, course_id=task.course_id, task_id=task_id,
++        )
++        for cid in {task.course_id, course_id}:
++            await course_activity_service.assert_course_active_for_student(
++                db, student_id=student_id, course_id=cid, action="итоговый срез",
++            )
++        task_content = TaskContent.model_validate(task.task_content)
++        solution_rules = checking.build_solution_rules(task.solution_rules, task.max_score)
++        supported = retrieval_service.task_supports_review(task_content, solution_rules)
++    if not supported or task is None:
++        await _skip(db, run, task_id=task_id, student_id=student_id, course_id=course_id)
++
++    if answer.type != task_content.type:
++        raise DomainError(
++            f"Тип ответа ({answer.type}) не совпадает с типом задачи ({task_content.type}).",
++            status_code=400,
++        )
++    # Гейт 2.3f (tsk-419), как у повтора: SA_COM/TBL_COM без комментария не
++    # принимается — отказ, а не незачёт, ответ в срезе не расходуется.
++    if task_content.type in COMMENT_TASK_TYPES and not (answer.response.comment or "").strip():
++        raise DomainError(
++            "Добавьте комментарий: как вы получили ответ.",
++            status_code=422,
++            payload={"code": FINAL_CHECK_EVIDENCE_REQUIRED_CODE},
++        )
++
++    check_result: CheckResult = await asyncio.to_thread(
++        checking.check_task,
++        task_content=task_content,
++        solution_rules=solution_rules,
++        answer=answer,
++    )
++    if check_result.is_correct is None:
++        await _skip(db, run, task_id=task_id, student_id=student_id, course_id=course_id)
++
++    attempt = await retrieval_service._course_attempt(
++        db,
++        student_id=student_id,
++        task_id=task_id,
++        task_course_id=task.course_id,
++        root_course_id=course_id,
++        source_system=attempt_source_system,
++    )
++    task_result = await TaskResultsService().create_from_check_result(
++        db=db,
++        attempt_id=attempt.id,
++        task_id=task_id,
++        user_id=student_id,
++        answer=answer,
++        check_result=check_result,
++        source_system=FINAL_CHECK_SOURCE,
++        commit=False,
++    )
++    max_score = check_result.max_score or 0
++    passed = max_score > 0 and (check_result.score or 0) / max_score >= PASS_THRESHOLD_RATIO
++    task_result_id = int(task_result.id)
++    answers[str(task_id)] = {"result_id": task_result_id, "is_correct": passed}
++    run.answers = answers
++    await _finish_if_complete(db, run, student_id=student_id, course_id=course_id)
++    await db.commit()
++
++    logger.info(
++        "tsk-994: ответ среза student_id=%s course_id=%s task_id=%s correct=%s",
++        student_id, course_id, task_id, passed,
++    )
++    return AnswerOutcome(
++        task_id=task_id,
++        task_result_id=task_result_id,
++        check_result=check_result,
++        is_correct=passed,
++        run=run,
++    )
++
++
++async def _skip_deleted(db: AsyncSession, *, student_id: int, course_id: int) -> None:
++    """Исключить из незаконченного среза задания, удалённые из базы.
++
++    Удалённое задание ученик не увидит и не ответит на него, а без исключения
++    итог не посчитался бы никогда. Зовётся при повторном открытии среза
++    (клиент открывает его снова, когда неотвеченных не осталось) и перед
++    приёмом ответа. Строка прогона — под замком; фиксация здесь же.
++    """
++    run = await get_run(db, student_id=student_id, course_id=course_id, lock=True)
++    if run is None or run.finished_at is not None:
++        return
++    existing = set(await _task_courses(db, run.task_ids))
++    answers = dict(run.answers or {})
++    missing = [int(t) for t in run.task_ids if int(t) not in existing and str(t) not in answers]
++    if not missing:
++        return
++    for tid in missing:
++        answers[str(tid)] = {"skipped": True}
++    run.answers = answers
++    await _finish_if_complete(db, run, student_id=student_id, course_id=course_id)
++    await db.commit()
++    logger.warning(
++        "tsk-994: удалённые задания %s исключены из среза run_id=%s", missing, run.id
++    )
++
++
++async def _skip(
++    db: AsyncSession, run: FinalCheckRuns, *, task_id: int, student_id: int, course_id: int
++) -> NoReturn:
++    """Исключить из среза задание, которое больше не проверяется автоматически.
++
++    Правила задания могли поменяться после выбора состава (включили ручную
++    проверку, сняли эталон, задание выключили). Ответить на такое задание
++    нельзя, а без исключения срез не закончился бы никогда. Отметка
++    фиксируется, затем — отказ 409 `final_check_unsupported`; клиент
++    перечитывает срез и идёт к следующему заданию.
++    """
++    answers = dict(run.answers or {})
++    answers[str(task_id)] = {"skipped": True}
++    run.answers = answers
++    await _finish_if_complete(db, run, student_id=student_id, course_id=course_id)
++    await db.commit()
++    logger.warning(
++        "tsk-994: задание %s исключено из среза run_id=%s — нет автопроверки",
++        task_id, run.id,
++    )
++    raise DomainError(
++        "Это задание больше не проверяется автоматически — оно исключено из среза.",
++        status_code=409,
++        payload={"code": FINAL_CHECK_UNSUPPORTED_CODE},
++    )
++
++
++async def serialize_run(db: AsyncSession, run: FinalCheckRuns) -> dict[str, Any]:
++    """Прогон в форму ответа API: задания с главами, ответы, итог."""
++    from app.utils.task_title import humanize_task_title
++
++    task_ids = [int(t) for t in run.task_ids]
++    rows = (
++        await db.execute(
++            text(
++                """
++                SELECT t.id, t.external_uid, t.course_id,
++                       t.task_content->>'title' AS title,
++                       t.task_content->>'stem' AS stem,
++                       t.task_content->>'type' AS task_type
++                FROM tasks t WHERE t.id = ANY(:ids)
++                """
++            ),
++            {"ids": task_ids},
++        )
++    ).mappings().all()
++    by_id = {int(r["id"]): r for r in rows}
++    layout = await course_layout(db, run.course_id)
++    answers = run.answers or {}
++    items: list[dict[str, Any]] = []
++    for tid in task_ids:
++        r = by_id.get(tid)
++        if r is None:
++            continue
++        ch = layout.chapter(r["course_id"])
++        a = answers.get(str(tid))
++        skipped = isinstance(a, dict) and bool(a.get("skipped"))
++        items.append(
++            {
++                "task_id": tid,
++                "external_uid": r["external_uid"],
++                "title": humanize_task_title(tid, r["title"], r["stem"], r["external_uid"]),
++                "task_type": r["task_type"],
++                "chapter_id": ch.course_id,
++                "chapter_title": ch.title,
++                "answered": isinstance(a, dict),
++                "is_correct": (
++                    None if not isinstance(a, dict) or skipped else bool(a.get("is_correct"))
++                ),
++            }
++        )
++    return {
++        "run_id": int(run.id),
++        "course_id": int(run.course_id),
++        "started_at": run.started_at,
++        "finished_at": run.finished_at,
++        "items": items,
++        "result": run.result,
++    }
+diff --git a/app/services/learning_gaps_service.py b/app/services/learning_gaps_service.py
+index 724aad7..42c1493 100644
+--- a/app/services/learning_gaps_service.py
++++ b/app/services/learning_gaps_service.py
+@@ -23,8 +23,9 @@ from __future__ import annotations
+ 
+ import logging
+ from dataclasses import dataclass
++from typing import Any
+ 
+-from sqlalchemy import text
++from sqlalchemy import or_, text
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+ logger = logging.getLogger(__name__)
+@@ -110,16 +111,29 @@ MANUAL_TEACHER_SOURCE = "manual_teacher"
+ #: `learning_path_results_filter`.
+ RETRIEVAL_SOURCE = "retrieval"
+ 
++#: tsk-994 (П5): сдача задания итогового среза — диагностика после курса
++#: (решение оператора Р4). Как и повтор, это ответ самого ученика, но НЕ шаг
++#: учебного пути: статус задания, счёт попыток, «пройдено» и статус курса срез
++#: не меняет. Поэтому значение исключается везде, где исключён повтор.
++FINAL_CHECK_SOURCE = "final_check"
++
++#: Сдачи ученика вне учебного пути (tsk-992, tsk-994): ЕДИНЫЙ список для
++#: `learning_path_results_filter` / `learning_path_results_clause`. Новое
++#: «послекурсовое» значение добавляется сюда — и попадает во все расчёты разом.
++NON_LEARNING_PATH_SOURCES: tuple[str, ...] = (RETRIEVAL_SOURCE, FINAL_CHECK_SOURCE)
++
+ 
+ def own_activity_results_filter(alias: str = "tr") -> str:
+     """Условие «ученик сам что-то сдавал» для SQL — признак АКТИВНОСТИ (tsk-992).
+ 
+-    Шире `real_student_results_filter` на сдачи повтора: ученик, который
+-    только повторяет пройденное, работает, а не затих. Нужно там, где вопрос
++    Шире `real_student_results_filter` на сдачи повтора и итогового среза
++    (tsk-994): ученик, который только повторяет пройденное, работает, а не затих. Нужно там, где вопрос
+     «был ли ученик занят» — серия, «последняя своя работа» у куратора,
+     напоминание «вернись». Аналитика пробелов и явка повтор по-прежнему не видят.
+     """
+-    sources = ", ".join(f"'{s}'" for s in (*REAL_STUDENT_SOURCES, RETRIEVAL_SOURCE))
++    sources = ", ".join(
++        f"'{s}'" for s in (*REAL_STUDENT_SOURCES, *NON_LEARNING_PATH_SOURCES)
++    )
+     return f"{alias}.source_system IN ({sources})"
+ 
+ 
+@@ -129,12 +143,27 @@ def learning_path_results_filter(alias: str = "tr") -> str:
+     Статус задания (последний результат решает), счёт попыток против лимита и
+     «пройдено» в прогрессе считаются БЕЗ сдач повтора: неверный повтор не
+     должен превращать пройденное задание в FAILED, а повтор — тратить лимит.
+-    `IS DISTINCT FROM`, а не `<>`: строки со старым `source_system IS NULL`
+-    остаются в расчёте, как и были.
++    tsk-994: так же исключаются сдачи итогового среза (`final_check`) —
++    список значений в `NON_LEARNING_PATH_SOURCES`.
++
++    `IS NULL OR NOT IN`, а не просто `NOT IN`: строки со старым
++    `source_system IS NULL` остаются в расчёте, как и были.
+ 
+     ЕДИНСТВЕННОЕ место правила — расчёты статуса подставляют его отсюда.
+     """
+-    return f"{alias}.source_system IS DISTINCT FROM '{RETRIEVAL_SOURCE}'"
++    sources = ", ".join(f"'{s}'" for s in NON_LEARNING_PATH_SOURCES)
++    return (
++        f"({alias}.source_system IS NULL OR {alias}.source_system NOT IN ({sources}))"
++    )
++
++
++def learning_path_results_clause(column: Any) -> Any:
++    """То же правило, что `learning_path_results_filter`, для запросов ORM (tsk-994).
++
++    Args:
++        column: колонка `TaskResults.source_system` (или её аналог).
++    """
++    return or_(column.is_(None), column.notin_(NON_LEARNING_PATH_SOURCES))
+ 
+ 
+ def real_student_material_filter(alias: str = "smp") -> str:
+diff --git a/app/services/me_service.py b/app/services/me_service.py
+index 55c22a5..dca0b62 100644
+--- a/app/services/me_service.py
++++ b/app/services/me_service.py
+@@ -801,6 +801,8 @@ SELECT
+     tr.checked_at,
+     -- tsk-992: сдача повтора пройденного задания, а не шаг учебного пути.
+     (tr.source_system = 'retrieval') AS is_retrieval,
++    -- tsk-994: сдача задания итогового среза — диагностика после курса.
++    (tr.source_system = 'final_check') AS is_final_check,
+     -- tsk-1176: работа ждёт преподавателя — тот же предикат, что у очереди.
+     (tr.checked_at IS NULL AND {mandatory_review_sql('t')}) AS awaits_teacher
+ FROM task_results tr
+@@ -811,7 +813,8 @@ WHERE tr.user_id = :user_id
+        :filter = 'all'
+     OR (:filter = 'pending_review' AND tr.is_correct IS NULL)
+     OR (:filter = 'passed'         AND tr.is_correct = TRUE)
+-    -- tsk-992: неверный повтор — не «надо доделать»: задание уже пройдено.
++    -- tsk-992/tsk-994: неверный повтор или срез — не «надо доделать»:
++    -- задание уже пройдено.
+     OR (:filter = 'failed'         AND tr.is_correct = FALSE
+                                    AND {learning_path_results_filter('tr')})
+   )
+diff --git a/app/services/retrieval_service.py b/app/services/retrieval_service.py
+index 4426760..1a3aa11 100644
+--- a/app/services/retrieval_service.py
++++ b/app/services/retrieval_service.py
+@@ -53,6 +53,7 @@ from app.services.learning_engine_service import (
+     is_mentor_reviewed,
+ )
+ from app.services.learning_gaps_service import (
++    FINAL_CHECK_SOURCE,
+     MANUAL_TEACHER_SOURCE,
+     RETRIEVAL_SOURCE,
+ )
+@@ -231,7 +232,7 @@ async def schedule_after_pass(
+     ).mappings().first()
+     if row is None:
+         return False
+-    if row["source_system"] in (MANUAL_TEACHER_SOURCE, RETRIEVAL_SOURCE):
++    if row["source_system"] in (MANUAL_TEACHER_SOURCE, RETRIEVAL_SOURCE, FINAL_CHECK_SOURCE):
+         return False
+     max_score = row["max_score"] or 0
+     if max_score <= 0 or (row["score"] or 0) / max_score < PASS_THRESHOLD_RATIO:
+@@ -258,6 +259,9 @@ async def schedule_after_pass(
+                   AND tr.submitted_at <= :submitted_at
+                   AND tr.source_system IS DISTINCT FROM :manual
+                   AND tr.source_system IS DISTINCT FROM :retrieval
++                  -- tsk-994: ошибка итогового среза ставит задание на повтор
++                  -- сама (`schedule_forgotten`), «провалом до сдачи» не считается.
++                  AND tr.source_system IS DISTINCT FROM :final_check
+                   AND tr.max_score > 0
+                   AND (tr.score::float / tr.max_score) < :ratio
+                   AND NOT ({_GATE_REJECTION_SQL})
+@@ -271,6 +275,7 @@ async def schedule_after_pass(
+                 "submitted_at": row["submitted_at"],
+                 "manual": MANUAL_TEACHER_SOURCE,
+                 "retrieval": RETRIEVAL_SOURCE,
++                "final_check": FINAL_CHECK_SOURCE,
+                 "ratio": PASS_THRESHOLD_RATIO,
+             },
+         )
+@@ -310,6 +315,68 @@ async def schedule_after_pass(
+     return True
+ 
+ 
++async def schedule_forgotten(
++    db: AsyncSession,
++    *,
++    student_id: int,
++    root_course_id: int,
++    results: dict[int, int],
++) -> list[int]:
++    """Поставить на повтор задания, ошибочно решённые в итоговом срезе (tsk-994).
++
++    Ошибка в срезе — то же, что неверный повтор: навык не удержался. Поэтому
++    исход тот же, что у неверного повтора в `submit_review`: стадия 0, срок
++    +3 дня (Р2). Существующая строка (открытая или уже закреплённая) по
++    уникальности (ученик, задание, корень) откатывается к стадии 0 и, если была
++    закрыта, открывается снова — «закреплено» оказалось неправдой.
++
++    Транзакцию НЕ фиксирует: вызывающий пишет итог среза в той же транзакции.
++
++    Args:
++        db: сессия БД.
++        student_id: ученик.
++        root_course_id: корневой курс среза.
++        results: `{task_id: task_result_id}` ошибочных ответов среза.
++
++    Returns:
++        id заданий, поставленных на повтор; пусто, если рубильник П3 выключен.
++    """
++    if not results or not await is_enabled(db, root_course_id):
++        return []
++    due_at = _now() + timedelta(days=INTERVAL_DAYS[0])
++    scheduled: list[int] = []
++    for task_id, result_id in sorted(results.items()):
++        await db.execute(
++            text(
++                """
++                INSERT INTO task_review_schedule
++                    (student_id, task_id, course_id, interval_stage, due_at, last_result_id)
++                VALUES (:sid, :tid, :cid, 0, :due_at, :rid)
++                ON CONFLICT ON CONSTRAINT uq_task_review_schedule_student_task_course
++                DO UPDATE SET interval_stage = 0,
++                              due_at = EXCLUDED.due_at,
++                              last_result_id = EXCLUDED.last_result_id,
++                              completed_at = NULL,
++                              updated_at = now()
++                """
++            ),
++            {
++                "sid": student_id,
++                "tid": task_id,
++                "cid": root_course_id,
++                "due_at": due_at,
++                "rid": result_id,
++            },
++        )
++        scheduled.append(task_id)
++    logger.info(
++        "tsk-994: ошибки итогового среза поставлены на повтор student_id=%s "
++        "course_id=%s task_ids=%s due_at=%s",
++        student_id, root_course_id, scheduled, due_at.isoformat(),
++    )
++    return scheduled
++
++
+ async def tasks_with_hidden_answers(
+     db: AsyncSession,
+     *,
+diff --git a/app/services/task_history_service.py b/app/services/task_history_service.py
+index 075e4fc..d6eff23 100644
+--- a/app/services/task_history_service.py
++++ b/app/services/task_history_service.py
+@@ -36,7 +36,7 @@ from app.schemas.checking import StudentAnswer
+ from app.schemas.task_content import TaskContent
+ from app.services.checking_service import CheckingService
+ from app.services.learning_events_service import get_hint_open_counts
+-from app.services.learning_gaps_service import RETRIEVAL_SOURCE
++from app.services.learning_gaps_service import FINAL_CHECK_SOURCE, RETRIEVAL_SOURCE
+ 
+ logger = logging.getLogger(__name__)
+ 
+@@ -168,7 +168,9 @@ async def _load_attempts(
+     attempt_no = 0
+     for r in rows:
+         is_retrieval = r["source_system"] == RETRIEVAL_SOURCE
+-        if not is_retrieval:
++        # tsk-994: сдача итогового среза — тоже не попытка учебного пути.
++        is_final_check = r["source_system"] == FINAL_CHECK_SOURCE
++        if not (is_retrieval or is_final_check):
+             attempt_no += 1
+         attempt: Dict[str, Any] = {
+             "task_result_id": int(r["task_result_id"]),
+@@ -185,6 +187,7 @@ async def _load_attempts(
+             "checked_at": r["checked_at"],
+             "manual": (r["source_system"] == _MANUAL_SOURCE),
+             "is_retrieval": is_retrieval,
++            "is_final_check": is_final_check,
+         }
+         if task_meta is not None:
+             # Пересчитываем по СЫРОМУ ответу из БД, а не по `attempt["answer_json"]`:
+diff --git a/app/services/task_results_service.py b/app/services/task_results_service.py
+index 05013c1..2040138 100644
+--- a/app/services/task_results_service.py
++++ b/app/services/task_results_service.py
+@@ -14,7 +14,7 @@ from app.services.base import BaseService
+ from app.services.checking_service import CheckingService
+ from app.services.learning_gaps_service import (
+     REAL_STUDENT_SOURCES,
+-    RETRIEVAL_SOURCE,
++    learning_path_results_clause,
+     learning_path_results_filter,
+ )
+ 
+@@ -716,8 +716,9 @@ class TaskResultsService(BaseService[TaskResults]):
+             .where(
+                 TaskResults.user_id == user_id,
+                 Attempts.cancelled_at.is_(None),
+-                # tsk-992: повтор не добавляет баллов к прохождению.
+-                TaskResults.source_system.is_distinct_from(RETRIEVAL_SOURCE),
++                # tsk-992/tsk-994: повтор и итоговый срез не добавляют баллов
++                # к прохождению.
++                learning_path_results_clause(TaskResults.source_system),
+             )
+         )
+         totals_row = (await db.execute(totals_query)).first()
+diff --git a/app/services/task_sampling.py b/app/services/task_sampling.py
+index 3eb9c9f..cf077bf 100644
+--- a/app/services/task_sampling.py
++++ b/app/services/task_sampling.py
+@@ -25,9 +25,15 @@ import random
+ from typing import Iterable, Optional, Sequence
+ 
+ 
+-def deterministic_seed(student_id: int, course_id: int) -> int:
+-    """Стабильный (между процессами и рестартами) сид для пары студент+подкурс."""
+-    digest = hashlib.sha256(f"{student_id}:{course_id}".encode("utf-8")).hexdigest()
++def deterministic_seed(student_id: int, course_id: int, salt: str = "") -> int:
++    """Стабильный (между процессами и рестартами) сид для пары студент+подкурс.
++
++    `salt` (tsk-994) разводит независимые выборки по одной паре: итоговый срез
++    берёт соль «final», чтобы его набор не повторял порядок выборки по
++    сложности. Без соли ключ прежний — существующие наборы не меняются.
++    """
++    key = f"{student_id}:{course_id}" if not salt else f"{salt}:{student_id}:{course_id}"
++    digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
+     return int(digest[:16], 16)
+ 
+ 
+diff --git a/app/services/teacher_activity_feed_service.py b/app/services/teacher_activity_feed_service.py
+index ffc6db3..e6c65c3 100644
+--- a/app/services/teacher_activity_feed_service.py
++++ b/app/services/teacher_activity_feed_service.py
+@@ -33,7 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
+ from app.auth.current_user import CurrentUser
+ from app.schemas.code_review import build_code_review_badge
+ from app.services import roles_service
+-from app.services.learning_gaps_service import RETRIEVAL_SOURCE
++from app.services.learning_gaps_service import FINAL_CHECK_SOURCE, RETRIEVAL_SOURCE
+ from app.services.teacher_queue_service import teacher_course_acl
+ from app.utils.task_title import humanize_task_title
+ 
+@@ -128,6 +128,10 @@ async def _fetch_task_solved(
+             # tsk-992: повтор уже пройденного задания — «решил неверно» читалось
+             # бы как провал по учебному пути, а статус задания не меняется.
+             verb = "повторил"
++        elif r["source_system"] == FINAL_CHECK_SOURCE:
++            # tsk-994: итоговый срез после курса — диагностика, статус задания
++            # и курса он не меняет (решение Р4).
++            verb = "проверил в итоговом срезе"
+         events.append({
+             "type": "task_solved",
+             "student_id": int(r["student_id"]),
+diff --git a/app/services/teacher_lesson_summary_service.py b/app/services/teacher_lesson_summary_service.py
+index 806479b..4c9dbb8 100644
+--- a/app/services/teacher_lesson_summary_service.py
++++ b/app/services/teacher_lesson_summary_service.py
+@@ -307,8 +307,8 @@ async def _load_last_activity(db: AsyncSession, *, student_id: int) -> Optional[
+                 "    SELECT tr.task_id, tr.submitted_at FROM task_results tr "
+                 "    WHERE tr.user_id = :student_id AND tr.is_correct = true "
+                 "      AND tr.source_system IS DISTINCT FROM :manual_source "
+-                # tsk-992: повтор пройденного — не «последнее решённое».
+-                "      AND tr.source_system IS DISTINCT FROM 'retrieval' "
++                # tsk-992/tsk-994: повтор и итоговый срез — не «последнее решённое».
++                f"      AND {learning_path_results_filter('tr')} "
+                 "    ORDER BY tr.submitted_at DESC LIMIT 1 "
+                 ") t "
+                 "JOIN tasks tk ON tk.id = t.task_id "
+diff --git a/docs/api-reference.md b/docs/api-reference.md
+index 4dc956d..20831e2 100644
+--- a/docs/api-reference.md
++++ b/docs/api-reference.md
+@@ -754,6 +754,20 @@ Stateless-проверка одной задачи без сохранения 
+ 
+ **Ошибки:** `404` — задание/студент/попытка не найдены; `409` — попытка не принадлежит студенту или не в контексте задания/курса.
+ 
++### Итоговый срез после курса (tsk-994, П5)
++
++Только диагностика (решение оператора Р4): статус курса, зависимости и выпуск срез не меняет. По умолчанию выключен.
++
++| Метод | Путь | Кто | Описание |
++|-------|------|-----|----------|
++| GET | `/courses/{course_id}/final-check` | методист, админ | Рубильник `{enabled, size}` из `courses.final_check_config`; NULL читается как `{"enabled": false, "size": 10}`. 404 — курса нет. |
++| PUT | `/courses/{course_id}/final-check` | методист, админ | Полная замена рубильника. Тело `{enabled: bool, size: 1…50}`; 422 — размер вне пределов. |
++| GET | `/learning/courses/{course_id}/final-check?student_id=` | ученик (свой), сервис | Состояние для карточки: `status` = `disabled` (карточку не показывать) \| `locked` (курс не завершён) \| `ready` \| `in_progress` \| `finished`; `size`; `run` — прогон, если срез открывали. Ничего не пишет. 403 — чужой `student_id`, `payment_overdue`. |
++| POST | `/learning/courses/{course_id}/final-check/start` | ученик (свой), сервис | Тело `{student_id}`. При первом открытии выбирает `size` заданий из пройденных учеником заданий курса и подкурсов (только с автопроверкой), равномерно по главам, детерминированно; состав сохраняется в `final_check_runs`. Повторный вызов — тот же набор. 409 `final_check_locked` — срез выключен или `compute_course_state != COMPLETED`; 409 `final_check_empty` — нечего выбрать; 403 `payment_overdue` / `course_work_closed` (выпускник). |
++| POST | `/learning/courses/{course_id}/final-check/{task_id}/answer` | ученик (свой), сервис | Тело `{student_id, answer}`. Ответ проверяется автоматикой и пишется в `task_results` с `source_system='final_check'`; статус задания и курса, счёт и лимит попыток не меняются. Один ответ на задание. После последнего — `run.result`: `total`, `correct`, `ratio`, `skill_retained` (≥ 80 % верных), `chapters_with_errors[]` (`course_id`, `course_uid`, `title`, `task_ids`), `scheduled_for_review[]` (ошибки, поставленные в повторение tsk-992, если оно включено на курсе). Ошибки: 404 `final_check_not_started` / `final_check_task_not_in_run`; 409 `final_check_locked` / `final_check_finished` / `final_check_already_answered` / `final_check_unsupported` (задание перестало проверяться автоматически — исключено из среза); 400 — тип ответа не совпадает; 422 `evidence_required` — SA_COM/TBL_COM без комментария; 403 — как у `start`. |
++
++Сдачи среза помечены в истории: `is_final_check` в `GET /me/tasks/{task_id}/history` (номер попытки не увеличивают) и в `GET /me/history` (в фильтр `failed` не попадают); в ленте преподавателя — «проверил в итоговом срезе».
++
+ ---
+ 
+ ## Эндпойнты статистики
+diff --git a/tests/conftest.py b/tests/conftest.py
+index b49b64e..5a9cbd1 100644
+--- a/tests/conftest.py
++++ b/tests/conftest.py
+@@ -335,6 +335,9 @@ SELF_MANAGED_CONNECTION_MODULES: frozenset[str] = frozenset(
+         # tsk-992: две одновременные сдачи повтора — замок строки расписания
+         # проверяется только двумя настоящими параллельными транзакциями.
+         "test_tsk992_retrieval_race.py",
++        # tsk-994: одновременные ответы на задание итогового среза — замок
++        # строки прогона проверяется только параллельными транзакциями.
++        "test_tsk994_final_check_race.py",
+         "test_teacher_courses_triggers_smoke.py",
+         "test_teacher_help_requests_overdue_tsk312.py",
+         "test_teacher_help_requests_stage38.py",
+diff --git a/tests/test_tsk994_final_check.py b/tests/test_tsk994_final_check.py
+new file mode 100644
+index 0000000..9153407
+--- /dev/null
++++ b/tests/test_tsk994_final_check.py
+@@ -0,0 +1,790 @@
++"""tsk-994 (П5): итоговый срез после курса.
++
++Решение оператора Р4: срез — только диагностика. Статус курса, зависимости и
++выпуск он не меняет.
++
++Главные свойства, ради которых файл существует (критерии 1, 6 постановки):
++- срез недоступен до COMPLETED и при выключенном рубильнике (по умолчанию) —
++  409 `final_check_locked`;
++- набор детерминирован, равномерен по главам и сохраняется: повторное открытие
++  даёт тот же состав;
++- ответ среза (`source_system='final_check'`) НЕ меняет статус задания
++  (`compute_task_state` и batch), статус курса, счёт и лимит попыток, пробелы,
++  П4 `has_own_attempt` и планировщик П3;
++- итог: доля верных, главы с ошибками; ошибки при включённом П3 — в повторение.
++"""
++from __future__ import annotations
++
++import json
++import random
++from datetime import datetime, timedelta, timezone
++
++import pytest
++from sqlalchemy import text
++
++from app.models.users import Users
++from app.services import entitlements_service as ent
++from app.services import final_check_service
++from app.services.auth import identity_link_service
++from app.services.auth.session_service import create_session
++from app.services.learning_engine_service import LearningEngineService
++from app.services.learning_gaps_service import (
++    FINAL_CHECK_SOURCE,
++    learning_path_results_filter,
++    own_activity_results_filter,
++    real_student_results_filter,
++)
++from app.services.me_service import get_syllabus_states
++from app.services.task_sampling import deterministic_seed
++
++# asyncio_mode = auto (pytest.ini): асинхронные тесты метки не требуют.
++
++_TAG = "tsk994"
++_WRONG = {"type": "SC", "response": {"selected_option_ids": ["a"]}}
++_RIGHT = {"type": "SC", "response": {"selected_option_ids": ["b"]}}
++
++
++# ───────────────────────────── хелперы ──────────────────────────────────────
++
++
++@pytest.fixture(autouse=True)
++def _gates_off(monkeypatch):
++    """Подписной гейт выключен — он проверяется отдельно."""
++    monkeypatch.setattr(ent.settings, "subscription_gate_mode", "off")
++
++
++def _rnd() -> int:
++    return random.randint(10**8, 10**10)
++
++
++async def _user(db, name: str, role: str | None = None) -> tuple[int, str]:
++    """Пользователь с живой сессией (bearer-токен) и, при надобности, ролью."""
++    u = Users(
++        email=f"{_TAG}-{name}-{_rnd()}@example.com",
++        password_hash=None,
++        full_name=f"{_TAG} {name}",
++        tg_id=None,
++    )
++    db.add(u)
++    await db.flush()
++    await identity_link_service.upsert_identity(db, u.id, "email", u.email)
++    if role is not None:
++        await db.execute(
++            text(
++                "INSERT INTO user_roles (user_id, role_id) "
++                "SELECT :u, r.id FROM roles r WHERE r.name = :role"
++            ),
++            {"u": u.id, "role": role},
++        )
++    token, _, _ = await create_session(db, user_id=u.id)
++    await db.commit()
++    return u.id, token
++
++
++def _bearer(token: str) -> dict[str, str]:
++    return {"Authorization": f"Bearer {token}"}
++
++
++async def _course(db, title: str, *, final: dict | None = None, retrieval: bool | None = None) -> int:
++    res = await db.execute(
++        text(
++            "INSERT INTO courses (title, access_level, final_check_config, retrieval_config) "
++            "VALUES (:t, 'self_guided', CAST(:fc AS jsonb), CAST(:rc AS jsonb)) RETURNING id"
++        ),
++        {
++            "t": f"{_TAG}-{title}-{_rnd()}",
++            "fc": None if final is None else json.dumps(final),
++            "rc": None if retrieval is None else json.dumps({"enabled": retrieval}),
++        },
++    )
++    return res.scalar_one()
++
++
++async def _child(db, parent_id: int, title: str) -> int:
++    cid = await _course(db, title)
++    await db.execute(
++        text("INSERT INTO course_parents (course_id, parent_course_id) VALUES (:c, :p)"),
++        {"c": cid, "p": parent_id},
++    )
++    return cid
++
++
++async def _task(db, course_id: int, *, max_attempts: int | None = None, title: str = "2+2") -> int:
++    difficulty_id = (await db.execute(text("SELECT id FROM difficulties ORDER BY id LIMIT 1"))).scalar()
++    res = await db.execute(
++        text(
++            "INSERT INTO tasks (external_uid, max_score, task_content, solution_rules, "
++            "course_id, difficulty_id, is_active, max_attempts) "
++            "VALUES (:e, 1, CAST(:c AS jsonb), CAST(:r AS jsonb), :cid, :d, true, :ma) "
++            "RETURNING id"
++        ),
++        {
++            "e": f"{_TAG}-{_rnd()}",
++            "c": json.dumps(
++                {
++                    "type": "SC",
++                    "title": f"Задание {title}",
++                    "stem": "2+2?",
++                    "options": [{"id": "a", "text": "3"}, {"id": "b", "text": "4"}],
++                }
++            ),
++            "r": json.dumps({"max_score": 1, "correct_options": ["b"]}),
++            "cid": course_id,
++            "d": difficulty_id,
++            "ma": max_attempts,
++        },
++    )
++    return res.scalar_one()
++
++
++async def _enroll(db, student_id: int, course_id: int) -> None:
++    await db.execute(
++        text("INSERT INTO user_courses (user_id, course_id, is_active) VALUES (:u, :c, true)"),
++        {"u": student_id, "c": course_id},
++    )
++    await db.commit()
++
++
++async def _answer(client, token: str, student_id: int, root_id: int, task_id: int, answer: dict):
++    """Обычная сдача ответа через учебный путь SPW."""
++    resp = await client.post(
++        f"/api/v1/learning/tasks/{task_id}/start-or-get-attempt",
++        headers=_bearer(token),
++        json={"student_id": student_id, "root_course_id": root_id, "source_system": "spw_web"},
++    )
++    assert resp.status_code == 200, resp.text
++    attempt_id = resp.json()["attempt_id"]
++    resp = await client.post(
++        f"/api/v1/attempts/{attempt_id}/answers",
++        headers=_bearer(token),
++        json={"items": [{"task_id": task_id, "answer": answer}]},
++    )
++    return resp
++
++
++class _Setup:
++    """Корень с двумя главами по `per_chapter` заданий; ученик записан на корень."""
++
++    def __init__(self, student_id, token, root_id, chapters, tasks):
++        self.student_id = student_id
++        self.token = token
++        self.root_id = root_id
++        self.chapters: list[int] = chapters
++        self.tasks: dict[int, list[int]] = tasks
++
++    @property
++    def all_tasks(self) -> list[int]:
++        return [t for ch in self.chapters for t in self.tasks[ch]]
++
++
++async def _setup(
++    db,
++    *,
++    final: dict | None = None,
++    retrieval: bool | None = None,
++    per_chapter: int = 3,
++    max_attempts: int | None = None,
++) -> _Setup:
++    student_id, token = await _user(db, "s")
++    root_id = await _course(db, "root", final=final, retrieval=retrieval)
++    chapters = [await _child(db, root_id, "ch1"), await _child(db, root_id, "ch2")]
++    tasks = {
++        ch: [await _task(db, ch, max_attempts=max_attempts, title=f"{n}") for n in range(per_chapter)]
++        for ch in chapters
++    }
++    await db.commit()
++    await _enroll(db, student_id, root_id)
++    return _Setup(student_id, token, root_id, chapters, tasks)
++
++
++async def _pass_all(client, s: _Setup) -> None:
++    for tid in s.all_tasks:
++        resp = await _answer(client, s.token, s.student_id, s.root_id, tid, _RIGHT)
++        assert resp.status_code == 200, resp.text
++
++
++async def _status(client, s: _Setup) -> dict:
++    resp = await client.get(
++        f"/api/v1/learning/courses/{s.root_id}/final-check",
++        headers=_bearer(s.token),
++        params={"student_id": s.student_id},
++    )
++    assert resp.status_code == 200, resp.text
++    return resp.json()
++
++
++async def _start(client, s: _Setup):
++    return await client.post(
++        f"/api/v1/learning/courses/{s.root_id}/final-check/start",
++        headers=_bearer(s.token),
++        json={"student_id": s.student_id},
++    )
++
++
++async def _fc_answer(client, s: _Setup, task_id: int, answer: dict):
++    return await client.post(
++        f"/api/v1/learning/courses/{s.root_id}/final-check/{task_id}/answer",
++        headers=_bearer(s.token),
++        json={"student_id": s.student_id, "answer": answer},
++    )
++
++
++_ON = {"enabled": True, "size": 4}
++
++
++# ───────────────── 1. рубильник курса ───────────────────────────────────────
++
++
++async def test_config_default_off_and_methodist_toggles(db, client) -> None:
++    """По умолчанию выключено (size 10); методист включает; ученику закрыто."""
++    _, methodist_token = await _user(db, "m", role="methodist")
++    _, student_token = await _user(db, "s")
++    course_id = await _course(db, "cfg")
++    await db.commit()
++
++    url = f"/api/v1/courses/{course_id}/final-check"
++    resp = await client.get(url, headers=_bearer(methodist_token))
++    assert resp.status_code == 200, resp.text
++    assert resp.json() == {"enabled": False, "size": 10}
++
++    resp = await client.put(url, headers=_bearer(methodist_token), json={"enabled": True, "size": 6})
++    assert resp.status_code == 200, resp.text
++    assert resp.json() == {"enabled": True, "size": 6}
++    stored = (
++        await db.execute(text("SELECT final_check_config FROM courses WHERE id = :c"), {"c": course_id})
++    ).scalar_one()
++    assert stored == {"enabled": True, "size": 6}
++
++    resp = await client.put(url, headers=_bearer(methodist_token), json={"enabled": True, "size": 0})
++    assert resp.status_code == 422
++    resp = await client.put(url, headers=_bearer(student_token), json={"enabled": False})
++    assert resp.status_code == 403, resp.text
++    resp = await client.get("/api/v1/courses/999999999/final-check", headers=_bearer(methodist_token))
++    assert resp.status_code == 404
++
++
++def test_parse_config_only_explicit_true() -> None:
++    parse = final_check_service.parse_config
++    assert parse(None) == (False, 10)
++    assert parse({}) == (False, 10)
++    assert parse({"enabled": "true"}) == (False, 10)
++    assert parse({"enabled": True}) == (True, 10)
++    assert parse({"enabled": True, "size": 5}) == (True, 5)
++    assert parse({"enabled": True, "size": 0}) == (True, 10)
++    assert parse({"enabled": True, "size": True}) == (True, 10)
++    assert parse({"enabled": True, "size": "5"}) == (True, 10)
++
++
++# ───────────────── 2. выборка ───────────────────────────────────────────────
++
++
++def test_select_is_deterministic_and_even_by_chapters() -> None:
++    pools = [(1, list(range(100, 110))), (2, list(range(200, 205))), (3, [300])]
++    picked = final_check_service.select_task_ids(pools, size=7, student_id=5, course_id=9)
++    assert picked == final_check_service.select_task_ids(
++        list(reversed(pools))[::-1], size=7, student_id=5, course_id=9
++    )
++    assert len(picked) == 7 and len(set(picked)) == 7
++    by_ch = {ch: [t for t in picked if t in ids] for ch, ids in pools}
++    # Глава 3 даёт единственное задание, остаток делится поровну между 1 и 2.
++    assert [len(by_ch[1]), len(by_ch[2]), len(by_ch[3])] == [3, 3, 1]
++    # Порядок показа — по главам в порядке программы.
++    assert picked == by_ch[1] + by_ch[2] + by_ch[3]
++
++
++def test_select_takes_all_when_pool_small_and_handles_empty() -> None:
++    pools = [(1, [10, 11]), (2, []), (3, [30])]
++    picked = final_check_service.select_task_ids(pools, size=10, student_id=1, course_id=1)
++    assert sorted(picked) == [10, 11, 30]
++    assert final_check_service.select_task_ids([(1, [])], size=5, student_id=1, course_id=1) == []
++    assert final_check_service.select_task_ids(pools, size=0, student_id=1, course_id=1) == []
++
++
++def test_select_more_chapters_than_size_one_per_chapter() -> None:
++    pools = [(c, [c * 10, c * 10 + 1]) for c in range(1, 9)]
++    picked = final_check_service.select_task_ids(pools, size=3, student_id=7, course_id=3)
++    chapters = {t // 10 for t in picked}
++    assert len(picked) == 3 and len(chapters) == 3, "по одному заданию на разные главы"
++    assert picked == final_check_service.select_task_ids(pools, size=3, student_id=7, course_id=3)
++
++
++def test_seed_salt_keeps_old_seed() -> None:
++    """Соль «final» даёт свой сид; без соли сид прежний (выборка tsk-314 цела)."""
++    import hashlib
++
++    old = int(hashlib.sha256(b"5:9").hexdigest()[:16], 16)
++    assert deterministic_seed(5, 9) == old
++    assert deterministic_seed(5, 9, salt="final") != old
++
++
++# ───────────────── 3. гейт доступа ──────────────────────────────────────────
++
++
++async def test_disabled_by_default_status_and_start_locked(db, client) -> None:
++    s = await _setup(db)
++    await _pass_all(client, s)
++    body = await _status(client, s)
++    assert body["status"] == "disabled" and body["run"] is None
++    resp = await _start(client, s)
++    assert resp.status_code == 409, resp.text
++    assert resp.json()["payload"]["code"] == "final_check_locked"
++
++
++async def test_locked_until_course_completed(db, client) -> None:
++    s = await _setup(db, final=_ON)
++    first = s.all_tasks[0]
++    assert (await _answer(client, s.token, s.student_id, s.root_id, first, _RIGHT)).status_code == 200
++    assert (await _status(client, s))["status"] == "locked"
++    resp = await _start(client, s)
++    assert resp.status_code == 409 and "final_check_locked" in resp.text
++    # Ответ на задание до старта и до завершения курса — тоже 409.
++    resp = await _fc_answer(client, s, first, _RIGHT)
++    assert resp.status_code == 409 and "final_check_locked" in resp.text
++    exists = (
++        await db.execute(
++            text("SELECT COUNT(*) FROM final_check_runs WHERE student_id = :s"), {"s": s.student_id}
++        )
++    ).scalar_one()
++    assert exists == 0
++
++
++async def test_foreign_student_forbidden(db, client) -> None:
++    s = await _setup(db, final=_ON)
++    _, other_token = await _user(db, "o")
++    resp = await client.get(
++        f"/api/v1/learning/courses/{s.root_id}/final-check",
++        headers=_bearer(other_token),
++        params={"student_id": s.student_id},
++    )
++    assert resp.status_code == 403
++    resp = await client.post(
++        f"/api/v1/learning/courses/{s.root_id}/final-check/start",
++        headers=_bearer(other_token),
++        json={"student_id": s.student_id},
++    )
++    assert resp.status_code == 403
++
++
++async def test_alumni_can_see_but_not_take(db, client) -> None:
++    """Выпускник: работа в курсе закрыта (tsk-673) — срез тоже; итог виден."""
++    s = await _setup(db, final=_ON)
++    await _pass_all(client, s)
++    # Подписку при входе могла завести самопочинка учётки — меняем тариф у неё.
++    await db.execute(
++        text("DELETE FROM student_subscription WHERE student_id = :sid"), {"sid": s.student_id}
++    )
++    await db.execute(
++        text(
++            "INSERT INTO student_subscription (student_id, plan_id) "
++            "SELECT :sid, id FROM subscription_plan WHERE code = 'alumni'"
++        ),
++        {"sid": s.student_id},
++    )
++    await db.commit()
++    # Карточку «Пройти срез» выпускнику не показываем — статус `closed`.
++    assert (await _status(client, s))["status"] == "closed"
++    resp = await _start(client, s)
++    assert resp.status_code == 403 and "course_work_closed" in resp.text
++
++
++# ───────────────── 4. состав среза ──────────────────────────────────────────
++
++
++async def test_start_selects_passed_tasks_evenly_and_persists(db, client) -> None:
++    s = await _setup(db, final=_ON)
++    await _pass_all(client, s)
++    assert (await _status(client, s))["status"] == "ready"
++
++    resp = await _start(client, s)
++    assert resp.status_code == 200, resp.text
++    run = resp.json()
++    ids = [i["task_id"] for i in run["items"]]
++    assert len(ids) == 4 and len(set(ids)) == 4
++    per_ch = {ch: sum(i["chapter_id"] == ch for i in run["items"]) for ch in s.chapters}
++    assert per_ch == {s.chapters[0]: 2, s.chapters[1]: 2}
++    assert all(i["answered"] is False and i["is_correct"] is None for i in run["items"])
++    assert run["result"] is None and run["finished_at"] is None
++
++    # Повторное открытие — тот же набор; в БД одна строка.
++    again = (await _start(client, s)).json()
++    assert [i["task_id"] for i in again["items"]] == ids
++    stored = (
++        await db.execute(
++            text("SELECT task_ids FROM final_check_runs WHERE student_id = :s AND course_id = :c"),
++            {"s": s.student_id, "c": s.root_id},
++        )
++    ).scalars().all()
++    assert stored == [ids]
++    status = await _status(client, s)
++    assert status["status"] == "in_progress"
++    assert [i["task_id"] for i in status["run"]["items"]] == ids
++
++
++async def test_manual_credit_not_selected(db, client) -> None:
++    """Ручной зачёт преподавателя — не своё решение: в срез не берётся."""
++    s = await _setup(db, final={"enabled": True, "size": 10}, per_chapter=2)
++    manual_task = s.all_tasks[0]
++    for tid in s.all_tasks[1:]:
++        assert (await _answer(client, s.token, s.student_id, s.root_id, tid, _RIGHT)).status_code == 200
++    attempt_id = (
++        await db.execute(
++            text(
++                "INSERT INTO attempts (user_id, course_id, root_course_id, source_system) "
++                "VALUES (:u, :c, :r, 'manual_teacher') RETURNING id"
++            ),
++            {"u": s.student_id, "c": s.chapters[0], "r": s.root_id},
++        )
++    ).scalar_one()
++    await db.execute(
++        text(
++            "INSERT INTO task_results (user_id, task_id, attempt_id, score, max_score, "
++            "  is_correct, submitted_at, received_at, count_retry, source_system) "
++            "VALUES (:u, :t, :a, 1, 1, true, now(), now(), 0, 'manual_teacher')"
++        ),
++        {"u": s.student_id, "t": manual_task, "a": attempt_id},
++    )
++    await db.commit()
++    resp = await _start(client, s)
++    assert resp.status_code == 200, resp.text
++    ids = {i["task_id"] for i in resp.json()["items"]}
++    assert ids == set(s.all_tasks[1:])
++
++
++# ───────────────── 5. ответы не меняют учебный путь ─────────────────────────
++
++
++async def test_wrong_answer_keeps_passed_limit_course_gaps_and_p4(db, client) -> None:
++    """Критерий 6: неверный ответ среза не трогает статусы, лимит и пробелы.
++
++    Лимит 2: провал + сдача исчерпывают его, так что любая утечка среза в
++    счёт дала бы 3 из 2.
++    """
++    s = await _setup(db, final={"enabled": True, "size": 10}, per_chapter=1, max_attempts=2)
++    target = s.all_tasks[0]
++    assert (await _answer(client, s.token, s.student_id, s.root_id, target, _WRONG)).status_code == 200
++    await _pass_all(client, s)
++    engine = LearningEngineService()
++    before = await engine.compute_task_state(db, s.student_id, target, s.root_id)
++    assert (before.state, before.attempts_used) == ("PASSED", 2)
++    course_before = await engine.compute_course_state(
++        db, s.student_id, s.root_id, update_state_table=False
++    )
++    assert course_before.state == "COMPLETED"
++    attempts_before = (
++        await db.execute(text("SELECT COUNT(*) FROM attempts WHERE user_id = :u"), {"u": s.student_id})
++    ).scalar_one()
++
++    async def _count(flt: str) -> int:
++        return (
++            await db.execute(
++                text(f"SELECT COUNT(*) FROM task_results tr WHERE tr.user_id = :u AND {flt}"),
++                {"u": s.student_id},
++            )
++        ).scalar_one()
++
++    real_before = await _count(real_student_results_filter("tr"))
++
++    assert (await _start(client, s)).status_code == 200
++    resp = await _fc_answer(client, s, target, _WRONG)
++    assert resp.status_code == 200, resp.text
++    body = resp.json()
++    assert body["is_correct"] is False
++    src = (
++        await db.execute(
++            text(
++                "SELECT tr.source_system, a.root_course_id FROM task_results tr "
++                "JOIN attempts a ON a.id = tr.attempt_id WHERE tr.id = :r"
++            ),
++            {"r": body["task_result_id"]},
++        )
++    ).fetchone()
++    assert (src.source_system, src.root_course_id) == (FINAL_CHECK_SOURCE, s.root_id)
++
++    after = await engine.compute_task_state(db, s.student_id, target, s.root_id)
++    assert (after.state, after.attempts_used) == ("PASSED", 2)
++    assert (await engine.compute_task_state(db, s.student_id, target)).state == "PASSED"
++    batch = await engine.compute_task_states_batch(
++        db, s.student_id, [target], root_course_id=s.root_id
++    )
++    assert (batch[target].state, batch[target].attempts_used) == ("PASSED", 2)
++    course_after = await engine.compute_course_state(
++        db, s.student_id, s.root_id, update_state_table=False
++    )
++    assert course_after == course_before
++
++    syllabus = await get_syllabus_states(db, s.student_id, s.root_id)
++    item = [i for i in syllabus["items"] if i.get("kind") == "task" and i.get("task_id") == target]
++    assert item and item[0]["status"] == "passed" and item[0]["attempts_used"] == 2
++
++    # Своей попытки срез не заводит; в пробелы не попадает; П4 цел.
++    attempts_after = (
++        await db.execute(text("SELECT COUNT(*) FROM attempts WHERE user_id = :u"), {"u": s.student_id})
++    ).scalar_one()
++    assert attempts_after == attempts_before
++    assert await _count(real_student_results_filter("tr")) == real_before
++    assert await _count(learning_path_results_filter("tr")) == real_before
++    assert await _count(own_activity_results_filter("tr")) == real_before + 1
++    assert await engine.has_own_attempt(db, s.student_id, target, s.root_id) is True
++
++    # Лимит не израсходован: обычная сдача после неверного среза принимается.
++    resp = await _answer(client, s.token, s.student_id, s.root_id, target, _RIGHT)
++    assert resp.status_code == 200, resp.text
++    assert resp.json()["results"][0]["check_result"]["is_correct"] is True
++
++
++async def test_status_read_does_not_touch_course_state_cache(db, client) -> None:
++    """GET среза только читает: кеш `student_course_state` не переписывается."""
++    s = await _setup(db, final=_ON)
++    await _pass_all(client, s)
++    await db.execute(
++        text("DELETE FROM student_course_state WHERE student_id = :s"), {"s": s.student_id}
++    )
++    await db.commit()
++    assert (await _status(client, s))["status"] == "ready"
++    rows = (
++        await db.execute(
++            text("SELECT COUNT(*) FROM student_course_state WHERE student_id = :s"),
++            {"s": s.student_id},
++        )
++    ).scalar_one()
++    assert rows == 0
++
++
++# ───────────────── 6. итог ──────────────────────────────────────────────────
++
++
++async def _run_with(client, s: _Setup, wrong: set[int]) -> dict:
++    run = (await _start(client, s)).json()
++    last = None
++    for item in run["items"]:
++        tid = item["task_id"]
++        resp = await _fc_answer(client, s, tid, _WRONG if tid in wrong else _RIGHT)
++        assert resp.status_code == 200, resp.text
++        last = resp.json()
++    assert last is not None
++    return last["run"]
++
++
++async def test_result_with_errors_lists_chapters_without_retrieval(db, client) -> None:
++    s = await _setup(db, final=_ON)
++    await _pass_all(client, s)
++    run = (await _start(client, s)).json()
++    wrong_task = next(i for i in run["items"] if i["chapter_id"] == s.chapters[1])["task_id"]
++    final = await _run_with(client, s, {wrong_task})
++
++    assert final["finished_at"] is not None
++    result = final["result"]
++    assert (result["total"], result["correct"]) == (4, 3)
++    assert result["ratio"] == 0.75 and result["skill_retained"] is False
++    assert [c["course_id"] for c in result["chapters_with_errors"]] == [s.chapters[1]]
++    assert result["chapters_with_errors"][0]["task_ids"] == [wrong_task]
++    assert result["scheduled_for_review"] == []  # П3 на курсе выключен
++    rows = (
++        await db.execute(
++            text("SELECT COUNT(*) FROM task_review_schedule WHERE student_id = :s"),
++            {"s": s.student_id},
++        )
++    ).scalar_one()
++    assert rows == 0
++
++    status = await _status(client, s)
++    assert status["status"] == "finished" and status["run"]["result"] == result
++    # Пройденный срез второй раз не пройти; курс остался COMPLETED (Р4).
++    resp = await _fc_answer(client, s, wrong_task, _RIGHT)
++    assert resp.status_code == 409 and "final_check_finished" in resp.text
++    state = await LearningEngineService().compute_course_state(
++        db, s.student_id, s.root_id, update_state_table=False
++    )
++    assert state.state == "COMPLETED"
++
++
++async def test_all_correct_skill_retained(db, client) -> None:
++    s = await _setup(db, final=_ON)
++    await _pass_all(client, s)
++    result = (await _run_with(client, s, set()))["result"]
++    assert result["skill_retained"] is True and result["ratio"] == 1.0
++    assert result["chapters_with_errors"] == []
++
++
++def test_skill_retained_threshold_is_80_percent() -> None:
++    layout = final_check_service.CourseLayout(
++        tree_ids=[1], chapters=[final_check_service.Chapter(1, None, "Курс")], chapter_of={1: 1}
++    )
++    ids = list(range(10))
++
++    def _result(n_right: int) -> dict:
++        answers = {str(t): {"result_id": t, "is_correct": t < n_right} for t in ids}
++        return final_check_service.build_result(ids, answers, layout, {t: 1 for t in ids}, [])
++
++    assert _result(8)["skill_retained"] is True
++    assert _result(7)["skill_retained"] is False
++
++
++async def test_errors_go_to_retrieval_when_p3_enabled(db, client) -> None:
++    s = await _setup(db, final=_ON, retrieval=True)
++    await _pass_all(client, s)
++    run = (await _start(client, s)).json()
++    wrong_task = run["items"][0]["task_id"]
++    # Задание уже «закреплено» повтором — ошибка в срезе открывает его снова.
++    await db.execute(
++        text(
++            "INSERT INTO task_review_schedule (student_id, task_id, course_id, interval_stage, "
++            "  due_at, completed_at) VALUES (:s, :t, :c, 2, now(), now())"
++        ),
++        {"s": s.student_id, "t": wrong_task, "c": s.root_id},
++    )
++    await db.commit()
++    final = await _run_with(client, s, {wrong_task})
++    assert final["result"]["scheduled_for_review"] == [wrong_task]
++    row = (
++        await db.execute(
++            text(
++                "SELECT interval_stage, due_at, completed_at, last_result_id "
++                "FROM task_review_schedule WHERE student_id = :s AND task_id = :t"
++            ),
++            {"s": s.student_id, "t": wrong_task},
++        )
++    ).fetchone()
++    assert row.interval_stage == 0 and row.completed_at is None
++    assert row.due_at.tzinfo is not None
++    assert abs(row.due_at - (datetime.now(timezone.utc) + timedelta(days=3))) < timedelta(minutes=5)
++    src = (
++        await db.execute(
++            text("SELECT source_system FROM task_results WHERE id = :r"), {"r": row.last_result_id}
++        )
++    ).scalar_one()
++    assert src == FINAL_CHECK_SOURCE
++
++
++async def test_final_check_fail_does_not_trigger_p3_scheduler(db, client) -> None:
++    """Ошибка среза — не «провал до сдачи» для планировщика П3."""
++    s = await _setup(db, final=_ON, max_attempts=10)
++    await _pass_all(client, s)
++    run = (await _start(client, s)).json()
++    wrong_task = run["items"][0]["task_id"]
++    await _run_with(client, s, {wrong_task})
++    # П3 включили ПОСЛЕ среза; обычная верная сдача не ставит задание на повтор.
++    await db.execute(
++        text("UPDATE courses SET retrieval_config = '{\"enabled\": true}' WHERE id = :c"),
++        {"c": s.root_id},
++    )
++    await db.commit()
++    resp = await _answer(client, s.token, s.student_id, s.root_id, wrong_task, _RIGHT)
++    assert resp.status_code == 200, resp.text
++    rows = (
++        await db.execute(
++            text("SELECT COUNT(*) FROM task_review_schedule WHERE student_id = :s"),
++            {"s": s.student_id},
++        )
++    ).scalar_one()
++    assert rows == 0
++
++
++# ───────────────── 7. отказы ────────────────────────────────────────────────
++
++
++async def test_answer_refusals(db, client) -> None:
++    s = await _setup(db, final=_ON)
++    await _pass_all(client, s)
++    resp = await _fc_answer(client, s, s.all_tasks[0], _RIGHT)
++    assert resp.status_code == 404 and "final_check_not_started" in resp.text
++
++    run = (await _start(client, s)).json()
++    in_run = [i["task_id"] for i in run["items"]]
++    outside = next(t for t in s.all_tasks if t not in in_run)
++    resp = await _fc_answer(client, s, outside, _RIGHT)
++    assert resp.status_code == 404 and "final_check_task_not_in_run" in resp.text
++
++    assert (await _fc_answer(client, s, in_run[0], _RIGHT)).status_code == 200
++    resp = await _fc_answer(client, s, in_run[0], _WRONG)
++    assert resp.status_code == 409 and "final_check_already_answered" in resp.text
++
++    resp = await _fc_answer(client, s, in_run[1], {"type": "SA", "response": {"value": "4"}})
++    assert resp.status_code == 400
++
++
++async def test_task_no_longer_auto_checked_is_skipped(db, client) -> None:
++    """Задание перестало проверяться автоматически — исключается, срез не виснет."""
++    s = await _setup(db, final={"enabled": True, "size": 2}, per_chapter=1)
++    await _pass_all(client, s)
++    run = (await _start(client, s)).json()
++    broken, ok = run["items"][0]["task_id"], run["items"][1]["task_id"]
++    await db.execute(
++        text(
++            "UPDATE tasks SET solution_rules = solution_rules || "
++            "'{\"manual_review_required\": true}'::jsonb, task_content = jsonb_set("
++            "task_content, '{type}', '\"SA\"') WHERE id = :t"
++        ),
++        {"t": broken},
++    )
++    await db.commit()
++    resp = await _fc_answer(client, s, broken, {"type": "SA", "response": {"value": "4"}})
++    assert resp.status_code == 409 and "final_check_unsupported" in resp.text
++    resp = await _fc_answer(client, s, ok, _RIGHT)
++    assert resp.status_code == 200, resp.text
++    result = resp.json()["run"]["result"]
++    assert (result["total"], result["correct"], result["skill_retained"]) == (1, 1, True)
++    skipped = next(i for i in resp.json()["run"]["items"] if i["task_id"] == broken)
++    assert skipped["answered"] is True and skipped["is_correct"] is None
++
++
++# ───────────────── 8. пометка в истории и ленте ─────────────────────────────
++
++
++async def test_history_and_feed_mark_final_check(db, client) -> None:
++    from app.services.teacher_activity_feed_service import _fetch_task_solved
++
++    s = await _setup(db, final={"enabled": True, "size": 2}, per_chapter=1)
++    await _pass_all(client, s)
++    run = (await _start(client, s)).json()
++    target = run["items"][0]["task_id"]
++    resp = await _fc_answer(client, s, target, _WRONG)
++    assert resp.status_code == 200, resp.text
++    fc_result_id = resp.json()["task_result_id"]
++
++    resp = await client.get(f"/api/v1/me/tasks/{target}/history", headers=_bearer(s.token))
++    assert resp.status_code == 200, resp.text
++    rows = [(a["attempt_no"], a["is_final_check"]) for a in resp.json()["attempts"]]
++    assert rows == [(1, False), (1, True)]
++
++    resp = await client.get("/api/v1/me/history", headers=_bearer(s.token), params={"filter": "failed"})
++    assert fc_result_id not in [i["task_result_id"] for i in resp.json()]
++    resp = await client.get("/api/v1/me/history", headers=_bearer(s.token), params={"filter": "all"})
++    marked = {i["task_result_id"]: i["is_final_check"] for i in resp.json()}
++    assert marked[fc_result_id] is True
++
++    events = await _fetch_task_solved(db, teacher_id=0, elevated=True, limit=50, before=None)
++    mine = [e["summary"] for e in events if e["student_id"] == s.student_id]
++    assert sum("проверил в итоговом срезе" in m for m in mine) == 1
++    assert sum("решил задание" in m for m in mine) == 2
++
++    # GET попытки: ответ среза не входит в результаты и суммы.
++    attempt_id = (
++        await db.execute(
++            text("SELECT attempt_id FROM task_results WHERE id = :r"), {"r": fc_result_id}
++        )
++    ).scalar_one()
++    resp = await client.get(f"/api/v1/attempts/{attempt_id}", headers=_bearer(s.token))
++    assert resp.status_code == 200, resp.text
++    assert fc_result_id not in [r.get("task_result_id", r.get("id")) for r in resp.json()["results"]]
++    assert resp.json()["total_score"] == resp.json()["total_max_score"]
++
++
++async def test_deleted_task_is_skipped_on_reopen(db, client) -> None:
++    """Задание удалили из базы посреди среза — повторное открытие его исключает."""
++    s = await _setup(db, final={"enabled": True, "size": 2}, per_chapter=1)
++    await _pass_all(client, s)
++    run = (await _start(client, s)).json()
++    gone, ok = run["items"][0]["task_id"], run["items"][1]["task_id"]
++    assert (await _fc_answer(client, s, ok, _RIGHT)).status_code == 200
++    await db.execute(text("DELETE FROM task_results WHERE task_id = :t"), {"t": gone})
++    await db.execute(text("DELETE FROM tasks WHERE id = :t"), {"t": gone})
++    await db.commit()
++    # Неотвеченных видимых заданий нет, итога ещё нет — клиент открывает срез снова.
++    status = await _status(client, s)
++    assert status["status"] == "in_progress" and status["run"]["result"] is None
++    resp = await _start(client, s)
++    assert resp.status_code == 200, resp.text
++    result = resp.json()["result"]
++    assert (result["total"], result["correct"], result["skill_retained"]) == (1, 1, True)
++    assert (await _status(client, s))["status"] == "finished"
+diff --git a/tests/test_tsk994_final_check_race.py b/tests/test_tsk994_final_check_race.py
+new file mode 100644
+index 0000000..8ae9080
+--- /dev/null
++++ b/tests/test_tsk994_final_check_race.py
+@@ -0,0 +1,200 @@
++"""tsk-994: одновременные ответы на одно задание итогового среза.
++
++Тот же класс дефекта, что нашло ревью П3 (MINOR 1): замок строки обязан
++держаться до записи ответа. Две вкладки с одним заданием среза не должны дать
++два результата `final_check` и затереть друг другу `answers`.
++
++Гонку нельзя проверить на одном соединении — нужны настоящие параллельные
++транзакции и коммиты. Поэтому модуль работает вне общей откатываемой
++транзакции и убирает за собой сам.
++"""
++from __future__ import annotations
++
++import asyncio
++import json
++import sys
++import uuid
++from pathlib import Path
++
++import pytest
++import pytest_asyncio
++from sqlalchemy import text
++from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
++from sqlalchemy.pool import NullPool
++
++project_root = Path(__file__).resolve().parents[1]
++sys.path.insert(0, str(project_root))
++
++from app.core.config import Settings
++from app.schemas.checking import StudentAnswer
++from app.services import entitlements_service as ent
++from app.services import final_check_service
++from app.utils.exceptions import DomainError
++
++pytestmark = [pytest.mark.asyncio, pytest.mark.no_tx_isolation]
++
++_settings = Settings()
++
++#: Больше одновременных ответов — шире окно гонки.
++CONCURRENCY = 4
++
++
++@pytest.fixture(autouse=True)
++def _gates_off(monkeypatch):
++    """Подписной гейт выключен — он проверяется отдельно."""
++    monkeypatch.setattr(ent.settings, "subscription_gate_mode", "off")
++
++
++@pytest_asyncio.fixture(scope="function")
++async def open_run():
++    """Ученик прошёл курс из двух SC-заданий; срез из обоих открыт. Уборка своя."""
++    engine = create_async_engine(_settings.database_url, poolclass=NullPool)
++    tag = uuid.uuid4().hex[:12]
++    async with AsyncSession(engine, expire_on_commit=False) as s:
++        student_id = (
++            await s.execute(
++                text(
++                    "INSERT INTO users (full_name, email, is_active) "
++                    "VALUES ('tsk994 гонка среза', :e, true) RETURNING id"
++                ),
++                {"e": f"tsk994-race-{tag}@example.test"},
++            )
++        ).scalar_one()
++        course_id = (
++            await s.execute(
++                text(
++                    "INSERT INTO courses (title, access_level, final_check_config) "
++                    "VALUES (:t, 'self_guided', CAST(:cfg AS jsonb)) RETURNING id"
++                ),
++                {"t": f"tsk994-race-{tag}", "cfg": json.dumps({"enabled": True, "size": 2})},
++            )
++        ).scalar_one()
++        difficulty_id = (
++            await s.execute(text("SELECT id FROM difficulties ORDER BY id LIMIT 1"))
++        ).scalar()
++        task_ids = []
++        for n in range(2):
++            task_ids.append(
++                (
++                    await s.execute(
++                        text(
++                            "INSERT INTO tasks (external_uid, max_score, task_content, "
++                            "solution_rules, course_id, difficulty_id, is_active) "
++                            "VALUES (:e, 1, CAST(:c AS jsonb), CAST(:r AS jsonb), :cid, :d, true) "
++                            "RETURNING id"
++                        ),
++                        {
++                            "e": f"tsk994-race-{tag}-{n}",
++                            "c": json.dumps({
++                                "type": "SC", "stem": "2+2?",
++                                "options": [{"id": "a", "text": "3"}, {"id": "b", "text": "4"}],
++                            }),
++                            "r": json.dumps({"max_score": 1, "correct_options": ["b"]}),
++                            "cid": course_id,
++                            "d": difficulty_id,
++                        },
++                    )
++                ).scalar_one()
++            )
++        await s.execute(
++            text("INSERT INTO user_courses (user_id, course_id, is_active) VALUES (:u, :c, true)"),
++            {"u": student_id, "c": course_id},
++        )
++        attempt_id = (
++            await s.execute(
++                text(
++                    "INSERT INTO attempts (user_id, course_id, root_course_id, source_system) "
++                    "VALUES (:u, :c, :c, 'spw_web') RETURNING id"
++                ),
++                {"u": student_id, "c": course_id},
++            )
++        ).scalar_one()
++        for tid in task_ids:
++            await s.execute(
++                text(
++                    "INSERT INTO task_results (user_id, task_id, attempt_id, score, max_score, "
++                    "  is_correct, submitted_at, received_at, count_retry, source_system) "
++                    "VALUES (:u, :t, :a, 1, 1, true, now(), now(), 0, 'spw_web')"
++                ),
++                {"u": student_id, "t": tid, "a": attempt_id},
++            )
++        await s.execute(
++            text(
++                "INSERT INTO final_check_runs (student_id, course_id, task_ids) "
++                "VALUES (:u, :c, CAST(:ids AS jsonb))"
++            ),
++            {"u": student_id, "c": course_id, "ids": json.dumps(task_ids)},
++        )
++        await s.commit()
++
++    try:
++        yield engine, student_id, course_id, task_ids
++    finally:
++        async with AsyncSession(engine) as s:
++            for sql in (
++                "DELETE FROM final_check_runs WHERE student_id = :u",
++                "DELETE FROM task_results WHERE user_id = :u",
++                "DELETE FROM attempts WHERE user_id = :u",
++                "DELETE FROM student_course_state WHERE student_id = :u",
++                "DELETE FROM user_courses WHERE user_id = :u",
++            ):
++                await s.execute(text(sql), {"u": student_id})
++            await s.execute(text("DELETE FROM tasks WHERE id = ANY(:t)"), {"t": task_ids})
++            await s.execute(text("DELETE FROM courses WHERE id = :c"), {"c": course_id})
++            await s.execute(text("DELETE FROM users WHERE id = :u"), {"u": student_id})
++            await s.commit()
++        await engine.dispose()
++
++
++async def test_concurrent_answers_accept_exactly_one(open_run) -> None:
++    """Одновременные ответы на одно задание среза: принимается один, остальные — 409."""
++    engine, student_id, course_id, task_ids = open_run
++    answer = StudentAnswer.model_validate(
++        {"type": "SC", "response": {"selected_option_ids": ["a"]}}
++    )
++
++    async def _one() -> object:
++        async with AsyncSession(engine, expire_on_commit=False) as s:
++            try:
++                return await final_check_service.answer(
++                    s, student_id=student_id, course_id=course_id,
++                    task_id=task_ids[0], answer=answer,
++                )
++            except DomainError as exc:
++                await s.rollback()
++                return exc
++
++    outcomes = await asyncio.gather(*(_one() for _ in range(CONCURRENCY)))
++    accepted = [o for o in outcomes if isinstance(o, final_check_service.AnswerOutcome)]
++    refused = [o for o in outcomes if isinstance(o, DomainError)]
++    assert len(accepted) == 1, outcomes
++    assert len(refused) == CONCURRENCY - 1
++    assert all(e.payload.get("code") == "final_check_already_answered" for e in refused), [
++        e.payload for e in refused
++    ]
++
++    async with AsyncSession(engine) as s:
++        results = (
++            await s.execute(
++                text(
++                    "SELECT COUNT(*) FROM task_results "
++                    "WHERE user_id = :u AND source_system = 'final_check'"
++                ),
++                {"u": student_id},
++            )
++        ).scalar_one()
++        answers = (
++            await s.execute(
++                text("SELECT answers FROM final_check_runs WHERE student_id = :u"),
++                {"u": student_id},
++            )
++        ).scalar_one()
++        attempts = (
++            await s.execute(
++                text("SELECT COUNT(*) FROM attempts WHERE user_id = :u"), {"u": student_id}
++            )
++        ).scalar_one()
++    assert results == 1
++    assert list(answers) == [str(task_ids[0])]
++    # Отказанные ответы откатились целиком — лишних попыток нет.
++    assert attempts == 1

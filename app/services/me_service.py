@@ -801,6 +801,8 @@ SELECT
     tr.checked_at,
     -- tsk-992: сдача повтора пройденного задания, а не шаг учебного пути.
     (tr.source_system = 'retrieval') AS is_retrieval,
+    -- tsk-994: сдача задания итогового среза — диагностика после курса.
+    (tr.source_system = 'final_check') AS is_final_check,
     -- tsk-1176: работа ждёт преподавателя — тот же предикат, что у очереди.
     (tr.checked_at IS NULL AND {mandatory_review_sql('t')}) AS awaits_teacher
 FROM task_results tr
@@ -811,7 +813,8 @@ WHERE tr.user_id = :user_id
        :filter = 'all'
     OR (:filter = 'pending_review' AND tr.is_correct IS NULL)
     OR (:filter = 'passed'         AND tr.is_correct = TRUE)
-    -- tsk-992: неверный повтор — не «надо доделать»: задание уже пройдено.
+    -- tsk-992/tsk-994: неверный повтор или срез — не «надо доделать»:
+    -- задание уже пройдено.
     OR (:filter = 'failed'         AND tr.is_correct = FALSE
                                    AND {learning_path_results_filter('tr')})
   )

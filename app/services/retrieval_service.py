@@ -53,6 +53,7 @@ from app.services.learning_engine_service import (
     is_mentor_reviewed,
 )
 from app.services.learning_gaps_service import (
+    FINAL_CHECK_SOURCE,
     MANUAL_TEACHER_SOURCE,
     RETRIEVAL_SOURCE,
 )
@@ -231,7 +232,7 @@ async def schedule_after_pass(
     ).mappings().first()
     if row is None:
         return False
-    if row["source_system"] in (MANUAL_TEACHER_SOURCE, RETRIEVAL_SOURCE):
+    if row["source_system"] in (MANUAL_TEACHER_SOURCE, RETRIEVAL_SOURCE, FINAL_CHECK_SOURCE):
         return False
     max_score = row["max_score"] or 0
     if max_score <= 0 or (row["score"] or 0) / max_score < PASS_THRESHOLD_RATIO:
@@ -258,6 +259,9 @@ async def schedule_after_pass(
                   AND tr.submitted_at <= :submitted_at
                   AND tr.source_system IS DISTINCT FROM :manual
                   AND tr.source_system IS DISTINCT FROM :retrieval
+                  -- tsk-994: ошибка итогового среза ставит задание на повтор
+                  -- сама (`schedule_forgotten`), «провалом до сдачи» не считается.
+                  AND tr.source_system IS DISTINCT FROM :final_check
                   AND tr.max_score > 0
                   AND (tr.score::float / tr.max_score) < :ratio
                   AND NOT ({_GATE_REJECTION_SQL})
@@ -271,6 +275,7 @@ async def schedule_after_pass(
                 "submitted_at": row["submitted_at"],
                 "manual": MANUAL_TEACHER_SOURCE,
                 "retrieval": RETRIEVAL_SOURCE,
+                "final_check": FINAL_CHECK_SOURCE,
                 "ratio": PASS_THRESHOLD_RATIO,
             },
         )
@@ -308,6 +313,68 @@ async def schedule_after_pass(
         student_id, task_id, root_course_id, due_at.isoformat(),
     )
     return True
+
+
+async def schedule_forgotten(
+    db: AsyncSession,
+    *,
+    student_id: int,
+    root_course_id: int,
+    results: dict[int, int],
+) -> list[int]:
+    """Поставить на повтор задания, ошибочно решённые в итоговом срезе (tsk-994).
+
+    Ошибка в срезе — то же, что неверный повтор: навык не удержался. Поэтому
+    исход тот же, что у неверного повтора в `submit_review`: стадия 0, срок
+    +3 дня (Р2). Существующая строка (открытая или уже закреплённая) по
+    уникальности (ученик, задание, корень) откатывается к стадии 0 и, если была
+    закрыта, открывается снова — «закреплено» оказалось неправдой.
+
+    Транзакцию НЕ фиксирует: вызывающий пишет итог среза в той же транзакции.
+
+    Args:
+        db: сессия БД.
+        student_id: ученик.
+        root_course_id: корневой курс среза.
+        results: `{task_id: task_result_id}` ошибочных ответов среза.
+
+    Returns:
+        id заданий, поставленных на повтор; пусто, если рубильник П3 выключен.
+    """
+    if not results or not await is_enabled(db, root_course_id):
+        return []
+    due_at = _now() + timedelta(days=INTERVAL_DAYS[0])
+    scheduled: list[int] = []
+    for task_id, result_id in sorted(results.items()):
+        await db.execute(
+            text(
+                """
+                INSERT INTO task_review_schedule
+                    (student_id, task_id, course_id, interval_stage, due_at, last_result_id)
+                VALUES (:sid, :tid, :cid, 0, :due_at, :rid)
+                ON CONFLICT ON CONSTRAINT uq_task_review_schedule_student_task_course
+                DO UPDATE SET interval_stage = 0,
+                              due_at = EXCLUDED.due_at,
+                              last_result_id = EXCLUDED.last_result_id,
+                              completed_at = NULL,
+                              updated_at = now()
+                """
+            ),
+            {
+                "sid": student_id,
+                "tid": task_id,
+                "cid": root_course_id,
+                "due_at": due_at,
+                "rid": result_id,
+            },
+        )
+        scheduled.append(task_id)
+    logger.info(
+        "tsk-994: ошибки итогового среза поставлены на повтор student_id=%s "
+        "course_id=%s task_ids=%s due_at=%s",
+        student_id, root_course_id, scheduled, due_at.isoformat(),
+    )
+    return scheduled
 
 
 async def tasks_with_hidden_answers(

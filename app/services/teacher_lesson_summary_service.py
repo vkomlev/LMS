@@ -307,8 +307,8 @@ async def _load_last_activity(db: AsyncSession, *, student_id: int) -> Optional[
                 "    SELECT tr.task_id, tr.submitted_at FROM task_results tr "
                 "    WHERE tr.user_id = :student_id AND tr.is_correct = true "
                 "      AND tr.source_system IS DISTINCT FROM :manual_source "
-                # tsk-992: повтор пройденного — не «последнее решённое».
-                "      AND tr.source_system IS DISTINCT FROM 'retrieval' "
+                # tsk-992/tsk-994: повтор и итоговый срез — не «последнее решённое».
+                f"      AND {learning_path_results_filter('tr')} "
                 "    ORDER BY tr.submitted_at DESC LIMIT 1 "
                 ") t "
                 "JOIN tasks tk ON tk.id = t.task_id "

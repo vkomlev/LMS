@@ -14,7 +14,7 @@ from app.services.base import BaseService
 from app.services.checking_service import CheckingService
 from app.services.learning_gaps_service import (
     REAL_STUDENT_SOURCES,
-    RETRIEVAL_SOURCE,
+    learning_path_results_clause,
     learning_path_results_filter,
 )
 
@@ -716,8 +716,9 @@ class TaskResultsService(BaseService[TaskResults]):
             .where(
                 TaskResults.user_id == user_id,
                 Attempts.cancelled_at.is_(None),
-                # tsk-992: повтор не добавляет баллов к прохождению.
-                TaskResults.source_system.is_distinct_from(RETRIEVAL_SOURCE),
+                # tsk-992/tsk-994: повтор и итоговый срез не добавляют баллов
+                # к прохождению.
+                learning_path_results_clause(TaskResults.source_system),
             )
         )
         totals_row = (await db.execute(totals_query)).first()

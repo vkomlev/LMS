@@ -689,6 +689,44 @@ class CoursesService(BaseService[Courses]):
         await db.refresh(course)
         return dict(course.retrieval_config or {})
 
+    async def get_final_check_config(
+        self, db: AsyncSession, course_id: int
+    ) -> Optional[Dict[str, Any]]:
+        """Прочитать рубильник итогового среза `courses.final_check_config` (tsk-994).
+
+        Returns:
+            `None`, если курса нет. Иначе `{"enabled": bool, "size": int}` —
+            пустое поле читается как выключенное с размером по умолчанию.
+        """
+        from app.services.final_check_service import parse_config
+
+        course = await self.get_by_id(db, course_id)
+        if course is None:
+            return None
+        enabled, size = parse_config(course.final_check_config)
+        return {"enabled": enabled, "size": size}
+
+    async def set_final_check_config(
+        self, db: AsyncSession, course_id: int, config: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
+        """Записать рубильник итогового среза `courses.final_check_config` (tsk-994).
+
+        Полная замена конфига (как у `retrieval_config`). Выключение прячет
+        карточку среза; уже пройденные срезы и их итоги сохраняются. Новый
+        размер действует на срезы, которые ещё не открывали: состав открытого
+        среза зафиксирован.
+
+        Returns:
+            Записанный конфиг либо `None`, если курса нет.
+        """
+        course = await self.get_by_id(db, course_id)
+        if course is None:
+            return None
+        course.final_check_config = config
+        await db.commit()
+        await db.refresh(course)
+        return dict(course.final_check_config or {})
+
     async def set_sampling_config(
         self, db: AsyncSession, course_id: int, config: Optional[Dict[str, Any]]
     ) -> Optional[Courses]:

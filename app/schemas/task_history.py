@@ -73,6 +73,14 @@ class TaskHistoryAttempt(BaseModel):
             "последней настоящей попытки перед ним"
         ),
     )
+    is_final_check: bool = Field(
+        default=False,
+        description=(
+            "tsk-994: сдача задания итогового среза после курса "
+            "(source_system='final_check'). Диагностика: попыткой не считается, "
+            "`attempt_no` не увеличивает, статус задания не меняет"
+        ),
+    )
     review: Optional[str] = Field(
         default=None,
         description=(

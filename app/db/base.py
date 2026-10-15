@@ -63,3 +63,4 @@ import app.models.student_curator      # закрепление ученика �
 import app.models.lesson_absence_followup  # «про пропуск уже спросили» (tsk-743)
 
 import app.models.task_review_schedule  # расписание повторов заданий (tsk-992)
+import app.models.final_check_runs  # итоговый срез после курса (tsk-994)

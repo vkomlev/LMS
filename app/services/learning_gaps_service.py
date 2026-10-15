@@ -23,8 +23,9 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from typing import Any
 
-from sqlalchemy import text
+from sqlalchemy import or_, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
@@ -110,16 +111,29 @@ MANUAL_TEACHER_SOURCE = "manual_teacher"
 #: `learning_path_results_filter`.
 RETRIEVAL_SOURCE = "retrieval"
 
+#: tsk-994 (П5): сдача задания итогового среза — диагностика после курса
+#: (решение оператора Р4). Как и повтор, это ответ самого ученика, но НЕ шаг
+#: учебного пути: статус задания, счёт попыток, «пройдено» и статус курса срез
+#: не меняет. Поэтому значение исключается везде, где исключён повтор.
+FINAL_CHECK_SOURCE = "final_check"
+
+#: Сдачи ученика вне учебного пути (tsk-992, tsk-994): ЕДИНЫЙ список для
+#: `learning_path_results_filter` / `learning_path_results_clause`. Новое
+#: «послекурсовое» значение добавляется сюда — и попадает во все расчёты разом.
+NON_LEARNING_PATH_SOURCES: tuple[str, ...] = (RETRIEVAL_SOURCE, FINAL_CHECK_SOURCE)
+
 
 def own_activity_results_filter(alias: str = "tr") -> str:
     """Условие «ученик сам что-то сдавал» для SQL — признак АКТИВНОСТИ (tsk-992).
 
-    Шире `real_student_results_filter` на сдачи повтора: ученик, который
-    только повторяет пройденное, работает, а не затих. Нужно там, где вопрос
+    Шире `real_student_results_filter` на сдачи повтора и итогового среза
+    (tsk-994): ученик, который только повторяет пройденное, работает, а не затих. Нужно там, где вопрос
     «был ли ученик занят» — серия, «последняя своя работа» у куратора,
     напоминание «вернись». Аналитика пробелов и явка повтор по-прежнему не видят.
     """
-    sources = ", ".join(f"'{s}'" for s in (*REAL_STUDENT_SOURCES, RETRIEVAL_SOURCE))
+    sources = ", ".join(
+        f"'{s}'" for s in (*REAL_STUDENT_SOURCES, *NON_LEARNING_PATH_SOURCES)
+    )
     return f"{alias}.source_system IN ({sources})"
 
 
@@ -129,12 +143,27 @@ def learning_path_results_filter(alias: str = "tr") -> str:
     Статус задания (последний результат решает), счёт попыток против лимита и
     «пройдено» в прогрессе считаются БЕЗ сдач повтора: неверный повтор не
     должен превращать пройденное задание в FAILED, а повтор — тратить лимит.
-    `IS DISTINCT FROM`, а не `<>`: строки со старым `source_system IS NULL`
-    остаются в расчёте, как и были.
+    tsk-994: так же исключаются сдачи итогового среза (`final_check`) —
+    список значений в `NON_LEARNING_PATH_SOURCES`.
+
+    `IS NULL OR NOT IN`, а не просто `NOT IN`: строки со старым
+    `source_system IS NULL` остаются в расчёте, как и были.
 
     ЕДИНСТВЕННОЕ место правила — расчёты статуса подставляют его отсюда.
     """
-    return f"{alias}.source_system IS DISTINCT FROM '{RETRIEVAL_SOURCE}'"
+    sources = ", ".join(f"'{s}'" for s in NON_LEARNING_PATH_SOURCES)
+    return (
+        f"({alias}.source_system IS NULL OR {alias}.source_system NOT IN ({sources}))"
+    )
+
+
+def learning_path_results_clause(column: Any) -> Any:
+    """То же правило, что `learning_path_results_filter`, для запросов ORM (tsk-994).
+
+    Args:
+        column: колонка `TaskResults.source_system` (или её аналог).
+    """
+    return or_(column.is_(None), column.notin_(NON_LEARNING_PATH_SOURCES))
 
 
 def real_student_material_filter(alias: str = "smp") -> str:
