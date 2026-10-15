@@ -639,3 +639,118 @@ async def test_second_review_on_same_due_is_refused(db, client) -> None:
     resp = await _review(client, token, student_id, course_id, task_id, _RIGHT)
     assert resp.status_code == 409
     assert resp.json()["payload"]["code"] == "retrieval_not_due"
+
+
+# ───────────────── гейты сдачи и выдачи повтора (ревью, MINOR 2–4) ───────────
+
+
+async def test_unenrolled_student_review_refused(db, client) -> None:
+    """Снятый с курса ученик (возврат оплаты) повтор не сдаёт: строка расписания
+    осталась, но ACL записи на курс (tsk-272) отказывает, результат не пишется."""
+    student_id, token, course_id, task_id = await _setup(db)
+    await _fail_then_pass(client, token, student_id, course_id, task_id)
+    await _make_due(db, student_id, task_id)
+    await db.execute(
+        text("UPDATE user_courses SET is_active = false WHERE user_id = :u"),
+        {"u": student_id},
+    )
+    await db.commit()
+
+    resp = await _review(client, token, student_id, course_id, task_id, _RIGHT)
+    assert resp.status_code == 403, resp.text
+    row = await _schedule_row(db, student_id, task_id, course_id)
+    assert row.interval_stage == 0
+    count = (
+        await db.execute(
+            text("SELECT COUNT(*) FROM task_results WHERE user_id = :u AND source_system = :src"),
+            {"u": student_id, "src": RETRIEVAL_SOURCE},
+        )
+    ).scalar_one()
+    assert count == 0
+
+
+async def test_sa_com_review_requires_comment(db, client) -> None:
+    """Гейт 2.3f (tsk-419) действует и на повторе: без комментария — 422, стадия
+    не сдвигается; с комментарием повтор принимается."""
+    student_id, token = await _user(db, "s")
+    course_id = await _course(db, enabled=True)
+    task_id = await _task(
+        db,
+        course_id,
+        content={"type": "SA_COM", "title": "Ответ числом", "stem": "Сколько?"},
+        rules={
+            "max_score": 1,
+            "short_answer": {
+                "normalization": ["trim", "lower"],
+                "accepted_answers": [{"value": "42", "score": 1}],
+            },
+        },
+    )
+    await _enroll(db, student_id, course_id)
+    wrong = {"type": "SA_COM", "response": {"value": "1", "comment": "так решил"}}
+    right = {"type": "SA_COM", "response": {"value": "42", "comment": "посчитал"}}
+    assert (await _answer(client, token, student_id, course_id, task_id, wrong)).status_code == 200
+    assert (await _answer(client, token, student_id, course_id, task_id, right)).status_code == 200
+    assert await _schedule_row(db, student_id, task_id, course_id) is not None
+    await _make_due(db, student_id, task_id)
+
+    resp = await _review(
+        client, token, student_id, course_id, task_id,
+        {"type": "SA_COM", "response": {"value": "42"}},
+    )
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["payload"]["code"] == "evidence_required"
+    assert (await _schedule_row(db, student_id, task_id, course_id)).interval_stage == 0
+
+    resp = await _review(client, token, student_id, course_id, task_id, right)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["interval_stage"] == 1
+
+
+async def test_due_list_hides_task_no_longer_auto_checked(db, client) -> None:
+    """Методист сделал вложение обязательным после постановки на повтор — задание
+    пропадает из «пора повторить», а не висит там вечно с 409 на сдаче."""
+    student_id, token, course_id, task_id = await _setup(db)
+    await _fail_then_pass(client, token, student_id, course_id, task_id)
+    await _make_due(db, student_id, task_id)
+
+    async def _due_ids() -> list[int]:
+        resp = await client.get(
+            f"/api/v1/learning/courses/{course_id}/review-due",
+            headers=_bearer(token), params={"student_id": student_id},
+        )
+        assert resp.status_code == 200, resp.text
+        return [i["task_id"] for i in resp.json()["items"]]
+
+    assert await _due_ids() == [task_id]
+    await db.execute(
+        text(
+            "UPDATE tasks SET solution_rules = solution_rules || "
+            "CAST(:patch AS jsonb) WHERE id = :t"
+        ),
+        {"t": task_id, "patch": json.dumps({"requires_attachment": True})},
+    )
+    await db.commit()
+    assert await _due_ids() == []
+
+
+async def test_review_due_checks_payment_gate(db, client, monkeypatch) -> None:
+    """`GET review-due` закрывается просроченной оплатой, как соседние GET
+    учебного пути; проверяется УЧЕНИК."""
+    from app.services import payment_access_service
+    from app.utils.exceptions import DomainError
+
+    student_id, token, course_id, _ = await _setup(db)
+    seen: list[int] = []
+
+    async def _blocked(_db, sid: int) -> None:
+        seen.append(sid)
+        raise DomainError("оплата просрочена", status_code=403, payload={"code": "payment_overdue"})
+
+    monkeypatch.setattr(payment_access_service, "assert_content_allowed", _blocked)
+    resp = await client.get(
+        f"/api/v1/learning/courses/{course_id}/review-due",
+        headers=_bearer(token), params={"student_id": student_id},
+    )
+    assert resp.status_code == 403
+    assert seen == [student_id]

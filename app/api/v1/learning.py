@@ -1345,6 +1345,7 @@ async def get_review_due(
                 "(`retrieval_unsupported`)"
             )
         },
+        422: {"description": "SA_COM/TBL_COM без комментария (`payload.code = evidence_required`)"},
     },
     summary="Сдать повтор задания (tsk-992)",
     description=(
@@ -1364,8 +1365,9 @@ async def submit_review_answer(
 ) -> ReviewAnswerResponse:
     """Принять ответ на повтор и сдвинуть расписание.
 
-    :raises HTTPException: 403 — чужой `student_id`.
-    :raises DomainError: 404/409 — см. `retrieval_service.submit_review`.
+    :raises HTTPException: 403 — чужой `student_id` или вызывающий не записан
+        на курс задания (tsk-272).
+    :raises DomainError: 404/409/422 — см. `retrieval_service.submit_review`.
     """
     if not current_user.is_service and current_user.id != body.student_id:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
@@ -1379,6 +1381,7 @@ async def submit_review_answer(
         task_id=task_id,
         course_id=course_id,
         answer=body.answer,
+        current_user=current_user,
     )
     return ReviewAnswerResponse(
         task_id=outcome.task_id,

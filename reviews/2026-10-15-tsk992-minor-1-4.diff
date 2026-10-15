@@ -1,0 +1,601 @@
+diff --git a/app/api/v1/learning.py b/app/api/v1/learning.py
+index e81a236..faf1bcc 100644
+--- a/app/api/v1/learning.py
++++ b/app/api/v1/learning.py
+@@ -1345,6 +1345,7 @@ async def get_review_due(
+                 "(`retrieval_unsupported`)"
+             )
+         },
++        422: {"description": "SA_COM/TBL_COM без комментария (`payload.code = evidence_required`)"},
+     },
+     summary="Сдать повтор задания (tsk-992)",
+     description=(
+@@ -1364,8 +1365,9 @@ async def submit_review_answer(
+ ) -> ReviewAnswerResponse:
+     """Принять ответ на повтор и сдвинуть расписание.
+ 
+-    :raises HTTPException: 403 — чужой `student_id`.
+-    :raises DomainError: 404/409 — см. `retrieval_service.submit_review`.
++    :raises HTTPException: 403 — чужой `student_id` или вызывающий не записан
++        на курс задания (tsk-272).
++    :raises DomainError: 404/409/422 — см. `retrieval_service.submit_review`.
+     """
+     if not current_user.is_service and current_user.id != body.student_id:
+         raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
+@@ -1379,6 +1381,7 @@ async def submit_review_answer(
+         task_id=task_id,
+         course_id=course_id,
+         answer=body.answer,
++        current_user=current_user,
+     )
+     return ReviewAnswerResponse(
+         task_id=outcome.task_id,
+diff --git a/app/services/attempts_service.py b/app/services/attempts_service.py
+index 1977498..28bfb73 100644
+--- a/app/services/attempts_service.py
++++ b/app/services/attempts_service.py
+@@ -59,11 +59,16 @@ class AttemptsService(BaseService[Attempts]):
+         db: AsyncSession,
+         attempt: Attempts,
+         task_id: int,
++        *,
++        commit: bool = True,
+     ) -> Attempts:
+         """
+         Гарантирует, что attempt.meta — объект, attempt.meta.task_ids — массив int[],
+         содержащий task_id (merge, без дублей). Сохраняет изменения в БД.
+         Логирует WARN при восстановлении битого meta (null, не dict, не list в task_ids).
++
++        :param commit: False — только flush, транзакцию фиксирует вызывающий
++            (повтор tsk-992 держит замок строки расписания до своей записи).
+         """
+         meta: dict[str, Any]
+         if attempt.meta is None or not isinstance(attempt.meta, dict):
+@@ -91,8 +96,9 @@ class AttemptsService(BaseService[Attempts]):
+             task_ids.append(task_id)
+ 
+         meta["task_ids"] = task_ids
+-        updated = await self.update(db, db_obj=attempt, obj_in={"meta": meta})
+-        return updated
++        if commit:
++            return await self.update(db, db_obj=attempt, obj_in={"meta": meta})
++        return await self.repo.update(db, attempt, {"meta": meta}, commit=False)
+ 
+     async def _get_task_ids_for_deadline_check(
+         self,
+diff --git a/app/services/retrieval_service.py b/app/services/retrieval_service.py
+index cdc18db..e0e9e50 100644
+--- a/app/services/retrieval_service.py
++++ b/app/services/retrieval_service.py
+@@ -32,7 +32,7 @@ import asyncio
+ import logging
+ from dataclasses import dataclass
+ from datetime import datetime, timedelta, timezone
+-from typing import Any, Optional
++from typing import TYPE_CHECKING, Any, Optional
+ 
+ from sqlalchemy import select, text
+ from sqlalchemy.ext.asyncio import AsyncSession
+@@ -43,6 +43,7 @@ from app.models.task_review_schedule import TaskReviewSchedule
+ from app.schemas.checking import CheckResult, StudentAnswer
+ from app.schemas.solution_rules import SolutionRules
+ from app.schemas.task_content import (
++    COMMENT_TASK_TYPES,
+     QUIZ_TASK_TYPES,
+     SHORT_ANSWER_TASK_TYPES,
+     TaskContent,
+@@ -57,6 +58,9 @@ from app.services.learning_gaps_service import (
+ )
+ from app.utils.exceptions import DomainError
+ 
++if TYPE_CHECKING:
++    from app.auth.current_user import CurrentUser
++
+ logger = logging.getLogger(__name__)
+ 
+ #: Интервал до следующего повтора по стадии: 0 → 3 дня, 1 → 7, 2 → 21 (Р2).
+@@ -68,6 +72,7 @@ RETRIEVAL_DISABLED_CODE = "retrieval_disabled"
+ RETRIEVAL_NOT_SCHEDULED_CODE = "retrieval_not_scheduled"
+ RETRIEVAL_NOT_DUE_CODE = "retrieval_not_due"
+ RETRIEVAL_UNSUPPORTED_CODE = "retrieval_unsupported"
++RETRIEVAL_EVIDENCE_REQUIRED_CODE = "evidence_required"
+ 
+ 
+ @dataclass(frozen=True)
+@@ -357,6 +362,10 @@ async def _course_attempt(
+     Та же механика, что у `start-or-get-attempt`: тот же ключ замка, тот же
+     поиск открытой попытки, создание через `AttemptsService`. Своей попытки
+     повтор не заводит — ответ ложится туда же, куда легли бы обычные ответы.
++
++    Транзакцию НЕ фиксирует (только flush): иначе промежуточный commit снял бы
++    замок строки расписания и advisory-замок до записи стадии, а при падении
++    записи результата осталась бы пустая зафиксированная попытка.
+     """
+     from app.services.attempts_service import AttemptsService
+ 
+@@ -380,16 +389,21 @@ async def _course_attempt(
+         )
+     ).scalar_one_or_none()
+     if existing is not None:
+-        return await attempts_service.ensure_attempt_task_ids(db, existing, task_id)
+-    attempt = await attempts_service.create_attempt(
+-        db=db,
+-        user_id=student_id,
+-        course_id=task_course_id,
+-        root_course_id=root_course_id,
+-        source_system=source_system,
+-        meta={"task_ids": [task_id]},
++        return await attempts_service.ensure_attempt_task_ids(
++            db, existing, task_id, commit=False
++        )
++    attempt = await attempts_service.repo.create(
++        db,
++        {
++            "user_id": student_id,
++            "course_id": task_course_id,
++            "root_course_id": root_course_id,
++            "source_system": source_system,
++            "meta": {"task_ids": [task_id]},
++        },
++        commit=False,
+     )
+-    return await attempts_service.ensure_attempt_task_ids(db, attempt, task_id)
++    return attempt
+ 
+ 
+ async def _due_schedule(
+@@ -440,6 +454,7 @@ async def submit_review(
+     course_id: int,
+     answer: StudentAnswer,
+     attempt_source_system: str = "spw_web",
++    current_user: Optional["CurrentUser"] = None,
+ ) -> ReviewOutcome:
+     """Принять ответ на повтор, записать результат и сдвинуть расписание.
+ 
+@@ -455,11 +470,15 @@ async def submit_review(
+         answer: ответ ученика.
+         attempt_source_system: источник для НОВОЙ курсовой попытки, если
+             открытой нет (сам результат всё равно помечается `retrieval`).
++        current_user: вызывающий — для ACL записи на курс (tsk-272);
++            None — проверка пропускается (внутренний вызов).
+ 
+     Raises:
+         DomainError: 409 `retrieval_disabled` / `retrieval_not_due` /
+             `retrieval_unsupported`; 404 `retrieval_not_scheduled`; 400 —
+-            тип ответа не совпадает с типом задания.
++            тип ответа не совпадает с типом задания; 422 `evidence_required` —
++            SA_COM/TBL_COM без комментария. HTTPException 403 — не записан
++            на курс задания.
+     """
+     from app.services.checking_service import CheckingService
+     from app.services.task_results_service import TaskResultsService
+@@ -472,9 +491,14 @@ async def submit_review(
+             payload={"code": RETRIEVAL_DISABLED_CODE},
+         )
+ 
+-    # Первая проверка — без замка: отказы «не на повторе» / «рано» не должны
+-    # заводить попытку. Под замком строка перечитывается ниже.
+-    await _due_schedule(db, student_id=student_id, task_id=task_id, course_id=course_id)
++    # Строка расписания берётся под замком СРАЗУ и держится до единственной
++    # фиксации в конце (попытка ниже заводится без commit): две одновременные
++    # сдачи повтора сериализуются, вторая увидит уже сдвинутый срок и получит
++    # 409 `retrieval_not_due`. Любой отказ ниже откатывает всё вместе с
++    # попыткой — пустых зафиксированных попыток не остаётся.
++    schedule = await _due_schedule(
++        db, student_id=student_id, task_id=task_id, course_id=course_id, lock=True
++    )
+ 
+     task = await TasksService().get_by_id(db, task_id)
+     if task is None or not task.is_active or task.course_id is None:
+@@ -484,12 +508,14 @@ async def submit_review(
+             payload={"code": RETRIEVAL_NOT_SCHEDULED_CODE},
+         )
+ 
+-    # Те же замки, что у обычного приёма ответа (по УЧЕНИКУ): курс выведен из
+-    # работы (tsk-886) и закрыт зависимостью (tsk-1276). Запись на курс
+-    # подтверждается самой строкой расписания — она ставится только из сдачи
+-    # в этом корне, прошедшей `assert_task_access`.
++    # Те же гейты, что у обычного приёма ответа: запись на курс задания
++    # (tsk-272, по вызывающему — как в `POST /attempts/{id}/answers`), курс
++    # выведен из работы (tsk-886) и закрыт зависимостью (tsk-1276) — по УЧЕНИКУ.
+     from app.services import course_activity_service, dependency_lock_service
++    from app.services.tasks_acl_service import assert_task_access
+ 
++    if current_user is not None:
++        await assert_task_access(db, current_user=current_user, task_course_id=task.course_id)
+     await dependency_lock_service.assert_course_not_locked(
+         db, student_id=student_id, course_id=task.course_id, task_id=task_id,
+     )
+@@ -512,6 +538,17 @@ async def submit_review(
+             f"Тип ответа ({answer.type}) не совпадает с типом задачи ({task_content.type}).",
+             status_code=400,
+         )
++    # Гейт 2.3f (tsk-419): у SA_COM/TBL_COM без комментария ответ не принимается.
++    # Вложений у повтора нет (`requires_attachment` и песочница отсечены
++    # `task_supports_review`), поэтому доказательство — только комментарий.
++    # В отличие от обычной сдачи отказ, а не незачёт: пустой комментарий —
++    # не «забыл решение», и откатывать стадию за него было бы неверно.
++    if task_content.type in COMMENT_TASK_TYPES and not (answer.response.comment or "").strip():
++        raise DomainError(
++            "Добавьте комментарий: как вы получили ответ.",
++            status_code=422,
++            payload={"code": RETRIEVAL_EVIDENCE_REQUIRED_CODE},
++        )
+ 
+     check_result: CheckResult = await asyncio.to_thread(
+         checking.check_task,
+@@ -537,13 +574,6 @@ async def submit_review(
+         source_system=attempt_source_system,
+     )
+     attempt_id = attempt.id
+-    # `_course_attempt` фиксирует транзакцию (запись `meta.task_ids`), поэтому
+-    # замок строки расписания берётся ПОСЛЕ неё и держится до записи стадии:
+-    # две одновременные сдачи повтора сериализуются, вторая увидит уже
+-    # сдвинутый срок и получит 409 `retrieval_not_due`.
+-    schedule = await _due_schedule(
+-        db, student_id=student_id, task_id=task_id, course_id=course_id, lock=True
+-    )
+     now = _now()
+     task_result = await TaskResultsService().create_from_check_result(
+         db=db,
+diff --git a/tests/conftest.py b/tests/conftest.py
+index f496a7b..b49b64e 100644
+--- a/tests/conftest.py
++++ b/tests/conftest.py
+@@ -332,6 +332,9 @@ SELF_MANAGED_CONNECTION_MODULES: frozenset[str] = frozenset(
+         # нужны настоящие параллельные транзакции и коммиты. Остальные тесты
+         # задачи живут под обычной изоляцией.
+         "test_tsk301_limit_race.py",
++        # tsk-992: две одновременные сдачи повтора — замок строки расписания
++        # проверяется только двумя настоящими параллельными транзакциями.
++        "test_tsk992_retrieval_race.py",
+         "test_teacher_courses_triggers_smoke.py",
+         "test_teacher_help_requests_overdue_tsk312.py",
+         "test_teacher_help_requests_stage38.py",
+diff --git a/tests/test_tsk992_retrieval.py b/tests/test_tsk992_retrieval.py
+index 767a0c3..f7f2c32 100644
+--- a/tests/test_tsk992_retrieval.py
++++ b/tests/test_tsk992_retrieval.py
+@@ -639,3 +639,118 @@ async def test_second_review_on_same_due_is_refused(db, client) -> None:
+     resp = await _review(client, token, student_id, course_id, task_id, _RIGHT)
+     assert resp.status_code == 409
+     assert resp.json()["payload"]["code"] == "retrieval_not_due"
++
++
++# ───────────────── гейты сдачи и выдачи повтора (ревью, MINOR 2–4) ───────────
++
++
++async def test_unenrolled_student_review_refused(db, client) -> None:
++    """Снятый с курса ученик (возврат оплаты) повтор не сдаёт: строка расписания
++    осталась, но ACL записи на курс (tsk-272) отказывает, результат не пишется."""
++    student_id, token, course_id, task_id = await _setup(db)
++    await _fail_then_pass(client, token, student_id, course_id, task_id)
++    await _make_due(db, student_id, task_id)
++    await db.execute(
++        text("UPDATE user_courses SET is_active = false WHERE user_id = :u"),
++        {"u": student_id},
++    )
++    await db.commit()
++
++    resp = await _review(client, token, student_id, course_id, task_id, _RIGHT)
++    assert resp.status_code == 403, resp.text
++    row = await _schedule_row(db, student_id, task_id, course_id)
++    assert row.interval_stage == 0
++    count = (
++        await db.execute(
++            text("SELECT COUNT(*) FROM task_results WHERE user_id = :u AND source_system = :src"),
++            {"u": student_id, "src": RETRIEVAL_SOURCE},
++        )
++    ).scalar_one()
++    assert count == 0
++
++
++async def test_sa_com_review_requires_comment(db, client) -> None:
++    """Гейт 2.3f (tsk-419) действует и на повторе: без комментария — 422, стадия
++    не сдвигается; с комментарием повтор принимается."""
++    student_id, token = await _user(db, "s")
++    course_id = await _course(db, enabled=True)
++    task_id = await _task(
++        db,
++        course_id,
++        content={"type": "SA_COM", "title": "Ответ числом", "stem": "Сколько?"},
++        rules={
++            "max_score": 1,
++            "short_answer": {
++                "normalization": ["trim", "lower"],
++                "accepted_answers": [{"value": "42", "score": 1}],
++            },
++        },
++    )
++    await _enroll(db, student_id, course_id)
++    wrong = {"type": "SA_COM", "response": {"value": "1", "comment": "так решил"}}
++    right = {"type": "SA_COM", "response": {"value": "42", "comment": "посчитал"}}
++    assert (await _answer(client, token, student_id, course_id, task_id, wrong)).status_code == 200
++    assert (await _answer(client, token, student_id, course_id, task_id, right)).status_code == 200
++    assert await _schedule_row(db, student_id, task_id, course_id) is not None
++    await _make_due(db, student_id, task_id)
++
++    resp = await _review(
++        client, token, student_id, course_id, task_id,
++        {"type": "SA_COM", "response": {"value": "42"}},
++    )
++    assert resp.status_code == 422, resp.text
++    assert resp.json()["payload"]["code"] == "evidence_required"
++    assert (await _schedule_row(db, student_id, task_id, course_id)).interval_stage == 0
++
++    resp = await _review(client, token, student_id, course_id, task_id, right)
++    assert resp.status_code == 200, resp.text
++    assert resp.json()["interval_stage"] == 1
++
++
++async def test_due_list_hides_task_no_longer_auto_checked(db, client) -> None:
++    """Методист сделал вложение обязательным после постановки на повтор — задание
++    пропадает из «пора повторить», а не висит там вечно с 409 на сдаче."""
++    student_id, token, course_id, task_id = await _setup(db)
++    await _fail_then_pass(client, token, student_id, course_id, task_id)
++    await _make_due(db, student_id, task_id)
++
++    async def _due_ids() -> list[int]:
++        resp = await client.get(
++            f"/api/v1/learning/courses/{course_id}/review-due",
++            headers=_bearer(token), params={"student_id": student_id},
++        )
++        assert resp.status_code == 200, resp.text
++        return [i["task_id"] for i in resp.json()["items"]]
++
++    assert await _due_ids() == [task_id]
++    await db.execute(
++        text(
++            "UPDATE tasks SET solution_rules = solution_rules || "
++            "CAST(:patch AS jsonb) WHERE id = :t"
++        ),
++        {"t": task_id, "patch": json.dumps({"requires_attachment": True})},
++    )
++    await db.commit()
++    assert await _due_ids() == []
++
++
++async def test_review_due_checks_payment_gate(db, client, monkeypatch) -> None:
++    """`GET review-due` закрывается просроченной оплатой, как соседние GET
++    учебного пути; проверяется УЧЕНИК."""
++    from app.services import payment_access_service
++    from app.utils.exceptions import DomainError
++
++    student_id, token, course_id, _ = await _setup(db)
++    seen: list[int] = []
++
++    async def _blocked(_db, sid: int) -> None:
++        seen.append(sid)
++        raise DomainError("оплата просрочена", status_code=403, payload={"code": "payment_overdue"})
++
++    monkeypatch.setattr(payment_access_service, "assert_content_allowed", _blocked)
++    resp = await client.get(
++        f"/api/v1/learning/courses/{course_id}/review-due",
++        headers=_bearer(token), params={"student_id": student_id},
++    )
++    assert resp.status_code == 403
++    assert seen == [student_id]
+diff --git a/tests/test_tsk992_retrieval_race.py b/tests/test_tsk992_retrieval_race.py
+new file mode 100644
+index 0000000..226566b
+--- /dev/null
++++ b/tests/test_tsk992_retrieval_race.py
+@@ -0,0 +1,218 @@
++"""tsk-992 (ревью, MINOR 1): две одновременные сдачи одного повтора.
++
++Модель дефекта. `submit_review` брал строку расписания `FOR UPDATE`, но потом
++заводил курсовую попытку через `AttemptsService`, а тот фиксировал транзакцию —
++замок снимался до записи стадии. Вторая вкладка проходила проверку срока со
++старым `due_at`, и оба ответа записывались (потерянное обновление стадии).
++
++Здесь проверяется, что при одновременных сдачах принимается ровно одна, а
++остальные получают 409 `retrieval_not_due`; результат повтора ровно один.
++
++Гонку нельзя проверить на одном соединении — нужны настоящие параллельные
++транзакции и коммиты. Поэтому модуль работает вне общей откатываемой
++транзакции и убирает за собой сам.
++"""
++from __future__ import annotations
++
++import asyncio
++import json
++import sys
++import uuid
++from pathlib import Path
++
++import pytest
++import pytest_asyncio
++from sqlalchemy import text
++from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
++from sqlalchemy.pool import NullPool
++
++project_root = Path(__file__).resolve().parents[1]
++sys.path.insert(0, str(project_root))
++
++from app.core.config import Settings
++from app.schemas.checking import StudentAnswer
++from app.services import entitlements_service as ent
++from app.services import retrieval_service
++from app.utils.exceptions import DomainError
++
++pytestmark = [pytest.mark.asyncio, pytest.mark.no_tx_isolation]
++
++_settings = Settings()
++
++#: Больше одновременных сдач — шире окно гонки.
++CONCURRENCY = 4
++
++
++@pytest.fixture(autouse=True)
++def _gates_off(monkeypatch):
++    """Подписной гейт выключен — он проверяется отдельно."""
++    monkeypatch.setattr(ent.settings, "subscription_gate_mode", "off")
++
++
++@pytest_asyncio.fixture(scope="function")
++async def due_review():
++    """Ученик, курс с включённым повтором, SC-задание и строка расписания,
++    срок которой уже подошёл. Уборка своя."""
++    engine = create_async_engine(_settings.database_url, poolclass=NullPool)
++    tag = uuid.uuid4().hex[:12]
++    async with AsyncSession(engine, expire_on_commit=False) as s:
++        student_id = (
++            await s.execute(
++                text(
++                    "INSERT INTO users (full_name, email, is_active) "
++                    "VALUES ('tsk992 гонка повтора', :e, true) RETURNING id"
++                ),
++                {"e": f"tsk992-race-{tag}@example.test"},
++            )
++        ).scalar_one()
++        course_id = (
++            await s.execute(
++                text(
++                    "INSERT INTO courses (title, access_level, retrieval_config) "
++                    "VALUES (:t, 'self_guided', CAST(:cfg AS jsonb)) RETURNING id"
++                ),
++                {"t": f"tsk992-race-{tag}", "cfg": json.dumps({"enabled": True})},
++            )
++        ).scalar_one()
++        difficulty_id = (
++            await s.execute(text("SELECT id FROM difficulties ORDER BY id LIMIT 1"))
++        ).scalar()
++        task_id = (
++            await s.execute(
++                text(
++                    "INSERT INTO tasks (external_uid, max_score, task_content, solution_rules, "
++                    "course_id, difficulty_id, is_active) "
++                    "VALUES (:e, 1, CAST(:c AS jsonb), CAST(:r AS jsonb), :cid, :d, true) "
++                    "RETURNING id"
++                ),
++                {
++                    "e": f"tsk992-race-{tag}",
++                    "c": json.dumps({
++                        "type": "SC", "stem": "2+2?",
++                        "options": [{"id": "a", "text": "3"}, {"id": "b", "text": "4"}],
++                    }),
++                    "r": json.dumps({"max_score": 1, "correct_options": ["b"]}),
++                    "cid": course_id,
++                    "d": difficulty_id,
++                },
++            )
++        ).scalar_one()
++        await s.execute(
++            text("INSERT INTO user_courses (user_id, course_id, is_active) VALUES (:u, :c, true)"),
++            {"u": student_id, "c": course_id},
++        )
++        await s.execute(
++            text(
++                "INSERT INTO task_review_schedule (student_id, task_id, course_id, "
++                "interval_stage, due_at) VALUES (:u, :t, :c, 0, now() - interval '1 hour')"
++            ),
++            {"u": student_id, "t": task_id, "c": course_id},
++        )
++        await s.commit()
++
++    try:
++        yield engine, student_id, course_id, task_id
++    finally:
++        async with AsyncSession(engine) as s:
++            await s.execute(
++                text("DELETE FROM task_review_schedule WHERE student_id = :u"), {"u": student_id}
++            )
++            await s.execute(text("DELETE FROM task_results WHERE user_id = :u"), {"u": student_id})
++            await s.execute(text("DELETE FROM attempts WHERE user_id = :u"), {"u": student_id})
++            await s.execute(text("DELETE FROM user_courses WHERE user_id = :u"), {"u": student_id})
++            await s.execute(text("DELETE FROM tasks WHERE id = :t"), {"t": task_id})
++            await s.execute(text("DELETE FROM courses WHERE id = :c"), {"c": course_id})
++            await s.execute(text("DELETE FROM users WHERE id = :u"), {"u": student_id})
++            await s.commit()
++        await engine.dispose()
++
++
++async def test_concurrent_reviews_accept_exactly_one(due_review) -> None:
++    """Одновременные сдачи одного повтора: принимается одна, остальные — 409."""
++    engine, student_id, course_id, task_id = due_review
++    answer = StudentAnswer.model_validate(
++        {"type": "SC", "response": {"selected_option_ids": ["b"]}}
++    )
++
++    async def _one() -> object:
++        async with AsyncSession(engine, expire_on_commit=False) as s:
++            try:
++                return await retrieval_service.submit_review(
++                    s, student_id=student_id, task_id=task_id,
++                    course_id=course_id, answer=answer,
++                )
++            except DomainError as exc:
++                await s.rollback()
++                return exc
++
++    outcomes = await asyncio.gather(*(_one() for _ in range(CONCURRENCY)))
++    accepted = [o for o in outcomes if isinstance(o, retrieval_service.ReviewOutcome)]
++    refused = [o for o in outcomes if isinstance(o, DomainError)]
++    assert len(accepted) == 1, outcomes
++    assert len(refused) == CONCURRENCY - 1
++    assert all(e.payload.get("code") == "retrieval_not_due" for e in refused), [
++        e.payload for e in refused
++    ]
++
++    async with AsyncSession(engine) as s:
++        results = (
++            await s.execute(
++                text(
++                    "SELECT COUNT(*) FROM task_results "
++                    "WHERE user_id = :u AND source_system = 'retrieval'"
++                ),
++                {"u": student_id},
++            )
++        ).scalar_one()
++        stage = (
++            await s.execute(
++                text("SELECT interval_stage FROM task_review_schedule WHERE student_id = :u"),
++                {"u": student_id},
++            )
++        ).scalar_one()
++        attempts = (
++            await s.execute(
++                text("SELECT COUNT(*) FROM attempts WHERE user_id = :u"), {"u": student_id}
++            )
++        ).scalar_one()
++    assert results == 1
++    assert stage == 1
++    # Отказанные сдачи откатились целиком — лишних пустых попыток нет.
++    assert attempts == 1
++
++
++async def test_failed_result_write_leaves_no_attempt(due_review, monkeypatch) -> None:
++    """Запись результата упала после заведения попытки — откатывается всё:
++    ни пустой попытки, ни сдвига стадии (раньше попытка успевала зафиксироваться)."""
++    from app.services.task_results_service import TaskResultsService
++
++    engine, student_id, course_id, task_id = due_review
++
++    async def _boom(self, **kwargs):
++        raise RuntimeError("запись результата упала")
++
++    monkeypatch.setattr(TaskResultsService, "create_from_check_result", _boom)
++    answer = StudentAnswer.model_validate(
++        {"type": "SC", "response": {"selected_option_ids": ["b"]}}
++    )
++    async with AsyncSession(engine, expire_on_commit=False) as s:
++        with pytest.raises(RuntimeError):
++            await retrieval_service.submit_review(
++                s, student_id=student_id, task_id=task_id, course_id=course_id, answer=answer,
++            )
++        await s.rollback()
++
++    async with AsyncSession(engine) as s:
++        attempts = (
++            await s.execute(
++                text("SELECT COUNT(*) FROM attempts WHERE user_id = :u"), {"u": student_id}
++            )
++        ).scalar_one()
++        stage = (
++            await s.execute(
++                text("SELECT interval_stage FROM task_review_schedule WHERE student_id = :u"),
++                {"u": student_id},
++            )
++        ).scalar_one()
++    assert attempts == 0
++    assert stage == 0

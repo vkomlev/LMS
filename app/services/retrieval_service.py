@@ -32,7 +32,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -43,6 +43,7 @@ from app.models.task_review_schedule import TaskReviewSchedule
 from app.schemas.checking import CheckResult, StudentAnswer
 from app.schemas.solution_rules import SolutionRules
 from app.schemas.task_content import (
+    COMMENT_TASK_TYPES,
     QUIZ_TASK_TYPES,
     SHORT_ANSWER_TASK_TYPES,
     TaskContent,
@@ -57,6 +58,9 @@ from app.services.learning_gaps_service import (
 )
 from app.utils.exceptions import DomainError
 
+if TYPE_CHECKING:
+    from app.auth.current_user import CurrentUser
+
 logger = logging.getLogger(__name__)
 
 #: Интервал до следующего повтора по стадии: 0 → 3 дня, 1 → 7, 2 → 21 (Р2).
@@ -68,6 +72,7 @@ RETRIEVAL_DISABLED_CODE = "retrieval_disabled"
 RETRIEVAL_NOT_SCHEDULED_CODE = "retrieval_not_scheduled"
 RETRIEVAL_NOT_DUE_CODE = "retrieval_not_due"
 RETRIEVAL_UNSUPPORTED_CODE = "retrieval_unsupported"
+RETRIEVAL_EVIDENCE_REQUIRED_CODE = "evidence_required"
 
 
 @dataclass(frozen=True)
@@ -357,6 +362,10 @@ async def _course_attempt(
     Та же механика, что у `start-or-get-attempt`: тот же ключ замка, тот же
     поиск открытой попытки, создание через `AttemptsService`. Своей попытки
     повтор не заводит — ответ ложится туда же, куда легли бы обычные ответы.
+
+    Транзакцию НЕ фиксирует (только flush): иначе промежуточный commit снял бы
+    замок строки расписания и advisory-замок до записи стадии, а при падении
+    записи результата осталась бы пустая зафиксированная попытка.
     """
     from app.services.attempts_service import AttemptsService
 
@@ -380,16 +389,21 @@ async def _course_attempt(
         )
     ).scalar_one_or_none()
     if existing is not None:
-        return await attempts_service.ensure_attempt_task_ids(db, existing, task_id)
-    attempt = await attempts_service.create_attempt(
-        db=db,
-        user_id=student_id,
-        course_id=task_course_id,
-        root_course_id=root_course_id,
-        source_system=source_system,
-        meta={"task_ids": [task_id]},
+        return await attempts_service.ensure_attempt_task_ids(
+            db, existing, task_id, commit=False
+        )
+    attempt = await attempts_service.repo.create(
+        db,
+        {
+            "user_id": student_id,
+            "course_id": task_course_id,
+            "root_course_id": root_course_id,
+            "source_system": source_system,
+            "meta": {"task_ids": [task_id]},
+        },
+        commit=False,
     )
-    return await attempts_service.ensure_attempt_task_ids(db, attempt, task_id)
+    return attempt
 
 
 async def _due_schedule(
@@ -440,6 +454,7 @@ async def submit_review(
     course_id: int,
     answer: StudentAnswer,
     attempt_source_system: str = "spw_web",
+    current_user: Optional["CurrentUser"] = None,
 ) -> ReviewOutcome:
     """Принять ответ на повтор, записать результат и сдвинуть расписание.
 
@@ -455,11 +470,15 @@ async def submit_review(
         answer: ответ ученика.
         attempt_source_system: источник для НОВОЙ курсовой попытки, если
             открытой нет (сам результат всё равно помечается `retrieval`).
+        current_user: вызывающий — для ACL записи на курс (tsk-272);
+            None — проверка пропускается (внутренний вызов).
 
     Raises:
         DomainError: 409 `retrieval_disabled` / `retrieval_not_due` /
             `retrieval_unsupported`; 404 `retrieval_not_scheduled`; 400 —
-            тип ответа не совпадает с типом задания.
+            тип ответа не совпадает с типом задания; 422 `evidence_required` —
+            SA_COM/TBL_COM без комментария. HTTPException 403 — не записан
+            на курс задания.
     """
     from app.services.checking_service import CheckingService
     from app.services.task_results_service import TaskResultsService
@@ -472,9 +491,14 @@ async def submit_review(
             payload={"code": RETRIEVAL_DISABLED_CODE},
         )
 
-    # Первая проверка — без замка: отказы «не на повторе» / «рано» не должны
-    # заводить попытку. Под замком строка перечитывается ниже.
-    await _due_schedule(db, student_id=student_id, task_id=task_id, course_id=course_id)
+    # Строка расписания берётся под замком СРАЗУ и держится до единственной
+    # фиксации в конце (попытка ниже заводится без commit): две одновременные
+    # сдачи повтора сериализуются, вторая увидит уже сдвинутый срок и получит
+    # 409 `retrieval_not_due`. Любой отказ ниже откатывает всё вместе с
+    # попыткой — пустых зафиксированных попыток не остаётся.
+    schedule = await _due_schedule(
+        db, student_id=student_id, task_id=task_id, course_id=course_id, lock=True
+    )
 
     task = await TasksService().get_by_id(db, task_id)
     if task is None or not task.is_active or task.course_id is None:
@@ -484,12 +508,14 @@ async def submit_review(
             payload={"code": RETRIEVAL_NOT_SCHEDULED_CODE},
         )
 
-    # Те же замки, что у обычного приёма ответа (по УЧЕНИКУ): курс выведен из
-    # работы (tsk-886) и закрыт зависимостью (tsk-1276). Запись на курс
-    # подтверждается самой строкой расписания — она ставится только из сдачи
-    # в этом корне, прошедшей `assert_task_access`.
+    # Те же гейты, что у обычного приёма ответа: запись на курс задания
+    # (tsk-272, по вызывающему — как в `POST /attempts/{id}/answers`), курс
+    # выведен из работы (tsk-886) и закрыт зависимостью (tsk-1276) — по УЧЕНИКУ.
     from app.services import course_activity_service, dependency_lock_service
+    from app.services.tasks_acl_service import assert_task_access
 
+    if current_user is not None:
+        await assert_task_access(db, current_user=current_user, task_course_id=task.course_id)
     await dependency_lock_service.assert_course_not_locked(
         db, student_id=student_id, course_id=task.course_id, task_id=task_id,
     )
@@ -511,6 +537,17 @@ async def submit_review(
         raise DomainError(
             f"Тип ответа ({answer.type}) не совпадает с типом задачи ({task_content.type}).",
             status_code=400,
+        )
+    # Гейт 2.3f (tsk-419): у SA_COM/TBL_COM без комментария ответ не принимается.
+    # Вложений у повтора нет (`requires_attachment` и песочница отсечены
+    # `task_supports_review`), поэтому доказательство — только комментарий.
+    # В отличие от обычной сдачи отказ, а не незачёт: пустой комментарий —
+    # не «забыл решение», и откатывать стадию за него было бы неверно.
+    if task_content.type in COMMENT_TASK_TYPES and not (answer.response.comment or "").strip():
+        raise DomainError(
+            "Добавьте комментарий: как вы получили ответ.",
+            status_code=422,
+            payload={"code": RETRIEVAL_EVIDENCE_REQUIRED_CODE},
         )
 
     check_result: CheckResult = await asyncio.to_thread(
@@ -537,13 +574,6 @@ async def submit_review(
         source_system=attempt_source_system,
     )
     attempt_id = attempt.id
-    # `_course_attempt` фиксирует транзакцию (запись `meta.task_ids`), поэтому
-    # замок строки расписания берётся ПОСЛЕ неё и держится до записи стадии:
-    # две одновременные сдачи повтора сериализуются, вторая увидит уже
-    # сдвинутый срок и получит 409 `retrieval_not_due`.
-    schedule = await _due_schedule(
-        db, student_id=student_id, task_id=task_id, course_id=course_id, lock=True
-    )
     now = _now()
     task_result = await TaskResultsService().create_from_check_result(
         db=db,

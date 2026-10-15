@@ -59,11 +59,16 @@ class AttemptsService(BaseService[Attempts]):
         db: AsyncSession,
         attempt: Attempts,
         task_id: int,
+        *,
+        commit: bool = True,
     ) -> Attempts:
         """
         Гарантирует, что attempt.meta — объект, attempt.meta.task_ids — массив int[],
         содержащий task_id (merge, без дублей). Сохраняет изменения в БД.
         Логирует WARN при восстановлении битого meta (null, не dict, не list в task_ids).
+
+        :param commit: False — только flush, транзакцию фиксирует вызывающий
+            (повтор tsk-992 держит замок строки расписания до своей записи).
         """
         meta: dict[str, Any]
         if attempt.meta is None or not isinstance(attempt.meta, dict):
@@ -91,8 +96,9 @@ class AttemptsService(BaseService[Attempts]):
             task_ids.append(task_id)
 
         meta["task_ids"] = task_ids
-        updated = await self.update(db, db_obj=attempt, obj_in={"meta": meta})
-        return updated
+        if commit:
+            return await self.update(db, db_obj=attempt, obj_in={"meta": meta})
+        return await self.repo.update(db, attempt, {"meta": meta}, commit=False)
 
     async def _get_task_ids_for_deadline_check(
         self,

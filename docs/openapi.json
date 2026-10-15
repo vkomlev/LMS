@@ -3668,6 +3668,230 @@
         }
       }
     },
+    "/api/v1/courses/{course_id}/retrieval": {
+      "get": {
+        "tags": [
+          "courses"
+        ],
+        "summary": "Рубильник повторения по следам ошибок на курсе (tsk-992)",
+        "description": "`{enabled}` из `courses.retrieval_config`. Пустое поле читается как `enabled=false`. Действует на КОРНЕВОМ курсе — по нему ученик идёт по программе; на подкурсе настройка ни на что не влияет.",
+        "operationId": "get_course_retrieval_endpoint_api_v1_courses__course_id__retrieval_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "course_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Course Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Настройка отдана",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CourseRetrievalConfig"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Не аутентифицирован"
+          },
+          "403": {
+            "description": "Роль не позволяет менять настройки курса"
+          },
+          "404": {
+            "description": "Курс не найден"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "courses"
+        ],
+        "summary": "Включить/выключить повторение по следам ошибок на курсе (tsk-992)",
+        "description": "Полная замена `courses.retrieval_config`. По умолчанию повторение выключено; включение на пилотном курсе — решение оператора. Выключение прячет блок «Пора повторить», расписание учеников сохраняется.",
+        "operationId": "put_course_retrieval_endpoint_api_v1_courses__course_id__retrieval_put",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "course_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Course Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CourseRetrievalConfig"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Настройка записана",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CourseRetrievalConfig"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Не аутентифицирован"
+          },
+          "403": {
+            "description": "Роль не позволяет менять настройки курса"
+          },
+          "404": {
+            "description": "Курс не найден"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/courses/": {
       "post": {
         "tags": [
@@ -20681,6 +20905,245 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/v1/learning/courses/{course_id}/review-due": {
+      "get": {
+        "tags": [
+          "learning"
+        ],
+        "summary": "Задания курса, которые пора повторить (tsk-992)",
+        "description": "Задания «сначала завалил, потом сдал», у которых подошёл срок повтора (`due_at <= now`, не закреплены). `course_id` — корневой курс. Пустой список, если повторение на курсе выключено (`retrieval_config`).",
+        "operationId": "get_review_due_api_v1_learning_courses__course_id__review_due_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "course_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "description": "ID корневого курса",
+              "title": "Course Id"
+            },
+            "description": "ID корневого курса"
+          },
+          {
+            "name": "student_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "description": "ID студента",
+              "title": "Student Id"
+            },
+            "description": "ID студента"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewDueResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "tsk-010: занятия закрыты за просроченную оплату — `payload.code = payment_overdue` (сумма, месяцы, `payments_url`); tsk-673: тариф закрывает работу в курсе — `payload.code = course_work_closed` (так устроен «Выпускник»: материалы читаются, ответы не принимаются); либо чужой `student_id`."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/learning/courses/{course_id}/review/{task_id}/answer": {
+      "post": {
+        "tags": [
+          "learning"
+        ],
+        "summary": "Сдать повтор задания (tsk-992)",
+        "description": "Ответ проверяется той же автоматикой, что и обычная сдача, и пишется в `task_results` с `source_system='retrieval'` в открытую курсовую попытку (или новую по механике start-or-get-attempt). Статус задания в учебном пути, счёт и лимит попыток повтор не меняет. Верно — следующая стадия (+7 / +21 день) или «закреплено»; неверно — стадия 0, +3 дня.",
+        "operationId": "submit_review_answer_api_v1_learning_courses__course_id__review__task_id__answer_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "course_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "description": "ID корневого курса",
+              "title": "Course Id"
+            },
+            "description": "ID корневого курса"
+          },
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "description": "ID задания",
+              "title": "Task Id"
+            },
+            "description": "ID задания"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewAnswerRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewAnswerResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "tsk-010: занятия закрыты за просроченную оплату — `payload.code = payment_overdue` (сумма, месяцы, `payments_url`); tsk-673: тариф закрывает работу в курсе — `payload.code = course_work_closed` (так устроен «Выпускник»: материалы читаются, ответы не принимаются); либо чужой `student_id`."
+          },
+          "404": {
+            "description": "Задание не стоит на повторении (`payload.code = retrieval_not_scheduled`)"
+          },
+          "409": {
+            "description": "Повтор не принят: повторение на курсе выключено (`retrieval_disabled`), срок ещё не подошёл (`retrieval_not_due`, `payload.due_at`) либо задание не проверяется автоматически (`retrieval_unsupported`)"
+          },
+          "422": {
+            "description": "SA_COM/TBL_COM без комментария (`payload.code = evidence_required`)"
           }
         }
       }
@@ -54679,6 +55142,27 @@
         ],
         "title": "CourseRead"
       },
+      "CourseRetrievalConfig": {
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "description": "Включено ли повторение на курсе",
+            "default": false
+          }
+        },
+        "type": "object",
+        "title": "CourseRetrievalConfig",
+        "description": "Формат `courses.retrieval_config` (JSONB) и тело `PUT /courses/{id}/retrieval`.\n\nДействует на КОРНЕВОМ курсе — по нему ученик идёт по программе. Пустое\nполе (NULL) читается как `{\"enabled\": false}`.",
+        "examples": [
+          {
+            "enabled": true
+          },
+          {
+            "enabled": false
+          }
+        ]
+      },
       "CourseSamplingConfig": {
         "properties": {
           "enabled": {
@@ -71379,6 +71863,91 @@
         "title": "RetentionSummaryRead",
         "description": "Сводка для дашборда родителя: сигнал «возвращается ли ребёнок между\nзанятиями», без витрины наград."
       },
+      "ReviewAnswerRequest": {
+        "properties": {
+          "student_id": {
+            "type": "integer",
+            "title": "Student Id",
+            "description": "ID ученика"
+          },
+          "answer": {
+            "$ref": "#/components/schemas/StudentAnswer",
+            "description": "Ответ ученика"
+          }
+        },
+        "type": "object",
+        "required": [
+          "student_id",
+          "answer"
+        ],
+        "title": "ReviewAnswerRequest",
+        "description": "Тело `POST /learning/courses/{course_id}/review/{task_id}/answer`."
+      },
+      "ReviewAnswerResponse": {
+        "properties": {
+          "task_id": {
+            "type": "integer",
+            "title": "Task Id",
+            "description": "ID задания"
+          },
+          "task_result_id": {
+            "type": "integer",
+            "title": "Task Result Id",
+            "description": "Записанный результат (source_system=retrieval)"
+          },
+          "attempt_id": {
+            "type": "integer",
+            "title": "Attempt Id",
+            "description": "Курсовая попытка, в которую лёг ответ"
+          },
+          "check_result": {
+            "$ref": "#/components/schemas/CheckResult",
+            "description": "Результат проверки ответа"
+          },
+          "is_correct": {
+            "type": "boolean",
+            "title": "Is Correct",
+            "description": "Повтор засчитан"
+          },
+          "interval_stage": {
+            "type": "integer",
+            "maximum": 2.0,
+            "minimum": 0.0,
+            "title": "Interval Stage",
+            "description": "Стадия после повтора"
+          },
+          "next_due_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Due At",
+            "description": "Срок следующего повтора; null — задание закреплено"
+          },
+          "completed": {
+            "type": "boolean",
+            "title": "Completed",
+            "description": "Задание закреплено (верный повтор на стадии 2)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "task_id",
+          "task_result_id",
+          "attempt_id",
+          "check_result",
+          "is_correct",
+          "interval_stage",
+          "completed"
+        ],
+        "title": "ReviewAnswerResponse",
+        "description": "Итог сдачи повтора."
+      },
       "ReviewClaimItem": {
         "properties": {
           "id": {
@@ -71668,6 +72237,102 @@
         ],
         "title": "ReviewClaimResponse",
         "description": "Ответ claim по result_id: блокировка выдана (иначе 403/404/409)."
+      },
+      "ReviewDueItem": {
+        "properties": {
+          "task_id": {
+            "type": "integer",
+            "title": "Task Id",
+            "description": "ID задания"
+          },
+          "external_uid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Uid",
+            "description": "Внешний код задания"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title",
+            "description": "Название задания (или начало условия)"
+          },
+          "task_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Type",
+            "description": "Тип задания (SA, SC, …)"
+          },
+          "interval_stage": {
+            "type": "integer",
+            "maximum": 2.0,
+            "minimum": 0.0,
+            "title": "Interval Stage",
+            "description": "Стадия интервала: 0 → 3 дня, 1 → 7, 2 → 21"
+          },
+          "due_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Due At",
+            "description": "Когда подошёл срок повтора"
+          },
+          "days_since_solved": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Days Since Solved",
+            "description": "Сколько дней назад ученик решал задание в последний раз"
+          }
+        },
+        "type": "object",
+        "required": [
+          "task_id",
+          "title",
+          "interval_stage",
+          "due_at"
+        ],
+        "title": "ReviewDueItem",
+        "description": "Задание, которое пора повторить."
+      },
+      "ReviewDueResponse": {
+        "properties": {
+          "course_id": {
+            "type": "integer",
+            "title": "Course Id",
+            "description": "Корневой курс"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ReviewDueItem"
+            },
+            "type": "array",
+            "title": "Items",
+            "description": "Задания, которые пора повторить; пусто, если повторение выключено"
+          }
+        },
+        "type": "object",
+        "required": [
+          "course_id"
+        ],
+        "title": "ReviewDueResponse",
+        "description": "Ответ `GET /learning/courses/{course_id}/review-due`."
       },
       "ReviewGradeRequest": {
         "properties": {
