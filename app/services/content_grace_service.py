@@ -351,10 +351,33 @@ async def graced_for_roots(
     return GracedItems(tasks=frozenset(tasks), materials=frozenset(materials))
 
 
+REASON_NEW_CONTENT = "grace_new_content"
+REASON_AHEAD = "grace_ahead"
+
+
 async def _compute(
     db: AsyncSession, student_id: int, root_course_id: int
 ) -> GracedItems:
-    """Расчёт без кеша: три запроса на дерево, дальше чистый Python.
+    """Расчёт без кеша — набор прощённого из `compute_grace_reasons`."""
+    reasons = await compute_grace_reasons(db, student_id, root_course_id)
+    if not reasons:
+        return EMPTY_GRACE
+    return GracedItems(
+        tasks=frozenset(i for k, i in reasons if k == "task"),
+        materials=frozenset(i for k, i in reasons if k == "material"),
+    )
+
+
+async def compute_grace_reasons(
+    db: AsyncSession, student_id: int, root_course_id: int
+) -> Dict[Tuple[str, int], str]:
+    """tsk-1361: прощённое дерева с кодом критерия, без кеша.
+
+    Ключ — (`task`|`material`, id), значение — `REASON_NEW_CONTENT` (правило
+    узла) или `REASON_AHEAD` (правило «ушёл вперёд»). Если сработали оба —
+    пишется правило узла: его объяснение ученику понятнее.
+
+    Расчёт: три запроса на дерево, дальше чистый Python.
 
     Запросы — узлы дерева, рёбра между ними и все обязательные элементы дерева
     сразу. Ни один из них не растёт по числу элементов или подкурсов: именно
@@ -374,14 +397,14 @@ async def _compute(
         )
     ).scalar()
     if root_uid and root_uid.startswith(INDIVIDUAL_UID_PREFIX):
-        return EMPTY_GRACE
+        return {}
 
     node_rows = (
         await db.execute(text(_TREE_NODES_SQL), {"root_id": root_course_id})
     ).fetchall()
     tree_ids = [int(r[0]) for r in node_rows]
     if not tree_ids:
-        return EMPTY_GRACE
+        return {}
 
     edge_rows = (
         await db.execute(text(_TREE_EDGES_SQL), {"root_id": root_course_id})
@@ -399,7 +422,7 @@ async def _compute(
         )
     ).fetchall()
     if not item_rows:
-        return EMPTY_GRACE
+        return {}
 
     nodes: Dict[int, _Node] = {cid: _Node() for cid in tree_ids}
     for parent_id, child_id, order_number in edge_rows:
@@ -424,35 +447,26 @@ async def _compute(
             )
         )
 
-    graced_tasks: Set[int] = set()
-    graced_materials: Set[int] = set()
+    reasons: Dict[Tuple[str, int], str] = {}
     for course_id in nodes:
         subtree = _subtree_ids(nodes, course_id)
         items = [item for cid in subtree for item in nodes[cid].own]
         for item in _graced_in_node(items):
-            if item.kind == "task":
-                graced_tasks.add(item.item_id)
-            else:
-                graced_materials.add(item.item_id)
+            reasons[(item.kind, item.item_id)] = REASON_NEW_CONTENT
 
     for item in _graced_by_position(nodes, root_course_id):
-        if item.kind == "task":
-            graced_tasks.add(item.item_id)
-        else:
-            graced_materials.add(item.item_id)
+        reasons.setdefault((item.kind, item.item_id), REASON_AHEAD)
 
-    if graced_tasks or graced_materials:
+    if reasons:
         logger.info(
             "tsk-692: ученик %s, дерево курса %s — снята обязательность: "
             "заданий %s, материалов %s",
             student_id,
             root_course_id,
-            len(graced_tasks),
-            len(graced_materials),
+            sum(1 for k, _ in reasons if k == "task"),
+            sum(1 for k, _ in reasons if k == "material"),
         )
-    return GracedItems(
-        tasks=frozenset(graced_tasks), materials=frozenset(graced_materials)
-    )
+    return reasons
 
 
 def _subtree_ids(nodes: Dict[int, _Node], course_id: int) -> Set[int]:

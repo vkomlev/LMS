@@ -1,0 +1,2393 @@
+diff --git a/app/api/main.py b/app/api/main.py
+index dfa7466..aa6fd83 100644
+--- a/app/api/main.py
++++ b/app/api/main.py
+@@ -766,6 +766,26 @@ async def _stop_course_dependency_state_scheduler() -> None:
+         logger.exception("tsk-541: failed to stop course_dependency_state scheduler")
+ 
+ 
++# tsk-1361: фоновая сверка переопределений обязательности (фаза А — тень).
++from app.services import requirement_override_sync_cron_service as _req_override_cron
++
++
++@app.on_event("startup")
++async def _start_requirement_override_scheduler() -> None:
++    try:
++        _req_override_cron.start_scheduler()
++    except Exception:
++        logger.exception("tsk-1361: failed to start requirement_override_sync scheduler")
++
++
++@app.on_event("shutdown")
++async def _stop_requirement_override_scheduler() -> None:
++    try:
++        _req_override_cron.stop_scheduler()
++    except Exception:
++        logger.exception("tsk-1361: failed to stop requirement_override_sync scheduler")
++
++
+ # tsk-591: простой ученика во время занятия — сигнал преподавателю (событие в
+ # ленту + уведомление). Тот же multi-worker-safe паттерн, отдельный lock-ключ.
+ from app.services import lesson_idle_cron_service as _lesson_idle_cron
+diff --git a/app/core/config.py b/app/core/config.py
+index 835b816..c205dc9 100644
+--- a/app/core/config.py
++++ b/app/core/config.py
+@@ -289,6 +289,19 @@ class Settings:
+             os.getenv("COURSE_DEPENDENCY_STATE_CRON_STARTUP_DELAY_MIN", "2")
+         )
+ 
++        # tsk-1361: фоновая сверка переопределений обязательности по правилам
++        # (requirement_override_sync_cron_service.py). Фаза А — только запись
++        # в student_requirement_override, экраны её ещё не читают.
++        self.requirement_override_sync_cron_enabled: bool = os.getenv(
++            "REQUIREMENT_OVERRIDE_SYNC_CRON_ENABLED", "true"
++        ).lower() in ("true", "1", "yes")
++        self.requirement_override_sync_cron_interval_min: int = int(
++            os.getenv("REQUIREMENT_OVERRIDE_SYNC_CRON_INTERVAL_MIN", "60")
++        )
++        self.requirement_override_sync_cron_startup_delay_min: float = float(
++            os.getenv("REQUIREMENT_OVERRIDE_SYNC_CRON_STARTUP_DELAY_MIN", "7")
++        )
++
+         # tsk-302 этап 3: фоновая оценка кода ученика (чистота + признак
+         # ИИ-авторства). Синхронно её делать нельзя — это внешний вызов модели
+         # в пользовательском пути приёма ответа; ученик ждать не должен, а к
+diff --git a/app/db/base.py b/app/db/base.py
+index b22183f..94faf17 100644
+--- a/app/db/base.py
++++ b/app/db/base.py
+@@ -59,6 +59,7 @@ import app.models.lesson_idle_episode  # простои на занятии (tsk
+ import app.models.system_setting       # настройки школы из кабинета админа (tsk-721)
+ import app.models.homework             # домашняя работа: выдача и состав (tsk-741)
+ import app.models.program_scope        # персональный объём программы (tsk-798)
++import app.models.requirement_override  # персональная обязательность (tsk-1361)
+ import app.models.student_curator      # закрепление ученика за куратором (tsk-742)
+ import app.models.lesson_absence_followup  # «про пропуск уже спросили» (tsk-743)
+ 
+diff --git a/app/db/migrations/versions/2026_10_15_tsk1361_requirement_override.py b/app/db/migrations/versions/2026_10_15_tsk1361_requirement_override.py
+new file mode 100644
+index 0000000..5b4609b
+--- /dev/null
++++ b/app/db/migrations/versions/2026_10_15_tsk1361_requirement_override.py
+@@ -0,0 +1,90 @@
++"""tsk-1361: персональная обязательность элемента с причиной.
++
++`student_requirement_override` — отступление от `requirement_level` задания,
++материала или целого узла курса для одного ученика. Строку пишет правило
++(прощение нового tsk-692/1261/1294, сокращение программы tsk-798) или
++человек (учитель). Отмена мягкая (`revoked_at`) — история причин остаётся.
++Активной может быть одна строка на (ученик, вид, цель).
++
++Фаза А (тень): таблицу заполняет фоновая сверка, потребители её ещё не
++читают — поведение экранов не меняется.
++
++Rollback: `alembic downgrade tsk994_final_check` — таблица снимается
++целиком, потребители от неё на фазе А не зависят.
++
++Revision ID: tsk1361_requirement_override
++Revises: tsk994_final_check
++Create Date: 2026-10-15
++"""
++from typing import Sequence, Union
++
++import sqlalchemy as sa
++from alembic import op
++
++revision: str = "tsk1361_requirement_override"
++down_revision: Union[str, None] = "tsk994_final_check"
++branch_labels: Union[str, Sequence[str], None] = None
++depends_on: Union[str, Sequence[str], None] = None
++
++
++def upgrade() -> None:
++    """Создать таблицу, ограничения и индексы."""
++    op.create_table(
++        "student_requirement_override",
++        sa.Column("id", sa.Integer(), primary_key=True),
++        sa.Column(
++            "student_id", sa.Integer(),
++            sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False,
++        ),
++        sa.Column("target_kind", sa.String(16), nullable=False),
++        sa.Column("target_id", sa.Integer(), nullable=False),
++        sa.Column("level", sa.String(16), nullable=False),
++        sa.Column("reason_code", sa.String(32), nullable=False),
++        sa.Column("reason_text", sa.Text(), nullable=False),
++        sa.Column("source", sa.String(8), nullable=False),
++        sa.Column("rule_version", sa.Integer(), nullable=True),
++        sa.Column(
++            "created_by", sa.Integer(),
++            sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True,
++        ),
++        sa.Column(
++            "created_at", sa.DateTime(timezone=True),
++            nullable=False, server_default=sa.text("now()"),
++        ),
++        sa.Column("revoked_at", sa.DateTime(timezone=True), nullable=True),
++        sa.Column(
++            "revoked_by", sa.Integer(),
++            sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True,
++        ),
++        sa.CheckConstraint(
++            "target_kind IN ('task', 'material', 'course')", name="ck_sro_target_kind"
++        ),
++        sa.CheckConstraint(
++            "level IN ('required', 'recommended', 'skippable')", name="ck_sro_level"
++        ),
++        sa.CheckConstraint("source IN ('rule', 'human')", name="ck_sro_source"),
++        sa.CheckConstraint(
++            "source = 'human' OR created_by IS NULL", name="ck_sro_rule_has_no_author"
++        ),
++        comment="tsk-1361: персональная обязательность элемента с причиной",
++    )
++    op.create_index(
++        "uq_sro_active_target",
++        "student_requirement_override",
++        ["student_id", "target_kind", "target_id"],
++        unique=True,
++        postgresql_where=sa.text("revoked_at IS NULL"),
++    )
++    op.create_index(
++        "ix_sro_target_active",
++        "student_requirement_override",
++        ["target_kind", "target_id"],
++        postgresql_where=sa.text("revoked_at IS NULL"),
++    )
++
++
++def downgrade() -> None:
++    """Снять таблицу."""
++    op.drop_index("ix_sro_target_active", table_name="student_requirement_override")
++    op.drop_index("uq_sro_active_target", table_name="student_requirement_override")
++    op.drop_table("student_requirement_override")
+diff --git a/app/models/requirement_override.py b/app/models/requirement_override.py
+new file mode 100644
+index 0000000..b1b9158
+--- /dev/null
++++ b/app/models/requirement_override.py
+@@ -0,0 +1,51 @@
++"""Персональный уровень обязательности элемента для ученика (tsk-1361).
++
++Уровень у задания/материала (`requirement_level`) — одна отметка на всех.
++Эта таблица хранит отступления от неё для конкретного ученика вместе с
++причиной: кто или какое правило решило и почему. Подробности — в миграции
++`tsk1361_requirement_override`.
++"""
++from __future__ import annotations
++
++from datetime import datetime
++from typing import Optional
++
++from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, text
++from sqlalchemy.orm import Mapped, mapped_column
++
++from app.db.base import Base
++
++
++class StudentRequirementOverride(Base):
++    """Ученик × (задание | материал | узел курса) → уровень + причина."""
++
++    __tablename__ = "student_requirement_override"
++    __table_args__ = {
++        "comment": "tsk-1361: персональная обязательность элемента с причиной"
++    }
++
++    id: Mapped[int] = mapped_column(Integer, primary_key=True)
++    student_id: Mapped[int] = mapped_column(
++        Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
++    )
++    target_kind: Mapped[str] = mapped_column(
++        String(16), nullable=False, comment="task | material | course (узел — на поддерево)"
++    )
++    target_id: Mapped[int] = mapped_column(Integer, nullable=False)
++    level: Mapped[str] = mapped_column(
++        String(16), nullable=False, comment="required | recommended | skippable"
++    )
++    reason_code: Mapped[str] = mapped_column(String(32), nullable=False)
++    reason_text: Mapped[str] = mapped_column(Text, nullable=False)
++    source: Mapped[str] = mapped_column(String(8), nullable=False, comment="rule | human")
++    rule_version: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
++    created_by: Mapped[Optional[int]] = mapped_column(
++        Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
++    )
++    created_at: Mapped[datetime] = mapped_column(
++        DateTime(timezone=True), nullable=False, server_default=text("now()")
++    )
++    revoked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
++    revoked_by: Mapped[Optional[int]] = mapped_column(
++        Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
++    )
+diff --git a/app/services/content_grace_service.py b/app/services/content_grace_service.py
+index 1584e1f..d3db498 100644
+--- a/app/services/content_grace_service.py
++++ b/app/services/content_grace_service.py
+@@ -351,10 +351,33 @@ async def graced_for_roots(
+     return GracedItems(tasks=frozenset(tasks), materials=frozenset(materials))
+ 
+ 
++REASON_NEW_CONTENT = "grace_new_content"
++REASON_AHEAD = "grace_ahead"
++
++
+ async def _compute(
+     db: AsyncSession, student_id: int, root_course_id: int
+ ) -> GracedItems:
+-    """Расчёт без кеша: три запроса на дерево, дальше чистый Python.
++    """Расчёт без кеша — набор прощённого из `compute_grace_reasons`."""
++    reasons = await compute_grace_reasons(db, student_id, root_course_id)
++    if not reasons:
++        return EMPTY_GRACE
++    return GracedItems(
++        tasks=frozenset(i for k, i in reasons if k == "task"),
++        materials=frozenset(i for k, i in reasons if k == "material"),
++    )
++
++
++async def compute_grace_reasons(
++    db: AsyncSession, student_id: int, root_course_id: int
++) -> Dict[Tuple[str, int], str]:
++    """tsk-1361: прощённое дерева с кодом критерия, без кеша.
++
++    Ключ — (`task`|`material`, id), значение — `REASON_NEW_CONTENT` (правило
++    узла) или `REASON_AHEAD` (правило «ушёл вперёд»). Если сработали оба —
++    пишется правило узла: его объяснение ученику понятнее.
++
++    Расчёт: три запроса на дерево, дальше чистый Python.
+ 
+     Запросы — узлы дерева, рёбра между ними и все обязательные элементы дерева
+     сразу. Ни один из них не растёт по числу элементов или подкурсов: именно
+@@ -374,14 +397,14 @@ async def _compute(
+         )
+     ).scalar()
+     if root_uid and root_uid.startswith(INDIVIDUAL_UID_PREFIX):
+-        return EMPTY_GRACE
++        return {}
+ 
+     node_rows = (
+         await db.execute(text(_TREE_NODES_SQL), {"root_id": root_course_id})
+     ).fetchall()
+     tree_ids = [int(r[0]) for r in node_rows]
+     if not tree_ids:
+-        return EMPTY_GRACE
++        return {}
+ 
+     edge_rows = (
+         await db.execute(text(_TREE_EDGES_SQL), {"root_id": root_course_id})
+@@ -399,7 +422,7 @@ async def _compute(
+         )
+     ).fetchall()
+     if not item_rows:
+-        return EMPTY_GRACE
++        return {}
+ 
+     nodes: Dict[int, _Node] = {cid: _Node() for cid in tree_ids}
+     for parent_id, child_id, order_number in edge_rows:
+@@ -424,35 +447,26 @@ async def _compute(
+             )
+         )
+ 
+-    graced_tasks: Set[int] = set()
+-    graced_materials: Set[int] = set()
++    reasons: Dict[Tuple[str, int], str] = {}
+     for course_id in nodes:
+         subtree = _subtree_ids(nodes, course_id)
+         items = [item for cid in subtree for item in nodes[cid].own]
+         for item in _graced_in_node(items):
+-            if item.kind == "task":
+-                graced_tasks.add(item.item_id)
+-            else:
+-                graced_materials.add(item.item_id)
++            reasons[(item.kind, item.item_id)] = REASON_NEW_CONTENT
+ 
+     for item in _graced_by_position(nodes, root_course_id):
+-        if item.kind == "task":
+-            graced_tasks.add(item.item_id)
+-        else:
+-            graced_materials.add(item.item_id)
++        reasons.setdefault((item.kind, item.item_id), REASON_AHEAD)
+ 
+-    if graced_tasks or graced_materials:
++    if reasons:
+         logger.info(
+             "tsk-692: ученик %s, дерево курса %s — снята обязательность: "
+             "заданий %s, материалов %s",
+             student_id,
+             root_course_id,
+-            len(graced_tasks),
+-            len(graced_materials),
++            sum(1 for k, _ in reasons if k == "task"),
++            sum(1 for k, _ in reasons if k == "material"),
+         )
+-    return GracedItems(
+-        tasks=frozenset(graced_tasks), materials=frozenset(graced_materials)
+-    )
++    return reasons
+ 
+ 
+ def _subtree_ids(nodes: Dict[int, _Node], course_id: int) -> Set[int]:
+diff --git a/app/services/requirement_override_service.py b/app/services/requirement_override_service.py
+new file mode 100644
+index 0000000..5f67c6a
+--- /dev/null
++++ b/app/services/requirement_override_service.py
+@@ -0,0 +1,281 @@
++"""tsk-1361: персональная обязательность элемента — запись и чтение.
++
++# Зачем
++
++`requirement_level` — одна отметка на всех. Отступления для конкретного
++ученика раньше вычислялись молча в каждом потребителе: прощение нового
++(`content_grace_service`, tsk-692/1261/1294) и сокращение программы
++(`program_scope_service`, tsk-798). Причину не видели ни ученик, ни учитель,
++а потребители применяли правила вразнобой (инвентарь — в
++`docs/specs/2026-10-15-plan-tsk1361-requirement-overrides.md`).
++
++Теперь правило ЗАПИСЫВАЕТ отступление в `student_requirement_override` с
++кодом и текстом причины. Расчёт остаётся тем же кодом, меняется только то,
++что результат хранится и его можно проверить.
++
++# Инварианты
++
++* Человек главнее правила: правило не создаёт, не меняет и не отменяет
++  строку `source='human'` и не пишет поверх неё.
++* Отмена мягкая: `revoked_at` ставится, строка остаётся — история причин.
++* Активна не больше одной строки на (ученик, вид, цель) — частичный
++  уникальный индекс; вставка правила идёт `ON CONFLICT DO NOTHING`, чтобы
++  гонка с учителем не роняла фоновую сверку.
++
++# Фаза А (тень)
++
++Строки пишет фоновая сверка (`requirement_override_sync_cron_service`),
++потребители их ещё не читают. Переключение — фаза Б, после сверки.
++"""
++from __future__ import annotations
++
++import logging
++from dataclasses import dataclass
++from typing import Dict, Optional, Tuple
++
++from sqlalchemy import text
++from sqlalchemy.ext.asyncio import AsyncSession
++
++from app.services.content_grace_service import (
++    REASON_AHEAD,
++    REASON_NEW_CONTENT,
++    compute_grace_reasons,
++)
++from app.services.program_scope_service import excluded_courses_for
++
++logger = logging.getLogger(__name__)
++
++# Уровни, которые идут в счёт обязательного. Единая точка для новых
++# потребителей (фаза Б сводит сюда копии литерала из других модулей).
++REQUIRED_LEVELS: Tuple[str, ...] = ("required", "skippable")
++LEVELS: Tuple[str, ...] = ("required", "recommended", "skippable")
++TARGET_KINDS: Tuple[str, ...] = ("task", "material", "course")
++
++# Растёт при изменении любого правила — по нему видно, какие строки
++# посчитаны старой версией.
++RULE_VERSION = 1
++
++REASON_PROGRAM_TRIM = "program_trim"
++REASON_TEACHER = "teacher"
++
++REASON_TEXTS: Dict[str, str] = {
++    REASON_NEW_CONTENT: "Добавлено после того, как вы прошли эту тему",
++    REASON_AHEAD: "Добавлено, когда вы уже прошли дальше по теме",
++    REASON_PROGRAM_TRIM: "Не входит в вашу программу до экзамена: не хватает времени до срока",
++    REASON_TEACHER: "Так решил преподаватель",
++}
++
++Target = Tuple[str, int]
++
++
++@dataclass(frozen=True)
++class OverrideView:
++    """Активное переопределение глазами потребителя."""
++
++    level: str
++    reason_code: str
++    reason_text: str
++    source: str
++
++
++@dataclass
++class SyncResult:
++    """Итог сверки правил одного ученика."""
++
++    inserted: int = 0
++    revoked: int = 0
++    kept: int = 0
++    skipped_human: int = 0
++
++
++async def desired_rule_overrides(db: AsyncSession, student_id: int) -> Dict[Target, str]:
++    """Что правила считают нужным сейчас: цель → код причины.
++
++    Прощение считается от каждого действующего корня зачисления (ровно как
++    `graced_for_roots`), сокращение программы — по сохранённому плану
++    объёма (`student_program_scope`).
++    """
++    root_ids = (
++        await db.execute(
++            text("SELECT course_id FROM user_courses WHERE user_id = :sid AND is_active = true"),
++            {"sid": student_id},
++        )
++    ).scalars().all()
++
++    desired: Dict[Target, str] = {}
++    for root_id in sorted({int(r) for r in root_ids}):
++        for target, code in (await compute_grace_reasons(db, student_id, root_id)).items():
++            # Один элемент виден из двух корней — правило узла объяснимее.
++            if desired.get(target) != REASON_NEW_CONTENT:
++                desired[target] = code
++    for course_id in await excluded_courses_for(db, student_id=student_id):
++        desired[("course", int(course_id))] = REASON_PROGRAM_TRIM
++    return desired
++
++
++async def sync_rule_overrides(db: AsyncSession, student_id: int) -> SyncResult:
++    """Привести строки правил ученика к `desired_rule_overrides`. Без коммита.
++
++    Строки человека не трогаются. Строка правила, чья причина сменилась,
++    отменяется и пишется заново — история показывает, когда сменилась причина.
++    """
++    desired = await desired_rule_overrides(db, student_id)
++    rows = (
++        await db.execute(
++            text(
++                "SELECT id, target_kind, target_id, source, reason_code "
++                "  FROM student_requirement_override "
++                " WHERE student_id = :sid AND revoked_at IS NULL"
++            ),
++            {"sid": student_id},
++        )
++    ).fetchall()
++
++    result = SyncResult()
++    human: set[Target] = set()
++    current_rule: Dict[Target, Tuple[int, str]] = {}
++    for row_id, kind, target_id, source, code in rows:
++        target = (str(kind), int(target_id))
++        if source == "human":
++            human.add(target)
++        else:
++            current_rule[target] = (int(row_id), str(code))
++
++    to_revoke = [
++        row_id
++        for target, (row_id, code) in current_rule.items()
++        if desired.get(target) != code
++    ]
++    if to_revoke:
++        await db.execute(
++            text(
++                "UPDATE student_requirement_override SET revoked_at = now() "
++                " WHERE id = ANY(:ids) AND revoked_at IS NULL"
++            ),
++            {"ids": to_revoke},
++        )
++        result.revoked = len(to_revoke)
++
++    for target, code in sorted(desired.items()):
++        if target in human:
++            result.skipped_human += 1
++            continue
++        existing = current_rule.get(target)
++        if existing is not None and existing[1] == code:
++            result.kept += 1
++            continue
++        inserted = await db.execute(
++            text(
++                "INSERT INTO student_requirement_override "
++                "  (student_id, target_kind, target_id, level, reason_code, "
++                "   reason_text, source, rule_version) "
++                "VALUES (:sid, :kind, :tid, 'recommended', :code, :txt, 'rule', :ver) "
++                "ON CONFLICT (student_id, target_kind, target_id) "
++                "  WHERE revoked_at IS NULL DO NOTHING"
++            ),
++            {
++                "sid": student_id,
++                "kind": target[0],
++                "tid": target[1],
++                "code": code,
++                "txt": REASON_TEXTS[code],
++                "ver": RULE_VERSION,
++            },
++        )
++        result.inserted += int(inserted.rowcount or 0)
++
++    if result.inserted or result.revoked:
++        logger.info(
++            "tsk-1361: ученик %s — правила: добавлено %s, отменено %s, без изменений %s, "
++            "под решением человека %s",
++            student_id, result.inserted, result.revoked, result.kept, result.skipped_human,
++        )
++    return result
++
++
++async def set_human_override(
++    db: AsyncSession,
++    *,
++    student_id: int,
++    target_kind: str,
++    target_id: int,
++    level: str,
++    by_user_id: int,
++    reason_text: Optional[str] = None,
++) -> int:
++    """Решение учителя: задать уровень элемента/узла ученику. Без коммита.
++
++    Активная строка на эту цель (правила или прежнее решение человека)
++    отменяется от имени учителя. Возвращает id новой строки.
++    """
++    if target_kind not in TARGET_KINDS:
++        raise ValueError(f"неизвестный вид цели: {target_kind!r}")
++    if level not in LEVELS:
++        raise ValueError(f"неизвестный уровень: {level!r}")
++    note = (reason_text or "").strip() or REASON_TEXTS[REASON_TEACHER]
++
++    await db.execute(
++        text(
++            "UPDATE student_requirement_override "
++            "   SET revoked_at = now(), revoked_by = :by "
++            " WHERE student_id = :sid AND target_kind = :kind AND target_id = :tid "
++            "   AND revoked_at IS NULL"
++        ),
++        {"by": by_user_id, "sid": student_id, "kind": target_kind, "tid": target_id},
++    )
++    new_id = (
++        await db.execute(
++            text(
++                "INSERT INTO student_requirement_override "
++                "  (student_id, target_kind, target_id, level, reason_code, "
++                "   reason_text, source, created_by) "
++                "VALUES (:sid, :kind, :tid, :lvl, :code, :txt, 'human', :by) RETURNING id"
++            ),
++            {
++                "sid": student_id, "kind": target_kind, "tid": target_id, "lvl": level,
++                "code": REASON_TEACHER, "txt": note, "by": by_user_id,
++            },
++        )
++    ).scalar_one()
++    logger.info(
++        "tsk-1361: учитель %s задал ученику %s уровень %s для %s %s",
++        by_user_id, student_id, level, target_kind, target_id,
++    )
++    return int(new_id)
++
++
++async def revoke_human_override(
++    db: AsyncSession, *, student_id: int, target_kind: str, target_id: int, by_user_id: int
++) -> bool:
++    """Снять решение учителя — элемент вернётся к курсу и правилам. Без коммита.
++
++    Правило восстановит своё переопределение на следующей сверке.
++    """
++    res = await db.execute(
++        text(
++            "UPDATE student_requirement_override "
++            "   SET revoked_at = now(), revoked_by = :by "
++            " WHERE student_id = :sid AND target_kind = :kind AND target_id = :tid "
++            "   AND source = 'human' AND revoked_at IS NULL"
++        ),
++        {"by": by_user_id, "sid": student_id, "kind": target_kind, "tid": target_id},
++    )
++    return bool(res.rowcount)
++
++
++async def active_overrides(db: AsyncSession, student_id: int) -> Dict[Target, OverrideView]:
++    """Все активные переопределения ученика одним запросом по индексу."""
++    rows = (
++        await db.execute(
++            text(
++                "SELECT target_kind, target_id, level, reason_code, reason_text, source "
++                "  FROM student_requirement_override "
++                " WHERE student_id = :sid AND revoked_at IS NULL"
++            ),
++            {"sid": student_id},
++        )
++    ).fetchall()
++    return {
++        (str(k), int(t)): OverrideView(level=str(lvl), reason_code=str(c), reason_text=str(txt), source=str(s))
++        for k, t, lvl, c, txt, s in rows
++    }
+diff --git a/app/services/requirement_override_sync_cron_service.py b/app/services/requirement_override_sync_cron_service.py
+new file mode 100644
+index 0000000..a0018b6
+--- /dev/null
++++ b/app/services/requirement_override_sync_cron_service.py
+@@ -0,0 +1,120 @@
++"""tsk-1361: фоновая сверка переопределений обязательности по правилам.
++
++Раз в интервал для каждого ученика с действующим зачислением правила
++(прощение нового, сокращение программы) приводят его строки в
++`student_requirement_override` к текущему расчёту.
++
++Паттерн тот же, что у `course_dependency_state_cron_service` (tsk-541/626):
++сторож одного worker'а — отдельная сессия с транзакционной advisory-блокировкой,
++работа — в своей сессии с коммитом после каждого ученика, ученики по
++возрастанию id. Соединение не держится во время ожидания: тик идёт подряд и
++закрывается (урок tsk-1250 — пул соединений).
++"""
++from __future__ import annotations
++
++import logging
++from typing import Optional
++
++from apscheduler.schedulers.asyncio import AsyncIOScheduler
++from sqlalchemy import text
++from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
++
++from app.core.config import Settings
++from app.core.cron_registry import register_interval_job
++from app.db.session import async_session_factory
++from app.services.content_grace_service import invalidate_grace_cache
++from app.services.requirement_override_service import sync_rule_overrides
++
++logger = logging.getLogger("app.requirement_override_sync_cron")
++
++# ascii "RQOV" — не пересекается с соседними ключами (CDST 0x43445354 и др.).
++_LOCK_KEY = 0x52514F56
++
++_scheduler: Optional[AsyncIOScheduler] = None
++
++
++async def requirement_override_sync_tick(
++    session_factory: Optional[async_sessionmaker[AsyncSession]] = None,
++) -> dict:
++    """Один проход по всем ученикам с действующими зачислениями."""
++    factory = session_factory or async_session_factory
++    summary = {"locked": False, "students": 0, "inserted": 0, "revoked": 0, "failed": 0}
++
++    async with factory() as guard:
++        got = await guard.execute(
++            text("SELECT pg_try_advisory_xact_lock(:k)"), {"k": _LOCK_KEY}
++        )
++        if not bool(got.scalar()):
++            logger.debug("tsk-1361: тик пропущен — работу делает другой worker")
++            return summary
++        summary["locked"] = True
++
++        async with factory() as db:
++            student_ids = (
++                await db.execute(
++                    text(
++                        "SELECT DISTINCT user_id FROM user_courses "
++                        " WHERE is_active = true ORDER BY user_id"
++                    )
++                )
++            ).scalars().all()
++            for student_id in student_ids:
++                try:
++                    res = await sync_rule_overrides(db, int(student_id))
++                    await db.commit()
++                except Exception:
++                    # Сбой одного ученика не должен останавливать остальных;
++                    # следующий тик повторит его.
++                    await db.rollback()
++                    summary["failed"] += 1
++                    logger.exception("tsk-1361: сверка ученика %s упала", student_id)
++                    continue
++                finally:
++                    invalidate_grace_cache(db)
++                summary["students"] += 1
++                summary["inserted"] += res.inserted
++                summary["revoked"] += res.revoked
++
++        logger.info(
++            "tsk-1361 requirement_override_sync done students=%s inserted=%s revoked=%s failed=%s",
++            summary["students"], summary["inserted"], summary["revoked"], summary["failed"],
++        )
++        # Коммит, а не откат сторожа — см. course_dependency_state_cron_service.
++        await guard.commit()
++    return summary
++
++
++def start_scheduler() -> Optional[AsyncIOScheduler]:
++    """Поднять периодический тик (если включён настройкой)."""
++    global _scheduler
++    settings = Settings()
++    if not settings.requirement_override_sync_cron_enabled:
++        logger.info("tsk-1361: сверка переопределений выключена (REQUIREMENT_OVERRIDE_SYNC_CRON_ENABLED)")
++        return None
++    if _scheduler is not None and _scheduler.running:
++        return _scheduler
++
++    scheduler = AsyncIOScheduler(timezone="UTC")
++    register_interval_job(
++        scheduler,
++        requirement_override_sync_tick,
++        job_id="tsk1361_requirement_override_sync",
++        startup_delay_min=settings.requirement_override_sync_cron_startup_delay_min,
++        minutes=int(settings.requirement_override_sync_cron_interval_min),
++    )
++    scheduler.start()
++    _scheduler = scheduler
++    logger.info(
++        "tsk-1361 requirement_override_sync scheduler started: interval=%smin",
++        settings.requirement_override_sync_cron_interval_min,
++    )
++    return scheduler
++
++
++def stop_scheduler() -> None:
++    """Остановить тик."""
++    global _scheduler
++    if _scheduler is not None and _scheduler.running:
++        _scheduler.shutdown(wait=False)
++        logger.info("tsk-1361 requirement_override_sync scheduler stopped")
++    _scheduler = None
+diff --git a/docs/specs/2026-10-15-plan-tsk1361-requirement-overrides.md b/docs/specs/2026-10-15-plan-tsk1361-requirement-overrides.md
+new file mode 100644
+index 0000000..6ef4cd3
+--- /dev/null
++++ b/docs/specs/2026-10-15-plan-tsk1361-requirement-overrides.md
+@@ -0,0 +1,101 @@
++# tsk-1361 — Обязательность на уровне ученика: инвентарь и проект решения
++
++Статус: ПРОЕКТ, ждёт «ОК» оператора. Реализация не начата.
++
++## 1. Масштаб на проде (15.10, только чтение)
++
++| Что | Число |
++|---|---|
++| Активные задания: required / recommended | 8220 / 1043 |
++| Активные материалы: required / recommended / skippable | 5270 / 297 / 18 |
++| Ученики с активными зачислениями | 140 (555 зачислений) |
++| Пар «ученик × активное задание» по деревьям курсов | 270 610 (обязательных 166 691) |
++| `course_dependencies` | 104 |
++| Прецедент: `student_task_limit_override` (ученик × задание → лимит, причина, кто) | 423 строки |
++
++Вывод: даже если правило запишет переопределение на каждую пару — это сотни тысяч строк, для PostgreSQL мелочь. Но переопределение на узел (подкурс) снимает почти весь объём: сокращение программы и «ушёл вперёд по узлу» — это узлы, а не задания.
++
++## 2. Инвентарь (по коду)
++
++### Где задаётся
++- `tasks.requirement_level`, `materials.requirement_level` (`required|recommended|skippable`, миграция tsk-111). `courses.is_required` — другая сущность (обязательность курса в зависимостях).
++- `student_program_scope` (tsk-798) — хранимый план объёма, пишется **только при выдаче ДЗ** (`homework_service.issue` → `program_scope_service.store_scope`).
++- Прощение нового (`content_grace_service`, tsk-692/1261/1294) — **не хранится**, считается на лету: 3 SQL + Python на (ученик, корень), кэш на одну сессию БД.
++- Ручной пропуск учителем — статус SKIPPED (`/progress/tasks/{id}/skip`), уровень не меняет.
++
++### Кто читает (Прощение / Объём)
++| Потребитель | Прощение | Объём |
++|---|---|---|
++| next-item (`learning_engine._effective_*_rows`) | да, от корня | да |
++| `compute_course_state` → замки, крон зависимостей | да, **от подкурса** (предки не видны) | да |
++| числитель `compute_course_state` | **нет** (прощённое закрытое идёт в «сделано») | нет |
++| состав ДЗ (`homework_service._next_items` через `manual_progress`) | да | **нет** — выпавшие номера могут попасть в ДЗ |
++| норма ДЗ (`homework_volume_service`) | да | да |
++| карточка курса ученика (`me_service.get_courses_with_progress`) | только знаменатель | **нет** |
++| программа курса ученика (`me_service.get_syllabus_states`) | да, отдаёт как `recommended` | **нет** |
++| прогресс и дашборд учителя (`student_dashboard_service`) | да | **нет** |
++| сводка урока (`teacher_lesson_summary_service`) | да, от `course_id` прогресса | **нет** |
++| `manual_progress_service` (обход для ДЗ, ручной зачёт) | **нет** | нет |
++| кнопка «Пропустить» ученика | только `skippable` | — |
++| лента, уведомления, кроны отчётов | не читают | — |
++| SPW | сам повторяет правило «в счёт идут required+skippable» в 4 местах (`content-requirement.ts`, `use-course-syllabus.ts`, `CourseSyllabus`, `SubcourseHeader`); причины не показывает нигде | — |
++
++Литерал «что обязательно» продублирован в 5+ модулях LMS и в SPW.
++
++### Главные дефекты AS-IS
++1. Две оси (прощение и объём) применяются в разных наборах потребителей → ученик и учитель видят «долг», которого движок уже не требует (это и есть жалоба оператора).
++2. Причина нигде не хранится и не показывается; регрессию вроде tsk-1294 видно только по жалобе.
++3. Ширина прощения разная (корень / подкурс) у разных потребителей.
++4. План объёма устаревает без выдачи ДЗ.
++
++## 3. Проект (TO-BE)
++
++### 3.1 Модель: `student_requirement_override`
++| Колонка | Смысл |
++|---|---|
++| `id` | |
++| `student_id` | FK users |
++| `target_kind` | `task` / `material` / `course` (узел — действует на поддерево) |
++| `target_id` | |
++| `level` | `required` / `recommended` / `skippable` |
++| `reason_code` | `grace_new_content` (tsk-692), `grace_ahead` (tsk-1261), `program_trim` (tsk-798), `course_switch`, `teacher` |
++| `reason_text` | человеческий текст для ученика/учителя |
++| `source` | `rule` / `human` |
++| `rule_version` | версия правила (для перепроверки при правке правила) |
++| `created_by`, `created_at` | |
++| `revoked_at`, `revoked_by` | мягкая отмена — история остаётся |
++
++Уникальность: одна **активная** строка на (ученик, вид, цель) — частичный уникальный индекс `WHERE revoked_at IS NULL`. Индекс `(student_id) WHERE revoked_at IS NULL`.
++
++Порядок: переопределение на элементе > на ближайшем узле-предке > уровень элемента в курсе. **Человек > правило**: правило никогда не перезаписывает и не отменяет строку `source=human`.
++
++### 3.2 Правила пишут, а не вычисляют молча
++- **tsk-692/1261/1294 (новизна):** тот же алгоритм `content_grace_service`, но запускается не в запросе, а (а) при создании/активации задания или материала — для зачисленных на дерево, (б) ночной сверкой. Результат — upsert/revoke строк `grace_*` с текстом причины. Чтение на лету убирается.
++- **tsk-798 (объём):** `store_scope` пишет `program_trim` на выпавшие узлы-номера и отменяет их при возврате; пересчёт — при выдаче ДЗ и ночным кроном (закрывает дефект 4).
++- **Смена курса (сценарий 3):** правило `course_switch` — см. вопрос оператору.
++
++### 3.3 Единый источник
++`requirement_resolver.effective_levels(db, student_id, root_ids)` → `{(kind,id): (level, reason)}` одним индексированным запросом. Его зовут все потребители из таблицы выше; `REQUIREMENT_LEVELS` — одна константа. API отдаёт `requirement_level` (уже персональный) + новое `requirement_reason {code, text, source}`. SPW перестаёт угадывать: показывает причину, счётчики берёт по полю.
++
++### 3.4 Экраны
++- Ученик: бейдж «Необязательно» + строка причины («вы прошли тему раньше, чем задание добавили», «не входит в вашу программу до экзамена»).
++- Учитель: в сводке урока, прогрессе и ДЗ — причина рядом с элементом; кнопки «Сделать необязательным / обязательным» (пишут `source=human`), история изменений.
++
++### 3.5 Миграция данных
++1. Alembic: таблица + индексы (без данных).
++2. Режим тени: правила пишут строки, потребители ещё читают старое; скрипт сверки «на лету vs таблица» по всем 140 ученикам — расхождение 0.
++3. Переключение потребителей на резолвер (экраны — с `Hold-For-Operator`).
++4. Удаление вычисления на лету.
++
++### 3.6 Производительность (урок tsk-1250)
++- Сейчас прощение — 3 запроса + Python на каждый (ученик, корень) в каждом запросе экрана. После — один запрос по индексу; тяжёлое уходит из пути запроса в события и ночной крон → нагрузка на пул падает.
++- Крон и заполнение — пачками по ученику, каждое в своей короткой сессии, без держания соединения во время расчёта; ограничение параллельности 1.
++- Событие «добавили задание» на большой курс → фоновая задача, не в запросе методиста.
++
++## 4. Риски
++| Риск | Мера |
++|---|---|
++| Расхождение тени и старого расчёта | сверка до переключения, порог 0 |
++| Правило отменило решение учителя | инвариант human > rule + тест |
++| Устаревшие строки после правки курса | события + ночная сверка + `rule_version` |
++| Экраны поменяли цифры у учеников без согласия оператора | `Hold-For-Operator` на коммитах SPW/экранной части |
+diff --git a/reviews/2026-10-15-tsk1361-requirement-override-phaseA.diff b/reviews/2026-10-15-tsk1361-requirement-override-phaseA.diff
+new file mode 100644
+index 0000000..218b069
+--- /dev/null
++++ b/reviews/2026-10-15-tsk1361-requirement-override-phaseA.diff
+@@ -0,0 +1,1180 @@
++diff --git a/app/api/main.py b/app/api/main.py
++index dfa7466..aa6fd83 100644
++--- a/app/api/main.py
+++++ b/app/api/main.py
++@@ -766,6 +766,26 @@ async def _stop_course_dependency_state_scheduler() -> None:
++         logger.exception("tsk-541: failed to stop course_dependency_state scheduler")
++ 
++ 
+++# tsk-1361: фоновая сверка переопределений обязательности (фаза А — тень).
+++from app.services import requirement_override_sync_cron_service as _req_override_cron
+++
+++
+++@app.on_event("startup")
+++async def _start_requirement_override_scheduler() -> None:
+++    try:
+++        _req_override_cron.start_scheduler()
+++    except Exception:
+++        logger.exception("tsk-1361: failed to start requirement_override_sync scheduler")
+++
+++
+++@app.on_event("shutdown")
+++async def _stop_requirement_override_scheduler() -> None:
+++    try:
+++        _req_override_cron.stop_scheduler()
+++    except Exception:
+++        logger.exception("tsk-1361: failed to stop requirement_override_sync scheduler")
+++
+++
++ # tsk-591: простой ученика во время занятия — сигнал преподавателю (событие в
++ # ленту + уведомление). Тот же multi-worker-safe паттерн, отдельный lock-ключ.
++ from app.services import lesson_idle_cron_service as _lesson_idle_cron
++diff --git a/app/core/config.py b/app/core/config.py
++index 835b816..c205dc9 100644
++--- a/app/core/config.py
+++++ b/app/core/config.py
++@@ -289,6 +289,19 @@ class Settings:
++             os.getenv("COURSE_DEPENDENCY_STATE_CRON_STARTUP_DELAY_MIN", "2")
++         )
++ 
+++        # tsk-1361: фоновая сверка переопределений обязательности по правилам
+++        # (requirement_override_sync_cron_service.py). Фаза А — только запись
+++        # в student_requirement_override, экраны её ещё не читают.
+++        self.requirement_override_sync_cron_enabled: bool = os.getenv(
+++            "REQUIREMENT_OVERRIDE_SYNC_CRON_ENABLED", "true"
+++        ).lower() in ("true", "1", "yes")
+++        self.requirement_override_sync_cron_interval_min: int = int(
+++            os.getenv("REQUIREMENT_OVERRIDE_SYNC_CRON_INTERVAL_MIN", "60")
+++        )
+++        self.requirement_override_sync_cron_startup_delay_min: float = float(
+++            os.getenv("REQUIREMENT_OVERRIDE_SYNC_CRON_STARTUP_DELAY_MIN", "7")
+++        )
+++
++         # tsk-302 этап 3: фоновая оценка кода ученика (чистота + признак
++         # ИИ-авторства). Синхронно её делать нельзя — это внешний вызов модели
++         # в пользовательском пути приёма ответа; ученик ждать не должен, а к
++diff --git a/app/db/base.py b/app/db/base.py
++index 9f831a9..8e87984 100644
++--- a/app/db/base.py
+++++ b/app/db/base.py
++@@ -59,6 +59,7 @@ import app.models.lesson_idle_episode  # простои на занятии (tsk
++ import app.models.system_setting       # настройки школы из кабинета админа (tsk-721)
++ import app.models.homework             # домашняя работа: выдача и состав (tsk-741)
++ import app.models.program_scope        # персональный объём программы (tsk-798)
+++import app.models.requirement_override  # персональная обязательность (tsk-1361)
++ import app.models.student_curator      # закрепление ученика за куратором (tsk-742)
++ import app.models.lesson_absence_followup  # «про пропуск уже спросили» (tsk-743)
++ 
++diff --git a/app/db/migrations/versions/2026_10_15_tsk1361_requirement_override.py b/app/db/migrations/versions/2026_10_15_tsk1361_requirement_override.py
++new file mode 100644
++index 0000000..8fb4337
++--- /dev/null
+++++ b/app/db/migrations/versions/2026_10_15_tsk1361_requirement_override.py
++@@ -0,0 +1,90 @@
+++"""tsk-1361: персональная обязательность элемента с причиной.
+++
+++`student_requirement_override` — отступление от `requirement_level` задания,
+++материала или целого узла курса для одного ученика. Строку пишет правило
+++(прощение нового tsk-692/1261/1294, сокращение программы tsk-798) или
+++человек (учитель). Отмена мягкая (`revoked_at`) — история причин остаётся.
+++Активной может быть одна строка на (ученик, вид, цель).
+++
+++Фаза А (тень): таблицу заполняет фоновая сверка, потребители её ещё не
+++читают — поведение экранов не меняется.
+++
+++Rollback: `alembic downgrade tsk992_task_review_schedule` — таблица снимается
+++целиком, потребители от неё на фазе А не зависят.
+++
+++Revision ID: tsk1361_requirement_override
+++Revises: tsk992_task_review_schedule
+++Create Date: 2026-10-15
+++"""
+++from typing import Sequence, Union
+++
+++import sqlalchemy as sa
+++from alembic import op
+++
+++revision: str = "tsk1361_requirement_override"
+++down_revision: Union[str, None] = "tsk992_task_review_schedule"
+++branch_labels: Union[str, Sequence[str], None] = None
+++depends_on: Union[str, Sequence[str], None] = None
+++
+++
+++def upgrade() -> None:
+++    """Создать таблицу, ограничения и индексы."""
+++    op.create_table(
+++        "student_requirement_override",
+++        sa.Column("id", sa.Integer(), primary_key=True),
+++        sa.Column(
+++            "student_id", sa.Integer(),
+++            sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False,
+++        ),
+++        sa.Column("target_kind", sa.String(16), nullable=False),
+++        sa.Column("target_id", sa.Integer(), nullable=False),
+++        sa.Column("level", sa.String(16), nullable=False),
+++        sa.Column("reason_code", sa.String(32), nullable=False),
+++        sa.Column("reason_text", sa.Text(), nullable=False),
+++        sa.Column("source", sa.String(8), nullable=False),
+++        sa.Column("rule_version", sa.Integer(), nullable=True),
+++        sa.Column(
+++            "created_by", sa.Integer(),
+++            sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True,
+++        ),
+++        sa.Column(
+++            "created_at", sa.DateTime(timezone=True),
+++            nullable=False, server_default=sa.text("now()"),
+++        ),
+++        sa.Column("revoked_at", sa.DateTime(timezone=True), nullable=True),
+++        sa.Column(
+++            "revoked_by", sa.Integer(),
+++            sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True,
+++        ),
+++        sa.CheckConstraint(
+++            "target_kind IN ('task', 'material', 'course')", name="ck_sro_target_kind"
+++        ),
+++        sa.CheckConstraint(
+++            "level IN ('required', 'recommended', 'skippable')", name="ck_sro_level"
+++        ),
+++        sa.CheckConstraint("source IN ('rule', 'human')", name="ck_sro_source"),
+++        sa.CheckConstraint(
+++            "source = 'human' OR created_by IS NULL", name="ck_sro_rule_has_no_author"
+++        ),
+++        comment="tsk-1361: персональная обязательность элемента с причиной",
+++    )
+++    op.create_index(
+++        "uq_sro_active_target",
+++        "student_requirement_override",
+++        ["student_id", "target_kind", "target_id"],
+++        unique=True,
+++        postgresql_where=sa.text("revoked_at IS NULL"),
+++    )
+++    op.create_index(
+++        "ix_sro_target_active",
+++        "student_requirement_override",
+++        ["target_kind", "target_id"],
+++        postgresql_where=sa.text("revoked_at IS NULL"),
+++    )
+++
+++
+++def downgrade() -> None:
+++    """Снять таблицу."""
+++    op.drop_index("ix_sro_target_active", table_name="student_requirement_override")
+++    op.drop_index("uq_sro_active_target", table_name="student_requirement_override")
+++    op.drop_table("student_requirement_override")
++diff --git a/app/models/requirement_override.py b/app/models/requirement_override.py
++new file mode 100644
++index 0000000..b1b9158
++--- /dev/null
+++++ b/app/models/requirement_override.py
++@@ -0,0 +1,51 @@
+++"""Персональный уровень обязательности элемента для ученика (tsk-1361).
+++
+++Уровень у задания/материала (`requirement_level`) — одна отметка на всех.
+++Эта таблица хранит отступления от неё для конкретного ученика вместе с
+++причиной: кто или какое правило решило и почему. Подробности — в миграции
+++`tsk1361_requirement_override`.
+++"""
+++from __future__ import annotations
+++
+++from datetime import datetime
+++from typing import Optional
+++
+++from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, text
+++from sqlalchemy.orm import Mapped, mapped_column
+++
+++from app.db.base import Base
+++
+++
+++class StudentRequirementOverride(Base):
+++    """Ученик × (задание | материал | узел курса) → уровень + причина."""
+++
+++    __tablename__ = "student_requirement_override"
+++    __table_args__ = {
+++        "comment": "tsk-1361: персональная обязательность элемента с причиной"
+++    }
+++
+++    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+++    student_id: Mapped[int] = mapped_column(
+++        Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+++    )
+++    target_kind: Mapped[str] = mapped_column(
+++        String(16), nullable=False, comment="task | material | course (узел — на поддерево)"
+++    )
+++    target_id: Mapped[int] = mapped_column(Integer, nullable=False)
+++    level: Mapped[str] = mapped_column(
+++        String(16), nullable=False, comment="required | recommended | skippable"
+++    )
+++    reason_code: Mapped[str] = mapped_column(String(32), nullable=False)
+++    reason_text: Mapped[str] = mapped_column(Text, nullable=False)
+++    source: Mapped[str] = mapped_column(String(8), nullable=False, comment="rule | human")
+++    rule_version: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+++    created_by: Mapped[Optional[int]] = mapped_column(
+++        Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+++    )
+++    created_at: Mapped[datetime] = mapped_column(
+++        DateTime(timezone=True), nullable=False, server_default=text("now()")
+++    )
+++    revoked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+++    revoked_by: Mapped[Optional[int]] = mapped_column(
+++        Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+++    )
++diff --git a/app/services/content_grace_service.py b/app/services/content_grace_service.py
++index 1584e1f..d3db498 100644
++--- a/app/services/content_grace_service.py
+++++ b/app/services/content_grace_service.py
++@@ -351,10 +351,33 @@ async def graced_for_roots(
++     return GracedItems(tasks=frozenset(tasks), materials=frozenset(materials))
++ 
++ 
+++REASON_NEW_CONTENT = "grace_new_content"
+++REASON_AHEAD = "grace_ahead"
+++
+++
++ async def _compute(
++     db: AsyncSession, student_id: int, root_course_id: int
++ ) -> GracedItems:
++-    """Расчёт без кеша: три запроса на дерево, дальше чистый Python.
+++    """Расчёт без кеша — набор прощённого из `compute_grace_reasons`."""
+++    reasons = await compute_grace_reasons(db, student_id, root_course_id)
+++    if not reasons:
+++        return EMPTY_GRACE
+++    return GracedItems(
+++        tasks=frozenset(i for k, i in reasons if k == "task"),
+++        materials=frozenset(i for k, i in reasons if k == "material"),
+++    )
+++
+++
+++async def compute_grace_reasons(
+++    db: AsyncSession, student_id: int, root_course_id: int
+++) -> Dict[Tuple[str, int], str]:
+++    """tsk-1361: прощённое дерева с кодом критерия, без кеша.
+++
+++    Ключ — (`task`|`material`, id), значение — `REASON_NEW_CONTENT` (правило
+++    узла) или `REASON_AHEAD` (правило «ушёл вперёд»). Если сработали оба —
+++    пишется правило узла: его объяснение ученику понятнее.
+++
+++    Расчёт: три запроса на дерево, дальше чистый Python.
++ 
++     Запросы — узлы дерева, рёбра между ними и все обязательные элементы дерева
++     сразу. Ни один из них не растёт по числу элементов или подкурсов: именно
++@@ -374,14 +397,14 @@ async def _compute(
++         )
++     ).scalar()
++     if root_uid and root_uid.startswith(INDIVIDUAL_UID_PREFIX):
++-        return EMPTY_GRACE
+++        return {}
++ 
++     node_rows = (
++         await db.execute(text(_TREE_NODES_SQL), {"root_id": root_course_id})
++     ).fetchall()
++     tree_ids = [int(r[0]) for r in node_rows]
++     if not tree_ids:
++-        return EMPTY_GRACE
+++        return {}
++ 
++     edge_rows = (
++         await db.execute(text(_TREE_EDGES_SQL), {"root_id": root_course_id})
++@@ -399,7 +422,7 @@ async def _compute(
++         )
++     ).fetchall()
++     if not item_rows:
++-        return EMPTY_GRACE
+++        return {}
++ 
++     nodes: Dict[int, _Node] = {cid: _Node() for cid in tree_ids}
++     for parent_id, child_id, order_number in edge_rows:
++@@ -424,35 +447,26 @@ async def _compute(
++             )
++         )
++ 
++-    graced_tasks: Set[int] = set()
++-    graced_materials: Set[int] = set()
+++    reasons: Dict[Tuple[str, int], str] = {}
++     for course_id in nodes:
++         subtree = _subtree_ids(nodes, course_id)
++         items = [item for cid in subtree for item in nodes[cid].own]
++         for item in _graced_in_node(items):
++-            if item.kind == "task":
++-                graced_tasks.add(item.item_id)
++-            else:
++-                graced_materials.add(item.item_id)
+++            reasons[(item.kind, item.item_id)] = REASON_NEW_CONTENT
++ 
++     for item in _graced_by_position(nodes, root_course_id):
++-        if item.kind == "task":
++-            graced_tasks.add(item.item_id)
++-        else:
++-            graced_materials.add(item.item_id)
+++        reasons.setdefault((item.kind, item.item_id), REASON_AHEAD)
++ 
++-    if graced_tasks or graced_materials:
+++    if reasons:
++         logger.info(
++             "tsk-692: ученик %s, дерево курса %s — снята обязательность: "
++             "заданий %s, материалов %s",
++             student_id,
++             root_course_id,
++-            len(graced_tasks),
++-            len(graced_materials),
+++            sum(1 for k, _ in reasons if k == "task"),
+++            sum(1 for k, _ in reasons if k == "material"),
++         )
++-    return GracedItems(
++-        tasks=frozenset(graced_tasks), materials=frozenset(graced_materials)
++-    )
+++    return reasons
++ 
++ 
++ def _subtree_ids(nodes: Dict[int, _Node], course_id: int) -> Set[int]:
++diff --git a/app/services/requirement_override_service.py b/app/services/requirement_override_service.py
++new file mode 100644
++index 0000000..5f67c6a
++--- /dev/null
+++++ b/app/services/requirement_override_service.py
++@@ -0,0 +1,281 @@
+++"""tsk-1361: персональная обязательность элемента — запись и чтение.
+++
+++# Зачем
+++
+++`requirement_level` — одна отметка на всех. Отступления для конкретного
+++ученика раньше вычислялись молча в каждом потребителе: прощение нового
+++(`content_grace_service`, tsk-692/1261/1294) и сокращение программы
+++(`program_scope_service`, tsk-798). Причину не видели ни ученик, ни учитель,
+++а потребители применяли правила вразнобой (инвентарь — в
+++`docs/specs/2026-10-15-plan-tsk1361-requirement-overrides.md`).
+++
+++Теперь правило ЗАПИСЫВАЕТ отступление в `student_requirement_override` с
+++кодом и текстом причины. Расчёт остаётся тем же кодом, меняется только то,
+++что результат хранится и его можно проверить.
+++
+++# Инварианты
+++
+++* Человек главнее правила: правило не создаёт, не меняет и не отменяет
+++  строку `source='human'` и не пишет поверх неё.
+++* Отмена мягкая: `revoked_at` ставится, строка остаётся — история причин.
+++* Активна не больше одной строки на (ученик, вид, цель) — частичный
+++  уникальный индекс; вставка правила идёт `ON CONFLICT DO NOTHING`, чтобы
+++  гонка с учителем не роняла фоновую сверку.
+++
+++# Фаза А (тень)
+++
+++Строки пишет фоновая сверка (`requirement_override_sync_cron_service`),
+++потребители их ещё не читают. Переключение — фаза Б, после сверки.
+++"""
+++from __future__ import annotations
+++
+++import logging
+++from dataclasses import dataclass
+++from typing import Dict, Optional, Tuple
+++
+++from sqlalchemy import text
+++from sqlalchemy.ext.asyncio import AsyncSession
+++
+++from app.services.content_grace_service import (
+++    REASON_AHEAD,
+++    REASON_NEW_CONTENT,
+++    compute_grace_reasons,
+++)
+++from app.services.program_scope_service import excluded_courses_for
+++
+++logger = logging.getLogger(__name__)
+++
+++# Уровни, которые идут в счёт обязательного. Единая точка для новых
+++# потребителей (фаза Б сводит сюда копии литерала из других модулей).
+++REQUIRED_LEVELS: Tuple[str, ...] = ("required", "skippable")
+++LEVELS: Tuple[str, ...] = ("required", "recommended", "skippable")
+++TARGET_KINDS: Tuple[str, ...] = ("task", "material", "course")
+++
+++# Растёт при изменении любого правила — по нему видно, какие строки
+++# посчитаны старой версией.
+++RULE_VERSION = 1
+++
+++REASON_PROGRAM_TRIM = "program_trim"
+++REASON_TEACHER = "teacher"
+++
+++REASON_TEXTS: Dict[str, str] = {
+++    REASON_NEW_CONTENT: "Добавлено после того, как вы прошли эту тему",
+++    REASON_AHEAD: "Добавлено, когда вы уже прошли дальше по теме",
+++    REASON_PROGRAM_TRIM: "Не входит в вашу программу до экзамена: не хватает времени до срока",
+++    REASON_TEACHER: "Так решил преподаватель",
+++}
+++
+++Target = Tuple[str, int]
+++
+++
+++@dataclass(frozen=True)
+++class OverrideView:
+++    """Активное переопределение глазами потребителя."""
+++
+++    level: str
+++    reason_code: str
+++    reason_text: str
+++    source: str
+++
+++
+++@dataclass
+++class SyncResult:
+++    """Итог сверки правил одного ученика."""
+++
+++    inserted: int = 0
+++    revoked: int = 0
+++    kept: int = 0
+++    skipped_human: int = 0
+++
+++
+++async def desired_rule_overrides(db: AsyncSession, student_id: int) -> Dict[Target, str]:
+++    """Что правила считают нужным сейчас: цель → код причины.
+++
+++    Прощение считается от каждого действующего корня зачисления (ровно как
+++    `graced_for_roots`), сокращение программы — по сохранённому плану
+++    объёма (`student_program_scope`).
+++    """
+++    root_ids = (
+++        await db.execute(
+++            text("SELECT course_id FROM user_courses WHERE user_id = :sid AND is_active = true"),
+++            {"sid": student_id},
+++        )
+++    ).scalars().all()
+++
+++    desired: Dict[Target, str] = {}
+++    for root_id in sorted({int(r) for r in root_ids}):
+++        for target, code in (await compute_grace_reasons(db, student_id, root_id)).items():
+++            # Один элемент виден из двух корней — правило узла объяснимее.
+++            if desired.get(target) != REASON_NEW_CONTENT:
+++                desired[target] = code
+++    for course_id in await excluded_courses_for(db, student_id=student_id):
+++        desired[("course", int(course_id))] = REASON_PROGRAM_TRIM
+++    return desired
+++
+++
+++async def sync_rule_overrides(db: AsyncSession, student_id: int) -> SyncResult:
+++    """Привести строки правил ученика к `desired_rule_overrides`. Без коммита.
+++
+++    Строки человека не трогаются. Строка правила, чья причина сменилась,
+++    отменяется и пишется заново — история показывает, когда сменилась причина.
+++    """
+++    desired = await desired_rule_overrides(db, student_id)
+++    rows = (
+++        await db.execute(
+++            text(
+++                "SELECT id, target_kind, target_id, source, reason_code "
+++                "  FROM student_requirement_override "
+++                " WHERE student_id = :sid AND revoked_at IS NULL"
+++            ),
+++            {"sid": student_id},
+++        )
+++    ).fetchall()
+++
+++    result = SyncResult()
+++    human: set[Target] = set()
+++    current_rule: Dict[Target, Tuple[int, str]] = {}
+++    for row_id, kind, target_id, source, code in rows:
+++        target = (str(kind), int(target_id))
+++        if source == "human":
+++            human.add(target)
+++        else:
+++            current_rule[target] = (int(row_id), str(code))
+++
+++    to_revoke = [
+++        row_id
+++        for target, (row_id, code) in current_rule.items()
+++        if desired.get(target) != code
+++    ]
+++    if to_revoke:
+++        await db.execute(
+++            text(
+++                "UPDATE student_requirement_override SET revoked_at = now() "
+++                " WHERE id = ANY(:ids) AND revoked_at IS NULL"
+++            ),
+++            {"ids": to_revoke},
+++        )
+++        result.revoked = len(to_revoke)
+++
+++    for target, code in sorted(desired.items()):
+++        if target in human:
+++            result.skipped_human += 1
+++            continue
+++        existing = current_rule.get(target)
+++        if existing is not None and existing[1] == code:
+++            result.kept += 1
+++            continue
+++        inserted = await db.execute(
+++            text(
+++                "INSERT INTO student_requirement_override "
+++                "  (student_id, target_kind, target_id, level, reason_code, "
+++                "   reason_text, source, rule_version) "
+++                "VALUES (:sid, :kind, :tid, 'recommended', :code, :txt, 'rule', :ver) "
+++                "ON CONFLICT (student_id, target_kind, target_id) "
+++                "  WHERE revoked_at IS NULL DO NOTHING"
+++            ),
+++            {
+++                "sid": student_id,
+++                "kind": target[0],
+++                "tid": target[1],
+++                "code": code,
+++                "txt": REASON_TEXTS[code],
+++                "ver": RULE_VERSION,
+++            },
+++        )
+++        result.inserted += int(inserted.rowcount or 0)
+++
+++    if result.inserted or result.revoked:
+++        logger.info(
+++            "tsk-1361: ученик %s — правила: добавлено %s, отменено %s, без изменений %s, "
+++            "под решением человека %s",
+++            student_id, result.inserted, result.revoked, result.kept, result.skipped_human,
+++        )
+++    return result
+++
+++
+++async def set_human_override(
+++    db: AsyncSession,
+++    *,
+++    student_id: int,
+++    target_kind: str,
+++    target_id: int,
+++    level: str,
+++    by_user_id: int,
+++    reason_text: Optional[str] = None,
+++) -> int:
+++    """Решение учителя: задать уровень элемента/узла ученику. Без коммита.
+++
+++    Активная строка на эту цель (правила или прежнее решение человека)
+++    отменяется от имени учителя. Возвращает id новой строки.
+++    """
+++    if target_kind not in TARGET_KINDS:
+++        raise ValueError(f"неизвестный вид цели: {target_kind!r}")
+++    if level not in LEVELS:
+++        raise ValueError(f"неизвестный уровень: {level!r}")
+++    note = (reason_text or "").strip() or REASON_TEXTS[REASON_TEACHER]
+++
+++    await db.execute(
+++        text(
+++            "UPDATE student_requirement_override "
+++            "   SET revoked_at = now(), revoked_by = :by "
+++            " WHERE student_id = :sid AND target_kind = :kind AND target_id = :tid "
+++            "   AND revoked_at IS NULL"
+++        ),
+++        {"by": by_user_id, "sid": student_id, "kind": target_kind, "tid": target_id},
+++    )
+++    new_id = (
+++        await db.execute(
+++            text(
+++                "INSERT INTO student_requirement_override "
+++                "  (student_id, target_kind, target_id, level, reason_code, "
+++                "   reason_text, source, created_by) "
+++                "VALUES (:sid, :kind, :tid, :lvl, :code, :txt, 'human', :by) RETURNING id"
+++            ),
+++            {
+++                "sid": student_id, "kind": target_kind, "tid": target_id, "lvl": level,
+++                "code": REASON_TEACHER, "txt": note, "by": by_user_id,
+++            },
+++        )
+++    ).scalar_one()
+++    logger.info(
+++        "tsk-1361: учитель %s задал ученику %s уровень %s для %s %s",
+++        by_user_id, student_id, level, target_kind, target_id,
+++    )
+++    return int(new_id)
+++
+++
+++async def revoke_human_override(
+++    db: AsyncSession, *, student_id: int, target_kind: str, target_id: int, by_user_id: int
+++) -> bool:
+++    """Снять решение учителя — элемент вернётся к курсу и правилам. Без коммита.
+++
+++    Правило восстановит своё переопределение на следующей сверке.
+++    """
+++    res = await db.execute(
+++        text(
+++            "UPDATE student_requirement_override "
+++            "   SET revoked_at = now(), revoked_by = :by "
+++            " WHERE student_id = :sid AND target_kind = :kind AND target_id = :tid "
+++            "   AND source = 'human' AND revoked_at IS NULL"
+++        ),
+++        {"by": by_user_id, "sid": student_id, "kind": target_kind, "tid": target_id},
+++    )
+++    return bool(res.rowcount)
+++
+++
+++async def active_overrides(db: AsyncSession, student_id: int) -> Dict[Target, OverrideView]:
+++    """Все активные переопределения ученика одним запросом по индексу."""
+++    rows = (
+++        await db.execute(
+++            text(
+++                "SELECT target_kind, target_id, level, reason_code, reason_text, source "
+++                "  FROM student_requirement_override "
+++                " WHERE student_id = :sid AND revoked_at IS NULL"
+++            ),
+++            {"sid": student_id},
+++        )
+++    ).fetchall()
+++    return {
+++        (str(k), int(t)): OverrideView(level=str(lvl), reason_code=str(c), reason_text=str(txt), source=str(s))
+++        for k, t, lvl, c, txt, s in rows
+++    }
++diff --git a/app/services/requirement_override_sync_cron_service.py b/app/services/requirement_override_sync_cron_service.py
++new file mode 100644
++index 0000000..a0018b6
++--- /dev/null
+++++ b/app/services/requirement_override_sync_cron_service.py
++@@ -0,0 +1,120 @@
+++"""tsk-1361: фоновая сверка переопределений обязательности по правилам.
+++
+++Раз в интервал для каждого ученика с действующим зачислением правила
+++(прощение нового, сокращение программы) приводят его строки в
+++`student_requirement_override` к текущему расчёту.
+++
+++Паттерн тот же, что у `course_dependency_state_cron_service` (tsk-541/626):
+++сторож одного worker'а — отдельная сессия с транзакционной advisory-блокировкой,
+++работа — в своей сессии с коммитом после каждого ученика, ученики по
+++возрастанию id. Соединение не держится во время ожидания: тик идёт подряд и
+++закрывается (урок tsk-1250 — пул соединений).
+++"""
+++from __future__ import annotations
+++
+++import logging
+++from typing import Optional
+++
+++from apscheduler.schedulers.asyncio import AsyncIOScheduler
+++from sqlalchemy import text
+++from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+++
+++from app.core.config import Settings
+++from app.core.cron_registry import register_interval_job
+++from app.db.session import async_session_factory
+++from app.services.content_grace_service import invalidate_grace_cache
+++from app.services.requirement_override_service import sync_rule_overrides
+++
+++logger = logging.getLogger("app.requirement_override_sync_cron")
+++
+++# ascii "RQOV" — не пересекается с соседними ключами (CDST 0x43445354 и др.).
+++_LOCK_KEY = 0x52514F56
+++
+++_scheduler: Optional[AsyncIOScheduler] = None
+++
+++
+++async def requirement_override_sync_tick(
+++    session_factory: Optional[async_sessionmaker[AsyncSession]] = None,
+++) -> dict:
+++    """Один проход по всем ученикам с действующими зачислениями."""
+++    factory = session_factory or async_session_factory
+++    summary = {"locked": False, "students": 0, "inserted": 0, "revoked": 0, "failed": 0}
+++
+++    async with factory() as guard:
+++        got = await guard.execute(
+++            text("SELECT pg_try_advisory_xact_lock(:k)"), {"k": _LOCK_KEY}
+++        )
+++        if not bool(got.scalar()):
+++            logger.debug("tsk-1361: тик пропущен — работу делает другой worker")
+++            return summary
+++        summary["locked"] = True
+++
+++        async with factory() as db:
+++            student_ids = (
+++                await db.execute(
+++                    text(
+++                        "SELECT DISTINCT user_id FROM user_courses "
+++                        " WHERE is_active = true ORDER BY user_id"
+++                    )
+++                )
+++            ).scalars().all()
+++            for student_id in student_ids:
+++                try:
+++                    res = await sync_rule_overrides(db, int(student_id))
+++                    await db.commit()
+++                except Exception:
+++                    # Сбой одного ученика не должен останавливать остальных;
+++                    # следующий тик повторит его.
+++                    await db.rollback()
+++                    summary["failed"] += 1
+++                    logger.exception("tsk-1361: сверка ученика %s упала", student_id)
+++                    continue
+++                finally:
+++                    invalidate_grace_cache(db)
+++                summary["students"] += 1
+++                summary["inserted"] += res.inserted
+++                summary["revoked"] += res.revoked
+++
+++        logger.info(
+++            "tsk-1361 requirement_override_sync done students=%s inserted=%s revoked=%s failed=%s",
+++            summary["students"], summary["inserted"], summary["revoked"], summary["failed"],
+++        )
+++        # Коммит, а не откат сторожа — см. course_dependency_state_cron_service.
+++        await guard.commit()
+++    return summary
+++
+++
+++def start_scheduler() -> Optional[AsyncIOScheduler]:
+++    """Поднять периодический тик (если включён настройкой)."""
+++    global _scheduler
+++    settings = Settings()
+++    if not settings.requirement_override_sync_cron_enabled:
+++        logger.info("tsk-1361: сверка переопределений выключена (REQUIREMENT_OVERRIDE_SYNC_CRON_ENABLED)")
+++        return None
+++    if _scheduler is not None and _scheduler.running:
+++        return _scheduler
+++
+++    scheduler = AsyncIOScheduler(timezone="UTC")
+++    register_interval_job(
+++        scheduler,
+++        requirement_override_sync_tick,
+++        job_id="tsk1361_requirement_override_sync",
+++        startup_delay_min=settings.requirement_override_sync_cron_startup_delay_min,
+++        minutes=int(settings.requirement_override_sync_cron_interval_min),
+++    )
+++    scheduler.start()
+++    _scheduler = scheduler
+++    logger.info(
+++        "tsk-1361 requirement_override_sync scheduler started: interval=%smin",
+++        settings.requirement_override_sync_cron_interval_min,
+++    )
+++    return scheduler
+++
+++
+++def stop_scheduler() -> None:
+++    """Остановить тик."""
+++    global _scheduler
+++    if _scheduler is not None and _scheduler.running:
+++        _scheduler.shutdown(wait=False)
+++        logger.info("tsk-1361 requirement_override_sync scheduler stopped")
+++    _scheduler = None
++diff --git a/docs/specs/2026-10-15-plan-tsk1361-requirement-overrides.md b/docs/specs/2026-10-15-plan-tsk1361-requirement-overrides.md
++new file mode 100644
++index 0000000..6ef4cd3
++--- /dev/null
+++++ b/docs/specs/2026-10-15-plan-tsk1361-requirement-overrides.md
++@@ -0,0 +1,101 @@
+++# tsk-1361 — Обязательность на уровне ученика: инвентарь и проект решения
+++
+++Статус: ПРОЕКТ, ждёт «ОК» оператора. Реализация не начата.
+++
+++## 1. Масштаб на проде (15.10, только чтение)
+++
+++| Что | Число |
+++|---|---|
+++| Активные задания: required / recommended | 8220 / 1043 |
+++| Активные материалы: required / recommended / skippable | 5270 / 297 / 18 |
+++| Ученики с активными зачислениями | 140 (555 зачислений) |
+++| Пар «ученик × активное задание» по деревьям курсов | 270 610 (обязательных 166 691) |
+++| `course_dependencies` | 104 |
+++| Прецедент: `student_task_limit_override` (ученик × задание → лимит, причина, кто) | 423 строки |
+++
+++Вывод: даже если правило запишет переопределение на каждую пару — это сотни тысяч строк, для PostgreSQL мелочь. Но переопределение на узел (подкурс) снимает почти весь объём: сокращение программы и «ушёл вперёд по узлу» — это узлы, а не задания.
+++
+++## 2. Инвентарь (по коду)
+++
+++### Где задаётся
+++- `tasks.requirement_level`, `materials.requirement_level` (`required|recommended|skippable`, миграция tsk-111). `courses.is_required` — другая сущность (обязательность курса в зависимостях).
+++- `student_program_scope` (tsk-798) — хранимый план объёма, пишется **только при выдаче ДЗ** (`homework_service.issue` → `program_scope_service.store_scope`).
+++- Прощение нового (`content_grace_service`, tsk-692/1261/1294) — **не хранится**, считается на лету: 3 SQL + Python на (ученик, корень), кэш на одну сессию БД.
+++- Ручной пропуск учителем — статус SKIPPED (`/progress/tasks/{id}/skip`), уровень не меняет.
+++
+++### Кто читает (Прощение / Объём)
+++| Потребитель | Прощение | Объём |
+++|---|---|---|
+++| next-item (`learning_engine._effective_*_rows`) | да, от корня | да |
+++| `compute_course_state` → замки, крон зависимостей | да, **от подкурса** (предки не видны) | да |
+++| числитель `compute_course_state` | **нет** (прощённое закрытое идёт в «сделано») | нет |
+++| состав ДЗ (`homework_service._next_items` через `manual_progress`) | да | **нет** — выпавшие номера могут попасть в ДЗ |
+++| норма ДЗ (`homework_volume_service`) | да | да |
+++| карточка курса ученика (`me_service.get_courses_with_progress`) | только знаменатель | **нет** |
+++| программа курса ученика (`me_service.get_syllabus_states`) | да, отдаёт как `recommended` | **нет** |
+++| прогресс и дашборд учителя (`student_dashboard_service`) | да | **нет** |
+++| сводка урока (`teacher_lesson_summary_service`) | да, от `course_id` прогресса | **нет** |
+++| `manual_progress_service` (обход для ДЗ, ручной зачёт) | **нет** | нет |
+++| кнопка «Пропустить» ученика | только `skippable` | — |
+++| лента, уведомления, кроны отчётов | не читают | — |
+++| SPW | сам повторяет правило «в счёт идут required+skippable» в 4 местах (`content-requirement.ts`, `use-course-syllabus.ts`, `CourseSyllabus`, `SubcourseHeader`); причины не показывает нигде | — |
+++
+++Литерал «что обязательно» продублирован в 5+ модулях LMS и в SPW.
+++
+++### Главные дефекты AS-IS
+++1. Две оси (прощение и объём) применяются в разных наборах потребителей → ученик и учитель видят «долг», которого движок уже не требует (это и есть жалоба оператора).
+++2. Причина нигде не хранится и не показывается; регрессию вроде tsk-1294 видно только по жалобе.
+++3. Ширина прощения разная (корень / подкурс) у разных потребителей.
+++4. План объёма устаревает без выдачи ДЗ.
+++
+++## 3. Проект (TO-BE)
+++
+++### 3.1 Модель: `student_requirement_override`
+++| Колонка | Смысл |
+++|---|---|
+++| `id` | |
+++| `student_id` | FK users |
+++| `target_kind` | `task` / `material` / `course` (узел — действует на поддерево) |
+++| `target_id` | |
+++| `level` | `required` / `recommended` / `skippable` |
+++| `reason_code` | `grace_new_content` (tsk-692), `grace_ahead` (tsk-1261), `program_trim` (tsk-798), `course_switch`, `teacher` |
+++| `reason_text` | человеческий текст для ученика/учителя |
+++| `source` | `rule` / `human` |
+++| `rule_version` | версия правила (для перепроверки при правке правила) |
+++| `created_by`, `created_at` | |
+++| `revoked_at`, `revoked_by` | мягкая отмена — история остаётся |
+++
+++Уникальность: одна **активная** строка на (ученик, вид, цель) — частичный уникальный индекс `WHERE revoked_at IS NULL`. Индекс `(student_id) WHERE revoked_at IS NULL`.
+++
+++Порядок: переопределение на элементе > на ближайшем узле-предке > уровень элемента в курсе. **Человек > правило**: правило никогда не перезаписывает и не отменяет строку `source=human`.
+++
+++### 3.2 Правила пишут, а не вычисляют молча
+++- **tsk-692/1261/1294 (новизна):** тот же алгоритм `content_grace_service`, но запускается не в запросе, а (а) при создании/активации задания или материала — для зачисленных на дерево, (б) ночной сверкой. Результат — upsert/revoke строк `grace_*` с текстом причины. Чтение на лету убирается.
+++- **tsk-798 (объём):** `store_scope` пишет `program_trim` на выпавшие узлы-номера и отменяет их при возврате; пересчёт — при выдаче ДЗ и ночным кроном (закрывает дефект 4).
+++- **Смена курса (сценарий 3):** правило `course_switch` — см. вопрос оператору.
+++
+++### 3.3 Единый источник
+++`requirement_resolver.effective_levels(db, student_id, root_ids)` → `{(kind,id): (level, reason)}` одним индексированным запросом. Его зовут все потребители из таблицы выше; `REQUIREMENT_LEVELS` — одна константа. API отдаёт `requirement_level` (уже персональный) + новое `requirement_reason {code, text, source}`. SPW перестаёт угадывать: показывает причину, счётчики берёт по полю.
+++
+++### 3.4 Экраны
+++- Ученик: бейдж «Необязательно» + строка причины («вы прошли тему раньше, чем задание добавили», «не входит в вашу программу до экзамена»).
+++- Учитель: в сводке урока, прогрессе и ДЗ — причина рядом с элементом; кнопки «Сделать необязательным / обязательным» (пишут `source=human`), история изменений.
+++
+++### 3.5 Миграция данных
+++1. Alembic: таблица + индексы (без данных).
+++2. Режим тени: правила пишут строки, потребители ещё читают старое; скрипт сверки «на лету vs таблица» по всем 140 ученикам — расхождение 0.
+++3. Переключение потребителей на резолвер (экраны — с `Hold-For-Operator`).
+++4. Удаление вычисления на лету.
+++
+++### 3.6 Производительность (урок tsk-1250)
+++- Сейчас прощение — 3 запроса + Python на каждый (ученик, корень) в каждом запросе экрана. После — один запрос по индексу; тяжёлое уходит из пути запроса в события и ночной крон → нагрузка на пул падает.
+++- Крон и заполнение — пачками по ученику, каждое в своей короткой сессии, без держания соединения во время расчёта; ограничение параллельности 1.
+++- Событие «добавили задание» на большой курс → фоновая задача, не в запросе методиста.
+++
+++## 4. Риски
+++| Риск | Мера |
+++|---|---|
+++| Расхождение тени и старого расчёта | сверка до переключения, порог 0 |
+++| Правило отменило решение учителя | инвариант human > rule + тест |
+++| Устаревшие строки после правки курса | события + ночная сверка + `rule_version` |
+++| Экраны поменяли цифры у учеников без согласия оператора | `Hold-For-Operator` на коммитах SPW/экранной части |
++diff --git a/scripts/tsk1361_reconcile_overrides.py b/scripts/tsk1361_reconcile_overrides.py
++new file mode 100644
++index 0000000..c75cf09
++--- /dev/null
+++++ b/scripts/tsk1361_reconcile_overrides.py
++@@ -0,0 +1,77 @@
+++"""tsk-1361: сверка таблицы переопределений с расчётом правил (только чтение).
+++
+++Для каждого ученика с действующим зачислением сравнивает:
+++  * строки правил в `student_requirement_override` и текущий расчёт правил;
+++  * прощённое в таблице и прежний расчёт на лету (`graced_for_roots`).
+++Ничего не пишет: транзакция откатывается. Код выхода 1 — есть расхождения.
+++
+++Запуск: python scripts/tsk1361_reconcile_overrides.py [--student ID]
+++"""
+++from __future__ import annotations
+++
+++import argparse
+++import asyncio
+++import logging
+++import sys
+++from pathlib import Path
+++
+++from dotenv import load_dotenv
+++
+++project_root = Path(__file__).resolve().parent.parent
+++sys.path.insert(0, str(project_root))
+++load_dotenv(dotenv_path=project_root / ".env", encoding="utf-8-sig")
+++
+++from sqlalchemy import text  # noqa: E402
+++
+++from app.db.session import async_session_factory
+++from app.services.content_grace_service import graced_for_roots, invalidate_grace_cache
+++from app.services.requirement_override_service import active_overrides, desired_rule_overrides
+++
+++logger = logging.getLogger("tsk1361_reconcile")
+++
+++
+++async def _run(only_student: int | None) -> int:
+++    """Пройти учеников и вернуть число учеников с расхождениями."""
+++    bad = 0
+++    async with async_session_factory() as db:
+++        ids = (
+++            await db.execute(
+++                text("SELECT DISTINCT user_id FROM user_courses WHERE is_active ORDER BY user_id")
+++            )
+++        ).scalars().all()
+++        if only_student is not None:
+++            ids = [i for i in ids if i == only_student]
+++        total_rows = 0
+++        for sid in ids:
+++            invalidate_grace_cache(db)
+++            desired = await desired_rule_overrides(db, int(sid))
+++            stored = {t: v.reason_code for t, v in (await active_overrides(db, int(sid))).items() if v.source == "rule"}
+++            total_rows += len(stored)
+++            graced = await graced_for_roots(db, int(sid))
+++            on_the_fly = {("task", i) for i in graced.tasks} | {("material", i) for i in graced.materials}
+++            stored_grace = {t for t, c in stored.items() if c.startswith("grace_")}
+++            if desired != stored or on_the_fly != stored_grace:
+++                bad += 1
+++                logger.warning(
+++                    "ученик %s: нет в таблице %s, лишнее в таблице %s, расхождение с расчётом на лету %s",
+++                    sid,
+++                    sorted(set(desired) - set(stored))[:10],
+++                    sorted(set(stored) - set(desired))[:10],
+++                    sorted(on_the_fly ^ stored_grace)[:10],
+++                )
+++        await db.rollback()
+++    logger.info("учеников %s, строк правил %s, с расхождением %s", len(ids), total_rows, bad)
+++    return bad
+++
+++
+++def main() -> None:
+++    """Точка входа."""
+++    logging.basicConfig(level=logging.INFO, format="%(message)s")
+++    parser = argparse.ArgumentParser(description=__doc__)
+++    parser.add_argument("--student", type=int, default=None)
+++    args = parser.parse_args()
+++    sys.exit(1 if asyncio.run(_run(args.student)) else 0)
+++
+++
+++if __name__ == "__main__":
+++    main()
++diff --git a/tests/test_tsk1361_requirement_override.py b/tests/test_tsk1361_requirement_override.py
++new file mode 100644
++index 0000000..f4472cc
++--- /dev/null
+++++ b/tests/test_tsk1361_requirement_override.py
++@@ -0,0 +1,243 @@
+++"""tsk-1361: правила записывают персональную обязательность с причиной.
+++
+++Три сценария оператора (15.10):
+++  1. сокращение программы, чтобы успеть до экзамена (tsk-798);
+++  2. ученик ушёл вперёд по теме, а в неё добавили новое (tsk-1261);
+++  3. смена курса ЕГЭ: добавили задачи, перенумеровали старые — решается
+++     правилом новизны (решение оператора), без карты соответствия.
+++Плюс регрессии tsk-1294 и tsk-1261, инвариант «человек главнее правила» и
+++совпадение записанного с прежним расчётом на лету.
+++"""
+++from __future__ import annotations
+++
+++from datetime import date, datetime, timedelta, timezone
+++
+++import pytest
+++from sqlalchemy import text
+++
+++from app.services.content_grace_service import (
+++    REASON_AHEAD,
+++    REASON_NEW_CONTENT,
+++    compute_graced_items,
+++    invalidate_grace_cache,
+++)
+++from app.services.requirement_override_service import (
+++    REASON_PROGRAM_TRIM,
+++    REASON_TEACHER,
+++    active_overrides,
+++    revoke_human_override,
+++    set_human_override,
+++    sync_rule_overrides,
+++)
+++from tests.test_tsk1261_grace_by_position import _link, _pass, _task
+++from tests.test_tsk692_content_grace import _enroll, _new_course, _new_student
+++
+++LONG_AGO = datetime(2026, 1, 10, 12, 0, tzinfo=timezone.utc)
+++INSERTED = datetime(2026, 6, 20, 12, 0, tzinfo=timezone.utc)
+++
+++
+++async def _sync(db, student: int):
+++    invalidate_grace_cache(db)
+++    res = await sync_rule_overrides(db, student)
+++    await db.commit()
+++    return res
+++
+++
+++async def _scope(db, student: int, excluded: list[int]) -> None:
+++    await db.execute(
+++        text("DELETE FROM student_program_scope WHERE student_id = :s"), {"s": student}
+++    )
+++    await db.execute(
+++        text(
+++            "INSERT INTO student_program_scope (student_id, program_kind, deadline, "
+++            " planned_pace, core_total, drill_total, drill_allowed, core_trimmed, "
+++            " excluded_courses) "
+++            "VALUES (:s, 'ege', :d, 10, 100, 50, 10, :trim, CAST(:ex AS jsonb))"
+++        ),
+++        {"s": student, "d": date(2027, 6, 1), "trim": bool(excluded), "ex": str(excluded)},
+++    )
+++
+++
+++@pytest.mark.asyncio
+++async def test_scenario1_program_trim_writes_and_revokes_course_override(db):
+++    """Сокращение программы — строка на узел с причиной; вернули номер — отменена."""
+++    root = await _new_course(db, "tsk1361 ЕГЭ")
+++    dropped = await _new_course(db, "tsk1361 номер 27")
+++    await _link(db, root, dropped, 1)
+++    student = await _new_student(db, "сокращение")
+++    await _enroll(db, student, root)
+++    await _scope(db, student, [dropped])
+++    await db.commit()
+++
+++    await _sync(db, student)
+++    view = (await active_overrides(db, student))[("course", dropped)]
+++    assert view.level == "recommended"
+++    assert view.reason_code == REASON_PROGRAM_TRIM
+++    assert view.source == "rule"
+++    assert "программу" in view.reason_text
+++
+++    await _scope(db, student, [])
+++    await db.commit()
+++    res = await _sync(db, student)
+++    assert res.revoked == 1
+++    assert ("course", dropped) not in await active_overrides(db, student)
+++    history = (
+++        await db.execute(
+++            text(
+++                "SELECT count(*) FROM student_requirement_override "
+++                " WHERE student_id = :s AND revoked_at IS NOT NULL"
+++            ),
+++            {"s": student},
+++        )
+++    ).scalar_one()
+++    assert history == 1, "Отмена мягкая — причина остаётся в истории"
+++
+++
+++@pytest.mark.asyncio
+++async def test_scenario2_went_ahead_new_task_gets_ahead_reason(db):
+++    """Ушёл вперёд по теме, вставили задание позади — строка «ушёл вперёд»."""
+++    topic = await _new_course(db, "tsk1361 тема")
+++    await _task(db, course_id=topic, position=1, created_at=None)  # пропущено
+++    done = await _task(db, course_id=topic, position=4, created_at=None)
+++    student = await _new_student(db, "вперёд")
+++    await _enroll(db, student, topic)
+++    await _pass(db, student, done, topic, topic, LONG_AGO)
+++    inserted = await _task(db, course_id=topic, position=3, created_at=INSERTED)
+++    await db.commit()
+++
+++    await _sync(db, student)
+++    overrides = await active_overrides(db, student)
+++    assert overrides[("task", inserted)].reason_code == REASON_AHEAD
+++    assert len(overrides) == 1, "Старое пропущенное задание остаётся долгом"
+++
+++
+++@pytest.mark.asyncio
+++async def test_scenario3_course_change_new_tasks_graced_renumbering_harmless(db):
+++    """Смена курса ЕГЭ: новое в пройденной теме — необязательно; перенумерация не влияет."""
+++    root = await _new_course(db, "tsk1361 ЕГЭ корень")
+++    topic = await _new_course(db, "tsk1361 номер 5")
+++    await _link(db, root, topic, 1)
+++    old1 = await _task(db, course_id=topic, position=1, created_at=None)
+++    old2 = await _task(db, course_id=topic, position=2, created_at=None)
+++
+++    passed = await _new_student(db, "прошёл тему")
+++    fresh = await _new_student(db, "не начинал")
+++    for s in (passed, fresh):
+++        await _enroll(db, s, root)
+++    await _pass(db, passed, old1, topic, root, LONG_AGO)
+++    await _pass(db, passed, old2, topic, root, LONG_AGO + timedelta(hours=1))
+++
+++    # Новая редакция: две новые задачи, старые перенумерованы в конец.
+++    new1 = await _task(db, course_id=topic, position=1, created_at=INSERTED)
+++    new2 = await _task(db, course_id=topic, position=2, created_at=INSERTED)
+++    # По одному: триггер порядка не пускает групповой сдвиг одним UPDATE.
+++    for old in (old2, old1):
+++        await db.execute(
+++            text("UPDATE tasks SET order_position = order_position + 10 WHERE id = :id"),
+++            {"id": old},
+++        )
+++    await db.commit()
+++
+++    await _sync(db, passed)
+++    await _sync(db, fresh)
+++    got = await active_overrides(db, passed)
+++    assert {t for t in got} == {("task", new1), ("task", new2)}
+++    assert all(v.reason_code == REASON_NEW_CONTENT for v in got.values())
+++    assert await active_overrides(db, fresh) == {}, "Для не проходившего новое обязательно"
+++
+++
+++@pytest.mark.asyncio
+++async def test_regression_tsk1294_far_topic_does_not_write_override(db):
+++    """Зачёт в дальней теме не делает непройденную тему необязательной.
+++
+++    Сценарий ученика 4507 из теста tsk-1294: «Читаем файл» решён, «Кратчайший
+++    путь» той же темы — нет; решённое в дальней теме 24 его не прощает.
+++    """
+++    root = await _new_course(db, "tsk1361/1294 корень")
+++    t23 = await _new_course(db, "tsk1361/1294 тема 23")
+++    t24 = await _new_course(db, "tsk1361/1294 тема 24")
+++    await _link(db, root, t23, 1)
+++    await _link(db, root, t24, 2)
+++    far = await _task(db, course_id=t24, position=1, created_at=LONG_AGO)
+++    student = await _new_student(db, "1294")
+++    await _enroll(db, student, root)
+++    await _pass(db, student, far, t24, root, LONG_AGO + timedelta(days=3))
+++    read_file = await _new_course(db, "tsk1361/1294 читаем файл")
+++    shortest = await _new_course(db, "tsk1361/1294 кратчайший путь")
+++    await _link(db, t23, read_file, 1)
+++    await _link(db, t23, shortest, 2)
+++    rf = await _task(db, course_id=read_file, position=1, created_at=INSERTED)
+++    unvisited = await _task(db, course_id=shortest, position=1, created_at=INSERTED)
+++    await _pass(db, student, rf, read_file, root, INSERTED + timedelta(days=30))
+++    await db.commit()
+++
+++    await _sync(db, student)
+++    assert ("task", unvisited) not in await active_overrides(db, student)
+++
+++
+++@pytest.mark.asyncio
+++async def test_written_overrides_match_on_the_fly_grace_and_sync_is_idempotent(db):
+++    """Записанное совпадает с прежним расчётом; повтор сверки ничего не меняет."""
+++    topic = await _new_course(db, "tsk1361 сверка")
+++    done = await _task(db, course_id=topic, position=5, created_at=None)
+++    student = await _new_student(db, "сверка")
+++    await _enroll(db, student, topic)
+++    await _pass(db, student, done, topic, topic, LONG_AGO)
+++    ins = [await _task(db, course_id=topic, position=p, created_at=INSERTED) for p in (2, 3)]
+++    await db.commit()
+++
+++    first = await _sync(db, student)
+++    invalidate_grace_cache(db)
+++    on_the_fly = await compute_graced_items(db, student, topic)
+++    written = {i for k, i in await active_overrides(db, student) if k == "task"}
+++    assert written == set(on_the_fly.tasks) == set(ins)
+++    assert first.inserted == 2
+++
+++    again = await _sync(db, student)
+++    assert (again.inserted, again.revoked, again.kept) == (0, 0, 2)
+++
+++
+++@pytest.mark.asyncio
+++async def test_human_override_beats_rule_and_rule_returns_after_revoke(db):
+++    """Учитель вернул задание в обязательные — правило не перебивает; сняли — правило вернулось."""
+++    topic = await _new_course(db, "tsk1361 учитель")
+++    done = await _task(db, course_id=topic, position=5, created_at=None)
+++    teacher = await _new_student(db, "учитель")
+++    student = await _new_student(db, "ученик")
+++    await _enroll(db, student, topic)
+++    await _pass(db, student, done, topic, topic, LONG_AGO)
+++    ins = await _task(db, course_id=topic, position=2, created_at=INSERTED)
+++    await db.commit()
+++    await _sync(db, student)
+++
+++    await set_human_override(
+++        db, student_id=student, target_kind="task", target_id=ins,
+++        level="required", by_user_id=teacher, reason_text="нужно к пробнику",
+++    )
+++    await db.commit()
+++    res = await _sync(db, student)
+++    view = (await active_overrides(db, student))[("task", ins)]
+++    assert (view.level, view.source, view.reason_code, view.reason_text) == (
+++        "required", "human", REASON_TEACHER, "нужно к пробнику",
+++    )
+++    assert res.skipped_human == 1 and res.inserted == 0
+++
+++    assert await revoke_human_override(
+++        db, student_id=student, target_kind="task", target_id=ins, by_user_id=teacher
+++    )
+++    await db.commit()
+++    await _sync(db, student)
+++    assert (await active_overrides(db, student))[("task", ins)].source == "rule"
+++
+++
+++@pytest.mark.asyncio
+++async def test_set_human_override_rejects_unknown_values(db):
+++    """Неизвестный уровень или вид цели — ошибка, а не тихая запись."""
+++    with pytest.raises(ValueError):
+++        await set_human_override(
+++            db, student_id=1, target_kind="task", target_id=1, level="optional", by_user_id=1
+++        )
+++    with pytest.raises(ValueError):
+++        await set_human_override(
+++            db, student_id=1, target_kind="lesson", target_id=1, level="required", by_user_id=1
+++        )
+diff --git a/reviews/2026-10-15-tsk1361-requirement-override-phaseA.md b/reviews/2026-10-15-tsk1361-requirement-override-phaseA.md
+new file mode 100644
+index 0000000..b213c8b
+--- /dev/null
++++ b/reviews/2026-10-15-tsk1361-requirement-override-phaseA.md
+@@ -0,0 +1,21 @@
++# tsk-1361 фаза А — таблица персональной обязательности (тень)
++
++**Цель.** Правила прощения нового (tsk-692/1261/1294) и сокращения программы (tsk-798) записывают отступления от `requirement_level` с причиной в `student_requirement_override`. Экраны и движок таблицу ещё не читают — поведение не меняется. План: `docs/specs/2026-10-15-plan-tsk1361-requirement-overrides.md` (одобрен оператором 15.10).
++
++**Файлы.**
++- миграция `2026_10_15_tsk1361_requirement_override.py`, модель `app/models/requirement_override.py`;
++- `content_grace_service.compute_grace_reasons` — тот же расчёт, плюс код критерия; `compute_graced_items` выдаёт прежний набор;
++- `requirement_override_service` — сверка правил, решения учителя, чтение;
++- `requirement_override_sync_cron_service` + настройки + регистрация в `main.py`;
++- `scripts/tsk1361_reconcile_overrides.py` — сверка таблицы с расчётом (только чтение);
++- тесты `tests/test_tsk1361_requirement_override.py`.
++
++**Валидация.**
++- `pytest tests/test_tsk1361_requirement_override.py tests/test_tsk1261_grace_by_position.py tests/test_tsk692_content_grace.py` → `20 passed`;
++- 11 файлов тестов прощения, объёма и нормы ДЗ → `181 passed in 91.41s`;
++- `alembic heads` → `tsk1361_requirement_override (head)`; `alembic upgrade head` на dev прошёл;
++- dev: проход сверки `{'students': 9, 'inserted': 861, 'revoked': 0, 'failed': 0}`, сверка `с расхождением 0`.
++
++**Rollback.** Выключить `REQUIREMENT_OVERRIDE_SYNC_CRON_ENABLED=false` + рестарт; полностью — `alembic downgrade tsk994_final_check` (потребителей у таблицы нет).
++
++Diff: `reviews/2026-10-15-tsk1361-requirement-override-phaseA.diff`.
+diff --git a/scripts/tsk1361_reconcile_overrides.py b/scripts/tsk1361_reconcile_overrides.py
+new file mode 100644
+index 0000000..c75cf09
+--- /dev/null
++++ b/scripts/tsk1361_reconcile_overrides.py
+@@ -0,0 +1,77 @@
++"""tsk-1361: сверка таблицы переопределений с расчётом правил (только чтение).
++
++Для каждого ученика с действующим зачислением сравнивает:
++  * строки правил в `student_requirement_override` и текущий расчёт правил;
++  * прощённое в таблице и прежний расчёт на лету (`graced_for_roots`).
++Ничего не пишет: транзакция откатывается. Код выхода 1 — есть расхождения.
++
++Запуск: python scripts/tsk1361_reconcile_overrides.py [--student ID]
++"""
++from __future__ import annotations
++
++import argparse
++import asyncio
++import logging
++import sys
++from pathlib import Path
++
++from dotenv import load_dotenv
++
++project_root = Path(__file__).resolve().parent.parent
++sys.path.insert(0, str(project_root))
++load_dotenv(dotenv_path=project_root / ".env", encoding="utf-8-sig")
++
++from sqlalchemy import text  # noqa: E402
++
++from app.db.session import async_session_factory
++from app.services.content_grace_service import graced_for_roots, invalidate_grace_cache
++from app.services.requirement_override_service import active_overrides, desired_rule_overrides
++
++logger = logging.getLogger("tsk1361_reconcile")
++
++
++async def _run(only_student: int | None) -> int:
++    """Пройти учеников и вернуть число учеников с расхождениями."""
++    bad = 0
++    async with async_session_factory() as db:
++        ids = (
++            await db.execute(
++                text("SELECT DISTINCT user_id FROM user_courses WHERE is_active ORDER BY user_id")
++            )
++        ).scalars().all()
++        if only_student is not None:
++            ids = [i for i in ids if i == only_student]
++        total_rows = 0
++        for sid in ids:
++            invalidate_grace_cache(db)
++            desired = await desired_rule_overrides(db, int(sid))
++            stored = {t: v.reason_code for t, v in (await active_overrides(db, int(sid))).items() if v.source == "rule"}
++            total_rows += len(stored)
++            graced = await graced_for_roots(db, int(sid))
++            on_the_fly = {("task", i) for i in graced.tasks} | {("material", i) for i in graced.materials}
++            stored_grace = {t for t, c in stored.items() if c.startswith("grace_")}
++            if desired != stored or on_the_fly != stored_grace:
++                bad += 1
++                logger.warning(
++                    "ученик %s: нет в таблице %s, лишнее в таблице %s, расхождение с расчётом на лету %s",
++                    sid,
++                    sorted(set(desired) - set(stored))[:10],
++                    sorted(set(stored) - set(desired))[:10],
++                    sorted(on_the_fly ^ stored_grace)[:10],
++                )
++        await db.rollback()
++    logger.info("учеников %s, строк правил %s, с расхождением %s", len(ids), total_rows, bad)
++    return bad
++
++
++def main() -> None:
++    """Точка входа."""
++    logging.basicConfig(level=logging.INFO, format="%(message)s")
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument("--student", type=int, default=None)
++    args = parser.parse_args()
++    sys.exit(1 if asyncio.run(_run(args.student)) else 0)
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/tests/test_tsk1361_requirement_override.py b/tests/test_tsk1361_requirement_override.py
+new file mode 100644
+index 0000000..f4472cc
+--- /dev/null
++++ b/tests/test_tsk1361_requirement_override.py
+@@ -0,0 +1,243 @@
++"""tsk-1361: правила записывают персональную обязательность с причиной.
++
++Три сценария оператора (15.10):
++  1. сокращение программы, чтобы успеть до экзамена (tsk-798);
++  2. ученик ушёл вперёд по теме, а в неё добавили новое (tsk-1261);
++  3. смена курса ЕГЭ: добавили задачи, перенумеровали старые — решается
++     правилом новизны (решение оператора), без карты соответствия.
++Плюс регрессии tsk-1294 и tsk-1261, инвариант «человек главнее правила» и
++совпадение записанного с прежним расчётом на лету.
++"""
++from __future__ import annotations
++
++from datetime import date, datetime, timedelta, timezone
++
++import pytest
++from sqlalchemy import text
++
++from app.services.content_grace_service import (
++    REASON_AHEAD,
++    REASON_NEW_CONTENT,
++    compute_graced_items,
++    invalidate_grace_cache,
++)
++from app.services.requirement_override_service import (
++    REASON_PROGRAM_TRIM,
++    REASON_TEACHER,
++    active_overrides,
++    revoke_human_override,
++    set_human_override,
++    sync_rule_overrides,
++)
++from tests.test_tsk1261_grace_by_position import _link, _pass, _task
++from tests.test_tsk692_content_grace import _enroll, _new_course, _new_student
++
++LONG_AGO = datetime(2026, 1, 10, 12, 0, tzinfo=timezone.utc)
++INSERTED = datetime(2026, 6, 20, 12, 0, tzinfo=timezone.utc)
++
++
++async def _sync(db, student: int):
++    invalidate_grace_cache(db)
++    res = await sync_rule_overrides(db, student)
++    await db.commit()
++    return res
++
++
++async def _scope(db, student: int, excluded: list[int]) -> None:
++    await db.execute(
++        text("DELETE FROM student_program_scope WHERE student_id = :s"), {"s": student}
++    )
++    await db.execute(
++        text(
++            "INSERT INTO student_program_scope (student_id, program_kind, deadline, "
++            " planned_pace, core_total, drill_total, drill_allowed, core_trimmed, "
++            " excluded_courses) "
++            "VALUES (:s, 'ege', :d, 10, 100, 50, 10, :trim, CAST(:ex AS jsonb))"
++        ),
++        {"s": student, "d": date(2027, 6, 1), "trim": bool(excluded), "ex": str(excluded)},
++    )
++
++
++@pytest.mark.asyncio
++async def test_scenario1_program_trim_writes_and_revokes_course_override(db):
++    """Сокращение программы — строка на узел с причиной; вернули номер — отменена."""
++    root = await _new_course(db, "tsk1361 ЕГЭ")
++    dropped = await _new_course(db, "tsk1361 номер 27")
++    await _link(db, root, dropped, 1)
++    student = await _new_student(db, "сокращение")
++    await _enroll(db, student, root)
++    await _scope(db, student, [dropped])
++    await db.commit()
++
++    await _sync(db, student)
++    view = (await active_overrides(db, student))[("course", dropped)]
++    assert view.level == "recommended"
++    assert view.reason_code == REASON_PROGRAM_TRIM
++    assert view.source == "rule"
++    assert "программу" in view.reason_text
++
++    await _scope(db, student, [])
++    await db.commit()
++    res = await _sync(db, student)
++    assert res.revoked == 1
++    assert ("course", dropped) not in await active_overrides(db, student)
++    history = (
++        await db.execute(
++            text(
++                "SELECT count(*) FROM student_requirement_override "
++                " WHERE student_id = :s AND revoked_at IS NOT NULL"
++            ),
++            {"s": student},
++        )
++    ).scalar_one()
++    assert history == 1, "Отмена мягкая — причина остаётся в истории"
++
++
++@pytest.mark.asyncio
++async def test_scenario2_went_ahead_new_task_gets_ahead_reason(db):
++    """Ушёл вперёд по теме, вставили задание позади — строка «ушёл вперёд»."""
++    topic = await _new_course(db, "tsk1361 тема")
++    await _task(db, course_id=topic, position=1, created_at=None)  # пропущено
++    done = await _task(db, course_id=topic, position=4, created_at=None)
++    student = await _new_student(db, "вперёд")
++    await _enroll(db, student, topic)
++    await _pass(db, student, done, topic, topic, LONG_AGO)
++    inserted = await _task(db, course_id=topic, position=3, created_at=INSERTED)
++    await db.commit()
++
++    await _sync(db, student)
++    overrides = await active_overrides(db, student)
++    assert overrides[("task", inserted)].reason_code == REASON_AHEAD
++    assert len(overrides) == 1, "Старое пропущенное задание остаётся долгом"
++
++
++@pytest.mark.asyncio
++async def test_scenario3_course_change_new_tasks_graced_renumbering_harmless(db):
++    """Смена курса ЕГЭ: новое в пройденной теме — необязательно; перенумерация не влияет."""
++    root = await _new_course(db, "tsk1361 ЕГЭ корень")
++    topic = await _new_course(db, "tsk1361 номер 5")
++    await _link(db, root, topic, 1)
++    old1 = await _task(db, course_id=topic, position=1, created_at=None)
++    old2 = await _task(db, course_id=topic, position=2, created_at=None)
++
++    passed = await _new_student(db, "прошёл тему")
++    fresh = await _new_student(db, "не начинал")
++    for s in (passed, fresh):
++        await _enroll(db, s, root)
++    await _pass(db, passed, old1, topic, root, LONG_AGO)
++    await _pass(db, passed, old2, topic, root, LONG_AGO + timedelta(hours=1))
++
++    # Новая редакция: две новые задачи, старые перенумерованы в конец.
++    new1 = await _task(db, course_id=topic, position=1, created_at=INSERTED)
++    new2 = await _task(db, course_id=topic, position=2, created_at=INSERTED)
++    # По одному: триггер порядка не пускает групповой сдвиг одним UPDATE.
++    for old in (old2, old1):
++        await db.execute(
++            text("UPDATE tasks SET order_position = order_position + 10 WHERE id = :id"),
++            {"id": old},
++        )
++    await db.commit()
++
++    await _sync(db, passed)
++    await _sync(db, fresh)
++    got = await active_overrides(db, passed)
++    assert {t for t in got} == {("task", new1), ("task", new2)}
++    assert all(v.reason_code == REASON_NEW_CONTENT for v in got.values())
++    assert await active_overrides(db, fresh) == {}, "Для не проходившего новое обязательно"
++
++
++@pytest.mark.asyncio
++async def test_regression_tsk1294_far_topic_does_not_write_override(db):
++    """Зачёт в дальней теме не делает непройденную тему необязательной.
++
++    Сценарий ученика 4507 из теста tsk-1294: «Читаем файл» решён, «Кратчайший
++    путь» той же темы — нет; решённое в дальней теме 24 его не прощает.
++    """
++    root = await _new_course(db, "tsk1361/1294 корень")
++    t23 = await _new_course(db, "tsk1361/1294 тема 23")
++    t24 = await _new_course(db, "tsk1361/1294 тема 24")
++    await _link(db, root, t23, 1)
++    await _link(db, root, t24, 2)
++    far = await _task(db, course_id=t24, position=1, created_at=LONG_AGO)
++    student = await _new_student(db, "1294")
++    await _enroll(db, student, root)
++    await _pass(db, student, far, t24, root, LONG_AGO + timedelta(days=3))
++    read_file = await _new_course(db, "tsk1361/1294 читаем файл")
++    shortest = await _new_course(db, "tsk1361/1294 кратчайший путь")
++    await _link(db, t23, read_file, 1)
++    await _link(db, t23, shortest, 2)
++    rf = await _task(db, course_id=read_file, position=1, created_at=INSERTED)
++    unvisited = await _task(db, course_id=shortest, position=1, created_at=INSERTED)
++    await _pass(db, student, rf, read_file, root, INSERTED + timedelta(days=30))
++    await db.commit()
++
++    await _sync(db, student)
++    assert ("task", unvisited) not in await active_overrides(db, student)
++
++
++@pytest.mark.asyncio
++async def test_written_overrides_match_on_the_fly_grace_and_sync_is_idempotent(db):
++    """Записанное совпадает с прежним расчётом; повтор сверки ничего не меняет."""
++    topic = await _new_course(db, "tsk1361 сверка")
++    done = await _task(db, course_id=topic, position=5, created_at=None)
++    student = await _new_student(db, "сверка")
++    await _enroll(db, student, topic)
++    await _pass(db, student, done, topic, topic, LONG_AGO)
++    ins = [await _task(db, course_id=topic, position=p, created_at=INSERTED) for p in (2, 3)]
++    await db.commit()
++
++    first = await _sync(db, student)
++    invalidate_grace_cache(db)
++    on_the_fly = await compute_graced_items(db, student, topic)
++    written = {i for k, i in await active_overrides(db, student) if k == "task"}
++    assert written == set(on_the_fly.tasks) == set(ins)
++    assert first.inserted == 2
++
++    again = await _sync(db, student)
++    assert (again.inserted, again.revoked, again.kept) == (0, 0, 2)
++
++
++@pytest.mark.asyncio
++async def test_human_override_beats_rule_and_rule_returns_after_revoke(db):
++    """Учитель вернул задание в обязательные — правило не перебивает; сняли — правило вернулось."""
++    topic = await _new_course(db, "tsk1361 учитель")
++    done = await _task(db, course_id=topic, position=5, created_at=None)
++    teacher = await _new_student(db, "учитель")
++    student = await _new_student(db, "ученик")
++    await _enroll(db, student, topic)
++    await _pass(db, student, done, topic, topic, LONG_AGO)
++    ins = await _task(db, course_id=topic, position=2, created_at=INSERTED)
++    await db.commit()
++    await _sync(db, student)
++
++    await set_human_override(
++        db, student_id=student, target_kind="task", target_id=ins,
++        level="required", by_user_id=teacher, reason_text="нужно к пробнику",
++    )
++    await db.commit()
++    res = await _sync(db, student)
++    view = (await active_overrides(db, student))[("task", ins)]
++    assert (view.level, view.source, view.reason_code, view.reason_text) == (
++        "required", "human", REASON_TEACHER, "нужно к пробнику",
++    )
++    assert res.skipped_human == 1 and res.inserted == 0
++
++    assert await revoke_human_override(
++        db, student_id=student, target_kind="task", target_id=ins, by_user_id=teacher
++    )
++    await db.commit()
++    await _sync(db, student)
++    assert (await active_overrides(db, student))[("task", ins)].source == "rule"
++
++
++@pytest.mark.asyncio
++async def test_set_human_override_rejects_unknown_values(db):
++    """Неизвестный уровень или вид цели — ошибка, а не тихая запись."""
++    with pytest.raises(ValueError):
++        await set_human_override(
++            db, student_id=1, target_kind="task", target_id=1, level="optional", by_user_id=1
++        )
++    with pytest.raises(ValueError):
++        await set_human_override(
++            db, student_id=1, target_kind="lesson", target_id=1, level="required", by_user_id=1
++        )

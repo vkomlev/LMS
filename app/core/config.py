@@ -289,6 +289,19 @@ class Settings:
             os.getenv("COURSE_DEPENDENCY_STATE_CRON_STARTUP_DELAY_MIN", "2")
         )
 
+        # tsk-1361: фоновая сверка переопределений обязательности по правилам
+        # (requirement_override_sync_cron_service.py). Фаза А — только запись
+        # в student_requirement_override, экраны её ещё не читают.
+        self.requirement_override_sync_cron_enabled: bool = os.getenv(
+            "REQUIREMENT_OVERRIDE_SYNC_CRON_ENABLED", "true"
+        ).lower() in ("true", "1", "yes")
+        self.requirement_override_sync_cron_interval_min: int = int(
+            os.getenv("REQUIREMENT_OVERRIDE_SYNC_CRON_INTERVAL_MIN", "60")
+        )
+        self.requirement_override_sync_cron_startup_delay_min: float = float(
+            os.getenv("REQUIREMENT_OVERRIDE_SYNC_CRON_STARTUP_DELAY_MIN", "7")
+        )
+
         # tsk-302 этап 3: фоновая оценка кода ученика (чистота + признак
         # ИИ-авторства). Синхронно её делать нельзя — это внешний вызов модели
         # в пользовательском пути приёма ответа; ученик ждать не должен, а к

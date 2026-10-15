@@ -766,6 +766,26 @@ async def _stop_course_dependency_state_scheduler() -> None:
         logger.exception("tsk-541: failed to stop course_dependency_state scheduler")
 
 
+# tsk-1361: фоновая сверка переопределений обязательности (фаза А — тень).
+from app.services import requirement_override_sync_cron_service as _req_override_cron
+
+
+@app.on_event("startup")
+async def _start_requirement_override_scheduler() -> None:
+    try:
+        _req_override_cron.start_scheduler()
+    except Exception:
+        logger.exception("tsk-1361: failed to start requirement_override_sync scheduler")
+
+
+@app.on_event("shutdown")
+async def _stop_requirement_override_scheduler() -> None:
+    try:
+        _req_override_cron.stop_scheduler()
+    except Exception:
+        logger.exception("tsk-1361: failed to stop requirement_override_sync scheduler")
+
+
 # tsk-591: простой ученика во время занятия — сигнал преподавателю (событие в
 # ленту + уведомление). Тот же multi-worker-safe паттерн, отдельный lock-ключ.
 from app.services import lesson_idle_cron_service as _lesson_idle_cron
