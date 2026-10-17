@@ -640,6 +640,9 @@ class Settings:
         # бота: напоминание раньше срока, чтобы успеть до просрочки.
         self.review_sla_hours: int = int(os.getenv("REVIEW_SLA_HOURS", "48"))
         self.review_reminder_hours: int = int(os.getenv("REVIEW_REMINDER_HOURS", "36"))
+        # tsk-995 (П6, решение оператора Р1): срок ответа на заявку помощи —
+        # часы от создания открытой заявки. Пишется в `help_requests.due_at`.
+        self.help_sla_hours: int = int(os.getenv("HELP_SLA_HOURS", "24"))
         # tsk-1309: первая блокировка по лимиту попыток снимается автоматически
         # (+базовый лимит), человеку уходит только вторая. Выключатель — откат
         # без выката: false возвращает прежнее «каждая блокировка → заявка».

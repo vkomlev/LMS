@@ -29,6 +29,7 @@ from app.schemas.task_content import MANUAL_REVIEW_TASK_TYPES
 from app.services import feedback_draft_service, inbox_service, review_sla
 from app.services import notification_names
 from app.services.attempt_attachments import mark_missing_one
+from app.services.help_sla import help_overdue_sql
 from app.utils.task_title import humanize_task_title
 
 logger = logging.getLogger(__name__)
@@ -305,8 +306,9 @@ async def claim_next_help_request(
             FROM cand
             WHERE hr.id = cand.id
             RETURNING hr.id, hr.status, hr.request_type, hr.student_id, hr.task_id, hr.course_id,
-                      hr.created_at, hr.priority, hr.due_at, hr.material_id
-        """),
+                      hr.created_at, hr.priority, hr.due_at, hr.material_id,
+                      {help_overdue_sql('hr')} AS is_overdue
+        """),  # nosec B608 — фрагменты из закрытого набора литералов
         params,
     )
     row = r.fetchone()
@@ -319,7 +321,8 @@ async def claim_next_help_request(
         return (None, None, None)
 
     due_at = row[8] if len(row) > 8 else None
-    is_overdue = due_at is not None and due_at < now
+    # tsk-995: просрочка — общий предикат `help_overdue_sql` (как в списке).
+    is_overdue = bool(row[10]) if len(row) > 10 else False
     item = {
         "request_id": row[0],
         "status": row[1],
@@ -527,8 +530,9 @@ async def claim_help_request_by_id(
               AND hr.status = 'open'
               {free_cond}
             RETURNING hr.id, hr.status, hr.request_type, hr.student_id, hr.task_id,
-                      hr.course_id, hr.created_at, hr.priority, hr.due_at, hr.material_id
-        """),  # nosec B608 — free_cond из закрытого набора литералов
+                      hr.course_id, hr.created_at, hr.priority, hr.due_at, hr.material_id,
+                      {help_overdue_sql('hr')} AS is_overdue
+        """),  # nosec B608 — free_cond/help_overdue_sql из закрытого набора литералов
         {
             "request_id": request_id,
             "teacher_id": teacher_id,
@@ -562,7 +566,7 @@ async def claim_help_request_by_id(
         "created_at": urow[6],
         "priority": urow[7] if urow[7] is not None else 100,
         "due_at": due_at,
-        "is_overdue": due_at is not None and due_at < now,
+        "is_overdue": bool(urow[10]) if len(urow) > 10 else False,
     }
     previous_claim = (
         {
@@ -1692,12 +1696,23 @@ async def teacher_can_override_limit(
 async def get_teacher_workload(
     db: AsyncSession,
     teacher_id: int,
-) -> dict[str, int]:
+) -> dict[str, Any]:
     """
     Агрегат нагрузки: открытые help_requests по типам, pending reviews, просроченные.
+
+    tsk-995 (П6): «Просрочено» = просроченные заявки (`help_overdue_sql`, срок
+    `HELP_SLA_HOURS`) + просроченные обязательные работы (срок `REVIEW_SLA_HOURS`
+    из `review_sla`, то же условие и ACL, что у `list_pending_reviews`).
+    До tsk-995 `due_at` никто не писал, и `overdue_total` был всегда 0.
+    Плюс скорость проверки работ за 30 дней: у преподавателя — его проверки,
+    у методиста (ACL-bypass, видит всю школу) — по школе.
     """
     now = datetime.now(timezone.utc)
-    params: dict[str, Any] = {"teacher_id": teacher_id, "now_ts": now}
+    params: dict[str, Any] = {
+        "teacher_id": teacher_id,
+        "now_ts": now,
+        "review_overdue_before": review_sla.review_overdue_before(now),
+    }
 
     r = await db.execute(
         text(f"""
@@ -1706,10 +1721,10 @@ async def get_teacher_workload(
                 COUNT(*) FILTER (WHERE hr.request_type = 'blocked_limit') AS blocked_limit,
                 COUNT(*) FILTER (WHERE hr.request_type = 'individual_review')
                     AS individual_review,
-                COUNT(*) FILTER (WHERE hr.due_at IS NOT NULL AND hr.due_at < :now_ts) AS overdue
+                COUNT(*) FILTER (WHERE {help_overdue_sql('hr')}) AS overdue
             FROM help_requests hr
             WHERE hr.status = 'open' AND {HELP_REQUESTS_ACL_SQL}
-        """),
+        """),  # nosec B608 — фрагменты из закрытого набора литералов
         params,
     )
     row = r.fetchone()
@@ -1720,7 +1735,7 @@ async def get_teacher_workload(
     # разбор выпали бы из панели нагрузки целиком — а это самый срочный случай
     # лестницы: ученик уже сказал, что текстовый ответ не помог, и ждёт ссылку.
     open_individual_review = int(row[2] or 0)
-    overdue_total = int(row[3] or 0)
+    overdue_help = int(row[3] or 0)
     open_help_requests_total = open_manual_help + open_blocked_limit + open_individual_review
 
     # tsk-298 (fix): «На проверке» ДОЛЖНО совпадать с фактической очередью
@@ -1730,9 +1745,15 @@ async def get_teacher_workload(
     # ручной проверки (`manual_review_required=false`) — очередь его не выдаёт.
     # Выравниваем на тот же `mandatory_review_sql`, что у очереди (TA ИЛИ
     # SA_COM с manual_review_required), без опоры на is_correct.
+    # tsk-995: просроченные — то же множество, плюс `is_review_overdue` в SQL
+    # (`submitted_at + REVIEW_SLA_HOURS < now` ⇔ `submitted_at < now − SLA`).
     r2 = await db.execute(
         text(f"""
-            SELECT COUNT(*)
+            SELECT COUNT(*),
+                   COUNT(*) FILTER (
+                       WHERE tr.submitted_at IS NOT NULL
+                         AND tr.submitted_at < :review_overdue_before
+                   )
             FROM task_results tr
             JOIN tasks t ON t.id = tr.task_id
             WHERE tr.checked_at IS NULL
@@ -1741,7 +1762,28 @@ async def get_teacher_workload(
         """),  # nosec B608 — mandatory_review_sql/REVIEW_ACL_SQL из закрытого набора литералов
         params,
     )
-    pending_manual_reviews_total = int(r2.scalar() or 0)
+    row2 = r2.fetchone()
+    pending_manual_reviews_total = int(row2[0] or 0) if row2 else 0
+    overdue_reviews = int(row2[1] or 0) if row2 else 0
+
+    # Скорость проверки: методист смотрит школу, преподаватель — себя. Роль —
+    # тот же bypass, что в `REVIEW_ACL_SQL`/`HELP_REQUESTS_ACL_SQL`.
+    from app.services.teacher_dashboard_service import get_review_speed
+
+    is_methodist = bool(
+        (
+            await db.execute(
+                text(
+                    "SELECT EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id "
+                    "WHERE ur.user_id = :teacher_id AND r.name = 'methodist')"
+                ),
+                {"teacher_id": teacher_id},
+            )
+        ).scalar()
+    )
+    review_speed = await get_review_speed(
+        db, checker_id=None if is_methodist else teacher_id
+    )
 
     return {
         "open_help_requests_total": open_help_requests_total,
@@ -1749,5 +1791,8 @@ async def get_teacher_workload(
         "open_manual_help_total": open_manual_help,
         "open_individual_review_total": open_individual_review,
         "pending_manual_reviews_total": pending_manual_reviews_total,
-        "overdue_total": overdue_total,
+        "overdue_total": overdue_help + overdue_reviews,
+        "overdue_help": overdue_help,
+        "overdue_reviews": overdue_reviews,
+        "review_speed": review_speed,
     }

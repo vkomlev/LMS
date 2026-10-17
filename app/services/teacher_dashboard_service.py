@@ -242,3 +242,109 @@ async def get_teacher_dashboard(
         date_from, date_to, len(rows), len(items),
     )
     return items
+
+
+#: tsk-995 (П6): окно метрики скорости проверки работ, дней.
+REVIEW_SPEED_WINDOW_DAYS = 30
+
+
+async def get_review_speed(
+    db: AsyncSession,
+    *,
+    checker_id: Optional[int],
+    days: int = REVIEW_SPEED_WINDOW_DAYS,
+) -> dict[str, Any]:
+    """Скорость ручной проверки работ за последние `days` дней (tsk-995, П6).
+
+    Считается `checked_at − submitted_at` по проверенным работам: медиана,
+    90-й перцентиль (часы) и доля уложившихся в `REVIEW_SLA_HOURS` — тот же
+    срок, что видят ученик и очередь (`review_sla`), новый не вводится.
+
+    Какие работы входят — только сдача ученика, проверенная человеком:
+
+    * `real_student_results_filter` — белый список каналов, где ответ набирает
+      сам ученик. Он отсекает ручной зачёт преподавателя без сдачи
+      (`manual_teacher`: там `checked_at` и `submitted_at` ставит сам
+      преподаватель одним действием — «проверка за 0 секунд»), сдачи повтора
+      (`retrieval`) и итогового среза (`final_check`), а заодно любой будущий
+      служебный источник — правило из `learning_gaps_service`, не копия.
+    * `mandatory_review_sql` — обязательная очередь: только у неё есть срок
+      (`list_pending_reviews` отдаёт срок только обязательным); опциональный
+      просмотр авто-проверенной работы — не обязанность и в «в срок» не идёт.
+      Предикат тот же, что у очереди, поэтому гибридная работа (tsk-396),
+      отклонённая преподавателем, выпадает: по вердикту её не отличить от
+      заваленной автопроверкой. Искажение малое, свой предикат дороже.
+    * `checked_by IS NOT NULL`, `submitted_at IS NOT NULL` — проверял человек,
+      и есть момент сдачи.
+    * Без переоценённых работ (`metrics.regrade_history` непуст): переоценка
+      перезаписывает `checked_at`, момент первой проверки в базе не сохраняется,
+      и такая работа выглядела бы проверенной через неделю.
+    * Без учеников на служебном тарифе (`not_test_student_sql`), как у
+      остальных показателей дашборда.
+
+    Окно — по `checked_at` (проверки, сделанные за последние `days` дней).
+
+    :param checker_id: id преподавателя — его проверки; `None` — вся школа
+        (обзор методиста).
+    :returns: словарь `ReviewSpeed`: `scope`, `days`, `sla_hours`, `checked`,
+        `median_hours`, `p90_hours`, `within_sla`, `within_sla_rate`.
+        Ниже `MIN_REQUESTS_FOR_RATE` проверок медиана, перцентиль и доля — `None`
+        («мало данных»), как у остальных долей дашборда.
+    """
+    # Ленивый импорт: teacher_queue_service импортирует этот модуль внутри
+    # get_teacher_workload, а help_requests_service (импортируемый выше)
+    # тянет teacher_queue_service на уровне модуля.
+    from app.services import review_sla
+    from app.services.learning_gaps_service import real_student_results_filter
+    from app.services.teacher_queue_service import mandatory_review_sql
+
+    sla = review_sla.sla_hours()
+    checker_cond = "AND tr.checked_by = :checker_id" if checker_id is not None else ""
+    params: dict[str, Any] = {"days": int(days), "sla": sla}
+    if checker_id is not None:
+        params["checker_id"] = int(checker_id)
+    row = (
+        await db.execute(
+            text(f"""
+                WITH speed AS (
+                    SELECT GREATEST(
+                               EXTRACT(EPOCH FROM (tr.checked_at - tr.submitted_at)), 0
+                           ) / 3600.0 AS hours
+                      FROM task_results tr
+                      JOIN tasks t ON t.id = tr.task_id
+                     WHERE tr.checked_at IS NOT NULL
+                       AND tr.checked_by IS NOT NULL
+                       AND tr.submitted_at IS NOT NULL
+                       AND tr.checked_at >= now() - make_interval(days => :days)
+                       AND {real_student_results_filter("tr")}
+                       AND {mandatory_review_sql("t", "tr")}
+                       AND COALESCE(
+                               jsonb_typeof(tr.metrics->'regrade_history') = 'array'
+                               AND jsonb_array_length(tr.metrics->'regrade_history') > 0,
+                               false
+                           ) = false
+                       AND {not_test_student_sql("tr.user_id")}
+                       {checker_cond}
+                )
+                SELECT COUNT(*),
+                       percentile_cont(0.5) WITHIN GROUP (ORDER BY hours),
+                       percentile_cont(0.9) WITHIN GROUP (ORDER BY hours),
+                       COUNT(*) FILTER (WHERE hours <= :sla)
+                  FROM speed
+            """),  # nosec B608 — фрагменты из литералов модулей, значения через bind
+            params,
+        )
+    ).fetchone()
+    checked = int(row[0] or 0) if row else 0
+    within = int(row[3] or 0) if row else 0
+    enough = checked >= MIN_REQUESTS_FOR_RATE
+    return {
+        "scope": "teacher" if checker_id is not None else "school",
+        "days": int(days),
+        "sla_hours": sla,
+        "checked": checked,
+        "median_hours": round(float(row[1]), 1) if enough and row[1] is not None else None,
+        "p90_hours": round(float(row[2]), 1) if enough and row[2] is not None else None,
+        "within_sla": within,
+        "within_sla_rate": round(within / checked, 4) if enough else None,
+    }

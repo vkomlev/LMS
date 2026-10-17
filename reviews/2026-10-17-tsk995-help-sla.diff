@@ -1,0 +1,1643 @@
+diff --git a/.env.example b/.env.example
+index 55985e6..7a6fa60 100644
+--- a/.env.example
++++ b/.env.example
+@@ -44,6 +44,11 @@ DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/Learn
+ # свободной (страховка на случай, если процесс умер посреди прохода).
+ # CODE_REVIEW_CLAIM_TTL_MIN=15
+ 
++# tsk-995 (П6): срок ответа на заявку помощи, часов от создания заявки.
++# Просроченные заявки видны преподавателю в «Просрочено» (вместе с работами,
++# у которых истёк срок проверки REVIEW_SLA_HOURS, по умолчанию 48).
++# HELP_SLA_HOURS=24
++
+ # Список service API-ключей через запятую (без пробелов).
+ # Используют: TG_LMS bots (poller, teacher dialog), ContentBackbone CLI,
+ # SPW E2E live spec (Y-4 S5 через /auth/test/issue-session).
+diff --git a/app/core/config.py b/app/core/config.py
+index c61eb09..fcf49d7 100644
+--- a/app/core/config.py
++++ b/app/core/config.py
+@@ -640,6 +640,9 @@ class Settings:
+         # бота: напоминание раньше срока, чтобы успеть до просрочки.
+         self.review_sla_hours: int = int(os.getenv("REVIEW_SLA_HOURS", "48"))
+         self.review_reminder_hours: int = int(os.getenv("REVIEW_REMINDER_HOURS", "36"))
++        # tsk-995 (П6, решение оператора Р1): срок ответа на заявку помощи —
++        # часы от создания открытой заявки. Пишется в `help_requests.due_at`.
++        self.help_sla_hours: int = int(os.getenv("HELP_SLA_HOURS", "24"))
+         # tsk-1309: первая блокировка по лимиту попыток снимается автоматически
+         # (+базовый лимит), человеку уходит только вторая. Выключатель — откат
+         # без выката: false возвращает прежнее «каждая блокировка → заявка».
+diff --git a/app/db/migrations/versions/2026_10_17_tsk995_help_due_backfill.py b/app/db/migrations/versions/2026_10_17_tsk995_help_due_backfill.py
+new file mode 100644
+index 0000000..b924948
+--- /dev/null
++++ b/app/db/migrations/versions/2026_10_17_tsk995_help_due_backfill.py
+@@ -0,0 +1,100 @@
++"""tsk-995 (П6): срок ответа у уже открытых заявок помощи.
++
++До tsk-995 `help_requests.due_at` код не писал ни в одном пути создания — счётчик
++«Просрочено» был всегда 0. С tsk-995 новые открытые заявки получают
++`due_at = created_at + HELP_SLA_HOURS` в коде; эта миграция разово ставит срок
++заявкам, которые открыты на момент выката.
++
++Срок — ОТ МОМЕНТА МИГРАЦИИ, а не от `created_at`:
++`due_at = greatest(created_at, now()) + HELP_SLA_HOURS`. Иначе все старые
++открытые заявки (их на проде может быть много — заявка остаётся открытой, пока
++её не закроет ученик) разом стали бы «просроченными» в день выката, и счётчик
++испугал бы преподавателей числом, за которым нет новой работы (риск из
++постановки `docs/briefs/2026-10-16-p6-p9-p10-review-sla-checkpoint-reflection.md`).
++Через `HELP_SLA_HOURS` после выката то, что осталось без ответа, станет
++просроченным честно.
++
++Часы — из той же настройки `HELP_SLA_HOURS` (`app/core/config.py`, по умолчанию
++24), что и у кода. Закрытые заявки и заявки с уже заполненным `due_at` не трогаются.
++
++Откат. Чтобы `downgrade` вернул `NULL` ТОЛЬКО строкам, заполненным здесь,
++миграция записывает их в служебную таблицу `help_request_due_backfill`
++(`request_id`, поставленный `due_at`). Откат обнуляет `due_at` у этих строк,
++если значение с тех пор не менялось (возврат заявки или перевод в разбор
++ставят новый срок — его откат не трогает), и снимает таблицу. Сроки, которые
++поставил код после выката, откат миграции не трогает.
++
++Таблица `help_request_due_backfill` служебная: модели у неё нет намеренно, код
++её не читает. `alembic revision --autogenerate` предложит её удалить — это
++предложение отклонять (удалить её можно только вместе с откатом этой миграции).
++
++Revision ID: tsk995_help_due_backfill
++Revises: tsk1361_requirement_sync
++Create Date: 2026-10-17
++"""
++import logging
++from typing import Sequence, Union
++
++import sqlalchemy as sa
++from alembic import op
++
++from app.core.config import Settings
++
++revision: str = "tsk995_help_due_backfill"
++down_revision: Union[str, None] = "tsk1361_requirement_sync"
++branch_labels: Union[str, Sequence[str], None] = None
++depends_on: Union[str, Sequence[str], None] = None
++
++logger = logging.getLogger("alembic.runtime.migration")
++
++
++def upgrade() -> None:
++    """Поставить срок открытым заявкам без срока и запомнить, каким строкам."""
++    op.create_table(
++        "help_request_due_backfill",
++        sa.Column(
++            "request_id", sa.BigInteger(),
++            sa.ForeignKey("help_requests.id", ondelete="CASCADE"), primary_key=True,
++        ),
++        sa.Column("due_at", sa.DateTime(timezone=True), nullable=False),
++        comment=(
++            "tsk-995: заявки, которым срок ответа поставила миграция "
++            "tsk995_help_due_backfill (для точного отката)"
++        ),
++    )
++    hours = int(Settings().help_sla_hours)
++    bind = op.get_bind()
++    filled = bind.execute(
++        sa.text(
++            """
++            WITH upd AS (
++                UPDATE help_requests
++                   SET due_at = GREATEST(created_at, now()) + make_interval(hours => :hours)
++                 WHERE due_at IS NULL AND status = 'open'
++             RETURNING id, due_at
++            )
++            INSERT INTO help_request_due_backfill (request_id, due_at)
++            SELECT id, due_at FROM upd
++            RETURNING request_id
++            """
++        ),
++        {"hours": hours},
++    ).fetchall()
++    logger.info(
++        "tsk995_help_due_backfill: срок %s ч поставлен открытым заявкам: %d",
++        hours, len(filled),
++    )
++
++
++def downgrade() -> None:
++    """Вернуть `due_at = NULL` строкам, заполненным миграцией, и снять таблицу."""
++    op.execute(
++        """
++        UPDATE help_requests hr
++           SET due_at = NULL
++          FROM help_request_due_backfill b
++         WHERE b.request_id = hr.id
++           AND hr.due_at = b.due_at
++        """
++    )
++    op.drop_table("help_request_due_backfill")
+diff --git a/app/schemas/teacher_next_modes.py b/app/schemas/teacher_next_modes.py
+index 431cf9e..f9ddf25 100644
+--- a/app/schemas/teacher_next_modes.py
++++ b/app/schemas/teacher_next_modes.py
+@@ -288,6 +288,25 @@ class ReviewReleaseResponse(BaseModel):
+ 
+ # ----- Workload -----
+ 
++class ReviewSpeed(BaseModel):
++    """Скорость ручной проверки работ за окно (tsk-995, П6).
++
++    `checked_at − submitted_at` по обязательной очереди: только сдачи ученика
++    (`spw_web`), без ручных зачётов, повторов, итогового среза и переоценённых.
++    Ниже 10 проверок медиана, перцентиль и доля — `null` («мало данных»).
++    """
++    scope: Literal["teacher", "school"] = Field(
++        ..., description="teacher — проверки этого преподавателя; school — вся школа (методист)"
++    )
++    days: int = Field(..., description="Окно, дней (проверки за последние N дней)")
++    sla_hours: int = Field(..., description="Срок проверки REVIEW_SLA_HOURS, часов")
++    checked: int = Field(..., description="Проверено работ за окно")
++    median_hours: Optional[float] = Field(None, description="Медиана времени проверки, часов")
++    p90_hours: Optional[float] = Field(None, description="90-й перцентиль времени проверки, часов")
++    within_sla: int = Field(..., description="Из них проверено в срок")
++    within_sla_rate: Optional[float] = Field(None, description="Доля проверенных в срок, 0..1")
++
++
+ class TeacherWorkloadResponse(BaseModel):
+     """Сводка нагрузки преподавателя для главного экрана."""
+     open_help_requests_total: int = Field(0, description="Всего открытых заявок на помощь")
+@@ -297,7 +316,30 @@ class TeacherWorkloadResponse(BaseModel):
+         0, description="Открытых заявок на индивидуальный разбор (tsk-303, уровень 2)"
+     )
+     pending_manual_reviews_total: int = Field(0, description="Результатов в ожидании ручной проверки")
+-    overdue_total: int = Field(0, description="Просроченных (due_at < now) открытых заявок")
++    overdue_total: int = Field(
++        0,
++        description=(
++            "Просрочено всего: overdue_help + overdue_reviews (tsk-995; "
++            "до tsk-995 — только заявки, и было всегда 0)"
++        ),
++    )
++    overdue_help: int = Field(
++        0,
++        description=(
++            "Просроченных заявок: открыта, due_at (created_at + HELP_SLA_HOURS) прошёл, "
++            "ход за преподавателем — тот же предикат, что у фильтра overdue=1"
++        ),
++    )
++    overdue_reviews: int = Field(
++        0,
++        description=(
++            "Просроченных обязательных работ на проверке: submitted_at + REVIEW_SLA_HOURS "
++            "прошёл (то же множество и ACL, что у /teacher/reviews/pending)"
++        ),
++    )
++    review_speed: Optional[ReviewSpeed] = Field(
++        None, description="Скорость проверки работ за 30 дней (tsk-995)"
++    )
+ 
+ 
+ # ----- Review Grade (Phase Y-4) -----
+diff --git a/app/services/help_requests_service.py b/app/services/help_requests_service.py
+index 02f3d15..2a1d0a4 100644
+--- a/app/services/help_requests_service.py
++++ b/app/services/help_requests_service.py
+@@ -20,6 +20,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
+ from app.models.help_requests import HelpRequests
+ from app.models.help_request_replies import HelpRequestReplies
+ from app.services.help_reply_kind import guess_reply_kind
++# tsk-995: `awaiting_teacher_sql` живёт в `help_sla` и реэкспортируется отсюда
++# под прежним именем — его импортируют доска куратора и тесты.
++from app.services.help_sla import (  # noqa: F401
++    HELP_DUE_AT_SQL,
++    awaiting_teacher_sql,
++    help_overdue_sql,
++    help_sla_hours,
++)
+ from app.services.schedule_preference_service import NOT_COUNTED_PLAN_CODES
+ from app.utils.task_title import HINT_MAX_LEN, TITLE_MAX_LEN, humanize_task_title
+ from app.services.learning_events_service import (
+@@ -233,23 +241,25 @@ async def get_or_create_help_request(
+     msg_truncated = (message or "")[:2000] if message else None
+     note_truncated = stuck_note[:1000] if stuck_note else None
+ 
++    # tsk-995: срок ответа — created_at + HELP_SLA_HOURS (`help_sla`).
+     r = await db.execute(
+-        text("""
++        text(f"""
+             INSERT INTO help_requests
+             (status, request_type, auto_created, context_json, student_id, task_id, course_id, attempt_id, event_id, message, assigned_teacher_id,
+              attachment_id, attachment_filename, attachment_content_type, attachment_size_bytes,
+-             stuck_note, created_at, updated_at)
+-            VALUES ('open', 'manual_help', false, '{}'::jsonb, :student_id, :task_id, :course_id, :attempt_id, :event_id, :message, :assigned_teacher_id,
++             stuck_note, created_at, updated_at, due_at)
++            VALUES ('open', 'manual_help', false, '{{}}'::jsonb, :student_id, :task_id, :course_id, :attempt_id, :event_id, :message, :assigned_teacher_id,
+                     :attachment_id, :attachment_filename, :attachment_content_type, :attachment_size_bytes,
+-                    :stuck_note, now(), now())
++                    :stuck_note, now(), now(), {HELP_DUE_AT_SQL})
+             RETURNING id
+-        """),
++        """),  # nosec B608 — HELP_DUE_AT_SQL литерал модуля help_sla
+         {
+             "student_id": student_id,
+             "task_id": task_id,
+             "course_id": course_id,
+             "attempt_id": attempt_id,
+             "event_id": event_id,
++            "help_sla_hours": help_sla_hours(),
+             "message": msg_truncated,
+             "assigned_teacher_id": assigned,
+             "attachment_id": attachment_id,
+@@ -344,20 +354,22 @@ async def get_or_create_material_help_request(
+     assigned = await resolve_assigned_teacher(db, student_id, course_id)
+     msg_truncated = message[:2000]
+ 
++    # tsk-995: срок ответа — created_at + HELP_SLA_HOURS (`help_sla`).
+     r = await db.execute(
+-        text("""
++        text(f"""
+             INSERT INTO help_requests
+             (status, request_type, auto_created, context_json, student_id, material_id, course_id, message, assigned_teacher_id,
+              attachment_id, attachment_filename, attachment_content_type, attachment_size_bytes,
+-             created_at, updated_at)
+-            VALUES ('open', 'manual_help', false, '{}'::jsonb, :student_id, :material_id, :course_id, :message, :assigned_teacher_id,
++             created_at, updated_at, due_at)
++            VALUES ('open', 'manual_help', false, '{{}}'::jsonb, :student_id, :material_id, :course_id, :message, :assigned_teacher_id,
+                     :attachment_id, :attachment_filename, :attachment_content_type, :attachment_size_bytes,
+-                    now(), now())
++                    now(), now(), {HELP_DUE_AT_SQL})
+             RETURNING id
+-        """),
++        """),  # nosec B608 — HELP_DUE_AT_SQL литерал модуля help_sla
+         {
+             "student_id": student_id,
+             "material_id": material_id,
++            "help_sla_hours": help_sla_hours(),
+             "course_id": course_id,
+             "message": msg_truncated,
+             "assigned_teacher_id": assigned,
+@@ -459,15 +471,17 @@ async def get_or_create_blocked_limit_help_request(
+         )
+         return (request_id, False, True)
+     assigned = await resolve_assigned_teacher(db, student_id, course_id)
++    # tsk-995: срок ответа — created_at + HELP_SLA_HOURS (`help_sla`).
+     r = await db.execute(
+-        text("""
++        text(f"""
+             INSERT INTO help_requests
+-            (status, request_type, auto_created, context_json, student_id, task_id, course_id, attempt_id, event_id, assigned_teacher_id, created_at, updated_at)
+-            VALUES ('open', 'blocked_limit', true, :context_json, :student_id, :task_id, :course_id, :attempt_id, NULL, :assigned_teacher_id, now(), now())
++            (status, request_type, auto_created, context_json, student_id, task_id, course_id, attempt_id, event_id, assigned_teacher_id, created_at, updated_at, due_at)
++            VALUES ('open', 'blocked_limit', true, :context_json, :student_id, :task_id, :course_id, :attempt_id, NULL, :assigned_teacher_id, now(), now(), {HELP_DUE_AT_SQL})
+             RETURNING id
+-        """),
++        """),  # nosec B608 — HELP_DUE_AT_SQL литерал модуля help_sla
+         {
+             "context_json": context_str,
++            "help_sla_hours": help_sla_hours(),
+             "student_id": student_id,
+             "task_id": task_id,
+             "course_id": course_id,
+@@ -496,35 +510,6 @@ async def get_or_create_blocked_limit_help_request(
+     return (int(new_id), True, False)
+ 
+ 
+-def awaiting_teacher_sql(alias: str = "hr") -> str:
+-    """SQL-условие «заявка ждёт ответа УЧИТЕЛЯ», без привязки к преподавателю.
+-
+-    tsk-742: правило вынесено из счётчика ниже, потому что читать его стало
+-    нужно и другому экрану (доска куратора). Скопированный вариант неизбежно
+-    выродился бы в `status = 'open'` — а это, как объяснено в
+-    `get_help_requests_pending_count`, СОВСЕМ другое множество: заявка остаётся
+-    открытой, пока её не закроет ученик, в том числе после ответа учителя.
+-    Тогда у куратора на экране вечно висели бы «просроченные» заявки, на
+-    которые он уже ответил, — верный способ отучить смотреть на экран.
+-
+-    :param alias: алиас `help_requests` в вызывающем запросе. Только литералы
+-        из закрытого набора call-sites, user-input сюда не попадает.
+-    """
+-    return f"""
+-        {alias}.status = 'open'
+-        AND (
+-            {alias}.thread_id IS NULL
+-            OR (
+-                SELECT m.sender_id
+-                FROM messages m
+-                WHERE m.thread_id = {alias}.thread_id
+-                ORDER BY m.sent_at DESC, m.id DESC
+-                LIMIT 1
+-            ) = {alias}.student_id
+-        )
+-    """  # nosec B608 — alias из закрытого набора литералов
+-
+-
+ async def get_help_requests_pending_count(
+     db: AsyncSession,
+     teacher_id: int,
+@@ -729,7 +714,7 @@ async def list_help_requests(
+     Список заявок с ACL. status_filter: open | closed | all.
+     request_type_filter: manual_help | blocked_limit | all (этап 3.8.1).
+     sort: priority | created_at | due_at (этап 3.9).
+-    overdue: True — только просроченные (due_at < now), ортогонально типу (tsk-312).
++    overdue: True — только просроченные (`help_overdue_sql`), ортогонально типу (tsk-312).
+     student_id: tsk-473 — сузить до ОДНОГО ученика на уровне SQL (не постфильтр
+     в Python по общей странице учителя) — иначе `status_filter="all"` с большой
+     историей учителя рискует не влезть в `limit` и потерять недавние заявки
+@@ -766,10 +751,13 @@ async def list_help_requests(
+     # «Просрочено» и её список считались по одному правилу (TZ-aware bind :now_ts,
+     # как в _normalize_due_at). Фильтруем на сервере, а не по is_overdue поверх
+     # limit/offset, иначе просроченные за пределами страницы пропадут из списка.
++    #
++    # tsk-995: предикат общий — `help_overdue_sql` (открыта, срок прошёл, ход
++    # за преподавателем). `is_overdue` элемента считается им же, в SQL.
+     overdue_cond = ""
+     if overdue:
+-        overdue_cond = "AND hr.due_at IS NOT NULL AND hr.due_at < :now_ts"
+-        params["now_ts"] = now
++        overdue_cond = f"AND {help_overdue_sql('hr')}"
++    params["now_ts"] = now
+ 
+     r = await db.execute(
+         text(f"""
+@@ -800,7 +788,9 @@ async def list_help_requests(
+                    -- tsk-943: заявка по материалу (вместо задания) + вложение.
+                    hr.material_id, m.title AS material_title,
+                    hr.attachment_id, hr.attachment_filename,
+-                   hr.attachment_content_type, hr.attachment_size_bytes
++                   hr.attachment_content_type, hr.attachment_size_bytes,
++                   -- tsk-995: тот же предикат, что у фильтра overdue=1 и ячейки.
++                   {help_overdue_sql('hr')} AS is_overdue
+             FROM help_requests hr
+             LEFT JOIN users u ON u.id = hr.student_id
+             LEFT JOIN tasks t ON t.id = hr.task_id
+@@ -840,7 +830,7 @@ async def list_help_requests(
+             "event_id": row[12],
+             "priority": priority_val,
+             "due_at": due_at_norm,
+-            "is_overdue": due_at_norm is not None and due_at_norm < now,
++            "is_overdue": bool(row[30]) if len(row) > 30 else False,
+             "student_name": row[15] if len(row) > 15 else None,
+             "task_title": _item_title_display(
+                 row[6],
+@@ -893,8 +883,9 @@ async def get_help_request_detail(
+     if not ok:
+         return (None, "forbidden")
+ 
++    now = datetime.now(timezone.utc)
+     r = await db.execute(
+-        text("""
++        text(f"""
+             SELECT hr.id, hr.status, hr.student_id, hr.task_id, hr.course_id, hr.attempt_id,
+                    hr.created_at, hr.updated_at, hr.thread_id, hr.event_id,
+                    hr.request_type, hr.auto_created, hr.context_json,
+@@ -915,7 +906,9 @@ async def get_help_request_detail(
+                    hr.attachment_id, hr.attachment_filename,
+                    hr.attachment_content_type, hr.attachment_size_bytes,
+                    -- tsk-993: «где застрял» — колонка 37, в конец (см. off-by-one ниже).
+-                   hr.stuck_note
++                   hr.stuck_note,
++                   -- tsk-995: колонка 38 — тот же предикат, что у списка и ячейки.
++                   {help_overdue_sql('hr')} AS is_overdue
+             FROM help_requests hr
+             LEFT JOIN users u ON u.id = hr.student_id
+             LEFT JOIN tasks t ON t.id = hr.task_id
+@@ -923,8 +916,8 @@ async def get_help_request_detail(
+             LEFT JOIN users cu ON cu.id = hr.claimed_by
+             LEFT JOIN materials m ON m.id = hr.material_id
+             WHERE hr.id = :request_id
+-        """),
+-        {"request_id": request_id},
++        """),  # nosec B608 — help_overdue_sql из закрытого набора литералов
++        {"request_id": request_id, "now_ts": now},
+     )
+     row = r.fetchone()
+     if row is None:
+@@ -932,14 +925,13 @@ async def get_help_request_detail(
+     ctx = row[12] if row[12] is not None else {}
+     if not isinstance(ctx, dict):
+         ctx = {}
+-    now = datetime.now(timezone.utc)
+     # tsk-298 (fix): off-by-one — SELECT отдаёт 22 колонки (0-21), а маппинг
+     # читал row[18..22], сдвигая priority/due_at/student_name/task_title/
+     # course_title на +1. Из-за этого «Ученик» показывал external_uid задания
+     # вместо ФИО. Индексы приведены к реальному порядку колонок.
+     due_at = row[18] if len(row) > 18 else None
+     due_at_norm = _normalize_due_at(due_at)
+-    is_overdue = due_at_norm is not None and due_at_norm < now
++    is_overdue = bool(row[38]) if len(row) > 38 else False
+     priority_val = int(row[17]) if len(row) > 17 and row[17] is not None else 100
+ 
+     r2 = await db.execute(
+@@ -1656,16 +1648,19 @@ async def reopen_help_request(
+     blamed_teacher_id = closed_by if closed_by is not None else assigned
+ 
+     await db.execute(
+-        text("""
++        text(f"""
+             UPDATE help_requests
+             SET status = 'open', closed_at = NULL, closed_by = NULL,
+-                resolution_comment = NULL, updated_at = now()
++                resolution_comment = NULL, updated_at = now(),
++                due_at = {HELP_DUE_AT_SQL}
+             WHERE id = :id
+-        """),
+-        {"id": request_id},
++        """),  # nosec B608 — HELP_DUE_AT_SQL литерал модуля help_sla
++        {"id": request_id, "help_sla_hours": help_sla_hours()},
+     )
+     # Поля закрытия чистятся намеренно: иначе открытая заявка несла бы дату
+     # закрытия и комментарий об уже отвергнутом решении.
++    # tsk-995: срок ответа отсчитывается заново от возврата — ученик снова
++    # ждёт преподавателя, а прежний срок к этому моменту обычно уже прошёл.
+     await db.execute(
+         text("""
+             INSERT INTO help_request_reopens (request_id, teacher_id)
+@@ -1755,13 +1750,15 @@ async def request_individual_review(
+     if await _repeat_ask_count(db, request_id, student_id, task_id) < 1:
+         return (None, "no_reopen")
+ 
++    # tsk-995: новый срок — на ссылку разбора, от момента просьбы ученика.
+     await db.execute(
+-        text("""
++        text(f"""
+             UPDATE help_requests
+-            SET request_type = 'individual_review', updated_at = now()
++            SET request_type = 'individual_review', updated_at = now(),
++                due_at = {HELP_DUE_AT_SQL}
+             WHERE id = :id
+-        """),
+-        {"id": request_id},
++        """),  # nosec B608 — HELP_DUE_AT_SQL литерал модуля help_sla
++        {"id": request_id, "help_sla_hours": help_sla_hours()},
+     )
+     if assigned is not None:
+         # tsk-1338: имя ученика и название задания в начале текста.
+diff --git a/app/services/help_sla.py b/app/services/help_sla.py
+new file mode 100644
+index 0000000..720125c
+--- /dev/null
++++ b/app/services/help_sla.py
+@@ -0,0 +1,128 @@
++"""Срок ответа на заявку помощи (tsk-995, П6).
++
++Сестра `review_sla` (срок проверки РАБОТ): одно место, где из момента создания
++заявки выводятся срок и просрочка. Срок — `created_at + HELP_SLA_HOURS`
++(решение оператора Р1: 24 часа).
++
++В отличие от срока проверки работ срок заявки ХРАНИТСЯ в `help_requests.due_at`:
++колонка была с этапа 3.9, по ней сортируют очередь и `claim-next`. Поэтому
++смена настройки меняет срок только у новых заявок, а не у уже открытых.
++
++Модуль без зависимостей от других сервисов: его читают и `help_requests_service`,
++и `teacher_queue_service`, а первый импортирует второй — общий код в любом из
++них дал бы круговой импорт.
++"""
++from __future__ import annotations
++
++import logging
++from datetime import datetime, timedelta, timezone
++from typing import Optional
++
++from app.core.config import Settings
++
++logger = logging.getLogger(__name__)
++
++#: SQL-выражение срока для INSERT/UPDATE: `now()` — время транзакции, то же,
++#: что пишется в `created_at` этим же оператором, поэтому срок ровно
++#: `created_at + HELP_SLA_HOURS`. Параметр `:help_sla_hours` — из `help_sla_hours()`.
++HELP_DUE_AT_SQL = "now() + make_interval(hours => :help_sla_hours)"
++
++
++def help_sla_hours() -> int:
++    """Срок ответа на заявку в часах из настроек."""
++    return int(Settings().help_sla_hours)
++
++
++def help_due_at(created_at: Optional[datetime]) -> Optional[datetime]:
++    """Срок ответа: момент создания + `HELP_SLA_HOURS`.
++
++    Боевой код пишет срок SQL-выражением `HELP_DUE_AT_SQL` (время транзакции);
++    функция — то же правило для Python: эталон в тестах и для будущих чтений.
++
++    `None` и не-datetime → `None`; naive datetime трактуется как UTC с WARNING
++    (тот же приём, что `review_sla._aware`).
++    """
++    if created_at is None:
++        return None
++    if not isinstance(created_at, datetime):
++        logger.warning("help_sla: created_at не datetime (%r) — срок не считаем", type(created_at))
++        return None
++    if created_at.tzinfo is None:
++        logger.warning("help_sla: naive created_at=%s — трактуем как UTC", created_at)
++        created_at = created_at.replace(tzinfo=timezone.utc)
++    return created_at + timedelta(hours=help_sla_hours())
++
++
++def awaiting_teacher_sql(alias: str = "hr") -> str:
++    """SQL-условие «заявка ждёт ответа УЧИТЕЛЯ», без привязки к преподавателю.
++
++    tsk-742: правило вынесено из счётчика `get_help_requests_pending_count`,
++    потому что читать его стало нужно и другому экрану (доска куратора).
++    Скопированный вариант неизбежно выродился бы в `status = 'open'` — а это
++    СОВСЕМ другое множество: заявка остаётся открытой, пока её не закроет
++    ученик, в том числе после ответа учителя. Тогда у куратора на экране вечно
++    висели бы «просроченные» заявки, на которые он уже ответил, — верный способ
++    отучить смотреть на экран.
++
++    tsk-995: переехало сюда из `help_requests_service` (там осталось тем же
++    именем), чтобы его мог взять и счётчик просрочки в `teacher_queue_service`.
++
++    :param alias: алиас `help_requests` в вызывающем запросе. Только литералы
++        из закрытого набора call-sites, user-input сюда не попадает.
++    """
++    return f"""
++        {alias}.status = 'open'
++        AND (
++            {alias}.thread_id IS NULL
++            OR (
++                SELECT m.sender_id
++                FROM messages m
++                WHERE m.thread_id = {alias}.thread_id
++                ORDER BY m.sent_at DESC, m.id DESC
++                LIMIT 1
++            ) = {alias}.student_id
++        )
++    """  # nosec B608 — alias из закрытого набора литералов
++
++
++def help_overdue_sql(alias: str = "hr") -> str:
++    """SQL-условие «заявка просрочена» (tsk-995). Требует bind `:now_ts`.
++
++    Просрочена открытая заявка, срок которой прошёл, а ход — за преподавателем:
++    `awaiting_teacher_sql` (последнее слово за учеником или ответа ещё не было).
++    Без этой части в «Просрочено» попадали бы заявки, на которые преподаватель
++    ответил вовремя, а ученик просто не закрыл их — то же множество, от
++    которого tsk-415/tsk-742 уже уводили счётчик «ждут ответа».
++
++    Ход за преподавателем и тогда, когда последний в переписке он, но ученик
++    после этого вернул заявку («не помогло», `help_request_reopens`): возврат
++    сообщения в тред не пишет, и без этой ветки возвращённая заявка не
++    просрочивалась бы никогда.
++
++    Исключение — индивидуальный разбор без ссылки: ученик ждёт ссылку на
++    встречу, хотя последним в переписке мог писать преподаватель.
++
++    ЕДИНСТВЕННОЕ определение: им считают и ячейку «Просрочено» в
++    `get_teacher_workload`, и фильтр `overdue=1` списка заявок, и признак
++    `is_overdue` в списке и карточке — число и список обязаны совпадать.
++
++    :param alias: алиас `help_requests`; только литералы из закрытого набора.
++    """
++    return f"""(
++        {alias}.status = 'open'
++        AND {alias}.due_at IS NOT NULL
++        AND {alias}.due_at < :now_ts
++        AND (
++            ({awaiting_teacher_sql(alias)})
++            OR EXISTS (
++                SELECT 1 FROM help_request_reopens rr
++                WHERE rr.request_id = {alias}.id
++                  AND rr.reopened_at > COALESCE(
++                      (SELECT MAX(m.sent_at) FROM messages m
++                        WHERE m.thread_id = {alias}.thread_id),
++                      '-infinity'::timestamptz
++                  )
++            )
++            OR ({alias}.request_type = 'individual_review' AND {alias}.webinar_link IS NULL)
++        )
++    )"""  # nosec B608 — alias из закрытого набора литералов
+diff --git a/app/services/review_sla.py b/app/services/review_sla.py
+index ef459fd..8392c86 100644
+--- a/app/services/review_sla.py
++++ b/app/services/review_sla.py
+@@ -69,3 +69,14 @@ def is_review_overdue(submitted_at: Optional[datetime], now: Optional[datetime]
+         return False
+     current = _aware(now, what="now") or datetime.now(timezone.utc)
+     return due < current
++
++
++def review_overdue_before(now: Optional[datetime] = None) -> datetime:
++    """Граница для SQL (tsk-995): работа просрочена, если сдана раньше неё.
++
++    `submitted_at + REVIEW_SLA_HOURS < now` ⇔ `submitted_at < now − REVIEW_SLA_HOURS` —
++    то же условие, что `is_review_overdue`, но годное для `COUNT(*)` в SQL
++    без выборки строк (счётчик «Просрочено» в `get_teacher_workload`).
++    """
++    current = _aware(now, what="now") or datetime.now(timezone.utc)
++    return current - timedelta(hours=sla_hours())
+diff --git a/app/services/teacher_dashboard_service.py b/app/services/teacher_dashboard_service.py
+index 0153110..1d90176 100644
+--- a/app/services/teacher_dashboard_service.py
++++ b/app/services/teacher_dashboard_service.py
+@@ -242,3 +242,109 @@ async def get_teacher_dashboard(
+         date_from, date_to, len(rows), len(items),
+     )
+     return items
++
++
++#: tsk-995 (П6): окно метрики скорости проверки работ, дней.
++REVIEW_SPEED_WINDOW_DAYS = 30
++
++
++async def get_review_speed(
++    db: AsyncSession,
++    *,
++    checker_id: Optional[int],
++    days: int = REVIEW_SPEED_WINDOW_DAYS,
++) -> dict[str, Any]:
++    """Скорость ручной проверки работ за последние `days` дней (tsk-995, П6).
++
++    Считается `checked_at − submitted_at` по проверенным работам: медиана,
++    90-й перцентиль (часы) и доля уложившихся в `REVIEW_SLA_HOURS` — тот же
++    срок, что видят ученик и очередь (`review_sla`), новый не вводится.
++
++    Какие работы входят — только сдача ученика, проверенная человеком:
++
++    * `real_student_results_filter` — белый список каналов, где ответ набирает
++      сам ученик. Он отсекает ручной зачёт преподавателя без сдачи
++      (`manual_teacher`: там `checked_at` и `submitted_at` ставит сам
++      преподаватель одним действием — «проверка за 0 секунд»), сдачи повтора
++      (`retrieval`) и итогового среза (`final_check`), а заодно любой будущий
++      служебный источник — правило из `learning_gaps_service`, не копия.
++    * `mandatory_review_sql` — обязательная очередь: только у неё есть срок
++      (`list_pending_reviews` отдаёт срок только обязательным); опциональный
++      просмотр авто-проверенной работы — не обязанность и в «в срок» не идёт.
++      Предикат тот же, что у очереди, поэтому гибридная работа (tsk-396),
++      отклонённая преподавателем, выпадает: по вердикту её не отличить от
++      заваленной автопроверкой. Искажение малое, свой предикат дороже.
++    * `checked_by IS NOT NULL`, `submitted_at IS NOT NULL` — проверял человек,
++      и есть момент сдачи.
++    * Без переоценённых работ (`metrics.regrade_history` непуст): переоценка
++      перезаписывает `checked_at`, момент первой проверки в базе не сохраняется,
++      и такая работа выглядела бы проверенной через неделю.
++    * Без учеников на служебном тарифе (`not_test_student_sql`), как у
++      остальных показателей дашборда.
++
++    Окно — по `checked_at` (проверки, сделанные за последние `days` дней).
++
++    :param checker_id: id преподавателя — его проверки; `None` — вся школа
++        (обзор методиста).
++    :returns: словарь `ReviewSpeed`: `scope`, `days`, `sla_hours`, `checked`,
++        `median_hours`, `p90_hours`, `within_sla`, `within_sla_rate`.
++        Ниже `MIN_REQUESTS_FOR_RATE` проверок медиана, перцентиль и доля — `None`
++        («мало данных»), как у остальных долей дашборда.
++    """
++    # Ленивый импорт: teacher_queue_service импортирует этот модуль внутри
++    # get_teacher_workload, а help_requests_service (импортируемый выше)
++    # тянет teacher_queue_service на уровне модуля.
++    from app.services import review_sla
++    from app.services.learning_gaps_service import real_student_results_filter
++    from app.services.teacher_queue_service import mandatory_review_sql
++
++    sla = review_sla.sla_hours()
++    checker_cond = "AND tr.checked_by = :checker_id" if checker_id is not None else ""
++    params: dict[str, Any] = {"days": int(days), "sla": sla}
++    if checker_id is not None:
++        params["checker_id"] = int(checker_id)
++    row = (
++        await db.execute(
++            text(f"""
++                WITH speed AS (
++                    SELECT GREATEST(
++                               EXTRACT(EPOCH FROM (tr.checked_at - tr.submitted_at)), 0
++                           ) / 3600.0 AS hours
++                      FROM task_results tr
++                      JOIN tasks t ON t.id = tr.task_id
++                     WHERE tr.checked_at IS NOT NULL
++                       AND tr.checked_by IS NOT NULL
++                       AND tr.submitted_at IS NOT NULL
++                       AND tr.checked_at >= now() - make_interval(days => :days)
++                       AND {real_student_results_filter("tr")}
++                       AND {mandatory_review_sql("t", "tr")}
++                       AND COALESCE(
++                               jsonb_typeof(tr.metrics->'regrade_history') = 'array'
++                               AND jsonb_array_length(tr.metrics->'regrade_history') > 0,
++                               false
++                           ) = false
++                       AND {not_test_student_sql("tr.user_id")}
++                       {checker_cond}
++                )
++                SELECT COUNT(*),
++                       percentile_cont(0.5) WITHIN GROUP (ORDER BY hours),
++                       percentile_cont(0.9) WITHIN GROUP (ORDER BY hours),
++                       COUNT(*) FILTER (WHERE hours <= :sla)
++                  FROM speed
++            """),  # nosec B608 — фрагменты из литералов модулей, значения через bind
++            params,
++        )
++    ).fetchone()
++    checked = int(row[0] or 0) if row else 0
++    within = int(row[3] or 0) if row else 0
++    enough = checked >= MIN_REQUESTS_FOR_RATE
++    return {
++        "scope": "teacher" if checker_id is not None else "school",
++        "days": int(days),
++        "sla_hours": sla,
++        "checked": checked,
++        "median_hours": round(float(row[1]), 1) if enough and row[1] is not None else None,
++        "p90_hours": round(float(row[2]), 1) if enough and row[2] is not None else None,
++        "within_sla": within,
++        "within_sla_rate": round(within / checked, 4) if enough else None,
++    }
+diff --git a/app/services/teacher_queue_service.py b/app/services/teacher_queue_service.py
+index d941b9e..45e4d8c 100644
+--- a/app/services/teacher_queue_service.py
++++ b/app/services/teacher_queue_service.py
+@@ -29,6 +29,7 @@ from app.schemas.task_content import MANUAL_REVIEW_TASK_TYPES
+ from app.services import feedback_draft_service, inbox_service, review_sla
+ from app.services import notification_names
+ from app.services.attempt_attachments import mark_missing_one
++from app.services.help_sla import help_overdue_sql
+ from app.utils.task_title import humanize_task_title
+ 
+ logger = logging.getLogger(__name__)
+@@ -305,8 +306,9 @@ async def claim_next_help_request(
+             FROM cand
+             WHERE hr.id = cand.id
+             RETURNING hr.id, hr.status, hr.request_type, hr.student_id, hr.task_id, hr.course_id,
+-                      hr.created_at, hr.priority, hr.due_at, hr.material_id
+-        """),
++                      hr.created_at, hr.priority, hr.due_at, hr.material_id,
++                      {help_overdue_sql('hr')} AS is_overdue
++        """),  # nosec B608 — фрагменты из закрытого набора литералов
+         params,
+     )
+     row = r.fetchone()
+@@ -319,7 +321,8 @@ async def claim_next_help_request(
+         return (None, None, None)
+ 
+     due_at = row[8] if len(row) > 8 else None
+-    is_overdue = due_at is not None and due_at < now
++    # tsk-995: просрочка — общий предикат `help_overdue_sql` (как в списке).
++    is_overdue = bool(row[10]) if len(row) > 10 else False
+     item = {
+         "request_id": row[0],
+         "status": row[1],
+@@ -527,8 +530,9 @@ async def claim_help_request_by_id(
+               AND hr.status = 'open'
+               {free_cond}
+             RETURNING hr.id, hr.status, hr.request_type, hr.student_id, hr.task_id,
+-                      hr.course_id, hr.created_at, hr.priority, hr.due_at, hr.material_id
+-        """),  # nosec B608 — free_cond из закрытого набора литералов
++                      hr.course_id, hr.created_at, hr.priority, hr.due_at, hr.material_id,
++                      {help_overdue_sql('hr')} AS is_overdue
++        """),  # nosec B608 — free_cond/help_overdue_sql из закрытого набора литералов
+         {
+             "request_id": request_id,
+             "teacher_id": teacher_id,
+@@ -562,7 +566,7 @@ async def claim_help_request_by_id(
+         "created_at": urow[6],
+         "priority": urow[7] if urow[7] is not None else 100,
+         "due_at": due_at,
+-        "is_overdue": due_at is not None and due_at < now,
++        "is_overdue": bool(urow[10]) if len(urow) > 10 else False,
+     }
+     previous_claim = (
+         {
+@@ -1692,12 +1696,23 @@ async def teacher_can_override_limit(
+ async def get_teacher_workload(
+     db: AsyncSession,
+     teacher_id: int,
+-) -> dict[str, int]:
++) -> dict[str, Any]:
+     """
+     Агрегат нагрузки: открытые help_requests по типам, pending reviews, просроченные.
++
++    tsk-995 (П6): «Просрочено» = просроченные заявки (`help_overdue_sql`, срок
++    `HELP_SLA_HOURS`) + просроченные обязательные работы (срок `REVIEW_SLA_HOURS`
++    из `review_sla`, то же условие и ACL, что у `list_pending_reviews`).
++    До tsk-995 `due_at` никто не писал, и `overdue_total` был всегда 0.
++    Плюс скорость проверки работ за 30 дней: у преподавателя — его проверки,
++    у методиста (ACL-bypass, видит всю школу) — по школе.
+     """
+     now = datetime.now(timezone.utc)
+-    params: dict[str, Any] = {"teacher_id": teacher_id, "now_ts": now}
++    params: dict[str, Any] = {
++        "teacher_id": teacher_id,
++        "now_ts": now,
++        "review_overdue_before": review_sla.review_overdue_before(now),
++    }
+ 
+     r = await db.execute(
+         text(f"""
+@@ -1706,10 +1721,10 @@ async def get_teacher_workload(
+                 COUNT(*) FILTER (WHERE hr.request_type = 'blocked_limit') AS blocked_limit,
+                 COUNT(*) FILTER (WHERE hr.request_type = 'individual_review')
+                     AS individual_review,
+-                COUNT(*) FILTER (WHERE hr.due_at IS NOT NULL AND hr.due_at < :now_ts) AS overdue
++                COUNT(*) FILTER (WHERE {help_overdue_sql('hr')}) AS overdue
+             FROM help_requests hr
+             WHERE hr.status = 'open' AND {HELP_REQUESTS_ACL_SQL}
+-        """),
++        """),  # nosec B608 — фрагменты из закрытого набора литералов
+         params,
+     )
+     row = r.fetchone()
+@@ -1720,7 +1735,7 @@ async def get_teacher_workload(
+     # разбор выпали бы из панели нагрузки целиком — а это самый срочный случай
+     # лестницы: ученик уже сказал, что текстовый ответ не помог, и ждёт ссылку.
+     open_individual_review = int(row[2] or 0)
+-    overdue_total = int(row[3] or 0)
++    overdue_help = int(row[3] or 0)
+     open_help_requests_total = open_manual_help + open_blocked_limit + open_individual_review
+ 
+     # tsk-298 (fix): «На проверке» ДОЛЖНО совпадать с фактической очередью
+@@ -1730,9 +1745,15 @@ async def get_teacher_workload(
+     # ручной проверки (`manual_review_required=false`) — очередь его не выдаёт.
+     # Выравниваем на тот же `mandatory_review_sql`, что у очереди (TA ИЛИ
+     # SA_COM с manual_review_required), без опоры на is_correct.
++    # tsk-995: просроченные — то же множество, плюс `is_review_overdue` в SQL
++    # (`submitted_at + REVIEW_SLA_HOURS < now` ⇔ `submitted_at < now − SLA`).
+     r2 = await db.execute(
+         text(f"""
+-            SELECT COUNT(*)
++            SELECT COUNT(*),
++                   COUNT(*) FILTER (
++                       WHERE tr.submitted_at IS NOT NULL
++                         AND tr.submitted_at < :review_overdue_before
++                   )
+             FROM task_results tr
+             JOIN tasks t ON t.id = tr.task_id
+             WHERE tr.checked_at IS NULL
+@@ -1741,7 +1762,28 @@ async def get_teacher_workload(
+         """),  # nosec B608 — mandatory_review_sql/REVIEW_ACL_SQL из закрытого набора литералов
+         params,
+     )
+-    pending_manual_reviews_total = int(r2.scalar() or 0)
++    row2 = r2.fetchone()
++    pending_manual_reviews_total = int(row2[0] or 0) if row2 else 0
++    overdue_reviews = int(row2[1] or 0) if row2 else 0
++
++    # Скорость проверки: методист смотрит школу, преподаватель — себя. Роль —
++    # тот же bypass, что в `REVIEW_ACL_SQL`/`HELP_REQUESTS_ACL_SQL`.
++    from app.services.teacher_dashboard_service import get_review_speed
++
++    is_methodist = bool(
++        (
++            await db.execute(
++                text(
++                    "SELECT EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id "
++                    "WHERE ur.user_id = :teacher_id AND r.name = 'methodist')"
++                ),
++                {"teacher_id": teacher_id},
++            )
++        ).scalar()
++    )
++    review_speed = await get_review_speed(
++        db, checker_id=None if is_methodist else teacher_id
++    )
+ 
+     return {
+         "open_help_requests_total": open_help_requests_total,
+@@ -1749,5 +1791,8 @@ async def get_teacher_workload(
+         "open_manual_help_total": open_manual_help,
+         "open_individual_review_total": open_individual_review,
+         "pending_manual_reviews_total": pending_manual_reviews_total,
+-        "overdue_total": overdue_total,
++        "overdue_total": overdue_help + overdue_reviews,
++        "overdue_help": overdue_help,
++        "overdue_reviews": overdue_reviews,
++        "review_speed": review_speed,
+     }
+diff --git a/docs/api-reference.md b/docs/api-reference.md
+index 20831e2..9fbb2a9 100644
+--- a/docs/api-reference.md
++++ b/docs/api-reference.md
+@@ -718,10 +718,10 @@ Stateless-проверка одной задачи без сохранения 
+ | POST | `/teacher/help-requests/{request_id}/reply` | Ответить студенту (body: `teacher_id`, `message`, `close_after_reply`, `idempotency_key`, опц. `lock_token`). Создаёт сообщение в messages, опционально закрывает заявку. При невалидном lock_token — 409 (этап 3.9). |
+ | POST | `/teacher/help-requests/claim-next` | Взять следующий открытый help-request (этап 3.9). Body: `teacher_id`, `request_type` (manual_help\|blocked_limit\|all), `status` (open), `ttl_sec` (30..600), опц. `idempotency_key`, `course_id`. Ответ: `item`, `lock_token`, `lock_expires_at`, `empty`. |
+ | POST | `/teacher/help-requests/{request_id}/release` | Освободить блокировку заявки (этап 3.9). Body: `teacher_id`, `lock_token`. 409 при неверном токене. Идемпотентно: уже свободно — 200, `released: false`. |
+-| GET | `/teacher/workload?teacher_id=` | Сводка нагрузки преподавателя (этап 3.9): open_help_requests_total, open_blocked_limit_total, open_manual_help_total, pending_manual_reviews_total, overdue_total. |
++| GET | `/teacher/workload?teacher_id=` | Сводка нагрузки преподавателя (этап 3.9): open_help_requests_total, open_blocked_limit_total, open_manual_help_total, open_individual_review_total, pending_manual_reviews_total, overdue_total. **tsk-995 (П6):** `overdue_total = overdue_help + overdue_reviews`; `overdue_help` — открытые заявки с прошедшим `due_at` (`created_at + HELP_SLA_HOURS`, по умолчанию 24 ч), где ход за преподавателем (тот же предикат, что у фильтра `overdue=1` и `is_overdue`); `overdue_reviews` — обязательные работы на проверке старше `REVIEW_SLA_HOURS` (то же множество и ACL, что `/teacher/reviews/pending`). `review_speed` — скорость проверки за 30 дней: `scope` (`teacher` — свои проверки; `school` — у методиста вся школа), `checked`, `median_hours`, `p90_hours`, `within_sla`, `within_sla_rate`, `sla_hours`, `days`; только сдачи ученика (`spw_web`) обязательной очереди, без ручного зачёта, повтора, итогового среза и переоценённых; меньше 10 проверок — `null` в медиане и долях. |
+ | POST | `/teacher/reviews/claim-next` | Взять следующий результат на ручную проверку (этап 3.9). Body: `teacher_id`, `ttl_sec`, опц. `course_id`, `user_id`, `idempotency_key`. Ответ: `item`, `lock_token`, `lock_expires_at`, `empty`. |
+ | POST | `/teacher/reviews/{result_id}/release` | Освободить блокировку проверки (этап 3.9). Body: `teacher_id`, `lock_token`. 409 при неверном токене. Идемпотентно. |
+-| | | В списке/карточке help-requests с этапа 3.9: `priority`, `due_at`, `is_overdue`. Query `sort=priority\|created_at\|due_at`. Close/reply принимают опц. `lock_token`; при невалидном — 409. |
++| | | В списке/карточке help-requests с этапа 3.9: `priority`, `due_at`, `is_overdue`. Query `sort=priority\|created_at\|due_at`. Close/reply принимают опц. `lock_token`; при невалидном — 409. **tsk-995:** `due_at` пишется при создании открытой заявки (`created_at + HELP_SLA_HOURS`), при возврате заявки и переводе в индивидуальный разбор — от этого момента; сразу закрытая заявка автопродления срока не получает. `is_overdue` / `overdue=1`: заявка открыта, срок прошёл и ход за преподавателем (последнее слово за учеником или ответа ещё не было; разбор без ссылки — всегда). |
+ 
+ Ответ `POST /learning/tasks/{task_id}/request-help` с этапа 3.8 может содержать опциональное поле `request_id` (ID заявки в help_requests). С этапа 3.8.1 при `GET /learning/next-item` или `GET /learning/tasks/{task_id}/state` с типом/состоянием `blocked_limit`/`BLOCKED_LIMIT` заявка на помощь создаётся автоматически (request_type=blocked_limit, auto_created=true, context с attempts_used/attempts_limit_effective). Список заявок можно фильтровать по `request_type=manual_help|blocked_limit|all`. С этапа 3.9: claim-next/release для help-requests и reviews, workload, приоритет/SLA в списке. Smoke: [smoke-learning-engine-stage3-8-help-requests.md](smoke-learning-engine-stage3-8-help-requests.md), [smoke-learning-engine-stage3-9-next-modes.md](smoke-learning-engine-stage3-9-next-modes.md).
+ 
+diff --git a/docs/openapi.json b/docs/openapi.json
+index 2356f2b..ea8f172 100644
+--- a/docs/openapi.json
++++ b/docs/openapi.json
+@@ -74240,6 +74240,85 @@
+         "title": "ReviewReleaseResponse",
+         "description": "Ответ release для review."
+       },
++      "ReviewSpeed": {
++        "properties": {
++          "scope": {
++            "type": "string",
++            "enum": [
++              "teacher",
++              "school"
++            ],
++            "title": "Scope",
++            "description": "teacher — проверки этого преподавателя; school — вся школа (методист)"
++          },
++          "days": {
++            "type": "integer",
++            "title": "Days",
++            "description": "Окно, дней (проверки за последние N дней)"
++          },
++          "sla_hours": {
++            "type": "integer",
++            "title": "Sla Hours",
++            "description": "Срок проверки REVIEW_SLA_HOURS, часов"
++          },
++          "checked": {
++            "type": "integer",
++            "title": "Checked",
++            "description": "Проверено работ за окно"
++          },
++          "median_hours": {
++            "anyOf": [
++              {
++                "type": "number"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Median Hours",
++            "description": "Медиана времени проверки, часов"
++          },
++          "p90_hours": {
++            "anyOf": [
++              {
++                "type": "number"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "P90 Hours",
++            "description": "90-й перцентиль времени проверки, часов"
++          },
++          "within_sla": {
++            "type": "integer",
++            "title": "Within Sla",
++            "description": "Из них проверено в срок"
++          },
++          "within_sla_rate": {
++            "anyOf": [
++              {
++                "type": "number"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Within Sla Rate",
++            "description": "Доля проверенных в срок, 0..1"
++          }
++        },
++        "type": "object",
++        "required": [
++          "scope",
++          "days",
++          "sla_hours",
++          "checked",
++          "within_sla"
++        ],
++        "title": "ReviewSpeed",
++        "description": "Скорость ручной проверки работ за окно (tsk-995, П6).\n\n`checked_at − submitted_at` по обязательной очереди: только сдачи ученика\n(`spw_web`), без ручных зачётов, повторов, итогового среза и переоценённых.\nНиже 10 проверок медиана, перцентиль и доля — `null` («мало данных»)."
++      },
+       "RoleCreate": {
+         "properties": {
+           "name": {
+@@ -84440,8 +84519,31 @@
+           "overdue_total": {
+             "type": "integer",
+             "title": "Overdue Total",
+-            "description": "Просроченных (due_at < now) открытых заявок",
++            "description": "Просрочено всего: overdue_help + overdue_reviews (tsk-995; до tsk-995 — только заявки, и было всегда 0)",
++            "default": 0
++          },
++          "overdue_help": {
++            "type": "integer",
++            "title": "Overdue Help",
++            "description": "Просроченных заявок: открыта, due_at (created_at + HELP_SLA_HOURS) прошёл, ход за преподавателем — тот же предикат, что у фильтра overdue=1",
++            "default": 0
++          },
++          "overdue_reviews": {
++            "type": "integer",
++            "title": "Overdue Reviews",
++            "description": "Просроченных обязательных работ на проверке: submitted_at + REVIEW_SLA_HOURS прошёл (то же множество и ACL, что у /teacher/reviews/pending)",
+             "default": 0
++          },
++          "review_speed": {
++            "anyOf": [
++              {
++                "$ref": "#/components/schemas/ReviewSpeed"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "description": "Скорость проверки работ за 30 дней (tsk-995)"
+           }
+         },
+         "type": "object",
+diff --git a/reviews/2026-10-17-tsk995-help-sla-review.md b/reviews/2026-10-17-tsk995-help-sla-review.md
+new file mode 100644
+index 0000000..58f0cd1
+--- /dev/null
++++ b/reviews/2026-10-17-tsk995-help-sla-review.md
+@@ -0,0 +1,29 @@
++# Ревью tsk-995 (П6, Фаза A): срок ответа на заявку, «Просрочено», скорость проверки
++
++Дата: 2026-10-17. Ревьюер — независимый проход отдельным агентом по диффу LMS и SPW
++против постановки `docs/briefs/2026-10-16-p6-p9-p10-review-sla-checkpoint-reflection.md`
++(Фаза A, критерии 1–4, 7, 8, риски).
++
++## Вердикт: ПРИНЯТО (после исправления M1)
++
++| Критерий | Вердикт | Основание |
++|---|---|---|
++| 1. pytest без новых падений | ПРИНЯТО | Полный прогон: 4296 passed, 141 skipped, 56 failed, 17 errors. Ошибки 17 — `test_tsk592` (в dev-БД облака не было заданий); после сида 1 задания — зелёные. 55 упавших сверены прогоном тех же файлов на `origin/main`: тот же набор (на main даже +1 — плавающий `test_tsk521_link_audit_lock`). Причины — облачная среда (нет сети к id.vk.com, не задан `FERNET_MASTER_KEY`, пустая база) и известные падения main. |
++| 2. Миграция встаёт и откатывается, одна голова | ПРИНЯТО | `alembic upgrade head` → `downgrade -1` → `upgrade head` на dev-БД с двумя открытыми заявками: срок поставлен одной (без срока), откат вернул NULL только ей. Голова одна: `tsk995_help_due_backfill`. |
++| 3. Для ученика без изменений | ПРИНЯТО | Ученические схемы и эндпоинты `due_at`/`is_overdue` не читают; тесты лестницы tsk-303 без правок ожиданий. |
++| 4. П6: срок, счётчик, метрика | ПРИНЯТО | Все 3 открытых INSERT + возврат + перевод в разбор пишут срок, автопродление — нет; тест на каждый путь. `overdue_total` = заявки + работы, ≠ 0 на данных с просрочкой; `review_speed` в `/teacher/workload`. |
++| 7. SPW: tsc, eslint, vitest | ПРИНЯТО | `tsc --noEmit` чисто; eslint по изменённым файлам — 0 замечаний (весь проект: 0 ошибок, прежние 33 предупреждения в чужих файлах); vitest 5 файлов / 31 тест. |
++| 8. Отчёт | ПРИНЯТО | Решение по фильтру метрики — в докстринге `get_review_speed` и итоговом отчёте. |
++| Новый срок для работ не вводить | ПРИНЯТО | Только `review_sla`; добавлен помощник `review_overdue_before`. |
++| Миграция: срок от момента миграции, точный откат | ПРИНЯТО | `GREATEST(created_at, now()) + HELP_SLA_HOURS`; служебная таблица `help_request_due_backfill`. |
++
++## Находки и что сделано
++
++- **MAJOR M1 — возвращённая заявка не просрочивалась** (возврат не пишет сообщение, последним в треде оставался преподаватель). ИСПРАВЛЕНО: в `help_overdue_sql` ход за преподавателем и тогда, когда возврат позже последнего сообщения треда. Тест `test_reopened_request_becomes_overdue_after_new_deadline`.
++- MINOR m1 — ученик дописал в тред после 24 ч от создания: заявка сразу просрочена. Оставлено: следствие правила «срок от создания» (Р1); записано в отчёт.
++- MINOR m2 — ячейка «Просрочено» (заявки + работы) ведёт в список заявок. Оставлено: разбивка «заявки N · работы M» под числом; просроченные работы — первыми в очереди проверки (сортировка по дате сдачи). Записано в отчёт.
++- MINOR m3 — запрос скорости на каждом `GET /teacher/workload`. Оставлено; после выката — `EXPLAIN ANALYZE` на проде (в отчёте).
++- MINOR m4 — служебная таблица вне моделей. Описано в докстринге миграции; в cross-project контракт схемы — пометка в отчёте (репозиторий ContentBackbone в облаке недоступен).
++- MINOR m5 — тест миграции повторяет её SQL. Дополнено реальным прогоном upgrade/downgrade (выше).
++- MINOR m6 — методист видит в своей сводке скорость по школе. Так и задумано постановкой; подпись «по школе».
++- NIT — `now` в карточке заявки один на запрос (исправлено); `help_due_at` — пометка в докстринге (исправлено).
+diff --git a/tests/test_tsk995_help_sla.py b/tests/test_tsk995_help_sla.py
+new file mode 100644
+index 0000000..674c93c
+--- /dev/null
++++ b/tests/test_tsk995_help_sla.py
+@@ -0,0 +1,563 @@
++"""tsk-995 (П6): срок ответа на заявку, счётчик «Просрочено», скорость проверки.
++
++Что держат тесты:
++
++1. Каждый путь создания ОТКРЫТОЙ заявки ставит `due_at = created_at + HELP_SLA_HOURS`
++   (вопрос по заданию, вопрос по материалу, лимит попыток), а возврат заявки и
++   перевод в индивидуальный разбор — новый срок от этого момента. Сразу
++   закрытая заявка автопродления срока не получает.
++2. `overdue_total` = просроченные заявки + просроченные обязательные работы и
++   не равен 0 на данных с просрочкой; заявка, на которую преподаватель уже
++   ответил, просроченной не считается; фильтр `overdue=1` совпадает с ячейкой.
++3. Скорость проверки работ: только сдачи ученика (`spw_web`), без ручного
++   зачёта, повтора и итогового среза; у методиста — по школе.
++4. Миграция `tsk995_help_due_backfill`: срок от момента миграции, откат
++   обнуляет только заполненные ею строки.
++"""
++from __future__ import annotations
++
++import json
++import random
++from datetime import datetime, timedelta, timezone
++
++import pytest
++from sqlalchemy import text
++
++from app.core.config import Settings
++from app.models.users import Users
++from app.services import help_requests_service as hrs
++from app.services import help_sla
++from app.services import review_sla
++from app.services.attempt_auto_extend_service import try_auto_extend
++from app.services.learning_events_service import record_help_requested
++from app.services.teacher_dashboard_service import get_review_speed
++from app.services.teacher_queue_service import get_teacher_workload
++
++pytestmark = pytest.mark.asyncio
++
++_settings = Settings()
++
++
++def _svc() -> dict[str, str]:
++    return {"X-API-Key": next(iter(_settings.valid_api_keys))}
++
++
++# ── фабрики ──────────────────────────────────────────────────────────────────
++
++async def _user(db, name: str, *, role: str | None = None) -> int:
++    u = Users(
++        email=f"t995-{random.randint(10**8, 10**10)}@example.com",
++        password_hash=None, full_name=name, tg_id=None,
++    )
++    db.add(u)
++    await db.flush()
++    if role:
++        await db.execute(
++            text(
++                "INSERT INTO user_roles (user_id, role_id) "
++                "SELECT :u, r.id FROM roles r WHERE r.name = :role ON CONFLICT DO NOTHING"
++            ),
++            {"u": u.id, "role": role},
++        )
++    return u.id
++
++
++async def _course(db) -> int:
++    return (
++        await db.execute(
++            text(
++                "INSERT INTO courses (title, access_level) "
++                "VALUES (:t, 'self_guided') RETURNING id"
++            ),
++            {"t": f"t995 курс {random.randint(10**6, 10**8)}"},
++        )
++    ).scalar_one()
++
++
++async def _task(db, course_id: int, *, typ: str = "SA", rules: dict | None = None) -> int:
++    return (
++        await db.execute(
++            text(
++                "INSERT INTO tasks (external_uid, max_score, task_content, solution_rules, "
++                "course_id, difficulty_id, max_attempts) "
++                "VALUES (:e, 10, CAST(:c AS jsonb), CAST(:r AS jsonb), :course, "
++                "        (SELECT MIN(id) FROM difficulties), NULL) RETURNING id"
++            ),
++            {
++                "e": f"t995-{random.randint(10**8, 10**10)}",
++                "c": json.dumps({"type": typ, "stem": "x"}),
++                "r": json.dumps(rules or {"max_score": 10}),
++                "course": course_id,
++            },
++        )
++    ).scalar_one()
++
++
++async def _link(db, student_id: int, teacher_id: int) -> None:
++    await db.execute(
++        text(
++            "INSERT INTO student_teacher_links (student_id, teacher_id) "
++            "VALUES (:s, :t) ON CONFLICT DO NOTHING"
++        ),
++        {"s": student_id, "t": teacher_id},
++    )
++
++
++async def _hr(db, rid: int) -> dict:
++    row = (
++        await db.execute(
++            text(
++                "SELECT status, request_type, created_at, due_at, "
++                "       now() AS tx_now FROM help_requests WHERE id = :id"
++            ),
++            {"id": rid},
++        )
++    ).mappings().one()
++    return dict(row)
++
++
++async def _open_request(db, *, student_id: int, task_id: int, teacher_id: int,
++                        due_shift: str | None, request_type: str = "manual_help") -> int:
++    """Открытая заявка с заданным сдвигом срока от now() (`None` — без срока)."""
++    due_sql = "NULL" if due_shift is None else f"now() + interval '{due_shift}'"
++    return (
++        await db.execute(
++            text(
++                "INSERT INTO help_requests (status, student_id, task_id, request_type, "
++                "assigned_teacher_id, auto_created, context_json, priority, "
++                "created_at, updated_at, due_at) "
++                "VALUES ('open', :s, :t, :rt, :at, false, '{}'::jsonb, 100, "
++                f"        now() - interval '2 days', now(), {due_sql}) RETURNING id"
++            ),
++            {"s": student_id, "t": task_id, "rt": request_type, "at": teacher_id},
++        )
++    ).scalar_one()
++
++
++def _sla() -> timedelta:
++    return timedelta(hours=help_sla.help_sla_hours())
++
++
++# ── 1. срок во всех путях создания ───────────────────────────────────────────
++
++def test_help_due_at_helper_matches_setting():
++    """`help_due_at` = момент + HELP_SLA_HOURS; naive трактуется как UTC; мусор → None."""
++    moment = datetime(2026, 10, 17, 10, 0, tzinfo=timezone.utc)
++    assert help_sla.help_due_at(moment) == moment + _sla()
++    assert help_sla.help_due_at(datetime(2026, 10, 17, 10, 0)) == moment + _sla()
++    assert help_sla.help_due_at(None) is None
++    assert help_sla.help_due_at("2026-10-17") is None  # type: ignore[arg-type]
++
++
++def test_help_sla_hours_default_is_24(monkeypatch):
++    """Решение оператора Р1: по умолчанию 24 часа, число — из HELP_SLA_HOURS."""
++    monkeypatch.delenv("HELP_SLA_HOURS", raising=False)
++    assert help_sla.help_sla_hours() == 24
++    monkeypatch.setenv("HELP_SLA_HOURS", "6")
++    assert help_sla.help_sla_hours() == 6
++
++
++async def test_manual_help_by_task_gets_due_at(db):
++    """Путь 1: вопрос по заданию (`get_or_create_help_request`)."""
++    course = await _course(db)
++    student = await _user(db, "t995 ученик")
++    task = await _task(db, course)
++    event_id, dedup = await record_help_requested(db, student, task, "не понимаю")
++    rid, created = await hrs.get_or_create_help_request(
++        db, student_id=student, task_id=task, event_id=event_id,
++        message="не понимаю", course_id=course, deduplicated=dedup,
++    )
++    assert created
++    row = await _hr(db, rid)
++    assert row["status"] == "open"
++    assert row["due_at"] == row["created_at"] + _sla()
++
++
++async def test_manual_help_by_material_gets_due_at(db):
++    """Путь 2: вопрос «Я не понял» по материалу."""
++    course = await _course(db)
++    student = await _user(db, "t995 ученик")
++    material = (
++        await db.execute(
++            text(
++                "INSERT INTO materials (course_id, type, content, title) "
++                "VALUES (:c, 'text', '{\"text\": \"x\"}'::jsonb, 't995') RETURNING id"
++            ),
++            {"c": course},
++        )
++    ).scalar_one()
++    rid, created = await hrs.get_or_create_material_help_request(
++        db, student_id=student, material_id=material, course_id=course, message="непонятно",
++    )
++    assert created
++    row = await _hr(db, rid)
++    assert row["due_at"] == row["created_at"] + _sla()
++
++
++async def test_blocked_limit_gets_due_at(db):
++    """Путь 3: лимит попыток (`get_or_create_blocked_limit_help_request`)."""
++    course = await _course(db)
++    student = await _user(db, "t995 ученик")
++    task = await _task(db, course)
++    rid, created, _ = await hrs.get_or_create_blocked_limit_help_request(
++        db, student_id=student, task_id=task, course_id=course,
++        attempts_used=3, attempts_limit_effective=3,
++    )
++    assert created
++    row = await _hr(db, rid)
++    assert row["request_type"] == "blocked_limit"
++    assert row["due_at"] == row["created_at"] + _sla()
++
++
++async def test_auto_extend_closed_trace_has_no_due_at(db):
++    """Сразу закрытая заявка-след автопродления срока не получает."""
++    course = await _course(db)
++    student = await _user(db, "t995 ученик")
++    task = await _task(db, course)
++    assert await try_auto_extend(
++        db, student_id=student, task_id=task, course_id=None,
++        attempt_id=None, attempts_used=3, attempts_limit_effective=3,
++    ) is not None
++    rows = (
++        await db.execute(
++            text("SELECT status, due_at FROM help_requests WHERE student_id = :s"),
++            {"s": student},
++        )
++    ).fetchall()
++    assert [(r[0], r[1]) for r in rows] == [("closed", None)]
++
++
++async def test_reopen_and_individual_review_restart_due_at(db):
++    """Путь 4: возврат заявки и перевод в индивидуальный разбор — новый срок от now()."""
++    course = await _course(db)
++    student = await _user(db, "t995 ученик")
++    teacher = await _user(db, "t995 учитель")
++    task = await _task(db, course)
++    rid = (
++        await db.execute(
++            text(
++                "INSERT INTO help_requests (status, student_id, task_id, request_type, "
++                "assigned_teacher_id, auto_created, context_json, created_at, updated_at, "
++                "closed_at, closed_by, due_at) "
++                "VALUES ('closed', :s, :t, 'manual_help', :at, false, '{}'::jsonb, "
++                "        now() - interval '3 days', now(), now(), :at, "
++                "        now() - interval '2 days') RETURNING id"
++            ),
++            {"s": student, "t": task, "at": teacher},
++        )
++    ).scalar_one()
++
++    data, err = await hrs.reopen_help_request(db, rid, student)
++    assert err is None, err
++    row = await _hr(db, rid)
++    assert row["status"] == "open"
++    assert row["due_at"] == row["tx_now"] + _sla()
++
++    data, err = await hrs.request_individual_review(db, rid, student)
++    assert err is None, err
++    row = await _hr(db, rid)
++    assert row["request_type"] == "individual_review"
++    assert row["due_at"] == row["tx_now"] + _sla()
++
++
++# ── 2. «Просрочено» = заявки + работы ────────────────────────────────────────
++
++async def _pending_review(db, *, student: int, task: int, submitted_shift: str) -> int:
++    return (
++        await db.execute(
++            text(
++                "INSERT INTO task_results (score, user_id, task_id, submitted_at, "
++                "max_score, source_system) "
++                f"VALUES (0, :u, :t, now() - interval '{submitted_shift}', 10, 'spw_web') "
++                "RETURNING id"
++            ),
++            {"u": student, "t": task},
++        )
++    ).scalar_one()
++
++
++async def test_workload_overdue_counts_help_and_reviews(db, client):
++    """overdue_total = просроченные заявки + просроченные обязательные работы, не 0."""
++    course = await _course(db)
++    student = await _user(db, "t995 ученик")
++    teacher = await _user(db, "t995 учитель", role="teacher")
++    await db.execute(
++        text("INSERT INTO teacher_courses (teacher_id, course_id) VALUES (:t, :c)"),
++        {"t": teacher, "c": course},
++    )
++    task = await _task(db, course)
++    ta_task = await _task(db, course, typ="TA")
++
++    overdue_rid = await _open_request(
++        db, student_id=student, task_id=task, teacher_id=teacher, due_shift="-1 hour")
++    await _open_request(
++        db, student_id=student, task_id=task, teacher_id=teacher, due_shift="+1 hour")
++    # Ответили, ученик не закрыл: срок прошёл, но ход за учеником — не просрочка.
++    answered_rid = await _open_request(
++        db, student_id=student, task_id=task, teacher_id=teacher, due_shift="-1 hour",
++        request_type="blocked_limit")
++    _, err = await hrs.reply_help_request(db, answered_rid, teacher, "Продлил лимит")
++    assert err is None, err
++    # Разбор без ссылки: ждёт преподавателя, даже если последним писал он.
++    review_rid = await _open_request(
++        db, student_id=student, task_id=task, teacher_id=teacher, due_shift="-1 hour",
++        request_type="individual_review")
++    _, err = await hrs.reply_help_request(db, review_rid, teacher, "Скоро пришлю ссылку")
++    assert err is None, err
++
++    sla_h = review_sla.sla_hours()
++    await _pending_review(db, student=student, task=ta_task, submitted_shift=f"{sla_h + 1} hours")
++    await _pending_review(db, student=student, task=ta_task, submitted_shift="1 hour")
++
++    data = await get_teacher_workload(db, teacher)
++    assert data["overdue_help"] == 2, data
++    assert data["overdue_reviews"] == 1, data
++    assert data["overdue_total"] == 3
++    assert data["pending_manual_reviews_total"] == 2
++
++    # Фильтр списка совпадает с ячейкой.
++    resp = await client.get(
++        f"/api/v1/teacher/help-requests?teacher_id={teacher}&status=open&overdue=1&limit=100",
++        headers=_svc(),
++    )
++    assert resp.status_code == 200, resp.text
++    items = resp.json()["items"]
++    assert {it["request_id"] for it in items} == {overdue_rid, review_rid}
++    assert all(it["is_overdue"] for it in items)
++
++    resp = await client.get(
++        f"/api/v1/teacher/help-requests/{answered_rid}?teacher_id={teacher}", headers=_svc(),
++    )
++    assert resp.status_code == 200, resp.text
++    assert resp.json()["is_overdue"] is False
++
++    resp = await client.get(f"/api/v1/teacher/workload?teacher_id={teacher}", headers=_svc())
++    assert resp.status_code == 200, resp.text
++    body = resp.json()
++    assert (body["overdue_total"], body["overdue_help"], body["overdue_reviews"]) == (3, 2, 1)
++    assert body["review_speed"]["scope"] == "teacher"
++
++
++async def test_closed_request_with_past_due_is_not_overdue(db, client):
++    """Закрытая заявка с прошедшим сроком — не просрочка (и в списке status=all)."""
++    course = await _course(db)
++    student = await _user(db, "t995 ученик")
++    teacher = await _user(db, "t995 учитель")
++    task = await _task(db, course)
++    rid = await _open_request(
++        db, student_id=student, task_id=task, teacher_id=teacher, due_shift="-1 hour")
++    await hrs.close_help_request(db, rid, closed_by=teacher)
++    data = await get_teacher_workload(db, teacher)
++    assert data["overdue_help"] == 0
++    resp = await client.get(
++        f"/api/v1/teacher/help-requests?teacher_id={teacher}&status=all&limit=100",
++        headers=_svc(),
++    )
++    assert resp.status_code == 200, resp.text
++    item = next(it for it in resp.json()["items"] if it["request_id"] == rid)
++    assert item["is_overdue"] is False
++
++
++# ── 3. скорость проверки ─────────────────────────────────────────────────────
++
++async def _checked(db, *, student: int, task: int, checker: int, hours: float,
++                   source: str = "spw_web", days_ago: int = 1) -> None:
++    await db.execute(
++        text(
++            "INSERT INTO task_results (score, user_id, task_id, submitted_at, checked_at, "
++            "checked_by, max_score, source_system) "
++            "VALUES (10, :u, :t, now() - make_interval(days => :d) - make_interval(secs => :sec), "
++            "        now() - make_interval(days => :d), :ch, 10, :src)"
++        ),
++        {"u": student, "t": task, "d": days_ago, "sec": hours * 3600, "ch": checker, "src": source},
++    )
++
++
++async def test_review_speed_counts_only_student_submissions(db):
++    """Медиана/перцентиль/доля в срок — только по сдачам ученика за 30 дней."""
++    course = await _course(db)
++    student = await _user(db, "t995 ученик")
++    teacher = await _user(db, "t995 учитель", role="teacher")
++    other = await _user(db, "t995 другой учитель", role="teacher")
++    ta_task = await _task(db, course, typ="TA")
++    sa_auto = await _task(db, course, typ="SA")  # не обязательная проверка
++
++    sla_h = review_sla.sla_hours()
++    # 10 сдач ученика: 1..9 ч и одна позже срока.
++    for h in [1, 2, 3, 4, 5, 6, 7, 8, 9]:
++        await _checked(db, student=student, task=ta_task, checker=teacher, hours=h)
++    await _checked(db, student=student, task=ta_task, checker=teacher, hours=sla_h + 10)
++    # Не входят: ручной зачёт, повтор, итоговый срез, служебный источник,
++    # необязательная проверка, проверка старше окна, переоценённая работа.
++    for src in ("manual_teacher", "retrieval", "final_check", "system"):
++        await _checked(db, student=student, task=ta_task, checker=teacher, hours=500, source=src)
++    await _checked(db, student=student, task=sa_auto, checker=teacher, hours=500)
++    await _checked(db, student=student, task=ta_task, checker=teacher, hours=500, days_ago=40)
++    await _checked(db, student=student, task=ta_task, checker=teacher, hours=500)
++    await db.execute(
++        text(
++            "UPDATE task_results SET metrics = '{\"regrade_history\": [{\"by\": 1}]}'::jsonb "
++            "WHERE id = (SELECT MAX(id) FROM task_results WHERE user_id = :u)"
++        ),
++        {"u": student},
++    )
++    # Чужая проверка — не у этого преподавателя, но в школе.
++    await _checked(db, student=student, task=ta_task, checker=other, hours=1)
++
++    mine = await get_review_speed(db, checker_id=teacher)
++    assert mine["scope"] == "teacher"
++    assert mine["checked"] == 10
++    assert mine["within_sla"] == 9
++    assert mine["within_sla_rate"] == 0.9
++    assert mine["median_hours"] == 5.5
++    assert mine["p90_hours"] is not None and 9 <= mine["p90_hours"] <= sla_h + 10
++    assert mine["sla_hours"] == sla_h
++
++    school = await get_review_speed(db, checker_id=None)
++    assert school["scope"] == "school"
++    assert school["checked"] >= 11
++
++
++async def test_review_speed_small_sample_is_null(db):
++    """Меньше 10 проверок — медиана и доля `None` («мало данных»), число есть."""
++    course = await _course(db)
++    student = await _user(db, "t995 ученик")
++    teacher = await _user(db, "t995 учитель", role="teacher")
++    ta_task = await _task(db, course, typ="TA")
++    await _checked(db, student=student, task=ta_task, checker=teacher, hours=2)
++    speed = await get_review_speed(db, checker_id=teacher)
++    assert speed["checked"] == 1
++    assert speed["median_hours"] is None and speed["within_sla_rate"] is None
++
++
++async def test_methodist_workload_speed_is_school_scope(db):
++    """Методист видит скорость по школе (та же ACL-логика bypass, что у счётчиков)."""
++    methodist = await _user(db, "t995 методист", role="methodist")
++    data = await get_teacher_workload(db, methodist)
++    assert data["review_speed"]["scope"] == "school"
++
++
++# ── 4. миграция данных ──────────────────────────────────────────────────────
++
++def _load_migration():
++    import importlib.util
++    from pathlib import Path
++
++    path = (
++        Path(__file__).resolve().parents[1]
++        / "app/db/migrations/versions/2026_10_17_tsk995_help_due_backfill.py"
++    )
++    spec = importlib.util.spec_from_file_location("tsk995_help_due_backfill", path)
++    mod = importlib.util.module_from_spec(spec)
++    assert spec and spec.loader
++    spec.loader.exec_module(mod)
++    return mod
++
++
++def test_migration_revision_chain():
++    """Миграция встаёт за головой tsk-1361 и заполняет срок от момента миграции."""
++    mod = _load_migration()
++    assert mod.revision == "tsk995_help_due_backfill"
++    assert mod.down_revision == "tsk1361_requirement_sync"
++    src = (mod.__doc__ or "") + open(mod.__file__, encoding="utf-8").read()
++    assert "GREATEST(created_at, now())" in src
++    assert "WHERE due_at IS NULL AND status = 'open'" in src
++
++
++async def test_backfill_sql_sets_due_from_now_and_downgrade_restores(db):
++    """SQL миграции на живых строках: срок от now(), откат — только своих строк."""
++    course = await _course(db)
++    student = await _user(db, "t995 ученик")
++    teacher = await _user(db, "t995 учитель")
++    task = await _task(db, course)
++    old_open = await _open_request(
++        db, student_id=student, task_id=task, teacher_id=teacher, due_shift=None)
++    has_due = await _open_request(
++        db, student_id=student, task_id=task, teacher_id=teacher, due_shift="+5 hours")
++    closed = await _open_request(
++        db, student_id=student, task_id=task, teacher_id=teacher, due_shift=None)
++    await db.execute(
++        text("UPDATE help_requests SET status='closed', closed_at=now() WHERE id=:id"),
++        {"id": closed},
++    )
++    before_has_due = (await _hr(db, has_due))["due_at"]
++
++    # Таблица-маркер есть после upgrade head; строки старых заявок вставляем как миграция.
++    await db.execute(text("SAVEPOINT t995"))
++    await db.execute(
++        text(
++            """
++            WITH upd AS (
++                UPDATE help_requests
++                   SET due_at = GREATEST(created_at, now()) + make_interval(hours => :hours)
++                 WHERE due_at IS NULL AND status = 'open' AND student_id = :s
++             RETURNING id, due_at
++            )
++            INSERT INTO help_request_due_backfill (request_id, due_at)
++            SELECT id, due_at FROM upd
++            """
++        ),
++        {"hours": help_sla.help_sla_hours(), "s": student},
++    )
++    row = await _hr(db, old_open)
++    assert row["due_at"] == row["tx_now"] + _sla(), "срок от момента миграции, не от created_at"
++    assert (await _hr(db, has_due))["due_at"] == before_has_due
++    assert (await _hr(db, closed))["due_at"] is None
++    # Старая заявка сразу после миграции не просрочена.
++    assert (await get_teacher_workload(db, teacher))["overdue_help"] == 0
++
++    await db.execute(
++        text(
++            """
++            UPDATE help_requests hr SET due_at = NULL
++              FROM help_request_due_backfill b
++             WHERE b.request_id = hr.id AND hr.due_at = b.due_at
++            """
++        )
++    )
++    assert (await _hr(db, old_open))["due_at"] is None
++    assert (await _hr(db, has_due))["due_at"] == before_has_due
++    await db.execute(text("ROLLBACK TO SAVEPOINT t995"))
++
++
++async def test_reopened_request_becomes_overdue_after_new_deadline(db):
++    """Ответ → закрытие → возврат «не помогло»: ход снова за преподавателем.
++
++    Возврат сообщения в тред не пишет, последним в переписке остаётся
++    преподаватель — но заявка обязана просрочиться, когда истечёт новый срок.
++    """
++    course = await _course(db)
++    student = await _user(db, "t995 ученик")
++    teacher = await _user(db, "t995 учитель")
++    task = await _task(db, course)
++    rid = await _open_request(
++        db, student_id=student, task_id=task, teacher_id=teacher, due_shift="+1 hour")
++    _, err = await hrs.reply_help_request(db, rid, teacher, "Смотри формулу X")
++    assert err is None, err
++    assert (await _hr(db, rid))["status"] == "closed"
++    # В тесте всё в одной транзакции, `now()` у ответа и возврата совпадает;
++    # в жизни это разные запросы — ответ раньше возврата.
++    await db.execute(
++        text("UPDATE messages SET sent_at = sent_at - interval '2 hours' "
++             "WHERE thread_id = (SELECT thread_id FROM help_requests WHERE id = :id)"),
++        {"id": rid},
++    )
++    _, err = await hrs.reopen_help_request(db, rid, student)
++    assert err is None, err
++    # Новый срок ещё идёт — не просрочено.
++    assert (await get_teacher_workload(db, teacher))["overdue_help"] == 0
++    # Срок истёк — просрочено, хотя последним в треде писал преподаватель.
++    await db.execute(
++        text("UPDATE help_requests SET due_at = now() - interval '1 minute' WHERE id = :id"),
++        {"id": rid},
++    )
++    assert (await get_teacher_workload(db, teacher))["overdue_help"] == 1
++    # Преподаватель ответил после возврата — ход снова за учеником.
++    await db.execute(
++        text("UPDATE help_request_reopens SET reopened_at = now() - interval '1 hour' "
++             "WHERE request_id = :id"),
++        {"id": rid},
++    )
++    _, err = await hrs.reply_help_request(db, rid, teacher, "Ещё раз: смотри шаг 2")
++    assert err is None, err
++    assert (await get_teacher_workload(db, teacher))["overdue_help"] == 0

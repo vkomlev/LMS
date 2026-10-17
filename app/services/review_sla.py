@@ -69,3 +69,14 @@ def is_review_overdue(submitted_at: Optional[datetime], now: Optional[datetime] 
         return False
     current = _aware(now, what="now") or datetime.now(timezone.utc)
     return due < current
+
+
+def review_overdue_before(now: Optional[datetime] = None) -> datetime:
+    """Граница для SQL (tsk-995): работа просрочена, если сдана раньше неё.
+
+    `submitted_at + REVIEW_SLA_HOURS < now` ⇔ `submitted_at < now − REVIEW_SLA_HOURS` —
+    то же условие, что `is_review_overdue`, но годное для `COUNT(*)` в SQL
+    без выборки строк (счётчик «Просрочено» в `get_teacher_workload`).
+    """
+    current = _aware(now, what="now") or datetime.now(timezone.utc)
+    return current - timedelta(hours=sla_hours())
