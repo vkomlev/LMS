@@ -288,6 +288,25 @@ class ReviewReleaseResponse(BaseModel):
 
 # ----- Workload -----
 
+class ReviewSpeed(BaseModel):
+    """Скорость ручной проверки работ за окно (tsk-995, П6).
+
+    `checked_at − submitted_at` по обязательной очереди: только сдачи ученика
+    (`spw_web`), без ручных зачётов, повторов, итогового среза и переоценённых.
+    Ниже 10 проверок медиана, перцентиль и доля — `null` («мало данных»).
+    """
+    scope: Literal["teacher", "school"] = Field(
+        ..., description="teacher — проверки этого преподавателя; school — вся школа (методист)"
+    )
+    days: int = Field(..., description="Окно, дней (проверки за последние N дней)")
+    sla_hours: int = Field(..., description="Срок проверки REVIEW_SLA_HOURS, часов")
+    checked: int = Field(..., description="Проверено работ за окно")
+    median_hours: Optional[float] = Field(None, description="Медиана времени проверки, часов")
+    p90_hours: Optional[float] = Field(None, description="90-й перцентиль времени проверки, часов")
+    within_sla: int = Field(..., description="Из них проверено в срок")
+    within_sla_rate: Optional[float] = Field(None, description="Доля проверенных в срок, 0..1")
+
+
 class TeacherWorkloadResponse(BaseModel):
     """Сводка нагрузки преподавателя для главного экрана."""
     open_help_requests_total: int = Field(0, description="Всего открытых заявок на помощь")
@@ -297,7 +316,30 @@ class TeacherWorkloadResponse(BaseModel):
         0, description="Открытых заявок на индивидуальный разбор (tsk-303, уровень 2)"
     )
     pending_manual_reviews_total: int = Field(0, description="Результатов в ожидании ручной проверки")
-    overdue_total: int = Field(0, description="Просроченных (due_at < now) открытых заявок")
+    overdue_total: int = Field(
+        0,
+        description=(
+            "Просрочено всего: overdue_help + overdue_reviews (tsk-995; "
+            "до tsk-995 — только заявки, и было всегда 0)"
+        ),
+    )
+    overdue_help: int = Field(
+        0,
+        description=(
+            "Просроченных заявок: открыта, due_at (created_at + HELP_SLA_HOURS) прошёл, "
+            "ход за преподавателем — тот же предикат, что у фильтра overdue=1"
+        ),
+    )
+    overdue_reviews: int = Field(
+        0,
+        description=(
+            "Просроченных обязательных работ на проверке: submitted_at + REVIEW_SLA_HOURS "
+            "прошёл (то же множество и ACL, что у /teacher/reviews/pending)"
+        ),
+    )
+    review_speed: Optional[ReviewSpeed] = Field(
+        None, description="Скорость проверки работ за 30 дней (tsk-995)"
+    )
 
 
 # ----- Review Grade (Phase Y-4) -----

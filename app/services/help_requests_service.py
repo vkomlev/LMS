@@ -20,6 +20,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.help_requests import HelpRequests
 from app.models.help_request_replies import HelpRequestReplies
 from app.services.help_reply_kind import guess_reply_kind
+# tsk-995: `awaiting_teacher_sql` живёт в `help_sla` и реэкспортируется отсюда
+# под прежним именем — его импортируют доска куратора и тесты.
+from app.services.help_sla import (  # noqa: F401
+    HELP_DUE_AT_SQL,
+    awaiting_teacher_sql,
+    help_overdue_sql,
+    help_sla_hours,
+)
 from app.services.schedule_preference_service import NOT_COUNTED_PLAN_CODES
 from app.utils.task_title import HINT_MAX_LEN, TITLE_MAX_LEN, humanize_task_title
 from app.services.learning_events_service import (
@@ -233,23 +241,25 @@ async def get_or_create_help_request(
     msg_truncated = (message or "")[:2000] if message else None
     note_truncated = stuck_note[:1000] if stuck_note else None
 
+    # tsk-995: срок ответа — created_at + HELP_SLA_HOURS (`help_sla`).
     r = await db.execute(
-        text("""
+        text(f"""
             INSERT INTO help_requests
             (status, request_type, auto_created, context_json, student_id, task_id, course_id, attempt_id, event_id, message, assigned_teacher_id,
              attachment_id, attachment_filename, attachment_content_type, attachment_size_bytes,
-             stuck_note, created_at, updated_at)
-            VALUES ('open', 'manual_help', false, '{}'::jsonb, :student_id, :task_id, :course_id, :attempt_id, :event_id, :message, :assigned_teacher_id,
+             stuck_note, created_at, updated_at, due_at)
+            VALUES ('open', 'manual_help', false, '{{}}'::jsonb, :student_id, :task_id, :course_id, :attempt_id, :event_id, :message, :assigned_teacher_id,
                     :attachment_id, :attachment_filename, :attachment_content_type, :attachment_size_bytes,
-                    :stuck_note, now(), now())
+                    :stuck_note, now(), now(), {HELP_DUE_AT_SQL})
             RETURNING id
-        """),
+        """),  # nosec B608 — HELP_DUE_AT_SQL литерал модуля help_sla
         {
             "student_id": student_id,
             "task_id": task_id,
             "course_id": course_id,
             "attempt_id": attempt_id,
             "event_id": event_id,
+            "help_sla_hours": help_sla_hours(),
             "message": msg_truncated,
             "assigned_teacher_id": assigned,
             "attachment_id": attachment_id,
@@ -344,20 +354,22 @@ async def get_or_create_material_help_request(
     assigned = await resolve_assigned_teacher(db, student_id, course_id)
     msg_truncated = message[:2000]
 
+    # tsk-995: срок ответа — created_at + HELP_SLA_HOURS (`help_sla`).
     r = await db.execute(
-        text("""
+        text(f"""
             INSERT INTO help_requests
             (status, request_type, auto_created, context_json, student_id, material_id, course_id, message, assigned_teacher_id,
              attachment_id, attachment_filename, attachment_content_type, attachment_size_bytes,
-             created_at, updated_at)
-            VALUES ('open', 'manual_help', false, '{}'::jsonb, :student_id, :material_id, :course_id, :message, :assigned_teacher_id,
+             created_at, updated_at, due_at)
+            VALUES ('open', 'manual_help', false, '{{}}'::jsonb, :student_id, :material_id, :course_id, :message, :assigned_teacher_id,
                     :attachment_id, :attachment_filename, :attachment_content_type, :attachment_size_bytes,
-                    now(), now())
+                    now(), now(), {HELP_DUE_AT_SQL})
             RETURNING id
-        """),
+        """),  # nosec B608 — HELP_DUE_AT_SQL литерал модуля help_sla
         {
             "student_id": student_id,
             "material_id": material_id,
+            "help_sla_hours": help_sla_hours(),
             "course_id": course_id,
             "message": msg_truncated,
             "assigned_teacher_id": assigned,
@@ -459,15 +471,17 @@ async def get_or_create_blocked_limit_help_request(
         )
         return (request_id, False, True)
     assigned = await resolve_assigned_teacher(db, student_id, course_id)
+    # tsk-995: срок ответа — created_at + HELP_SLA_HOURS (`help_sla`).
     r = await db.execute(
-        text("""
+        text(f"""
             INSERT INTO help_requests
-            (status, request_type, auto_created, context_json, student_id, task_id, course_id, attempt_id, event_id, assigned_teacher_id, created_at, updated_at)
-            VALUES ('open', 'blocked_limit', true, :context_json, :student_id, :task_id, :course_id, :attempt_id, NULL, :assigned_teacher_id, now(), now())
+            (status, request_type, auto_created, context_json, student_id, task_id, course_id, attempt_id, event_id, assigned_teacher_id, created_at, updated_at, due_at)
+            VALUES ('open', 'blocked_limit', true, :context_json, :student_id, :task_id, :course_id, :attempt_id, NULL, :assigned_teacher_id, now(), now(), {HELP_DUE_AT_SQL})
             RETURNING id
-        """),
+        """),  # nosec B608 — HELP_DUE_AT_SQL литерал модуля help_sla
         {
             "context_json": context_str,
+            "help_sla_hours": help_sla_hours(),
             "student_id": student_id,
             "task_id": task_id,
             "course_id": course_id,
@@ -494,35 +508,6 @@ async def get_or_create_blocked_limit_help_request(
             created_by=None,
         )
     return (int(new_id), True, False)
-
-
-def awaiting_teacher_sql(alias: str = "hr") -> str:
-    """SQL-условие «заявка ждёт ответа УЧИТЕЛЯ», без привязки к преподавателю.
-
-    tsk-742: правило вынесено из счётчика ниже, потому что читать его стало
-    нужно и другому экрану (доска куратора). Скопированный вариант неизбежно
-    выродился бы в `status = 'open'` — а это, как объяснено в
-    `get_help_requests_pending_count`, СОВСЕМ другое множество: заявка остаётся
-    открытой, пока её не закроет ученик, в том числе после ответа учителя.
-    Тогда у куратора на экране вечно висели бы «просроченные» заявки, на
-    которые он уже ответил, — верный способ отучить смотреть на экран.
-
-    :param alias: алиас `help_requests` в вызывающем запросе. Только литералы
-        из закрытого набора call-sites, user-input сюда не попадает.
-    """
-    return f"""
-        {alias}.status = 'open'
-        AND (
-            {alias}.thread_id IS NULL
-            OR (
-                SELECT m.sender_id
-                FROM messages m
-                WHERE m.thread_id = {alias}.thread_id
-                ORDER BY m.sent_at DESC, m.id DESC
-                LIMIT 1
-            ) = {alias}.student_id
-        )
-    """  # nosec B608 — alias из закрытого набора литералов
 
 
 async def get_help_requests_pending_count(
@@ -729,7 +714,7 @@ async def list_help_requests(
     Список заявок с ACL. status_filter: open | closed | all.
     request_type_filter: manual_help | blocked_limit | all (этап 3.8.1).
     sort: priority | created_at | due_at (этап 3.9).
-    overdue: True — только просроченные (due_at < now), ортогонально типу (tsk-312).
+    overdue: True — только просроченные (`help_overdue_sql`), ортогонально типу (tsk-312).
     student_id: tsk-473 — сузить до ОДНОГО ученика на уровне SQL (не постфильтр
     в Python по общей странице учителя) — иначе `status_filter="all"` с большой
     историей учителя рискует не влезть в `limit` и потерять недавние заявки
@@ -766,10 +751,13 @@ async def list_help_requests(
     # «Просрочено» и её список считались по одному правилу (TZ-aware bind :now_ts,
     # как в _normalize_due_at). Фильтруем на сервере, а не по is_overdue поверх
     # limit/offset, иначе просроченные за пределами страницы пропадут из списка.
+    #
+    # tsk-995: предикат общий — `help_overdue_sql` (открыта, срок прошёл, ход
+    # за преподавателем). `is_overdue` элемента считается им же, в SQL.
     overdue_cond = ""
     if overdue:
-        overdue_cond = "AND hr.due_at IS NOT NULL AND hr.due_at < :now_ts"
-        params["now_ts"] = now
+        overdue_cond = f"AND {help_overdue_sql('hr')}"
+    params["now_ts"] = now
 
     r = await db.execute(
         text(f"""
@@ -800,7 +788,9 @@ async def list_help_requests(
                    -- tsk-943: заявка по материалу (вместо задания) + вложение.
                    hr.material_id, m.title AS material_title,
                    hr.attachment_id, hr.attachment_filename,
-                   hr.attachment_content_type, hr.attachment_size_bytes
+                   hr.attachment_content_type, hr.attachment_size_bytes,
+                   -- tsk-995: тот же предикат, что у фильтра overdue=1 и ячейки.
+                   {help_overdue_sql('hr')} AS is_overdue
             FROM help_requests hr
             LEFT JOIN users u ON u.id = hr.student_id
             LEFT JOIN tasks t ON t.id = hr.task_id
@@ -840,7 +830,7 @@ async def list_help_requests(
             "event_id": row[12],
             "priority": priority_val,
             "due_at": due_at_norm,
-            "is_overdue": due_at_norm is not None and due_at_norm < now,
+            "is_overdue": bool(row[30]) if len(row) > 30 else False,
             "student_name": row[15] if len(row) > 15 else None,
             "task_title": _item_title_display(
                 row[6],
@@ -893,8 +883,9 @@ async def get_help_request_detail(
     if not ok:
         return (None, "forbidden")
 
+    now = datetime.now(timezone.utc)
     r = await db.execute(
-        text("""
+        text(f"""
             SELECT hr.id, hr.status, hr.student_id, hr.task_id, hr.course_id, hr.attempt_id,
                    hr.created_at, hr.updated_at, hr.thread_id, hr.event_id,
                    hr.request_type, hr.auto_created, hr.context_json,
@@ -915,7 +906,9 @@ async def get_help_request_detail(
                    hr.attachment_id, hr.attachment_filename,
                    hr.attachment_content_type, hr.attachment_size_bytes,
                    -- tsk-993: «где застрял» — колонка 37, в конец (см. off-by-one ниже).
-                   hr.stuck_note
+                   hr.stuck_note,
+                   -- tsk-995: колонка 38 — тот же предикат, что у списка и ячейки.
+                   {help_overdue_sql('hr')} AS is_overdue
             FROM help_requests hr
             LEFT JOIN users u ON u.id = hr.student_id
             LEFT JOIN tasks t ON t.id = hr.task_id
@@ -923,8 +916,8 @@ async def get_help_request_detail(
             LEFT JOIN users cu ON cu.id = hr.claimed_by
             LEFT JOIN materials m ON m.id = hr.material_id
             WHERE hr.id = :request_id
-        """),
-        {"request_id": request_id},
+        """),  # nosec B608 — help_overdue_sql из закрытого набора литералов
+        {"request_id": request_id, "now_ts": now},
     )
     row = r.fetchone()
     if row is None:
@@ -932,14 +925,13 @@ async def get_help_request_detail(
     ctx = row[12] if row[12] is not None else {}
     if not isinstance(ctx, dict):
         ctx = {}
-    now = datetime.now(timezone.utc)
     # tsk-298 (fix): off-by-one — SELECT отдаёт 22 колонки (0-21), а маппинг
     # читал row[18..22], сдвигая priority/due_at/student_name/task_title/
     # course_title на +1. Из-за этого «Ученик» показывал external_uid задания
     # вместо ФИО. Индексы приведены к реальному порядку колонок.
     due_at = row[18] if len(row) > 18 else None
     due_at_norm = _normalize_due_at(due_at)
-    is_overdue = due_at_norm is not None and due_at_norm < now
+    is_overdue = bool(row[38]) if len(row) > 38 else False
     priority_val = int(row[17]) if len(row) > 17 and row[17] is not None else 100
 
     r2 = await db.execute(
@@ -1656,16 +1648,19 @@ async def reopen_help_request(
     blamed_teacher_id = closed_by if closed_by is not None else assigned
 
     await db.execute(
-        text("""
+        text(f"""
             UPDATE help_requests
             SET status = 'open', closed_at = NULL, closed_by = NULL,
-                resolution_comment = NULL, updated_at = now()
+                resolution_comment = NULL, updated_at = now(),
+                due_at = {HELP_DUE_AT_SQL}
             WHERE id = :id
-        """),
-        {"id": request_id},
+        """),  # nosec B608 — HELP_DUE_AT_SQL литерал модуля help_sla
+        {"id": request_id, "help_sla_hours": help_sla_hours()},
     )
     # Поля закрытия чистятся намеренно: иначе открытая заявка несла бы дату
     # закрытия и комментарий об уже отвергнутом решении.
+    # tsk-995: срок ответа отсчитывается заново от возврата — ученик снова
+    # ждёт преподавателя, а прежний срок к этому моменту обычно уже прошёл.
     await db.execute(
         text("""
             INSERT INTO help_request_reopens (request_id, teacher_id)
@@ -1755,13 +1750,15 @@ async def request_individual_review(
     if await _repeat_ask_count(db, request_id, student_id, task_id) < 1:
         return (None, "no_reopen")
 
+    # tsk-995: новый срок — на ссылку разбора, от момента просьбы ученика.
     await db.execute(
-        text("""
+        text(f"""
             UPDATE help_requests
-            SET request_type = 'individual_review', updated_at = now()
+            SET request_type = 'individual_review', updated_at = now(),
+                due_at = {HELP_DUE_AT_SQL}
             WHERE id = :id
-        """),
-        {"id": request_id},
+        """),  # nosec B608 — HELP_DUE_AT_SQL литерал модуля help_sla
+        {"id": request_id, "help_sla_hours": help_sla_hours()},
     )
     if assigned is not None:
         # tsk-1338: имя ученика и название задания в начале текста.

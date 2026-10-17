@@ -74240,6 +74240,85 @@
         "title": "ReviewReleaseResponse",
         "description": "Ответ release для review."
       },
+      "ReviewSpeed": {
+        "properties": {
+          "scope": {
+            "type": "string",
+            "enum": [
+              "teacher",
+              "school"
+            ],
+            "title": "Scope",
+            "description": "teacher — проверки этого преподавателя; school — вся школа (методист)"
+          },
+          "days": {
+            "type": "integer",
+            "title": "Days",
+            "description": "Окно, дней (проверки за последние N дней)"
+          },
+          "sla_hours": {
+            "type": "integer",
+            "title": "Sla Hours",
+            "description": "Срок проверки REVIEW_SLA_HOURS, часов"
+          },
+          "checked": {
+            "type": "integer",
+            "title": "Checked",
+            "description": "Проверено работ за окно"
+          },
+          "median_hours": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Median Hours",
+            "description": "Медиана времени проверки, часов"
+          },
+          "p90_hours": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "P90 Hours",
+            "description": "90-й перцентиль времени проверки, часов"
+          },
+          "within_sla": {
+            "type": "integer",
+            "title": "Within Sla",
+            "description": "Из них проверено в срок"
+          },
+          "within_sla_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Within Sla Rate",
+            "description": "Доля проверенных в срок, 0..1"
+          }
+        },
+        "type": "object",
+        "required": [
+          "scope",
+          "days",
+          "sla_hours",
+          "checked",
+          "within_sla"
+        ],
+        "title": "ReviewSpeed",
+        "description": "Скорость ручной проверки работ за окно (tsk-995, П6).\n\n`checked_at − submitted_at` по обязательной очереди: только сдачи ученика\n(`spw_web`), без ручных зачётов, повторов, итогового среза и переоценённых.\nНиже 10 проверок медиана, перцентиль и доля — `null` («мало данных»)."
+      },
       "RoleCreate": {
         "properties": {
           "name": {
@@ -84440,8 +84519,31 @@
           "overdue_total": {
             "type": "integer",
             "title": "Overdue Total",
-            "description": "Просроченных (due_at < now) открытых заявок",
+            "description": "Просрочено всего: overdue_help + overdue_reviews (tsk-995; до tsk-995 — только заявки, и было всегда 0)",
             "default": 0
+          },
+          "overdue_help": {
+            "type": "integer",
+            "title": "Overdue Help",
+            "description": "Просроченных заявок: открыта, due_at (created_at + HELP_SLA_HOURS) прошёл, ход за преподавателем — тот же предикат, что у фильтра overdue=1",
+            "default": 0
+          },
+          "overdue_reviews": {
+            "type": "integer",
+            "title": "Overdue Reviews",
+            "description": "Просроченных обязательных работ на проверке: submitted_at + REVIEW_SLA_HOURS прошёл (то же множество и ACL, что у /teacher/reviews/pending)",
+            "default": 0
+          },
+          "review_speed": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReviewSpeed"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Скорость проверки работ за 30 дней (tsk-995)"
           }
         },
         "type": "object",
