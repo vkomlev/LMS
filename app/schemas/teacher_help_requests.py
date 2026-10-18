@@ -152,6 +152,24 @@ class HelpRequestDetailResponse(HelpRequestListItem):
     escalated_to_methodist_at: Optional[datetime] = Field(
         None, description="Когда заявка эскалирована методисту (уровень 3)"
     )
+    # tsk-999 (П10): рефлексия ученика после ответа на заявку. Текст ученика —
+    # клиент показывает его как текст, без вставки HTML.
+    reflection_main: Optional[str] = Field(
+        None, description="Рефлексия ученика: что было главным (≤ 500 символов)"
+    )
+    reflection_unclear: Optional[str] = Field(
+        None, description="Рефлексия ученика: что осталось непонятным (≤ 500 символов)"
+    )
+    reflection_understood: Optional[bool] = Field(
+        None, description="Рефлексия ученика: «понятно?»; null — не ответил"
+    )
+    reflection_at: Optional[datetime] = Field(
+        None,
+        description=(
+            "Когда ученик оставил рефлексию или нажал «Пропустить»; null — ещё не отвечал. "
+            "Все три поля пустые при заполненном reflection_at — ученик пропустил."
+        ),
+    )
 
 
 # ----- POST close -----

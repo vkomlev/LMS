@@ -147,6 +147,25 @@ class HelpRequests(Base):
         comment="Где ученик застрял, своими словами (tsk-993). NULL — не описывал.",
     )
 
+    # tsk-999 (П10): рефлексия ученика после ответа на заявку. `review_understood`
+    # остаётся развилкой маршрута разбора; «понятно?» рефлексии — своя колонка.
+    reflection_main: Mapped[Optional[str]] = mapped_column(
+        Text, nullable=True,
+        comment="Рефлексия ученика: что было главным в ответе (tsk-999).",
+    )
+    reflection_unclear: Mapped[Optional[str]] = mapped_column(
+        Text, nullable=True,
+        comment="Рефлексия ученика: что осталось непонятным (tsk-999).",
+    )
+    reflection_understood: Mapped[Optional[bool]] = mapped_column(
+        Boolean, nullable=True,
+        comment="Рефлексия ученика: «понятно?»; NULL — не ответил (tsk-999).",
+    )
+    reflection_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+        comment="Когда ученик оставил рефлексию или пропустил её (tsk-999).",
+    )
+
     replies: Mapped[List["HelpRequestReplies"]] = relationship(
         "HelpRequestReplies",
         back_populates="help_request",

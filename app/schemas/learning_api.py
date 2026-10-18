@@ -331,6 +331,17 @@ class StudentHelpRequestResponse(BaseModel):
     can_reopen: bool = False
     can_request_individual_review: bool = False
     can_rate_review: bool = False
+    # tsk-999 (П10): рефлексия после ответа преподавателя или ссылки на разбор.
+    can_reflect: bool = Field(
+        False,
+        description=(
+            "Можно оставить рефлексию (POST /learning/help-requests/{id}/reflection). "
+            "Всегда false при выключенном HELP_REFLECTION_ENABLED."
+        ),
+    )
+    reflection_at: Optional[datetime] = Field(
+        None, description="Когда ученик оставил рефлексию или пропустил её; null — не отвечал"
+    )
 
 
 class HelpRequestReopenResponse(BaseModel):
@@ -359,6 +370,36 @@ class RateReviewResponse(BaseModel):
     understood: bool
     status: str = Field(..., description="closed при understood=true, иначе open")
     escalated: bool = Field(False, description="true — заявка ушла методисту")
+
+
+class HelpReflectionRequest(BaseModel):
+    """Тело POST /learning/help-requests/{id}/reflection (tsk-999).
+
+    Все поля необязательны: пустое тело — «Пропустить» (рефлексия отмечается
+    как пройденная, больше не спрашивается).
+    """
+    main: Optional[str] = Field(
+        None, max_length=500, description="Что было главным в ответе"
+    )
+    unclear: Optional[str] = Field(
+        None, max_length=500, description="Что осталось непонятным"
+    )
+    understood: Optional[bool] = Field(
+        None,
+        description=(
+            "«Понятно?» Для индивидуального разбора — та же развилка, что у rate-review: "
+            "true закрывает заявку, false уводит её методисту. Для остальных заявок — "
+            "только сохраняется."
+        ),
+    )
+
+
+class HelpReflectionResponse(BaseModel):
+    """Ответ на рефлексию."""
+    request_id: int
+    understood: Optional[bool] = None
+    status: str = Field(..., description="Статус заявки после рефлексии: open | closed")
+    escalated: bool = Field(False, description="true — заявка ушла методисту (только разбор)")
 
 
 # ----- Hint events (этап 3.6) -----

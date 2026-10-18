@@ -1,0 +1,1467 @@
+diff --git a/.env.example b/.env.example
+index 7a6fa60..2b0a905 100644
+--- a/.env.example
++++ b/.env.example
+@@ -49,6 +49,11 @@ DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/Learn
+ # у которых истёк срок проверки REVIEW_SLA_HOURS, по умолчанию 48).
+ # HELP_SLA_HOURS=24
+ 
++# tsk-999 (П10): рефлексия ученика после ответа на заявку помощи — «что было
++# главным / что осталось непонятным / понятно?». Выключено: ученик видит всё
++# как раньше, эндпоинт рефлексии отвечает 409 reflection_disabled.
++HELP_REFLECTION_ENABLED=false
++
+ # Список service API-ключей через запятую (без пробелов).
+ # Используют: TG_LMS bots (poller, teacher dialog), ContentBackbone CLI,
+ # SPW E2E live spec (Y-4 S5 через /auth/test/issue-session).
+diff --git a/app/api/v1/learning.py b/app/api/v1/learning.py
+index 3cd7951..f6a2d66 100644
+--- a/app/api/v1/learning.py
++++ b/app/api/v1/learning.py
+@@ -36,6 +36,8 @@ from app.schemas.learning_api import (
+     IndividualReviewResponse,
+     RateReviewRequest,
+     RateReviewResponse,
++    HelpReflectionRequest,
++    HelpReflectionResponse,
+     HintEventRequest,
+     HintEventResponse,
+     HelpRequestAttachmentRead,
+@@ -72,6 +74,7 @@ from app.services.help_requests_service import (
+     get_or_create_material_help_request,
+     get_student_help_request,
+     reopen_help_request,
++    reflect_on_help_request,
+     request_individual_review,
+     rate_individual_review,
+     get_help_request_attachment,
+@@ -1047,6 +1050,23 @@ _LADDER_STATE_ERRORS: dict[str, str] = {
+     "already_rated": "Разбор уже оценён.",
+ }
+ 
++# tsk-999: ошибки рефлексии — 409 с машинным кодом в `code`, чтобы клиент
++# отличал «уже отвечал» от «рефлексия выключена» без разбора текста.
++_REFLECTION_ERRORS: dict[str, str] = {
++    "disabled": "Рефлексия после ответа сейчас выключена.",
++    "already_reflected": "Вы уже ответили на этот вопрос.",
++    "already_rated": "Разбор уже оценён.",
++    "no_answer": "Преподаватель ещё не ответил на заявку.",
++    "wrong_type": "Для заявки такого типа рефлексия не предусмотрена.",
++}
++_REFLECTION_CODES: dict[str, str] = {
++    "disabled": "reflection_disabled",
++    "already_reflected": "already_reflected",
++    "already_rated": "already_rated",
++    "no_answer": "no_teacher_answer",
++    "wrong_type": "wrong_type",
++}
++
+ 
+ def _raise_ladder_error(err: str) -> None:
+     """Единая раскладка ошибок шагов лестницы в HTTP-коды."""
+@@ -1218,6 +1238,71 @@ async def rate_individual_review_endpoint(
+     return RateReviewResponse(**data)
+ 
+ 
++@router.post(
++    "/help-requests/{request_id}/reflection",
++    response_model=HelpReflectionResponse,
++    summary="Рефлексия ученика после ответа на заявку (tsk-999, П10)",
++    responses={
++        404: {"description": "Заявка не найдена"},
++        # Гейта оплаты нет — как у rate-review: это отзыв на уже оказанную помощь.
++        403: {"description": "Чужая заявка"},
++        409: {
++            "description": (
++                "code: reflection_disabled — рубильник HELP_REFLECTION_ENABLED выключен; "
++                "already_reflected — рефлексия уже была; already_rated — разбор уже оценён; "
++                "no_teacher_answer — ответа преподавателя ещё нет; wrong_type — заявка "
++                "не из лестницы помощи"
++            )
++        },
++        422: {"description": "Поле длиннее 500 символов"},
++    },
++)
++async def reflect_on_help_request_endpoint(
++    request_id: int = Path(..., description="ID заявки"),
++    body: HelpReflectionRequest = Body(...),
++    current_user: CurrentUser = Depends(get_current_user),
++    db: AsyncSession = Depends(get_bare_db),
++) -> HelpReflectionResponse:
++    """«Что было главным / что осталось непонятным / понятно?» — раз за круг.
++
++    Доступна, когда в текущем круге заявки (с создания или последнего
++    возврата) есть ответ: у обычной заявки — ответ преподавателя, у
++    индивидуального разбора — ссылка на разбор.
++    Все поля необязательны; пустое тело — «Пропустить». Для индивидуального
++    разбора ответ «понятно?» идёт по той же развилке, что `rate-review`
++    (закрытие или эскалация методисту); прежний `rate-review` работает как был.
++
++    При выключенном рубильнике — 409 `reflection_disabled`, а не 404: заявка
++    существует, недоступно только действие, и клиент обрабатывает это так же,
++    как остальные 409 лестницы — перечитывает состояние (там `can_reflect`
++    false). 404 смешал бы выключенную функцию с «заявки нет».
++    """
++    student_id = await _resolve_ladder_student(db, request_id, current_user)
++    data, err = await reflect_on_help_request(
++        db,
++        request_id,
++        student_id,
++        main=body.main,
++        unclear=body.unclear,
++        understood=body.understood,
++    )
++    if err in ("not_found", "forbidden"):
++        _raise_ladder_error(err)
++    if err is not None or data is None:
++        code = err or "unknown"
++        raise DomainError(
++            detail=_REFLECTION_ERRORS.get(code, "Действие недоступно в текущем состоянии заявки."),
++            status_code=status.HTTP_409_CONFLICT,
++            payload={"code": _REFLECTION_CODES.get(code, code)},
++        )
++    await db.commit()
++    logger.info(
++        "tsk-999 reflection: request_id=%s student_id=%s understood=%s escalated=%s",
++        request_id, student_id, data.get("understood"), data.get("escalated"),
++    )
++    return HelpReflectionResponse(**data)
++
++
+ # ----- POST /learning/tasks/{task_id}/hint-events (этап 3.6) -----
+ 
+ @router.post(
+diff --git a/app/core/config.py b/app/core/config.py
+index fcf49d7..0d41d4e 100644
+--- a/app/core/config.py
++++ b/app/core/config.py
+@@ -643,6 +643,13 @@ class Settings:
+         # tsk-995 (П6, решение оператора Р1): срок ответа на заявку помощи —
+         # часы от создания открытой заявки. Пишется в `help_requests.due_at`.
+         self.help_sla_hours: int = int(os.getenv("HELP_SLA_HOURS", "24"))
++        # tsk-999 (П10, решение оператора Р2): рефлексия ученика после ответа
++        # на заявку помощи («что было главным / что осталось непонятным»).
++        # Выключено по умолчанию: при false `can_reflect` всегда false, эндпоинт
++        # рефлексии отвечает 409, индивидуальный разбор работает по-старому.
++        self.help_reflection_enabled: bool = os.getenv(
++            "HELP_REFLECTION_ENABLED", "false"
++        ).lower() in ("true", "1", "yes")
+         # tsk-1309: первая блокировка по лимиту попыток снимается автоматически
+         # (+базовый лимит), человеку уходит только вторая. Выключатель — откат
+         # без выката: false возвращает прежнее «каждая блокировка → заявка».
+diff --git a/app/db/migrations/versions/2026_10_18_tsk999_help_reflection.py b/app/db/migrations/versions/2026_10_18_tsk999_help_reflection.py
+new file mode 100644
+index 0000000..4dd10a2
+--- /dev/null
++++ b/app/db/migrations/versions/2026_10_18_tsk999_help_reflection.py
+@@ -0,0 +1,86 @@
++"""tsk-999 (П10): рефлексия ученика после ответа на заявку помощи.
++
++Решение оператора Р2: после ЛЮБОГО ответа на заявку (текстовый ответ
++преподавателя или ссылка на индивидуальный разбор) ученик может коротко
++написать, что было главным и что осталось непонятным, и отметить «понятно?».
++Ответ необязателен; принимается один раз.
++
++Колонки `help_requests`:
++
++- `reflection_main` — «что было главным», текст ученика (≤ 500 символов,
++  ограничение — в схеме запроса);
++- `reflection_unclear` — «что осталось непонятным» (≤ 500);
++- `reflection_understood` — «понятно?» да/нет/не ответил. Отдельно от
++  `review_understood`: та колонка — развилка маршрута индивидуального разбора
++  (false уводит заявку методисту), и записать в неё ответ по обычной заявке
++  значило бы закрыть ученику оценку разбора, если заявка потом до него дойдёт;
++- `reflection_at` — когда ученик ответил или нажал «Пропустить»; признак
++  «рефлексия уже была» (повтор → 409 `already_reflected`).
++
++`review_understood` не трогается. Все колонки необязательные, без значения
++по умолчанию — старые строки и старые клиенты не затронуты.
++
++Rollback: `alembic downgrade tsk995_help_due_backfill` — колонки снимаются,
++тексты рефлексии теряются (сами заявки остаются).
++
++Revision ID: tsk999_help_reflection
++Revises: tsk995_help_due_backfill
++Create Date: 2026-10-18
++"""
++from typing import Sequence, Union
++
++import sqlalchemy as sa
++from alembic import op
++
++revision: str = "tsk999_help_reflection"
++down_revision: Union[str, None] = "tsk995_help_due_backfill"
++branch_labels: Union[str, Sequence[str], None] = None
++depends_on: Union[str, Sequence[str], None] = None
++
++
++def upgrade() -> None:
++    """Добавить колонки рефлексии в `help_requests`."""
++    op.add_column(
++        "help_requests",
++        sa.Column(
++            "reflection_main",
++            sa.Text(),
++            nullable=True,
++            comment="Рефлексия ученика: что было главным в ответе (tsk-999).",
++        ),
++    )
++    op.add_column(
++        "help_requests",
++        sa.Column(
++            "reflection_unclear",
++            sa.Text(),
++            nullable=True,
++            comment="Рефлексия ученика: что осталось непонятным (tsk-999).",
++        ),
++    )
++    op.add_column(
++        "help_requests",
++        sa.Column(
++            "reflection_understood",
++            sa.Boolean(),
++            nullable=True,
++            comment="Рефлексия ученика: «понятно?»; NULL — не ответил (tsk-999).",
++        ),
++    )
++    op.add_column(
++        "help_requests",
++        sa.Column(
++            "reflection_at",
++            sa.DateTime(timezone=True),
++            nullable=True,
++            comment="Когда ученик оставил рефлексию или пропустил её (tsk-999).",
++        ),
++    )
++
++
++def downgrade() -> None:
++    """Снять колонки рефлексии."""
++    op.drop_column("help_requests", "reflection_at")
++    op.drop_column("help_requests", "reflection_understood")
++    op.drop_column("help_requests", "reflection_unclear")
++    op.drop_column("help_requests", "reflection_main")
+diff --git a/app/models/help_requests.py b/app/models/help_requests.py
+index cef93c9..ab86932 100644
+--- a/app/models/help_requests.py
++++ b/app/models/help_requests.py
+@@ -147,6 +147,25 @@ class HelpRequests(Base):
+         comment="Где ученик застрял, своими словами (tsk-993). NULL — не описывал.",
+     )
+ 
++    # tsk-999 (П10): рефлексия ученика после ответа на заявку. `review_understood`
++    # остаётся развилкой маршрута разбора; «понятно?» рефлексии — своя колонка.
++    reflection_main: Mapped[Optional[str]] = mapped_column(
++        Text, nullable=True,
++        comment="Рефлексия ученика: что было главным в ответе (tsk-999).",
++    )
++    reflection_unclear: Mapped[Optional[str]] = mapped_column(
++        Text, nullable=True,
++        comment="Рефлексия ученика: что осталось непонятным (tsk-999).",
++    )
++    reflection_understood: Mapped[Optional[bool]] = mapped_column(
++        Boolean, nullable=True,
++        comment="Рефлексия ученика: «понятно?»; NULL — не ответил (tsk-999).",
++    )
++    reflection_at: Mapped[Optional[datetime]] = mapped_column(
++        DateTime(timezone=True), nullable=True,
++        comment="Когда ученик оставил рефлексию или пропустил её (tsk-999).",
++    )
++
+     replies: Mapped[List["HelpRequestReplies"]] = relationship(
+         "HelpRequestReplies",
+         back_populates="help_request",
+diff --git a/app/schemas/learning_api.py b/app/schemas/learning_api.py
+index eaa5ee8..040cf85 100644
+--- a/app/schemas/learning_api.py
++++ b/app/schemas/learning_api.py
+@@ -331,6 +331,17 @@ class StudentHelpRequestResponse(BaseModel):
+     can_reopen: bool = False
+     can_request_individual_review: bool = False
+     can_rate_review: bool = False
++    # tsk-999 (П10): рефлексия после ответа преподавателя или ссылки на разбор.
++    can_reflect: bool = Field(
++        False,
++        description=(
++            "Можно оставить рефлексию (POST /learning/help-requests/{id}/reflection). "
++            "Всегда false при выключенном HELP_REFLECTION_ENABLED."
++        ),
++    )
++    reflection_at: Optional[datetime] = Field(
++        None, description="Когда ученик оставил рефлексию или пропустил её; null — не отвечал"
++    )
+ 
+ 
+ class HelpRequestReopenResponse(BaseModel):
+@@ -361,6 +372,36 @@ class RateReviewResponse(BaseModel):
+     escalated: bool = Field(False, description="true — заявка ушла методисту")
+ 
+ 
++class HelpReflectionRequest(BaseModel):
++    """Тело POST /learning/help-requests/{id}/reflection (tsk-999).
++
++    Все поля необязательны: пустое тело — «Пропустить» (рефлексия отмечается
++    как пройденная, больше не спрашивается).
++    """
++    main: Optional[str] = Field(
++        None, max_length=500, description="Что было главным в ответе"
++    )
++    unclear: Optional[str] = Field(
++        None, max_length=500, description="Что осталось непонятным"
++    )
++    understood: Optional[bool] = Field(
++        None,
++        description=(
++            "«Понятно?» Для индивидуального разбора — та же развилка, что у rate-review: "
++            "true закрывает заявку, false уводит её методисту. Для остальных заявок — "
++            "только сохраняется."
++        ),
++    )
++
++
++class HelpReflectionResponse(BaseModel):
++    """Ответ на рефлексию."""
++    request_id: int
++    understood: Optional[bool] = None
++    status: str = Field(..., description="Статус заявки после рефлексии: open | closed")
++    escalated: bool = Field(False, description="true — заявка ушла методисту (только разбор)")
++
++
+ # ----- Hint events (этап 3.6) -----
+ 
+ HintType = Literal["text", "video"]
+diff --git a/app/schemas/teacher_help_requests.py b/app/schemas/teacher_help_requests.py
+index f774337..53896da 100644
+--- a/app/schemas/teacher_help_requests.py
++++ b/app/schemas/teacher_help_requests.py
+@@ -152,6 +152,24 @@ class HelpRequestDetailResponse(HelpRequestListItem):
+     escalated_to_methodist_at: Optional[datetime] = Field(
+         None, description="Когда заявка эскалирована методисту (уровень 3)"
+     )
++    # tsk-999 (П10): рефлексия ученика после ответа на заявку. Текст ученика —
++    # клиент показывает его как текст, без вставки HTML.
++    reflection_main: Optional[str] = Field(
++        None, description="Рефлексия ученика: что было главным (≤ 500 символов)"
++    )
++    reflection_unclear: Optional[str] = Field(
++        None, description="Рефлексия ученика: что осталось непонятным (≤ 500 символов)"
++    )
++    reflection_understood: Optional[bool] = Field(
++        None, description="Рефлексия ученика: «понятно?»; null — не ответил"
++    )
++    reflection_at: Optional[datetime] = Field(
++        None,
++        description=(
++            "Когда ученик оставил рефлексию или нажал «Пропустить»; null — ещё не отвечал. "
++            "Все три поля пустые при заполненном reflection_at — ученик пропустил."
++        ),
++    )
+ 
+ 
+ # ----- POST close -----
+diff --git a/app/services/help_requests_service.py b/app/services/help_requests_service.py
+index 2a1d0a4..ce1cd68 100644
+--- a/app/services/help_requests_service.py
++++ b/app/services/help_requests_service.py
+@@ -17,6 +17,7 @@ from typing import Any, Optional, Tuple
+ from sqlalchemy import text
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
++from app.core.config import Settings
+ from app.models.help_requests import HelpRequests
+ from app.models.help_request_replies import HelpRequestReplies
+ from app.services.help_reply_kind import guess_reply_kind
+@@ -50,6 +51,10 @@ from app.services.teacher_queue_service import (
+ 
+ logger = logging.getLogger(__name__)
+ 
++# tsk-999: рубильник рефлексии читается из этого экземпляра — тесты подменяют
++# его атрибут, как `help_attempt_gate.settings` у гейта П4.
++_settings = Settings()
++
+ 
+ def _normalize_due_at(due_at: Any) -> Optional[datetime]:
+     """Приводит due_at из сырого SQL (str или datetime) к timezone-aware datetime для сравнения с now."""
+@@ -908,7 +913,10 @@ async def get_help_request_detail(
+                    -- tsk-993: «где застрял» — колонка 37, в конец (см. off-by-one ниже).
+                    hr.stuck_note,
+                    -- tsk-995: колонка 38 — тот же предикат, что у списка и ячейки.
+-                   {help_overdue_sql('hr')} AS is_overdue
++                   {help_overdue_sql('hr')} AS is_overdue,
++                   -- tsk-999: колонки 39-42 — рефлексия ученика после ответа.
++                   hr.reflection_main, hr.reflection_unclear,
++                   hr.reflection_understood, hr.reflection_at
+             FROM help_requests hr
+             LEFT JOIN users u ON u.id = hr.student_id
+             LEFT JOIN tasks t ON t.id = hr.task_id
+@@ -1024,6 +1032,12 @@ async def get_help_request_detail(
+         "attachment_size_bytes": row[36] if len(row) > 36 else None,
+         # tsk-993: «где застрял» — колонка 37.
+         "stuck_note": row[37] if len(row) > 37 else None,
++        # tsk-999: рефлексия ученика — колонки 39-42. Показывается
++        # независимо от рубильника: записанное учеником преподавателю видно.
++        "reflection_main": row[39] if len(row) > 39 else None,
++        "reflection_unclear": row[40] if len(row) > 40 else None,
++        "reflection_understood": row[41] if len(row) > 41 else None,
++        "reflection_at": row[42] if len(row) > 42 else None,
+         # tsk-303: колонки 24-27 — состояние лестницы помощи. Индексы считаются
+         # от порядка SELECT выше; в этом же маппинге когда-то уже был сдвиг на
+         # +1 (см. комментарий про off-by-one), поэтому новые поля добавлены в
+@@ -1528,20 +1542,24 @@ async def get_student_help_request(
+     """
+     row = (
+         await db.execute(
+-            text("""
++            text(f"""
+                 SELECT hr.id, hr.status, hr.request_type, hr.message,
+                        hr.created_at, hr.updated_at, hr.closed_at,
+                        hr.webinar_link, hr.review_understood,
+                        hr.escalated_to_methodist_at, hr.resolution_comment,
+                        (SELECT COUNT(*) FROM help_request_reopens rr
+-                         WHERE rr.request_id = hr.id) AS reopen_count
++                         WHERE rr.request_id = hr.id) AS reopen_count,
++                       -- tsk-999: колонки 12-14 — рефлексия (в конец, не в середину).
++                       hr.reflection_at,
++                       {_REFLECTION_ANSWER_SQL} AS has_answer,
++                       {_REFLECTED_THIS_ROUND_SQL} AS reflected
+                 FROM help_requests hr
+                 WHERE hr.student_id = :student_id
+                   AND hr.task_id = :task_id
+                   AND hr.request_type = ANY(:types)
+                 ORDER BY hr.created_at DESC, hr.id DESC
+                 LIMIT 1
+-            """),
++            """),  # nosec B608 — _REFLECTION_ANSWER_SQL литерал модуля
+             {"student_id": student_id, "task_id": task_id, "types": list(_LADDER_TYPES)},
+         )
+     ).fetchone()
+@@ -1605,6 +1623,15 @@ async def get_student_help_request(
+             and webinar_link is not None
+             and review_understood is None
+         ),
++        # tsk-999: рефлексия после ответа (текст или ссылка на разбор). При
++        # выключенном HELP_REFLECTION_ENABLED — всегда false.
++        "reflection_at": row[12],
++        "can_reflect": _can_reflect(
++            request_type=request_type,
++            reflected=bool(row[14]),
++            review_understood=review_understood,
++            has_answer=bool(row[13]),
++        ),
+     }
+ 
+ 
+@@ -1871,6 +1898,185 @@ async def rate_individual_review(
+     )
+ 
+ 
++# ----- tsk-999 (П10): рефлексия ученика после ответа на заявку -----
++#
++# Решение оператора Р2: спрашивать после ЛЮБОГО ответа на заявку лестницы —
++# текстового ответа преподавателя и ссылки на индивидуальный разбор. Ответ
++# ученика необязателен («Пропустить» тоже фиксирует `reflection_at`) и
++# принимается один раз.
++#
++# «Ответ преподавателя» — строка `help_request_replies`: её пишет только
++# `reply_help_request` (ответ преподавателя из кабинета или бота), служебных
++# строк в этой таблице нет — все `reply_kind` (text/voice/video/telemost) это
++# способы ответа человека. Не считаются: `resolution_comment` при закрытии
++# (его пишут и системные закрытия) и сообщение со ссылкой на разбор — ссылка
++# учитывается отдельно, по `webinar_link`.
++
++#: Потолок длины каждого поля рефлексии (ограничение постановки).
++REFLECTION_MAX_LEN = 500
++
++
++def help_reflection_enabled() -> bool:
++    """Включена ли рефлексия (рубильник `HELP_REFLECTION_ENABLED`)."""
++    return bool(getattr(_settings, "help_reflection_enabled", False))
++
++
++# Рефлексия — одна на «круг» заявки. Круг начинается с создания или с
++# возврата («Всё равно не понял»): возврат — уже отзыв ученика на прежний
++# ответ, и следующий ответ (новый текст или разбор, к которому ведёт возврат)
++# заслуживает своего вопроса — решение Р2 «после любого ответа». Поля при
++# новом круге перезаписываются: преподаватель видит последний отзыв, а
++# неудачу прежнего ответа фиксирует сама строка возврата.
++_LAST_REOPEN_SQL = """COALESCE(
++    (SELECT max(rr.reopened_at) FROM help_request_reopens rr
++      WHERE rr.request_id = hr.id),
++    '-infinity'::timestamptz)"""
++
++# Есть ли в текущем круге ответ, о котором можно спросить:
++# - у индивидуального разбора — ссылка на разбор (текст «пришлю ссылку» ещё
++#   не ответ: «понятно?» по разбору — развилка к методисту, её нельзя
++#   потратить до встречи);
++# - у обычной заявки — ответ преподавателя (`help_request_replies`) после
++#   последнего возврата.
++_REFLECTION_ANSWER_SQL = f"""(
++    CASE WHEN hr.request_type = 'individual_review'
++         THEN hr.webinar_link IS NOT NULL
++         ELSE EXISTS (
++             SELECT 1 FROM help_request_replies hrr
++              WHERE hrr.request_id = hr.id
++                AND hrr.created_at > {_LAST_REOPEN_SQL})
++    END
++)"""
++
++# Ученик уже ответил (или пропустил) в текущем круге.
++_REFLECTED_THIS_ROUND_SQL = f"""(
++    hr.reflection_at IS NOT NULL AND hr.reflection_at > {_LAST_REOPEN_SQL}
++)"""
++
++
++def _can_reflect(
++    *,
++    request_type: Optional[str],
++    reflected: bool,
++    review_understood: Optional[bool],
++    has_answer: bool,
++) -> bool:
++    """Правило `can_reflect` — одно на состояние лестницы и на эндпоинт."""
++    if not help_reflection_enabled():
++        return False
++    if request_type not in _LADDER_TYPES or reflected:
++        return False
++    if request_type == "individual_review" and review_understood is not None:
++        # Разбор уже оценён прежними кнопками — второй раз не спрашиваем.
++        return False
++    return has_answer
++
++
++def _clean_reflection_text(value: Optional[str]) -> Optional[str]:
++    """Текст без крайних пробелов, пустой → None, не длиннее потолка."""
++    if value is None:
++        return None
++    cleaned = value.strip()
++    return cleaned[:REFLECTION_MAX_LEN] or None
++
++
++async def reflect_on_help_request(
++    db: AsyncSession,
++    request_id: int,
++    student_id: int,
++    *,
++    main: Optional[str],
++    unclear: Optional[str],
++    understood: Optional[bool],
++) -> Tuple[Optional[dict[str, Any]], Optional[str]]:
++    """Сохранить рефлексию ученика после ответа на заявку (один раз за круг).
++
++    Круг — от создания заявки или от её последнего возврата; повтор в том же
++    круге — `already_reflected`.
++
++    Для `individual_review` с ответом «понятно?» маршрут решает существующая
++    `rate_individual_review` (закрытие или эскалация методисту) — её же зовёт
++    прежний `rate-review`, второй копии этой развилки нет. Маршрут
++    применяется, когда разбор можно оценить (заявка открыта, ссылка есть —
++    у разбора без ссылки рефлексии нет вовсе); иначе рефлексия сохраняется.
++    Для остальных типов «не понял» автоматически никуда не уводит (решение
++    постановки) — только сохраняется.
++
++    Возвращает (data, error). error: None | "not_found" | "forbidden" |
++    "disabled" | "wrong_type" | "already_reflected" | "already_rated" |
++    "no_answer".
++    """
++    if not help_reflection_enabled():
++        return (None, "disabled")
++    await _lock_request(db, request_id)
++    row = (
++        await db.execute(
++            text(f"""
++                SELECT hr.student_id, hr.status, hr.request_type, hr.webinar_link,
++                       hr.review_understood,
++                       {_REFLECTED_THIS_ROUND_SQL} AS reflected,
++                       {_REFLECTION_ANSWER_SQL} AS has_answer
++                FROM help_requests hr WHERE hr.id = :id
++            """),  # nosec B608 — _REFLECTION_ANSWER_SQL литерал модуля
++            {"id": request_id},
++        )
++    ).fetchone()
++    if row is None:
++        return (None, "not_found")
++    owner_id, status_val, request_type, webinar_link, rated, reflected, has_answer = row
++    if owner_id != student_id:
++        return (None, "forbidden")
++    if request_type not in _LADDER_TYPES:
++        return (None, "wrong_type")
++    if reflected:
++        return (None, "already_reflected")
++    if request_type == "individual_review" and rated is not None:
++        return (None, "already_rated")
++    if not has_answer:
++        return (None, "no_answer")
++
++    await db.execute(
++        text("""
++            UPDATE help_requests
++            SET reflection_main = :main, reflection_unclear = :unclear,
++                reflection_understood = :understood, reflection_at = now(),
++                updated_at = now()
++            WHERE id = :id
++        """),
++        {
++            "main": _clean_reflection_text(main),
++            "unclear": _clean_reflection_text(unclear),
++            "understood": understood,
++            "id": request_id,
++        },
++    )
++
++    result: dict[str, Any] = {
++        "request_id": request_id,
++        "understood": understood,
++        "status": status_val,
++        "escalated": False,
++    }
++    if (
++        request_type == "individual_review"
++        and understood is not None
++        and status_val == "open"
++        and webinar_link is not None
++    ):
++        rated_data, err = await rate_individual_review(db, request_id, student_id, understood)
++        if err is not None:
++            # Условия проверены под той же блокировкой — сюда не попадаем;
++            # но если правила оценки разойдутся с этими, не теряем рефлексию.
++            logger.warning(
++                "tsk-999: рефлексия по заявке %s сохранена, оценка разбора не принята: %s",
++                request_id, err,
++            )
++        elif rated_data is not None:
++            result["status"] = rated_data["status"]
++            result["escalated"] = rated_data["escalated"]
++    return (result, None)
++
++
+ async def set_webinar_link(
+     db: AsyncSession,
+     request_id: int,
+diff --git a/docs/api-reference.md b/docs/api-reference.md
+index 9fbb2a9..aaf68f1 100644
+--- a/docs/api-reference.md
++++ b/docs/api-reference.md
+@@ -710,10 +710,13 @@ Stateless-проверка одной задачи без сохранения 
+ | POST | `/learning/tasks/{task_id}/start-or-get-attempt` | Начать или получить текущую попытку по задаче. Гарантия: в ответе `GET /attempts/{id}` поле `attempt.meta.task_ids` (int[]) содержит как минимум этот `task_id`; при пустом/битом `meta` backend восстанавливает его при вызове. |
+ | GET | `/learning/tasks/{task_id}/state?student_id=` | Состояние задания: OPEN \| IN_PROGRESS \| PASSED \| FAILED \| BLOCKED_LIMIT. |
+ | POST | `/learning/tasks/{task_id}/request-help` | Запрос помощи (body: `student_id`, `message`). |
++| GET | `/learning/tasks/{task_id}/help-request?student_id=` | Состояние лестницы помощи ученика по заданию (tsk-303): заявка, ответы, признаки `can_reopen`, `can_request_individual_review`, `can_rate_review`. **tsk-999:** `can_reflect` — можно оставить рефлексию (правило ниже; при выключенном `HELP_REFLECTION_ENABLED` всегда `false`), `reflection_at` — когда ученик ответил или пропустил. |
++| POST | `/learning/help-requests/{request_id}/rate-review` | Оценка индивидуального разбора (tsk-303), body `{understood: bool}`: `true` закрывает заявку, `false` уводит методисту. Работает как прежде, в том числе при включённой рефлексии. |
++| POST | `/learning/help-requests/{request_id}/reflection` | **tsk-999 (П10):** рефлексия ученика после ответа на заявку. Body `{main: str\|null, unclear: str\|null, understood: bool\|null}`, каждое поле ≤ 500 символов (иначе 422), все необязательны (пустое тело — «Пропустить»). Только владелец заявки (403), заявки `manual_help` и `individual_review` (эндпоинт принимает и заявку по материалу, но экрана состояния такой заявки у ученика в SPW пока нет — форма показывается только на странице задания). Можно, когда в текущем «круге» заявки есть ответ: у `manual_help` — ответ преподавателя (`help_request_replies`) после последнего возврата, у `individual_review` — ссылка на разбор. Один раз за круг: круг начинается с создания заявки или с её возврата; после возврата и нового ответа рефлексию можно оставить снова (поля перезаписываются последним ответом). Для `individual_review` с `understood` при открытой заявке со ссылкой — та же развилка, что у `rate-review` (закрытие / эскалация методисту); для остальных «не понял» только сохраняется. Ответ `{request_id, understood, status, escalated}`. 409 с `payload.code`: `reflection_disabled` (рубильник выключен), `already_reflected`, `already_rated` (разбор уже оценён), `no_teacher_answer`, `wrong_type`. Гейта оплаты нет (как у `rate-review`). |
+ | POST | `/learning/tasks/{task_id}/hint-events` | Фиксация открытия подсказки (этап 3.6). Body: `student_id`, `attempt_id`, `hint_type`, `hint_index`, `action`, `source`. Идемпотентно в окне дедупа. |
+ | POST | `/teacher/task-limits/override` | Переопределение лимита попыток (body: `student_id`, `task_id`, `max_attempts_override`, `updated_by`). |
+ | GET | `/teacher/help-requests?teacher_id=&status=open\|closed\|all&request_type=manual_help\|blocked_limit\|all&sort=priority\|created_at\|due_at&limit=&offset=` | Список заявок на помощь (этап 3.8/3.8.1/3.9). Поля: request_type, auto_created, context, priority, due_at, is_overdue. Фильтр request_type; sort по умолчанию priority. ACL: назначенный teacher, student_teacher_links, teacher_courses или роль methodist. |
+-| GET | `/teacher/help-requests/{request_id}?teacher_id=` | Карточка заявки (поля списка + message, closed_at, closed_by, resolution_comment, history, priority, due_at, is_overdue). |
++| GET | `/teacher/help-requests/{request_id}?teacher_id=` | Карточка заявки (поля списка + message, closed_at, closed_by, resolution_comment, history, priority, due_at, is_overdue). **tsk-999:** `reflection_main`, `reflection_unclear`, `reflection_understood`, `reflection_at` — рефлексия ученика после ответа (текст ученика, показывать как текст); `reflection_at` при пустых полях — ученик пропустил. |
+ | POST | `/teacher/help-requests/{request_id}/close` | Закрыть заявку (body: `closed_by`, `resolution_comment`, опц. `lock_token`). Идемпотентно. При невалидном lock_token — 409 (этап 3.9). |
+ | POST | `/teacher/help-requests/{request_id}/reply` | Ответить студенту (body: `teacher_id`, `message`, `close_after_reply`, `idempotency_key`, опц. `lock_token`). Создаёт сообщение в messages, опционально закрывает заявку. При невалидном lock_token — 409 (этап 3.9). |
+ | POST | `/teacher/help-requests/claim-next` | Взять следующий открытый help-request (этап 3.9). Body: `teacher_id`, `request_type` (manual_help\|blocked_limit\|all), `status` (open), `ttl_sec` (30..600), опц. `idempotency_key`, `course_id`. Ответ: `item`, `lock_token`, `lock_expires_at`, `empty`. |
+diff --git a/docs/openapi.json b/docs/openapi.json
+index ea8f172..76b3de5 100644
+--- a/docs/openapi.json
++++ b/docs/openapi.json
+@@ -21007,6 +21007,119 @@
+         }
+       }
+     },
++    "/api/v1/learning/help-requests/{request_id}/reflection": {
++      "post": {
++        "tags": [
++          "learning"
++        ],
++        "summary": "Рефлексия ученика после ответа на заявку (tsk-999, П10)",
++        "description": "«Что было главным / что осталось непонятным / понятно?» — раз за круг.\n\nДоступна, когда в текущем круге заявки (с создания или последнего\nвозврата) есть ответ: у обычной заявки — ответ преподавателя, у\nиндивидуального разбора — ссылка на разбор.\nВсе поля необязательны; пустое тело — «Пропустить». Для индивидуального\nразбора ответ «понятно?» идёт по той же развилке, что `rate-review`\n(закрытие или эскалация методисту); прежний `rate-review` работает как был.\n\nПри выключенном рубильнике — 409 `reflection_disabled`, а не 404: заявка\nсуществует, недоступно только действие, и клиент обрабатывает это так же,\nкак остальные 409 лестницы — перечитывает состояние (там `can_reflect`\nfalse). 404 смешал бы выключенную функцию с «заявки нет».",
++        "operationId": "reflect_on_help_request_endpoint_api_v1_learning_help_requests__request_id__reflection_post",
++        "security": [
++          {
++            "APIKeyHeader": []
++          },
++          {
++            "APIKeyQuery": []
++          }
++        ],
++        "parameters": [
++          {
++            "name": "request_id",
++            "in": "path",
++            "required": true,
++            "schema": {
++              "type": "integer",
++              "description": "ID заявки",
++              "title": "Request Id"
++            },
++            "description": "ID заявки"
++          },
++          {
++            "name": "token",
++            "in": "query",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Token"
++            }
++          },
++          {
++            "name": "authorization",
++            "in": "header",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Authorization"
++            }
++          },
++          {
++            "name": "session",
++            "in": "cookie",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Session"
++            }
++          }
++        ],
++        "requestBody": {
++          "required": true,
++          "content": {
++            "application/json": {
++              "schema": {
++                "$ref": "#/components/schemas/HelpReflectionRequest"
++              }
++            }
++          }
++        },
++        "responses": {
++          "200": {
++            "description": "Successful Response",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/HelpReflectionResponse"
++                }
++              }
++            }
++          },
++          "404": {
++            "description": "Заявка не найдена"
++          },
++          "403": {
++            "description": "Чужая заявка"
++          },
++          "409": {
++            "description": "code: reflection_disabled — рубильник HELP_REFLECTION_ENABLED выключен; already_reflected — рефлексия уже была; already_rated — разбор уже оценён; no_teacher_answer — ответа преподавателя ещё нет; wrong_type — заявка не из лестницы помощи"
++          },
++          "422": {
++            "description": "Поле длиннее 500 символов"
++          }
++        }
++      }
++    },
+     "/api/v1/learning/tasks/{task_id}/hint-events": {
+       "post": {
+         "tags": [
+@@ -61488,6 +61601,88 @@
+         "type": "object",
+         "title": "HTTPValidationError"
+       },
++      "HelpReflectionRequest": {
++        "properties": {
++          "main": {
++            "anyOf": [
++              {
++                "type": "string",
++                "maxLength": 500
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Main",
++            "description": "Что было главным в ответе"
++          },
++          "unclear": {
++            "anyOf": [
++              {
++                "type": "string",
++                "maxLength": 500
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Unclear",
++            "description": "Что осталось непонятным"
++          },
++          "understood": {
++            "anyOf": [
++              {
++                "type": "boolean"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Understood",
++            "description": "«Понятно?» Для индивидуального разбора — та же развилка, что у rate-review: true закрывает заявку, false уводит её методисту. Для остальных заявок — только сохраняется."
++          }
++        },
++        "type": "object",
++        "title": "HelpReflectionRequest",
++        "description": "Тело POST /learning/help-requests/{id}/reflection (tsk-999).\n\nВсе поля необязательны: пустое тело — «Пропустить» (рефлексия отмечается\nкак пройденная, больше не спрашивается)."
++      },
++      "HelpReflectionResponse": {
++        "properties": {
++          "request_id": {
++            "type": "integer",
++            "title": "Request Id"
++          },
++          "understood": {
++            "anyOf": [
++              {
++                "type": "boolean"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Understood"
++          },
++          "status": {
++            "type": "string",
++            "title": "Status",
++            "description": "Статус заявки после рефлексии: open | closed"
++          },
++          "escalated": {
++            "type": "boolean",
++            "title": "Escalated",
++            "description": "true — заявка ушла методисту (только разбор)",
++            "default": false
++          }
++        },
++        "type": "object",
++        "required": [
++          "request_id",
++          "status"
++        ],
++        "title": "HelpReflectionResponse",
++        "description": "Ответ на рефлексию."
++      },
+       "HelpRequestAttachmentRead": {
+         "properties": {
+           "attachment_id": {
+@@ -62313,6 +62508,55 @@
+             ],
+             "title": "Escalated To Methodist At",
+             "description": "Когда заявка эскалирована методисту (уровень 3)"
++          },
++          "reflection_main": {
++            "anyOf": [
++              {
++                "type": "string"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Reflection Main",
++            "description": "Рефлексия ученика: что было главным (≤ 500 символов)"
++          },
++          "reflection_unclear": {
++            "anyOf": [
++              {
++                "type": "string"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Reflection Unclear",
++            "description": "Рефлексия ученика: что осталось непонятным (≤ 500 символов)"
++          },
++          "reflection_understood": {
++            "anyOf": [
++              {
++                "type": "boolean"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Reflection Understood",
++            "description": "Рефлексия ученика: «понятно?»; null — не ответил"
++          },
++          "reflection_at": {
++            "anyOf": [
++              {
++                "type": "string",
++                "format": "date-time"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Reflection At",
++            "description": "Когда ученик оставил рефлексию или нажал «Пропустить»; null — ещё не отвечал. Все три поля пустые при заполненном reflection_at — ученик пропустил."
+           }
+         },
+         "type": "object",
+@@ -78116,6 +78360,25 @@
+             "type": "boolean",
+             "title": "Can Rate Review",
+             "default": false
++          },
++          "can_reflect": {
++            "type": "boolean",
++            "title": "Can Reflect",
++            "description": "Можно оставить рефлексию (POST /learning/help-requests/{id}/reflection). Всегда false при выключенном HELP_REFLECTION_ENABLED.",
++            "default": false
++          },
++          "reflection_at": {
++            "anyOf": [
++              {
++                "type": "string",
++                "format": "date-time"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Reflection At",
++            "description": "Когда ученик оставил рефлексию или пропустил её; null — не отвечал"
+           }
+         },
+         "type": "object",
+diff --git a/tests/test_tsk999_help_reflection.py b/tests/test_tsk999_help_reflection.py
+new file mode 100644
+index 0000000..96444c5
+--- /dev/null
++++ b/tests/test_tsk999_help_reflection.py
+@@ -0,0 +1,508 @@
++"""tsk-999 (П10): рефлексия ученика после ответа на заявку помощи.
++
++Решение оператора Р2: после ЛЮБОГО ответа на заявку — текстового ответа
++преподавателя и ссылки на индивидуальный разбор — ученик может коротко
++написать, что было главным и что осталось непонятным. Необязательно, один раз.
++
++Проверяется:
++- рубильник `HELP_REFLECTION_ENABLED` по умолчанию выключен: `can_reflect`
++  false, эндпоинт — 409 `reflection_disabled`, ничего не пишется;
++- когда можно: есть ответ преподавателя (после последнего возврата) или ссылка;
++- один раз за круг заявки (повтор → 409 `already_reflected`); после возврата
++  заявки и нового ответа — снова (Р2 «после любого ответа»); только владелец,
++  длина ≤ 500;
++- для разбора «понятно?» идёт по развилке `rate_individual_review`
++  (закрытие / эскалация методисту), для обычной заявки — только сохраняется;
++- преподаватель видит рефлексию в карточке заявки.
++
++Помощники — из тестов лестницы tsk-303, чтобы заявки создавались тем же путём.
++"""
++from __future__ import annotations
++
++import pytest
++from sqlalchemy import text
++
++from app.core.config import Settings
++from app.services import help_requests_service
++from test_help_ladder_endpoints_tsk303 import (
++    _WEBINAR,
++    _bearer,
++    _cleanup,
++    _headers,
++    _help_request,
++    _task,
++    _user,
++)
++
++pytestmark = pytest.mark.asyncio
++
++
++@pytest.fixture
++def reflection_on(monkeypatch):
++    """Включить рубильник рефлексии на время теста."""
++    monkeypatch.setattr(help_requests_service._settings, "help_reflection_enabled", True)
++
++
++async def _teacher_reply(client, rid: int, teacher_id: int, body: str = "Смотри формулу X") -> None:
++    """Ответ преподавателя штатным путём (сервисный ключ, как бот)."""
++    resp = await client.post(
++        f"/api/v1/teacher/help-requests/{rid}/reply",
++        json={"teacher_id": teacher_id, "message": body},
++        headers=_headers(),
++    )
++    assert resp.status_code == 200, resp.text
++
++
++async def _state(client, token: str, task_id: int, student_id: int) -> dict:
++    resp = await client.get(
++        f"/api/v1/learning/tasks/{task_id}/help-request?student_id={student_id}",
++        headers=_bearer(token),
++    )
++    assert resp.status_code == 200, resp.text
++    return resp.json()
++
++
++async def _reflect(client, token: str, rid: int, body: dict):
++    return await client.post(
++        f"/api/v1/learning/help-requests/{rid}/reflection", json=body, headers=_bearer(token)
++    )
++
++
++async def _reflection_row(db, rid: int) -> dict:
++    r = (
++        await db.execute(
++            text(
++                "SELECT reflection_main, reflection_unclear, reflection_understood, "
++                "reflection_at, status, review_understood, escalated_to_methodist_at "
++                "FROM help_requests WHERE id = :id"
++            ),
++            {"id": rid},
++        )
++    ).fetchone()
++    return {
++        "main": r[0], "unclear": r[1], "understood": r[2], "at": r[3],
++        "status": r[4], "review_understood": r[5], "escalated_at": r[6],
++    }
++
++
++async def _cleanup_all(db, *, user_ids, task_ids, request_ids):
++    for rid in request_ids:
++        await db.execute(text("DELETE FROM help_request_replies WHERE request_id=:r"), {"r": rid})
++    for uid in user_ids:
++        await db.execute(text("DELETE FROM messages WHERE recipient_id=:u"), {"u": uid})
++    await _cleanup(db, user_ids=user_ids, task_ids=task_ids, request_ids=request_ids)
++
++
++# ── рубильник выключен (по умолчанию) ────────────────────────────────────────
++
++async def test_switch_is_off_by_default():
++    """Выкат кода не меняет поведение, пока оператор не включит."""
++    assert Settings().help_reflection_enabled is False
++
++
++async def test_disabled_switch_hides_and_rejects_reflection(db, client):
++    """При выключенном рубильнике: can_reflect=false и 409 без записи."""
++    sid, token = await _user(db, "t999 ученик", with_session=True)
++    teacher_id, _ = await _user(db, "t999 учитель")
++    tid = await _task(db)
++    rid = await _help_request(db, student_id=sid, task_id=tid, assigned_teacher_id=teacher_id)
++    await db.commit()
++    try:
++        await _teacher_reply(client, rid, teacher_id)
++        state = await _state(client, token, tid, sid)
++        assert state["can_reflect"] is False
++        assert state["can_reopen"] is True, "лестница работает как раньше"
++
++        resp = await _reflect(client, token, rid, {"main": "формула"})
++        assert resp.status_code == 409, resp.text
++        assert resp.json()["payload"]["code"] == "reflection_disabled"
++        assert (await _reflection_row(db, rid))["at"] is None
++    finally:
++        await _cleanup_all(db, user_ids=[sid, teacher_id], task_ids=[tid], request_ids=[rid])
++
++
++async def test_disabled_switch_keeps_old_individual_review_rating(db, client):
++    """Разбор при выключенном рубильнике — прежние кнопки оценки (can_rate_review)."""
++    sid, token = await _user(db, "t999 ученик", with_session=True)
++    tid = await _task(db)
++    rid = await _help_request(db, student_id=sid, task_id=tid, request_type="individual_review")
++    await db.execute(
++        text("UPDATE help_requests SET webinar_link = :l WHERE id = :r"), {"l": _WEBINAR, "r": rid}
++    )
++    await db.commit()
++    try:
++        state = await _state(client, token, tid, sid)
++        assert state["can_rate_review"] is True
++        assert state["can_reflect"] is False
++    finally:
++        await _cleanup_all(db, user_ids=[sid], task_ids=[tid], request_ids=[rid])
++
++
++# ── когда можно ──────────────────────────────────────────────────────────────
++
++async def test_no_reflection_before_teacher_answer(db, client, reflection_on):
++    """Ответа нет — спрашивать не о чем: can_reflect=false, 409 no_teacher_answer."""
++    sid, token = await _user(db, "t999 ученик", with_session=True)
++    tid = await _task(db)
++    rid = await _help_request(db, student_id=sid, task_id=tid)
++    await db.commit()
++    try:
++        assert (await _state(client, token, tid, sid))["can_reflect"] is False
++        resp = await _reflect(client, token, rid, {})
++        assert resp.status_code == 409, resp.text
++        assert resp.json()["payload"]["code"] == "no_teacher_answer"
++    finally:
++        await _cleanup_all(db, user_ids=[sid], task_ids=[tid], request_ids=[rid])
++
++
++async def test_reflection_after_text_reply_saved_once(db, client, reflection_on):
++    """Обычный ответ: рефлексия сохраняется, «не понял» не эскалирует, повтор — 409."""
++    sid, token = await _user(db, "t999 ученик", with_session=True)
++    teacher_id, _ = await _user(db, "t999 учитель")
++    tid = await _task(db)
++    rid = await _help_request(db, student_id=sid, task_id=tid, assigned_teacher_id=teacher_id)
++    await db.commit()
++    try:
++        await _teacher_reply(client, rid, teacher_id)
++        state = await _state(client, token, tid, sid)
++        assert state["status"] == "closed", "ответ закрывает manual_help (tsk-303)"
++        assert state["can_reflect"] is True, "рефлексия доступна и по закрытой заявке"
++
++        resp = await _reflect(
++            client, token, rid,
++            {"main": "  формула площади  ", "unclear": "откуда берётся 1/2", "understood": False},
++        )
++        assert resp.status_code == 200, resp.text
++        body = resp.json()
++        assert body["escalated"] is False and body["status"] == "closed"
++
++        row = await _reflection_row(db, rid)
++        assert row["main"] == "формула площади", "крайние пробелы срезаются"
++        assert row["unclear"] == "откуда берётся 1/2"
++        assert row["understood"] is False
++        assert row["at"] is not None
++        assert row["review_understood"] is None, "развилка разбора не тронута"
++        assert row["escalated_at"] is None, "для обычной заявки авто-эскалации нет"
++
++        state = await _state(client, token, tid, sid)
++        assert state["can_reflect"] is False and state["reflection_at"] is not None
++
++        again = await _reflect(client, token, rid, {"main": "ещё"})
++        assert again.status_code == 409, again.text
++        assert again.json()["payload"]["code"] == "already_reflected"
++    finally:
++        await _cleanup_all(db, user_ids=[sid, teacher_id], task_ids=[tid], request_ids=[rid])
++
++
++async def test_skip_with_empty_body_marks_reflection(db, client, reflection_on):
++    """«Пропустить»: пустое тело принимается, больше не спрашиваем."""
++    sid, token = await _user(db, "t999 ученик", with_session=True)
++    teacher_id, _ = await _user(db, "t999 учитель")
++    tid = await _task(db)
++    rid = await _help_request(db, student_id=sid, task_id=tid, assigned_teacher_id=teacher_id)
++    await db.commit()
++    try:
++        await _teacher_reply(client, rid, teacher_id)
++        resp = await _reflect(client, token, rid, {"main": "   ", "unclear": None})
++        assert resp.status_code == 200, resp.text
++        row = await _reflection_row(db, rid)
++        assert row["main"] is None and row["unclear"] is None and row["understood"] is None
++        assert row["at"] is not None
++        assert (await _state(client, token, tid, sid))["can_reflect"] is False
++    finally:
++        await _cleanup_all(db, user_ids=[sid, teacher_id], task_ids=[tid], request_ids=[rid])
++
++
++async def test_reopened_request_waits_for_new_answer(db, client, reflection_on):
++    """После возврата старый ответ уже отвергнут — спрашиваем после нового."""
++    sid, token = await _user(db, "t999 ученик", with_session=True)
++    teacher_id, _ = await _user(db, "t999 учитель")
++    tid = await _task(db)
++    rid = await _help_request(db, student_id=sid, task_id=tid, assigned_teacher_id=teacher_id)
++    await db.commit()
++    try:
++        await _teacher_reply(client, rid, teacher_id)
++        reopen = await client.post(
++            f"/api/v1/learning/help-requests/{rid}/reopen", headers=_bearer(token)
++        )
++        assert reopen.status_code == 200, reopen.text
++        # Тест идёт в одной общей транзакции — `now()` у всех строк одинаков.
++        # Разносим события по времени, как они разнесены в жизни.
++        await db.execute(
++            text("UPDATE help_request_replies SET created_at = now() - interval '2 hours' "
++                 "WHERE request_id = :r"), {"r": rid},
++        )
++        await db.execute(
++            text("UPDATE help_request_reopens SET reopened_at = now() - interval '1 hour' "
++                 "WHERE request_id = :r"), {"r": rid},
++        )
++        await db.commit()
++        assert (await _state(client, token, tid, sid))["can_reflect"] is False
++
++        await _teacher_reply(client, rid, teacher_id, "Попробуй иначе")
++        assert (await _state(client, token, tid, sid))["can_reflect"] is True
++    finally:
++        await _cleanup_all(db, user_ids=[sid, teacher_id], task_ids=[tid], request_ids=[rid])
++
++
++async def test_foreign_request_forbidden(db, client, reflection_on):
++    """Чужая заявка — 403, рефлексия не записана."""
++    sid, token = await _user(db, "t999 ученик", with_session=True)
++    other_id, _ = await _user(db, "t999 чужой")
++    teacher_id, _ = await _user(db, "t999 учитель")
++    tid = await _task(db)
++    rid = await _help_request(db, student_id=other_id, task_id=tid, assigned_teacher_id=teacher_id)
++    await db.commit()
++    try:
++        await _teacher_reply(client, rid, teacher_id)
++        resp = await _reflect(client, token, rid, {"main": "x"})
++        assert resp.status_code == 403, resp.text
++        assert (await _reflection_row(db, rid))["at"] is None
++    finally:
++        await _cleanup_all(
++            db, user_ids=[sid, other_id, teacher_id], task_ids=[tid], request_ids=[rid]
++        )
++
++
++async def test_field_longer_than_500_rejected(db, client, reflection_on):
++    """Потолок длины — 500 символов на поле (422)."""
++    sid, token = await _user(db, "t999 ученик", with_session=True)
++    teacher_id, _ = await _user(db, "t999 учитель")
++    tid = await _task(db)
++    rid = await _help_request(db, student_id=sid, task_id=tid, assigned_teacher_id=teacher_id)
++    await db.commit()
++    try:
++        await _teacher_reply(client, rid, teacher_id)
++        resp = await _reflect(client, token, rid, {"unclear": "я" * 501})
++        assert resp.status_code == 422, resp.text
++        ok = await _reflect(client, token, rid, {"unclear": "я" * 500})
++        assert ok.status_code == 200, ok.text
++    finally:
++        await _cleanup_all(db, user_ids=[sid, teacher_id], task_ids=[tid], request_ids=[rid])
++
++
++async def test_blocked_limit_is_not_reflectable(db, client, reflection_on):
++    """Заявка «лимит попыток» — не вопрос по существу: 409 wrong_type."""
++    sid, token = await _user(db, "t999 ученик", with_session=True)
++    tid = await _task(db)
++    rid = await _help_request(db, student_id=sid, task_id=tid, request_type="blocked_limit")
++    await db.commit()
++    try:
++        resp = await _reflect(client, token, rid, {})
++        assert resp.status_code == 409, resp.text
++        assert resp.json()["payload"]["code"] == "wrong_type"
++    finally:
++        await _cleanup_all(db, user_ids=[sid], task_ids=[tid], request_ids=[rid])
++
++
++# ── индивидуальный разбор: развилка rate_individual_review ───────────────────
++
++async def _review_with_link(db, sid: int, tid: int) -> int:
++    rid = await _help_request(db, student_id=sid, task_id=tid, request_type="individual_review")
++    await db.execute(
++        text("UPDATE help_requests SET webinar_link = :l WHERE id = :r"), {"l": _WEBINAR, "r": rid}
++    )
++    return rid
++
++
++async def test_review_link_opens_reflection_and_understood_closes(db, client, reflection_on):
++    """Ссылка на разбор — тоже ответ; «понятно» закрывает заявку, как rate-review."""
++    sid, token = await _user(db, "t999 ученик", with_session=True)
++    tid = await _task(db)
++    rid = await _review_with_link(db, sid, tid)
++    await db.commit()
++    try:
++        assert (await _state(client, token, tid, sid))["can_reflect"] is True
++        resp = await _reflect(client, token, rid, {"main": "разобрали пример", "understood": True})
++        assert resp.status_code == 200, resp.text
++        assert resp.json()["status"] == "closed"
++        row = await _reflection_row(db, rid)
++        assert row["status"] == "closed"
++        assert row["review_understood"] is True, "оценка разбора записана той же логикой"
++        assert row["main"] == "разобрали пример"
++    finally:
++        await _cleanup_all(db, user_ids=[sid], task_ids=[tid], request_ids=[rid])
++
++
++async def test_review_not_understood_escalates_to_methodist(db, client, reflection_on):
++    """«Не понял» после разбора по-прежнему уводит заявку методисту."""
++    sid, token = await _user(db, "t999 ученик", with_session=True)
++    m_id, m_token = await _user(db, "t999 методист", role="methodist", with_session=True)
++    tid = await _task(db)
++    rid = await _review_with_link(db, sid, tid)
++    await db.commit()
++    try:
++        resp = await _reflect(client, token, rid, {"unclear": "всё ещё не ясно", "understood": False})
++        assert resp.status_code == 200, resp.text
++        body = resp.json()
++        assert body["escalated"] is True and body["status"] == "open"
++        row = await _reflection_row(db, rid)
++        assert row["escalated_at"] is not None and row["review_understood"] is False
++
++        queue = await client.get("/api/v1/methodist/escalations/pending", headers=_bearer(m_token))
++        assert queue.status_code == 200, queue.text
++        assert any(
++            i["kind"] == "help_request_escalated" and i["payload"].get("request_id") == rid
++            for i in queue.json()["items"]
++        ), "эскалация видна методисту"
++
++        state = await _state(client, token, tid, sid)
++        assert state["can_reflect"] is False and state["can_rate_review"] is False
++    finally:
++        await _cleanup_all(db, user_ids=[sid, m_id], task_ids=[tid], request_ids=[rid])
++
++
++async def test_review_skip_leaves_old_rating_available(db, client, reflection_on):
++    """Пропуск рефлексии по разбору не оценивает его: прежняя оценка остаётся."""
++    sid, token = await _user(db, "t999 ученик", with_session=True)
++    tid = await _task(db)
++    rid = await _review_with_link(db, sid, tid)
++    await db.commit()
++    try:
++        resp = await _reflect(client, token, rid, {})
++        assert resp.status_code == 200, resp.text
++        assert resp.json()["status"] == "open"
++        state = await _state(client, token, tid, sid)
++        assert state["can_reflect"] is False
++        assert state["can_rate_review"] is True
++    finally:
++        await _cleanup_all(db, user_ids=[sid], task_ids=[tid], request_ids=[rid])
++
++
++async def test_already_rated_review_not_asked_again(db, client, reflection_on):
++    """Разбор, оценённый старыми кнопками, рефлексию не предлагает."""
++    sid, token = await _user(db, "t999 ученик", with_session=True)
++    tid = await _task(db)
++    rid = await _review_with_link(db, sid, tid)
++    await db.commit()
++    try:
++        rate = await client.post(
++            f"/api/v1/learning/help-requests/{rid}/rate-review",
++            json={"understood": False}, headers=_bearer(token),
++        )
++        assert rate.status_code == 200, rate.text
++        assert (await _state(client, token, tid, sid))["can_reflect"] is False
++        resp = await _reflect(client, token, rid, {"understood": True})
++        assert resp.status_code == 409, resp.text
++        assert resp.json()["payload"]["code"] == "already_rated"
++    finally:
++        await _cleanup_all(db, user_ids=[sid], task_ids=[tid], request_ids=[rid])
++
++
++# ── карточка преподавателя ───────────────────────────────────────────────────
++
++async def test_teacher_card_shows_reflection(db, client, reflection_on):
++    """Преподаватель видит рефлексию ученика в карточке заявки."""
++    sid, token = await _user(db, "t999 ученик", with_session=True)
++    teacher_id, _ = await _user(db, "t999 учитель")
++    tid = await _task(db)
++    rid = await _help_request(db, student_id=sid, task_id=tid, assigned_teacher_id=teacher_id)
++    await db.commit()
++    try:
++        await _teacher_reply(client, rid, teacher_id)
++        card = await client.get(
++            f"/api/v1/teacher/help-requests/{rid}?teacher_id={teacher_id}", headers=_headers()
++        )
++        assert card.status_code == 200, card.text
++        assert card.json()["reflection_at"] is None
++
++        text_with_tags = "<b>главное</b> — формула"
++        resp = await _reflect(client, token, rid, {"main": text_with_tags, "understood": True})
++        assert resp.status_code == 200, resp.text
++
++        card = await client.get(
++            f"/api/v1/teacher/help-requests/{rid}?teacher_id={teacher_id}", headers=_headers()
++        )
++        body = card.json()
++        assert body["reflection_main"] == text_with_tags, "текст хранится как есть, экранирует клиент"
++        assert body["reflection_unclear"] is None
++        assert body["reflection_understood"] is True
++        assert body["reflection_at"] is not None
++    finally:
++        await _cleanup_all(db, user_ids=[sid, teacher_id], task_ids=[tid], request_ids=[rid])
++
++
++async def test_reflection_again_after_reopen_and_review_link(db, client, reflection_on):
++    """Основной путь к разбору: рефлексия → возврат → разбор → ссылка → снова форма.
++
++    Возврат начинает новый круг: ответ на разбор заслуживает своего вопроса,
++    и форма разбора (с развилкой к методисту) должна быть достижима.
++    """
++    sid, token = await _user(db, "t999 ученик", with_session=True)
++    m_id, _ = await _user(db, "t999 методист", role="methodist")
++    teacher_id, _ = await _user(db, "t999 учитель")
++    tid = await _task(db)
++    rid = await _help_request(db, student_id=sid, task_id=tid, assigned_teacher_id=teacher_id)
++    await db.commit()
++    try:
++        await _teacher_reply(client, rid, teacher_id)
++        first = await _reflect(client, token, rid, {"main": "первое", "understood": False})
++        assert first.status_code == 200, first.text
++        # Общая транзакция теста: разносим время, как в жизни.
++        await db.execute(
++            text("UPDATE help_requests SET reflection_at = now() - interval '2 hours' "
++                 "WHERE id = :r"), {"r": rid},
++        )
++        await db.execute(
++            text("UPDATE help_request_replies SET created_at = now() - interval '3 hours' "
++                 "WHERE request_id = :r"), {"r": rid},
++        )
++        await db.commit()
++
++        reopen = await client.post(
++            f"/api/v1/learning/help-requests/{rid}/reopen", headers=_bearer(token)
++        )
++        assert reopen.status_code == 200, reopen.text
++        review = await client.post(
++            f"/api/v1/learning/help-requests/{rid}/request-individual-review",
++            headers=_bearer(token),
++        )
++        assert review.status_code == 200, review.text
++
++        state = await _state(client, token, tid, sid)
++        assert state["can_reflect"] is False, "разбор без ссылки — ответа ещё нет"
++
++        # Текст преподавателя по разбору («пришлю ссылку») — ещё не ответ.
++        await _teacher_reply(client, rid, teacher_id, "Скоро пришлю ссылку")
++        assert (await _state(client, token, tid, sid))["can_reflect"] is False
++
++        await db.execute(
++            text("UPDATE help_requests SET webinar_link = :l WHERE id = :r"),
++            {"l": _WEBINAR, "r": rid},
++        )
++        await db.commit()
++        state = await _state(client, token, tid, sid)
++        assert state["can_reflect"] is True, "после ссылки на разбор — новая рефлексия"
++
++        second = await _reflect(client, token, rid, {"unclear": "всё ещё", "understood": False})
++        assert second.status_code == 200, second.text
++        assert second.json()["escalated"] is True
++        row = await _reflection_row(db, rid)
++        assert row["main"] is None and row["unclear"] == "всё ещё", "поля — от последнего круга"
++        assert row["escalated_at"] is not None
++    finally:
++        await _cleanup_all(
++            db, user_ids=[sid, m_id, teacher_id], task_ids=[tid], request_ids=[rid]
++        )
++
++
++async def test_service_key_acts_for_request_owner(db, client, reflection_on):
++    """Сервисный ключ (бот) действует от имени владельца заявки."""
++    sid, _ = await _user(db, "t999 ученик")
++    teacher_id, _ = await _user(db, "t999 учитель")
++    tid = await _task(db)
++    rid = await _help_request(db, student_id=sid, task_id=tid, assigned_teacher_id=teacher_id)
++    await db.commit()
++    try:
++        await _teacher_reply(client, rid, teacher_id)
++        resp = await client.post(
++            f"/api/v1/learning/help-requests/{rid}/reflection",
++            json={"unclear": "про знак"}, headers=_headers(),
++        )
++        assert resp.status_code == 200, resp.text
++        card = await client.get(
++            f"/api/v1/teacher/help-requests/{rid}?teacher_id={teacher_id}", headers=_headers()
++        )
++        assert card.json()["reflection_unclear"] == "про знак"
++    finally:
++        await _cleanup_all(db, user_ids=[sid, teacher_id], task_ids=[tid], request_ids=[rid])

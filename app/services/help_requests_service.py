@@ -17,6 +17,7 @@ from typing import Any, Optional, Tuple
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import Settings
 from app.models.help_requests import HelpRequests
 from app.models.help_request_replies import HelpRequestReplies
 from app.services.help_reply_kind import guess_reply_kind
@@ -49,6 +50,10 @@ from app.services.teacher_queue_service import (
 )
 
 logger = logging.getLogger(__name__)
+
+# tsk-999: рубильник рефлексии читается из этого экземпляра — тесты подменяют
+# его атрибут, как `help_attempt_gate.settings` у гейта П4.
+_settings = Settings()
 
 
 def _normalize_due_at(due_at: Any) -> Optional[datetime]:
@@ -908,7 +913,10 @@ async def get_help_request_detail(
                    -- tsk-993: «где застрял» — колонка 37, в конец (см. off-by-one ниже).
                    hr.stuck_note,
                    -- tsk-995: колонка 38 — тот же предикат, что у списка и ячейки.
-                   {help_overdue_sql('hr')} AS is_overdue
+                   {help_overdue_sql('hr')} AS is_overdue,
+                   -- tsk-999: колонки 39-42 — рефлексия ученика после ответа.
+                   hr.reflection_main, hr.reflection_unclear,
+                   hr.reflection_understood, hr.reflection_at
             FROM help_requests hr
             LEFT JOIN users u ON u.id = hr.student_id
             LEFT JOIN tasks t ON t.id = hr.task_id
@@ -1024,6 +1032,12 @@ async def get_help_request_detail(
         "attachment_size_bytes": row[36] if len(row) > 36 else None,
         # tsk-993: «где застрял» — колонка 37.
         "stuck_note": row[37] if len(row) > 37 else None,
+        # tsk-999: рефлексия ученика — колонки 39-42. Показывается
+        # независимо от рубильника: записанное учеником преподавателю видно.
+        "reflection_main": row[39] if len(row) > 39 else None,
+        "reflection_unclear": row[40] if len(row) > 40 else None,
+        "reflection_understood": row[41] if len(row) > 41 else None,
+        "reflection_at": row[42] if len(row) > 42 else None,
         # tsk-303: колонки 24-27 — состояние лестницы помощи. Индексы считаются
         # от порядка SELECT выше; в этом же маппинге когда-то уже был сдвиг на
         # +1 (см. комментарий про off-by-one), поэтому новые поля добавлены в
@@ -1528,20 +1542,24 @@ async def get_student_help_request(
     """
     row = (
         await db.execute(
-            text("""
+            text(f"""
                 SELECT hr.id, hr.status, hr.request_type, hr.message,
                        hr.created_at, hr.updated_at, hr.closed_at,
                        hr.webinar_link, hr.review_understood,
                        hr.escalated_to_methodist_at, hr.resolution_comment,
                        (SELECT COUNT(*) FROM help_request_reopens rr
-                         WHERE rr.request_id = hr.id) AS reopen_count
+                         WHERE rr.request_id = hr.id) AS reopen_count,
+                       -- tsk-999: колонки 12-14 — рефлексия (в конец, не в середину).
+                       hr.reflection_at,
+                       {_REFLECTION_ANSWER_SQL} AS has_answer,
+                       {_REFLECTED_THIS_ROUND_SQL} AS reflected
                 FROM help_requests hr
                 WHERE hr.student_id = :student_id
                   AND hr.task_id = :task_id
                   AND hr.request_type = ANY(:types)
                 ORDER BY hr.created_at DESC, hr.id DESC
                 LIMIT 1
-            """),
+            """),  # nosec B608 — _REFLECTION_ANSWER_SQL литерал модуля
             {"student_id": student_id, "task_id": task_id, "types": list(_LADDER_TYPES)},
         )
     ).fetchone()
@@ -1604,6 +1622,15 @@ async def get_student_help_request(
             and request_type == "individual_review"
             and webinar_link is not None
             and review_understood is None
+        ),
+        # tsk-999: рефлексия после ответа (текст или ссылка на разбор). При
+        # выключенном HELP_REFLECTION_ENABLED — всегда false.
+        "reflection_at": row[12],
+        "can_reflect": _can_reflect(
+            request_type=request_type,
+            reflected=bool(row[14]),
+            review_understood=review_understood,
+            has_answer=bool(row[13]),
         ),
     }
 
@@ -1869,6 +1896,185 @@ async def rate_individual_review(
         {"request_id": request_id, "understood": False, "status": "open", "escalated": True},
         None,
     )
+
+
+# ----- tsk-999 (П10): рефлексия ученика после ответа на заявку -----
+#
+# Решение оператора Р2: спрашивать после ЛЮБОГО ответа на заявку лестницы —
+# текстового ответа преподавателя и ссылки на индивидуальный разбор. Ответ
+# ученика необязателен («Пропустить» тоже фиксирует `reflection_at`) и
+# принимается один раз.
+#
+# «Ответ преподавателя» — строка `help_request_replies`: её пишет только
+# `reply_help_request` (ответ преподавателя из кабинета или бота), служебных
+# строк в этой таблице нет — все `reply_kind` (text/voice/video/telemost) это
+# способы ответа человека. Не считаются: `resolution_comment` при закрытии
+# (его пишут и системные закрытия) и сообщение со ссылкой на разбор — ссылка
+# учитывается отдельно, по `webinar_link`.
+
+#: Потолок длины каждого поля рефлексии (ограничение постановки).
+REFLECTION_MAX_LEN = 500
+
+
+def help_reflection_enabled() -> bool:
+    """Включена ли рефлексия (рубильник `HELP_REFLECTION_ENABLED`)."""
+    return bool(getattr(_settings, "help_reflection_enabled", False))
+
+
+# Рефлексия — одна на «круг» заявки. Круг начинается с создания или с
+# возврата («Всё равно не понял»): возврат — уже отзыв ученика на прежний
+# ответ, и следующий ответ (новый текст или разбор, к которому ведёт возврат)
+# заслуживает своего вопроса — решение Р2 «после любого ответа». Поля при
+# новом круге перезаписываются: преподаватель видит последний отзыв, а
+# неудачу прежнего ответа фиксирует сама строка возврата.
+_LAST_REOPEN_SQL = """COALESCE(
+    (SELECT max(rr.reopened_at) FROM help_request_reopens rr
+      WHERE rr.request_id = hr.id),
+    '-infinity'::timestamptz)"""
+
+# Есть ли в текущем круге ответ, о котором можно спросить:
+# - у индивидуального разбора — ссылка на разбор (текст «пришлю ссылку» ещё
+#   не ответ: «понятно?» по разбору — развилка к методисту, её нельзя
+#   потратить до встречи);
+# - у обычной заявки — ответ преподавателя (`help_request_replies`) после
+#   последнего возврата.
+_REFLECTION_ANSWER_SQL = f"""(
+    CASE WHEN hr.request_type = 'individual_review'
+         THEN hr.webinar_link IS NOT NULL
+         ELSE EXISTS (
+             SELECT 1 FROM help_request_replies hrr
+              WHERE hrr.request_id = hr.id
+                AND hrr.created_at > {_LAST_REOPEN_SQL})
+    END
+)"""
+
+# Ученик уже ответил (или пропустил) в текущем круге.
+_REFLECTED_THIS_ROUND_SQL = f"""(
+    hr.reflection_at IS NOT NULL AND hr.reflection_at > {_LAST_REOPEN_SQL}
+)"""
+
+
+def _can_reflect(
+    *,
+    request_type: Optional[str],
+    reflected: bool,
+    review_understood: Optional[bool],
+    has_answer: bool,
+) -> bool:
+    """Правило `can_reflect` — одно на состояние лестницы и на эндпоинт."""
+    if not help_reflection_enabled():
+        return False
+    if request_type not in _LADDER_TYPES or reflected:
+        return False
+    if request_type == "individual_review" and review_understood is not None:
+        # Разбор уже оценён прежними кнопками — второй раз не спрашиваем.
+        return False
+    return has_answer
+
+
+def _clean_reflection_text(value: Optional[str]) -> Optional[str]:
+    """Текст без крайних пробелов, пустой → None, не длиннее потолка."""
+    if value is None:
+        return None
+    cleaned = value.strip()
+    return cleaned[:REFLECTION_MAX_LEN] or None
+
+
+async def reflect_on_help_request(
+    db: AsyncSession,
+    request_id: int,
+    student_id: int,
+    *,
+    main: Optional[str],
+    unclear: Optional[str],
+    understood: Optional[bool],
+) -> Tuple[Optional[dict[str, Any]], Optional[str]]:
+    """Сохранить рефлексию ученика после ответа на заявку (один раз за круг).
+
+    Круг — от создания заявки или от её последнего возврата; повтор в том же
+    круге — `already_reflected`.
+
+    Для `individual_review` с ответом «понятно?» маршрут решает существующая
+    `rate_individual_review` (закрытие или эскалация методисту) — её же зовёт
+    прежний `rate-review`, второй копии этой развилки нет. Маршрут
+    применяется, когда разбор можно оценить (заявка открыта, ссылка есть —
+    у разбора без ссылки рефлексии нет вовсе); иначе рефлексия сохраняется.
+    Для остальных типов «не понял» автоматически никуда не уводит (решение
+    постановки) — только сохраняется.
+
+    Возвращает (data, error). error: None | "not_found" | "forbidden" |
+    "disabled" | "wrong_type" | "already_reflected" | "already_rated" |
+    "no_answer".
+    """
+    if not help_reflection_enabled():
+        return (None, "disabled")
+    await _lock_request(db, request_id)
+    row = (
+        await db.execute(
+            text(f"""
+                SELECT hr.student_id, hr.status, hr.request_type, hr.webinar_link,
+                       hr.review_understood,
+                       {_REFLECTED_THIS_ROUND_SQL} AS reflected,
+                       {_REFLECTION_ANSWER_SQL} AS has_answer
+                FROM help_requests hr WHERE hr.id = :id
+            """),  # nosec B608 — _REFLECTION_ANSWER_SQL литерал модуля
+            {"id": request_id},
+        )
+    ).fetchone()
+    if row is None:
+        return (None, "not_found")
+    owner_id, status_val, request_type, webinar_link, rated, reflected, has_answer = row
+    if owner_id != student_id:
+        return (None, "forbidden")
+    if request_type not in _LADDER_TYPES:
+        return (None, "wrong_type")
+    if reflected:
+        return (None, "already_reflected")
+    if request_type == "individual_review" and rated is not None:
+        return (None, "already_rated")
+    if not has_answer:
+        return (None, "no_answer")
+
+    await db.execute(
+        text("""
+            UPDATE help_requests
+            SET reflection_main = :main, reflection_unclear = :unclear,
+                reflection_understood = :understood, reflection_at = now(),
+                updated_at = now()
+            WHERE id = :id
+        """),
+        {
+            "main": _clean_reflection_text(main),
+            "unclear": _clean_reflection_text(unclear),
+            "understood": understood,
+            "id": request_id,
+        },
+    )
+
+    result: dict[str, Any] = {
+        "request_id": request_id,
+        "understood": understood,
+        "status": status_val,
+        "escalated": False,
+    }
+    if (
+        request_type == "individual_review"
+        and understood is not None
+        and status_val == "open"
+        and webinar_link is not None
+    ):
+        rated_data, err = await rate_individual_review(db, request_id, student_id, understood)
+        if err is not None:
+            # Условия проверены под той же блокировкой — сюда не попадаем;
+            # но если правила оценки разойдутся с этими, не теряем рефлексию.
+            logger.warning(
+                "tsk-999: рефлексия по заявке %s сохранена, оценка разбора не принята: %s",
+                request_id, err,
+            )
+        elif rated_data is not None:
+            result["status"] = rated_data["status"]
+            result["escalated"] = rated_data["escalated"]
+    return (result, None)
 
 
 async def set_webinar_link(

@@ -36,6 +36,8 @@ from app.schemas.learning_api import (
     IndividualReviewResponse,
     RateReviewRequest,
     RateReviewResponse,
+    HelpReflectionRequest,
+    HelpReflectionResponse,
     HintEventRequest,
     HintEventResponse,
     HelpRequestAttachmentRead,
@@ -72,6 +74,7 @@ from app.services.help_requests_service import (
     get_or_create_material_help_request,
     get_student_help_request,
     reopen_help_request,
+    reflect_on_help_request,
     request_individual_review,
     rate_individual_review,
     get_help_request_attachment,
@@ -1047,6 +1050,23 @@ _LADDER_STATE_ERRORS: dict[str, str] = {
     "already_rated": "Разбор уже оценён.",
 }
 
+# tsk-999: ошибки рефлексии — 409 с машинным кодом в `code`, чтобы клиент
+# отличал «уже отвечал» от «рефлексия выключена» без разбора текста.
+_REFLECTION_ERRORS: dict[str, str] = {
+    "disabled": "Рефлексия после ответа сейчас выключена.",
+    "already_reflected": "Вы уже ответили на этот вопрос.",
+    "already_rated": "Разбор уже оценён.",
+    "no_answer": "Преподаватель ещё не ответил на заявку.",
+    "wrong_type": "Для заявки такого типа рефлексия не предусмотрена.",
+}
+_REFLECTION_CODES: dict[str, str] = {
+    "disabled": "reflection_disabled",
+    "already_reflected": "already_reflected",
+    "already_rated": "already_rated",
+    "no_answer": "no_teacher_answer",
+    "wrong_type": "wrong_type",
+}
+
 
 def _raise_ladder_error(err: str) -> None:
     """Единая раскладка ошибок шагов лестницы в HTTP-коды."""
@@ -1216,6 +1236,71 @@ async def rate_individual_review_endpoint(
         request_id, student_id, data.get("understood"), data.get("escalated"),
     )
     return RateReviewResponse(**data)
+
+
+@router.post(
+    "/help-requests/{request_id}/reflection",
+    response_model=HelpReflectionResponse,
+    summary="Рефлексия ученика после ответа на заявку (tsk-999, П10)",
+    responses={
+        404: {"description": "Заявка не найдена"},
+        # Гейта оплаты нет — как у rate-review: это отзыв на уже оказанную помощь.
+        403: {"description": "Чужая заявка"},
+        409: {
+            "description": (
+                "code: reflection_disabled — рубильник HELP_REFLECTION_ENABLED выключен; "
+                "already_reflected — рефлексия уже была; already_rated — разбор уже оценён; "
+                "no_teacher_answer — ответа преподавателя ещё нет; wrong_type — заявка "
+                "не из лестницы помощи"
+            )
+        },
+        422: {"description": "Поле длиннее 500 символов"},
+    },
+)
+async def reflect_on_help_request_endpoint(
+    request_id: int = Path(..., description="ID заявки"),
+    body: HelpReflectionRequest = Body(...),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_bare_db),
+) -> HelpReflectionResponse:
+    """«Что было главным / что осталось непонятным / понятно?» — раз за круг.
+
+    Доступна, когда в текущем круге заявки (с создания или последнего
+    возврата) есть ответ: у обычной заявки — ответ преподавателя, у
+    индивидуального разбора — ссылка на разбор.
+    Все поля необязательны; пустое тело — «Пропустить». Для индивидуального
+    разбора ответ «понятно?» идёт по той же развилке, что `rate-review`
+    (закрытие или эскалация методисту); прежний `rate-review` работает как был.
+
+    При выключенном рубильнике — 409 `reflection_disabled`, а не 404: заявка
+    существует, недоступно только действие, и клиент обрабатывает это так же,
+    как остальные 409 лестницы — перечитывает состояние (там `can_reflect`
+    false). 404 смешал бы выключенную функцию с «заявки нет».
+    """
+    student_id = await _resolve_ladder_student(db, request_id, current_user)
+    data, err = await reflect_on_help_request(
+        db,
+        request_id,
+        student_id,
+        main=body.main,
+        unclear=body.unclear,
+        understood=body.understood,
+    )
+    if err in ("not_found", "forbidden"):
+        _raise_ladder_error(err)
+    if err is not None or data is None:
+        code = err or "unknown"
+        raise DomainError(
+            detail=_REFLECTION_ERRORS.get(code, "Действие недоступно в текущем состоянии заявки."),
+            status_code=status.HTTP_409_CONFLICT,
+            payload={"code": _REFLECTION_CODES.get(code, code)},
+        )
+    await db.commit()
+    logger.info(
+        "tsk-999 reflection: request_id=%s student_id=%s understood=%s escalated=%s",
+        request_id, student_id, data.get("understood"), data.get("escalated"),
+    )
+    return HelpReflectionResponse(**data)
 
 
 # ----- POST /learning/tasks/{task_id}/hint-events (этап 3.6) -----

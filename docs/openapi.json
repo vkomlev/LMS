@@ -21007,6 +21007,119 @@
         }
       }
     },
+    "/api/v1/learning/help-requests/{request_id}/reflection": {
+      "post": {
+        "tags": [
+          "learning"
+        ],
+        "summary": "Рефлексия ученика после ответа на заявку (tsk-999, П10)",
+        "description": "«Что было главным / что осталось непонятным / понятно?» — раз за круг.\n\nДоступна, когда в текущем круге заявки (с создания или последнего\nвозврата) есть ответ: у обычной заявки — ответ преподавателя, у\nиндивидуального разбора — ссылка на разбор.\nВсе поля необязательны; пустое тело — «Пропустить». Для индивидуального\nразбора ответ «понятно?» идёт по той же развилке, что `rate-review`\n(закрытие или эскалация методисту); прежний `rate-review` работает как был.\n\nПри выключенном рубильнике — 409 `reflection_disabled`, а не 404: заявка\nсуществует, недоступно только действие, и клиент обрабатывает это так же,\nкак остальные 409 лестницы — перечитывает состояние (там `can_reflect`\nfalse). 404 смешал бы выключенную функцию с «заявки нет».",
+        "operationId": "reflect_on_help_request_endpoint_api_v1_learning_help_requests__request_id__reflection_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "description": "ID заявки",
+              "title": "Request Id"
+            },
+            "description": "ID заявки"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HelpReflectionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HelpReflectionResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Заявка не найдена"
+          },
+          "403": {
+            "description": "Чужая заявка"
+          },
+          "409": {
+            "description": "code: reflection_disabled — рубильник HELP_REFLECTION_ENABLED выключен; already_reflected — рефлексия уже была; already_rated — разбор уже оценён; no_teacher_answer — ответа преподавателя ещё нет; wrong_type — заявка не из лестницы помощи"
+          },
+          "422": {
+            "description": "Поле длиннее 500 символов"
+          }
+        }
+      }
+    },
     "/api/v1/learning/tasks/{task_id}/hint-events": {
       "post": {
         "tags": [
@@ -61488,6 +61601,88 @@
         "type": "object",
         "title": "HTTPValidationError"
       },
+      "HelpReflectionRequest": {
+        "properties": {
+          "main": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Main",
+            "description": "Что было главным в ответе"
+          },
+          "unclear": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unclear",
+            "description": "Что осталось непонятным"
+          },
+          "understood": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Understood",
+            "description": "«Понятно?» Для индивидуального разбора — та же развилка, что у rate-review: true закрывает заявку, false уводит её методисту. Для остальных заявок — только сохраняется."
+          }
+        },
+        "type": "object",
+        "title": "HelpReflectionRequest",
+        "description": "Тело POST /learning/help-requests/{id}/reflection (tsk-999).\n\nВсе поля необязательны: пустое тело — «Пропустить» (рефлексия отмечается\nкак пройденная, больше не спрашивается)."
+      },
+      "HelpReflectionResponse": {
+        "properties": {
+          "request_id": {
+            "type": "integer",
+            "title": "Request Id"
+          },
+          "understood": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Understood"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "description": "Статус заявки после рефлексии: open | closed"
+          },
+          "escalated": {
+            "type": "boolean",
+            "title": "Escalated",
+            "description": "true — заявка ушла методисту (только разбор)",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "request_id",
+          "status"
+        ],
+        "title": "HelpReflectionResponse",
+        "description": "Ответ на рефлексию."
+      },
       "HelpRequestAttachmentRead": {
         "properties": {
           "attachment_id": {
@@ -62313,6 +62508,55 @@
             ],
             "title": "Escalated To Methodist At",
             "description": "Когда заявка эскалирована методисту (уровень 3)"
+          },
+          "reflection_main": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reflection Main",
+            "description": "Рефлексия ученика: что было главным (≤ 500 символов)"
+          },
+          "reflection_unclear": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reflection Unclear",
+            "description": "Рефлексия ученика: что осталось непонятным (≤ 500 символов)"
+          },
+          "reflection_understood": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reflection Understood",
+            "description": "Рефлексия ученика: «понятно?»; null — не ответил"
+          },
+          "reflection_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reflection At",
+            "description": "Когда ученик оставил рефлексию или нажал «Пропустить»; null — ещё не отвечал. Все три поля пустые при заполненном reflection_at — ученик пропустил."
           }
         },
         "type": "object",
@@ -78116,6 +78360,25 @@
             "type": "boolean",
             "title": "Can Rate Review",
             "default": false
+          },
+          "can_reflect": {
+            "type": "boolean",
+            "title": "Can Reflect",
+            "description": "Можно оставить рефлексию (POST /learning/help-requests/{id}/reflection). Всегда false при выключенном HELP_REFLECTION_ENABLED.",
+            "default": false
+          },
+          "reflection_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reflection At",
+            "description": "Когда ученик оставил рефлексию или пропустил её; null — не отвечал"
           }
         },
         "type": "object",
