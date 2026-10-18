@@ -24,6 +24,8 @@ from app.schemas.learning_api import (
     NextItemResponse,
     MaterialCompleteRequest,
     MaterialCompleteResponse,
+    MaterialCheckpointAnswerRequest,
+    MaterialCheckpointAnswerResponse,
     LearningSkipRequest,
     LearningSkipResponse,
     StartOrGetAttemptRequest,
@@ -90,6 +92,8 @@ from app.services import entitlements_service
 from app.services import help_attempt_gate
 from app.services import retrieval_service
 from app.services import final_check_service
+from app.services import material_checkpoints_service
+from app.services.materials_acl_service import assert_material_access
 from app.services import course_activity_service
 from app.services.attempts_service import AttemptsService
 from app.services.tasks_service import TasksService
@@ -339,6 +343,90 @@ async def material_complete(
         material_id=material_id,
         status="completed",
         completed_at=completed_at,
+    )
+
+
+# ----- POST /learning/materials/{material_id}/checkpoint/{checkpoint_id} (tsk-998) -----
+
+_CHECKPOINT_ERRORS: dict[str, tuple[int, str, str]] = {
+    "disabled": (
+        status.HTTP_409_CONFLICT, "checkpoints_disabled",
+        "Контрольные точки в материалах сейчас выключены.",
+    ),
+    "not_found": (
+        status.HTTP_404_NOT_FOUND, "checkpoint_not_found",
+        "В материале нет такой контрольной точки.",
+    ),
+}
+
+
+@router.post(
+    "/materials/{material_id}/checkpoint/{checkpoint_id}",
+    response_model=MaterialCheckpointAnswerResponse,
+    summary="Ответ на контрольную точку в материале (tsk-998, П9)",
+    responses={
+        403: {
+            "description": (
+                "Сервисный ключ (нужен ученик), ученик не зачислен в курс материала "
+                "или просрочена оплата (" + _PAYMENT_403_DESCRIPTION + ")"
+            )
+        },
+        404: {
+            "description": (
+                "Материал не найден или выключен; code: checkpoint_not_found — "
+                "в материале нет такой точки"
+            )
+        },
+        409: {"description": "code: checkpoints_disabled — рубильник MATERIAL_CHECKPOINTS_ENABLED выключен"},
+        422: {"description": "Пустой ответ или длиннее 200 символов"},
+    },
+)
+async def answer_material_checkpoint(
+    material_id: int = Path(..., description="ID материала"),
+    checkpoint_id: str = Path(..., max_length=64, description="id контрольной точки"),
+    body: MaterialCheckpointAnswerRequest = Body(...),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_bare_db),
+) -> MaterialCheckpointAnswerResponse:
+    """Проверить ответ ученика на вопрос «проверь себя» внутри материала.
+
+    Гейты — те же, что у выдачи материала ученику (`GET /materials/{id}`):
+    зачисление в дерево курса и оплата (`assert_material_access`), выключенный
+    материал — 404. Ответ пишет событие `material_checkpoint` в `learning_events`
+    (`first_attempt` — первая ли это попытка) и возвращает вердикт с пояснением.
+    Повторный ответ разрешён. Прохождение материала, статусы курса, попытки и
+    `task_results` от ответа НЕ меняются: это диагностика, а не гейт.
+    """
+    if current_user.is_service:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Ответ на контрольную точку даёт ученик")
+    material = await materials_service.get_by_id(db, material_id)
+    if material is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Материал не найден")
+    privileged = await assert_material_access(
+        db, current_user=current_user, material_course_id=material.course_id,
+    )
+    if not privileged and not material.is_active:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Материал не найден")
+    data, err = await material_checkpoints_service.answer_checkpoint(
+        db,
+        student_id=current_user.id,
+        material_id=material_id,
+        content=material.content,
+        checkpoint_id=checkpoint_id,
+        answer=body.answer,
+    )
+    if err is not None or data is None:
+        code_status, code, detail = _CHECKPOINT_ERRORS.get(
+            err or "", (status.HTTP_409_CONFLICT, err or "unknown", "Действие недоступно.")
+        )
+        raise DomainError(detail=detail, status_code=code_status, payload={"code": code})
+    await db.commit()
+    logger.info(
+        "tsk-998 checkpoint: student_id=%s material_id=%s checkpoint_id=%s correct=%s first=%s",
+        current_user.id, material_id, checkpoint_id, data["correct"], data["first_attempt"],
+    )
+    return MaterialCheckpointAnswerResponse(
+        material_id=material_id, checkpoint_id=checkpoint_id, **data,
     )
 
 

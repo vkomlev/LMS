@@ -707,6 +707,7 @@ Stateless-проверка одной задачи без сохранения �
 |-------|------|----------|
 | GET | `/learning/next-item?student_id=` | Следующий шаг: material \| task \| none \| blocked_dependency \| blocked_limit. |
 | POST | `/learning/materials/{material_id}/complete` | Отметить материал пройденным (body: `student_id`). |
+| POST | `/learning/materials/{material_id}/checkpoint/{checkpoint_id}` | **tsk-998 (П9):** ответ ученика на контрольную точку «Проверь себя» внутри материала. Body `{answer: str}` (1–200 символов, иначе 422): для `kind=single` — id варианта, для `short` — текст (сверка без регистра, «ё»=«е», лишние пробелы и конечная точка не важны). Ответ `{material_id, checkpoint_id, correct, explanation\|null, first_attempt}` — правильный ответ не возвращается. Только ученик по своей сессии (сервисный ключ — 403). Гейты как у `GET /materials/{id}`: зачисление в дерево курса, оплата (403 `payment_overdue`), выключенный материал — 404. 409 `payload.code=checkpoints_disabled` — рубильник `MATERIAL_CHECKPOINTS_ENABLED` выключен (по умолчанию); 404 `payload.code=checkpoint_not_found`. Повтор разрешён; каждое обращение пишет `learning_events` `material_checkpoint` с `payload {material_id, checkpoint_id, correct, answer, first_attempt}`. Прохождение материала, статусы курса, попытки и `task_results` не меняются. |
 | POST | `/learning/tasks/{task_id}/start-or-get-attempt` | Начать или получить текущую попытку по задаче. Гарантия: в ответе `GET /attempts/{id}` поле `attempt.meta.task_ids` (int[]) содержит как минимум этот `task_id`; при пустом/битом `meta` backend восстанавливает его при вызове. |
 | GET | `/learning/tasks/{task_id}/state?student_id=` | Состояние задания: OPEN \| IN_PROGRESS \| PASSED \| FAILED \| BLOCKED_LIMIT. |
 | POST | `/learning/tasks/{task_id}/request-help` | Запрос помощи (body: `student_id`, `message`). |
@@ -891,6 +892,7 @@ API учебных материалов курса: CRUD, список по ку
 
 - **GET** `/materials/search` — поиск материалов по title и external_uid (параметр q обязателен; course_id опционально — по всем курсам или по одному)
 - **GET** `/courses/{course_id}/materials` — список материалов курса (параметр q — поиск по title/external_uid в рамках курса; фильтры: is_active, type; сортировка: order_position, title, created_at; пагинация skip/limit)
+- **tsk-998:** `content` текстового материала может нести `checkpoints: [{id, after_block, question, kind: single|short, options?, answer, explanation?}]` (формат и метка `<div data-cb-checkpoint="id"></div>` — `app/schemas/material_content.py`, `MaterialCheckpoint`). Ученику (`GET /materials/{id}` и список выше) точки отдаются без `answer`/`explanation`, а при выключенном `MATERIAL_CHECKPOINTS_ENABLED` — без `checkpoints`; сервисный ключ и teacher/methodist/admin получают content целиком.
 - **POST** `/materials` — создание материала
 - **GET** `/materials/{id}` — получение материала
 - **PATCH** `/materials/{id}` — обновление материала (при изменении content передаётся полный объект content для типа)

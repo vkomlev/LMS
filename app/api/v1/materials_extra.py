@@ -27,6 +27,7 @@ from app.services.materials_acl_service import (
     assert_material_file_access,
 )
 from app.services.materials_service import MANUALLY_EDITABLE_FIELDS
+from app.services.material_checkpoints_service import student_content
 from app.schemas.material_content import validate_material_content
 from app.services.courses_acl_service import assert_course_access
 from app.schemas.materials import (
@@ -137,6 +138,25 @@ async def materials_bulk_upsert(
     return result
 
 
+def _read_for(material: Any, *, privileged: bool) -> MaterialRead:
+    """MaterialRead для вызывающего: ученику — без ответов контрольных точек (tsk-998).
+
+    Привилегированный (сервисный ключ, teacher / methodist / admin) получает
+    `content` целиком: на нём стоят правка методистом (PATCH отправляет content
+    назад — без точек он бы их стёр) и переиздание из ContentBackbone. Ученику —
+    проекция `student_content`: у точек нет `answer`/`explanation`, а при
+    выключенном `MATERIAL_CHECKPOINTS_ENABLED` нет самих точек. ORM-объект не
+    трогаем: правка его `content` ушла бы в базу при ближайшем flush.
+    """
+    read = MaterialRead.model_validate(material)
+    if privileged:
+        return read
+    projected = student_content(read.content)
+    if projected is read.content:
+        return read
+    return read.model_copy(update={"content": projected})
+
+
 def _active_filter_for(
     requested: Optional[bool],
     *,
@@ -224,7 +244,7 @@ async def list_course_materials(
     )
     logger.info("list_course_materials course_id=%s total=%s skip=%s limit=%s", course_id, total, skip, limit)
     return MaterialsListResponse(
-        items=[MaterialRead.model_validate(m) for m in items],
+        items=[_read_for(m, privileged=bool(privileged)) for m in items],
         total=total,
         skip=skip,
         limit=limit,
@@ -687,7 +707,8 @@ async def get_material_by_id(
             current_user.id, material_id,
         )
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Материал не найден")
-    return material
+    # tsk-998: ученику — без правильных ответов контрольных точек.
+    return _read_for(material, privileged=privileged)
 
 
 # ---------------------------------------------------------------------------

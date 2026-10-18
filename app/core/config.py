@@ -650,6 +650,12 @@ class Settings:
         self.help_reflection_enabled: bool = os.getenv(
             "HELP_REFLECTION_ENABLED", "false"
         ).lower() in ("true", "1", "yes")
+        # tsk-998 (П9): контрольные точки «проверь себя» внутри материала.
+        # Выключено по умолчанию: при false ученику материал отдаётся без
+        # `checkpoints`, а ответ на точку — 409 `checkpoints_disabled`.
+        self.material_checkpoints_enabled: bool = os.getenv(
+            "MATERIAL_CHECKPOINTS_ENABLED", "false"
+        ).lower() in ("true", "1", "yes")
         # tsk-1309: первая блокировка по лимиту попыток снимается автоматически
         # (+базовый лимит), человеку уходит только вторая. Выключатель — откат
         # без выката: false возвращает прежнее «каждая блокировка → заявка».

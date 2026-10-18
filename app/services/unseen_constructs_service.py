@@ -357,6 +357,10 @@ def codes_in_material(content_json: Optional[str], *, wanted: Optional[Set[str]]
     except (json.JSONDecodeError, TypeError, ValueError):
         # Материал с нечитаемым содержимым — не повод уронить оценку целиком.
         return set()
+    if isinstance(data, dict) and "checkpoints" in data:
+        # tsk-998: контрольные точки — вопрос ученику, а не объяснение теории;
+        # их скрытые ответы и пояснения учеником не прочитаны.
+        data = {k: v for k, v in data.items() if k != "checkpoints"}
     chunks: List[str] = []
     collect_text(data, chunks)
     body = "\n".join(chunks)

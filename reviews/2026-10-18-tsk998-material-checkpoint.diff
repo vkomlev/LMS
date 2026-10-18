@@ -1,0 +1,1329 @@
+diff --git a/.env.example b/.env.example
+index 2b0a905..c27765e 100644
+--- a/.env.example
++++ b/.env.example
+@@ -54,6 +54,11 @@ DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/Learn
+ # как раньше, эндпоинт рефлексии отвечает 409 reflection_disabled.
+ HELP_REFLECTION_ENABLED=false
+ 
++# tsk-998 (П9): контрольные точки «проверь себя» внутри материала. Выключено:
++# ученику материал отдаётся без checkpoints (выглядит как раньше), ответ на
++# точку — 409 checkpoints_disabled.
++MATERIAL_CHECKPOINTS_ENABLED=false
++
+ # Список service API-ключей через запятую (без пробелов).
+ # Используют: TG_LMS bots (poller, teacher dialog), ContentBackbone CLI,
+ # SPW E2E live spec (Y-4 S5 через /auth/test/issue-session).
+diff --git a/app/api/v1/learning.py b/app/api/v1/learning.py
+index f6a2d66..757c849 100644
+--- a/app/api/v1/learning.py
++++ b/app/api/v1/learning.py
+@@ -24,6 +24,8 @@ from app.schemas.learning_api import (
+     NextItemResponse,
+     MaterialCompleteRequest,
+     MaterialCompleteResponse,
++    MaterialCheckpointAnswerRequest,
++    MaterialCheckpointAnswerResponse,
+     LearningSkipRequest,
+     LearningSkipResponse,
+     StartOrGetAttemptRequest,
+@@ -90,6 +92,8 @@ from app.services import entitlements_service
+ from app.services import help_attempt_gate
+ from app.services import retrieval_service
+ from app.services import final_check_service
++from app.services import material_checkpoints_service
++from app.services.materials_acl_service import assert_material_access
+ from app.services import course_activity_service
+ from app.services.attempts_service import AttemptsService
+ from app.services.tasks_service import TasksService
+@@ -342,6 +346,90 @@ async def material_complete(
+     )
+ 
+ 
++# ----- POST /learning/materials/{material_id}/checkpoint/{checkpoint_id} (tsk-998) -----
++
++_CHECKPOINT_ERRORS: dict[str, tuple[int, str, str]] = {
++    "disabled": (
++        status.HTTP_409_CONFLICT, "checkpoints_disabled",
++        "Контрольные точки в материалах сейчас выключены.",
++    ),
++    "not_found": (
++        status.HTTP_404_NOT_FOUND, "checkpoint_not_found",
++        "В материале нет такой контрольной точки.",
++    ),
++}
++
++
++@router.post(
++    "/materials/{material_id}/checkpoint/{checkpoint_id}",
++    response_model=MaterialCheckpointAnswerResponse,
++    summary="Ответ на контрольную точку в материале (tsk-998, П9)",
++    responses={
++        403: {
++            "description": (
++                "Сервисный ключ (нужен ученик), ученик не зачислен в курс материала "
++                "или просрочена оплата (" + _PAYMENT_403_DESCRIPTION + ")"
++            )
++        },
++        404: {
++            "description": (
++                "Материал не найден или выключен; code: checkpoint_not_found — "
++                "в материале нет такой точки"
++            )
++        },
++        409: {"description": "code: checkpoints_disabled — рубильник MATERIAL_CHECKPOINTS_ENABLED выключен"},
++        422: {"description": "Пустой ответ или длиннее 200 символов"},
++    },
++)
++async def answer_material_checkpoint(
++    material_id: int = Path(..., description="ID материала"),
++    checkpoint_id: str = Path(..., max_length=64, description="id контрольной точки"),
++    body: MaterialCheckpointAnswerRequest = Body(...),
++    current_user: CurrentUser = Depends(get_current_user),
++    db: AsyncSession = Depends(get_bare_db),
++) -> MaterialCheckpointAnswerResponse:
++    """Проверить ответ ученика на вопрос «проверь себя» внутри материала.
++
++    Гейты — те же, что у выдачи материала ученику (`GET /materials/{id}`):
++    зачисление в дерево курса и оплата (`assert_material_access`), выключенный
++    материал — 404. Ответ пишет событие `material_checkpoint` в `learning_events`
++    (`first_attempt` — первая ли это попытка) и возвращает вердикт с пояснением.
++    Повторный ответ разрешён. Прохождение материала, статусы курса, попытки и
++    `task_results` от ответа НЕ меняются: это диагностика, а не гейт.
++    """
++    if current_user.is_service:
++        raise HTTPException(status.HTTP_403_FORBIDDEN, "Ответ на контрольную точку даёт ученик")
++    material = await materials_service.get_by_id(db, material_id)
++    if material is None:
++        raise HTTPException(status.HTTP_404_NOT_FOUND, "Материал не найден")
++    privileged = await assert_material_access(
++        db, current_user=current_user, material_course_id=material.course_id,
++    )
++    if not privileged and not material.is_active:
++        raise HTTPException(status.HTTP_404_NOT_FOUND, "Материал не найден")
++    data, err = await material_checkpoints_service.answer_checkpoint(
++        db,
++        student_id=current_user.id,
++        material_id=material_id,
++        content=material.content,
++        checkpoint_id=checkpoint_id,
++        answer=body.answer,
++    )
++    if err is not None or data is None:
++        code_status, code, detail = _CHECKPOINT_ERRORS.get(
++            err or "", (status.HTTP_409_CONFLICT, err or "unknown", "Действие недоступно.")
++        )
++        raise DomainError(detail=detail, status_code=code_status, payload={"code": code})
++    await db.commit()
++    logger.info(
++        "tsk-998 checkpoint: student_id=%s material_id=%s checkpoint_id=%s correct=%s first=%s",
++        current_user.id, material_id, checkpoint_id, data["correct"], data["first_attempt"],
++    )
++    return MaterialCheckpointAnswerResponse(
++        material_id=material_id, checkpoint_id=checkpoint_id, **data,
++    )
++
++
+ # ----- POST /learning/materials/{material_id}/skip -----
+ 
+ @router.post(
+diff --git a/app/api/v1/materials_extra.py b/app/api/v1/materials_extra.py
+index c563796..bc49108 100644
+--- a/app/api/v1/materials_extra.py
++++ b/app/api/v1/materials_extra.py
+@@ -27,6 +27,7 @@ from app.services.materials_acl_service import (
+     assert_material_file_access,
+ )
+ from app.services.materials_service import MANUALLY_EDITABLE_FIELDS
++from app.services.material_checkpoints_service import student_content
+ from app.schemas.material_content import validate_material_content
+ from app.services.courses_acl_service import assert_course_access
+ from app.schemas.materials import (
+@@ -137,6 +138,25 @@ async def materials_bulk_upsert(
+     return result
+ 
+ 
++def _read_for(material: Any, *, privileged: bool) -> MaterialRead:
++    """MaterialRead для вызывающего: ученику — без ответов контрольных точек (tsk-998).
++
++    Привилегированный (сервисный ключ, teacher / methodist / admin) получает
++    `content` целиком: на нём стоят правка методистом (PATCH отправляет content
++    назад — без точек он бы их стёр) и переиздание из ContentBackbone. Ученику —
++    проекция `student_content`: у точек нет `answer`/`explanation`, а при
++    выключенном `MATERIAL_CHECKPOINTS_ENABLED` нет самих точек. ORM-объект не
++    трогаем: правка его `content` ушла бы в базу при ближайшем flush.
++    """
++    read = MaterialRead.model_validate(material)
++    if privileged:
++        return read
++    projected = student_content(read.content)
++    if projected is read.content:
++        return read
++    return read.model_copy(update={"content": projected})
++
++
+ def _active_filter_for(
+     requested: Optional[bool],
+     *,
+@@ -224,7 +244,7 @@ async def list_course_materials(
+     )
+     logger.info("list_course_materials course_id=%s total=%s skip=%s limit=%s", course_id, total, skip, limit)
+     return MaterialsListResponse(
+-        items=[MaterialRead.model_validate(m) for m in items],
++        items=[_read_for(m, privileged=bool(privileged)) for m in items],
+         total=total,
+         skip=skip,
+         limit=limit,
+@@ -687,7 +707,8 @@ async def get_material_by_id(
+             current_user.id, material_id,
+         )
+         raise HTTPException(status.HTTP_404_NOT_FOUND, "Материал не найден")
+-    return material
++    # tsk-998: ученику — без правильных ответов контрольных точек.
++    return _read_for(material, privileged=privileged)
+ 
+ 
+ # ---------------------------------------------------------------------------
+diff --git a/app/core/config.py b/app/core/config.py
+index 0d41d4e..f268a13 100644
+--- a/app/core/config.py
++++ b/app/core/config.py
+@@ -650,6 +650,12 @@ class Settings:
+         self.help_reflection_enabled: bool = os.getenv(
+             "HELP_REFLECTION_ENABLED", "false"
+         ).lower() in ("true", "1", "yes")
++        # tsk-998 (П9): контрольные точки «проверь себя» внутри материала.
++        # Выключено по умолчанию: при false ученику материал отдаётся без
++        # `checkpoints`, а ответ на точку — 409 `checkpoints_disabled`.
++        self.material_checkpoints_enabled: bool = os.getenv(
++            "MATERIAL_CHECKPOINTS_ENABLED", "false"
++        ).lower() in ("true", "1", "yes")
+         # tsk-1309: первая блокировка по лимиту попыток снимается автоматически
+         # (+базовый лимит), человеку уходит только вторая. Выключатель — откат
+         # без выката: false возвращает прежнее «каждая блокировка → заявка».
+diff --git a/app/schemas/learning_api.py b/app/schemas/learning_api.py
+index 040cf85..5e03576 100644
+--- a/app/schemas/learning_api.py
++++ b/app/schemas/learning_api.py
+@@ -9,7 +9,7 @@ from __future__ import annotations
+ from datetime import datetime
+ from typing import Any, Literal, Optional
+ 
+-from pydantic import BaseModel, Field, model_validator
++from pydantic import BaseModel, Field, field_validator, model_validator
+ 
+ 
+ # ----- Next item -----
+@@ -402,6 +402,38 @@ class HelpReflectionResponse(BaseModel):
+     escalated: bool = Field(False, description="true — заявка ушла методисту (только разбор)")
+ 
+ 
++# ----- Контрольная точка в материале (tsk-998, П9) -----
++
++
++class MaterialCheckpointAnswerRequest(BaseModel):
++    """Тело POST /learning/materials/{id}/checkpoint/{cp_id}."""
++    answer: str = Field(
++        ...,
++        min_length=1,
++        max_length=200,
++        description="Ответ ученика: id варианта для single, текст для short",
++    )
++
++    @field_validator("answer")
++    @classmethod
++    def _not_blank(cls, v: str) -> str:
++        """Ответ из одних пробелов — не ответ: иначе он «съел» бы первую попытку."""
++        if not v.strip():
++            raise ValueError("Пустой ответ")
++        return v
++
++
++class MaterialCheckpointAnswerResponse(BaseModel):
++    """Вердикт по контрольной точке. Правильный ответ не возвращается."""
++    material_id: int
++    checkpoint_id: str
++    correct: bool
++    explanation: Optional[str] = Field(None, description="Пояснение автора, если есть")
++    first_attempt: bool = Field(
++        ..., description="true — первый ответ ученика на эту точку (сигнал усвоения)"
++    )
++
++
+ # ----- Hint events (этап 3.6) -----
+ 
+ HintType = Literal["text", "video"]
+diff --git a/app/schemas/material_content.py b/app/schemas/material_content.py
+index 75a99c9..1e941d4 100644
+--- a/app/schemas/material_content.py
++++ b/app/schemas/material_content.py
+@@ -7,7 +7,7 @@ from __future__ import annotations
+ 
+ from typing import Any, List, Literal, Optional, Union
+ 
+-from pydantic import BaseModel, Field
++from pydantic import BaseModel, Field, field_validator, model_validator
+ 
+ 
+ MaterialType = Literal[
+@@ -92,6 +92,63 @@ class DocumentSourceItem(BaseModel):
+ # ---------- Контент по типам материала ----------
+ 
+ 
++class MaterialCheckpointOption(BaseModel):
++    """Вариант ответа контрольной точки `kind="single"` (tsk-998)."""
++    id: str = Field(..., min_length=1, max_length=16, description="Стабильный id варианта (a, b, c…)")
++    text: str = Field(..., max_length=2000, description="Текст варианта (HTML)")
++
++
++#: Ключ контрольной точки: тот же алфавит, что у публикатора CB (`checkpoint_id`).
++CHECKPOINT_ID_PATTERN = r"^[A-Za-z0-9_-]{1,64}$"
++
++
++class MaterialCheckpoint(BaseModel):
++    """Контрольная точка внутри текстового материала (tsk-998, П9).
++
++    Пишет публикатор ContentBackbone. `answer`/`explanation` хранятся в
++    материале, но ученику не отдаются (`material_checkpoints_service.student_content`).
++    Место в HTML — пустая метка `<div data-cb-checkpoint="{id}"></div>`;
++    `after_block` — сколько блоков теории перед точкой (справочно).
++    """
++    id: str = Field(..., pattern=CHECKPOINT_ID_PATTERN, description="Стабильный id точки")
++    after_block: int = Field(default=0, ge=0, description="Сколько блоков теории перед точкой")
++    question: str = Field(..., min_length=1, max_length=20000, description="Вопрос (HTML)")
++    kind: Literal["single", "short"] = Field(..., description="single — выбор одного; short — короткий ответ")
++    options: Optional[List[MaterialCheckpointOption]] = Field(
++        default=None, max_length=16, description="Варианты (только для single)",
++    )
++    answer: Union[str, List[str]] = Field(
++        ...,
++        description="single — id верного варианта; short — список допустимых ответов",
++    )
++    explanation: Optional[str] = Field(default=None, max_length=5000, description="Пояснение после ответа")
++
++    @field_validator("answer")
++    @classmethod
++    def _answer_not_blank(cls, v: Union[str, List[str]]) -> Union[str, List[str]]:
++        values = [v] if isinstance(v, str) else v
++        if not values or any(not str(x).strip() or len(str(x)) > 200 for x in values):
++            raise ValueError("answer: нужен непустой ответ (каждый не длиннее 200 символов)")
++        return v
++
++    @model_validator(mode="after")
++    def _kind_shape(self) -> "MaterialCheckpoint":
++        if self.kind == "single":
++            if not self.options or len(self.options) < 2:
++                raise ValueError(f"точка {self.id}: для single нужно не меньше двух вариантов")
++            ids = [o.id for o in self.options]
++            if len(set(ids)) != len(ids):
++                raise ValueError(f"точка {self.id}: id вариантов повторяются")
++            if not isinstance(self.answer, str) or self.answer not in ids:
++                raise ValueError(f"точка {self.id}: answer должен быть id одного из вариантов")
++        else:
++            if self.options:
++                raise ValueError(f"точка {self.id}: у short вариантов быть не должно")
++            if isinstance(self.answer, str):
++                self.answer = [self.answer]
++        return self
++
++
+ class TextContent(BaseModel):
+     """Контент для type='text'."""
+     text: str = Field(..., description="Основной текст материала")
+@@ -99,6 +156,24 @@ class TextContent(BaseModel):
+         default="plain",
+         description="Формат текста",
+     )
++    # tsk-998: контрольные точки «проверь себя» (необязательно). Без них ключа
++    # в content нет вовсе — материалы без П9 хранятся как раньше.
++    checkpoints: Optional[List[MaterialCheckpoint]] = Field(
++        default=None,
++        max_length=20,
++        description="Контрольные точки внутри материала (tsk-998); ученику — без answer/explanation",
++    )
++
++    @field_validator("checkpoints")
++    @classmethod
++    def _unique_checkpoint_ids(
++        cls, v: Optional[List[MaterialCheckpoint]]
++    ) -> Optional[List[MaterialCheckpoint]]:
++        if v:
++            ids = [cp.id for cp in v]
++            if len(set(ids)) != len(ids):
++                raise ValueError("id контрольных точек в материале повторяются")
++        return v
+ 
+ 
+ class VideoContent(BaseModel):
+@@ -190,7 +265,18 @@ def validate_material_content(material_type: str, content: Any) -> dict[str, Any
+     if not isinstance(content, dict):
+         raise ValueError(f"content должен быть объектом (dict), получено: {type(content)}")
+     obj = model.model_validate(content)
+-    return obj.model_dump()
++    dumped = obj.model_dump()
++    # tsk-998: пустой `checkpoints` не записывается — content материалов без
++    # контрольных точек остаётся байт в байт прежним (и bulk-upsert не считает
++    # их изменёнными).
++    if material_type == "text" and dumped.get("checkpoints") is None:
++        dumped.pop("checkpoints", None)
++    if material_type == "text" and dumped.get("checkpoints"):
++        for cp in dumped["checkpoints"]:
++            for key in ("options", "explanation"):
++                if cp.get(key) is None:
++                    cp.pop(key, None)
++    return dumped
+ 
+ 
+ def get_content_model_for_type(material_type: str) -> type[BaseModel] | None:
+diff --git a/app/services/material_checkpoints_service.py b/app/services/material_checkpoints_service.py
+new file mode 100644
+index 0000000..ee17e12
+--- /dev/null
++++ b/app/services/material_checkpoints_service.py
+@@ -0,0 +1,186 @@
++"""Контрольные точки внутри материала (tsk-998, П9).
++
++Материал может нести 1–2 вопроса «проверь себя» прямо в тексте теории:
++`materials.content.checkpoints = [{id, after_block, question, kind, options?,
++answer, explanation?}]` (формат публикатора ContentBackbone; место вопроса в
++HTML — пустая метка `<div data-cb-checkpoint="id">`).
++
++Что здесь:
++- проекция `content` для ученика: без `answer`/`explanation`, а при выключенном
++  рубильнике `MATERIAL_CHECKPOINTS_ENABLED` — без `checkpoints` вообще;
++- проверка ответа ученика и запись события `material_checkpoint` в
++  `learning_events`.
++
++Чего здесь НЕТ и быть не должно (решение постановки): ответ на точку не влияет
++на прохождение материала (`student_material_progress`), статусы курса,
++`task_results` и аналитику пробелов — это диагностика, а не оценка и не гейт.
++Повторный ответ разрешён; перебор вариантов возможен, поэтому сигналом усвоения
++служит ПЕРВАЯ попытка — она помечена в событии `first_attempt: true`.
++"""
++from __future__ import annotations
++
++import json
++import logging
++import re
++from typing import Any, Optional
++
++from sqlalchemy import text
++from sqlalchemy.ext.asyncio import AsyncSession
++
++from app.core.config import Settings
++
++logger = logging.getLogger(__name__)
++
++_settings = Settings()
++
++#: Тип события в `learning_events`.
++EVENT_TYPE = "material_checkpoint"
++#: Потолок длины ответа ученика (ограничение постановки).
++ANSWER_MAX_LEN = 200
++#: Поля точки, которые ученику не отдаются.
++_HIDDEN_FROM_STUDENT = ("answer", "explanation")
++
++_SPACES_RE = re.compile(r"\s+")
++
++
++def checkpoints_enabled() -> bool:
++    """Включены ли контрольные точки (рубильник `MATERIAL_CHECKPOINTS_ENABLED`)."""
++    return bool(getattr(_settings, "material_checkpoints_enabled", False))
++
++
++def student_content(content: Any, *, enabled: Optional[bool] = None) -> Any:
++    """Проекция `materials.content` для ученика.
++
++    Без точек — тот же объект без изменений (материалы без П9 отдаются как
++    раньше). С точками — копия: при включённом рубильнике у каждой точки сняты
++    `answer` и `explanation`, при выключенном ключа `checkpoints` нет вовсе.
++    Исходный словарь не меняется: он может быть атрибутом ORM-объекта, и правка
++    на месте ушла бы в базу при ближайшем flush.
++    """
++    if not isinstance(content, dict) or "checkpoints" not in content:
++        return content
++    on = checkpoints_enabled() if enabled is None else enabled
++    projected = {k: v for k, v in content.items() if k != "checkpoints"}
++    if not on:
++        return projected
++    raw = content.get("checkpoints")
++    projected["checkpoints"] = [
++        {k: v for k, v in cp.items() if k not in _HIDDEN_FROM_STUDENT}
++        for cp in (raw if isinstance(raw, list) else [])
++        if isinstance(cp, dict)
++    ]
++    return projected
++
++
++def find_checkpoint(content: Any, checkpoint_id: str) -> Optional[dict[str, Any]]:
++    """Точка материала по id (из полного `content`, с ответом) или None."""
++    if not isinstance(content, dict):
++        return None
++    for cp in content.get("checkpoints") or []:
++        if isinstance(cp, dict) and str(cp.get("id")) == checkpoint_id:
++            return cp
++    return None
++
++
++def normalize_short_answer(value: str) -> str:
++    """Короткий ответ к виду для сверки: без регистра, «ё» как «е», пробелы схлопнуты.
++
++    Конечная точка снимается («Список.» = «список»). Числа с запятой и точкой
++    не сводятся: «0,5» и «0.5» — автор задаёт оба варианта, если нужны оба.
++    """
++    v = _SPACES_RE.sub(" ", str(value)).strip().casefold().replace("ё", "е")
++    return v[:-1].rstrip() if v.endswith(".") else v
++
++
++def is_correct(checkpoint: dict[str, Any], answer: str) -> bool:
++    """Верен ли ответ ученика.
++
++    `single` — id выбранного варианта совпадает с `answer` точки. `short` —
++    нормализованный ответ совпадает с одним из допустимых.
++    """
++    kind = checkpoint.get("kind")
++    expected = checkpoint.get("answer")
++    if kind == "single":
++        return isinstance(expected, str) and answer.strip() == expected
++    if kind == "short":
++        accepted = expected if isinstance(expected, list) else [expected]
++        given = normalize_short_answer(answer)
++        return any(
++            isinstance(a, str) and given == normalize_short_answer(a) for a in accepted
++        )
++    return False
++
++
++async def answer_checkpoint(
++    db: AsyncSession,
++    *,
++    student_id: int,
++    material_id: int,
++    content: Any,
++    checkpoint_id: str,
++    answer: str,
++) -> tuple[Optional[dict[str, Any]], Optional[str]]:
++    """Проверить ответ на точку и записать событие `material_checkpoint`.
++
++    Гейты доступа к материалу (зачисление, оплата, активность) — забота
++    вызывающего, здесь только рубильник и сама точка.
++
++    Returns:
++        (`{correct, explanation, first_attempt}`, None) или (None, код ошибки):
++        `disabled` — рубильник выключен; `not_found` — у материала нет такой точки.
++    """
++    if not checkpoints_enabled():
++        return None, "disabled"
++    checkpoint = find_checkpoint(content, checkpoint_id)
++    if checkpoint is None:
++        return None, "not_found"
++
++    answer = answer[:ANSWER_MAX_LEN]
++    correct = is_correct(checkpoint, answer)
++
++    # Первая попытка — сигнал усвоения (повтор после ответа «неверно» — уже
++    # перебор). Блокировка по паре (ученик, материал) не даёт двум параллельным
++    # первым ответам оба записаться как первые.
++    await db.execute(
++        text("SELECT pg_advisory_xact_lock(hashtextextended(:k, 0))"),
++        {"k": f"{EVENT_TYPE}:{student_id}:{material_id}"},
++    )
++    seen = (
++        await db.execute(
++            text(
++                """
++                SELECT 1 FROM learning_events
++                WHERE student_id = :sid
++                  AND event_type = :et
++                  AND payload->>'material_id' = :mid
++                  AND payload->>'checkpoint_id' = :cid
++                LIMIT 1
++                """
++            ),
++            {"sid": student_id, "et": EVENT_TYPE, "mid": str(material_id), "cid": checkpoint_id},
++        )
++    ).first()
++    first_attempt = seen is None
++
++    payload = {
++        "material_id": material_id,
++        "checkpoint_id": checkpoint_id,
++        "correct": correct,
++        "answer": answer,
++        "first_attempt": first_attempt,
++    }
++    await db.execute(
++        text(
++            """
++            INSERT INTO learning_events (student_id, event_type, payload, created_at)
++            VALUES (:sid, :et, CAST(:payload AS jsonb), now())
++            """
++        ),
++        {"sid": student_id, "et": EVENT_TYPE, "payload": json.dumps(payload, ensure_ascii=False)},
++    )
++    explanation = checkpoint.get("explanation")
++    return {
++        "correct": correct,
++        "explanation": explanation if isinstance(explanation, str) and explanation.strip() else None,
++        "first_attempt": first_attempt,
++    }, None
+diff --git a/app/services/unseen_constructs_service.py b/app/services/unseen_constructs_service.py
+index d05a708..4c3b482 100644
+--- a/app/services/unseen_constructs_service.py
++++ b/app/services/unseen_constructs_service.py
+@@ -357,6 +357,10 @@ def codes_in_material(content_json: Optional[str], *, wanted: Optional[Set[str]]
+     except (json.JSONDecodeError, TypeError, ValueError):
+         # Материал с нечитаемым содержимым — не повод уронить оценку целиком.
+         return set()
++    if isinstance(data, dict) and "checkpoints" in data:
++        # tsk-998: контрольные точки — вопрос ученику, а не объяснение теории;
++        # их скрытые ответы и пояснения учеником не прочитаны.
++        data = {k: v for k, v in data.items() if k != "checkpoints"}
+     chunks: List[str] = []
+     collect_text(data, chunks)
+     body = "\n".join(chunks)
+diff --git a/docs/api-reference.md b/docs/api-reference.md
+index aaf68f1..f72e6c1 100644
+--- a/docs/api-reference.md
++++ b/docs/api-reference.md
+@@ -707,6 +707,7 @@ Stateless-проверка одной задачи без сохранения 
+ |-------|------|----------|
+ | GET | `/learning/next-item?student_id=` | Следующий шаг: material \| task \| none \| blocked_dependency \| blocked_limit. |
+ | POST | `/learning/materials/{material_id}/complete` | Отметить материал пройденным (body: `student_id`). |
++| POST | `/learning/materials/{material_id}/checkpoint/{checkpoint_id}` | **tsk-998 (П9):** ответ ученика на контрольную точку «Проверь себя» внутри материала. Body `{answer: str}` (1–200 символов, иначе 422): для `kind=single` — id варианта, для `short` — текст (сверка без регистра, «ё»=«е», лишние пробелы и конечная точка не важны). Ответ `{material_id, checkpoint_id, correct, explanation\|null, first_attempt}` — правильный ответ не возвращается. Только ученик по своей сессии (сервисный ключ — 403). Гейты как у `GET /materials/{id}`: зачисление в дерево курса, оплата (403 `payment_overdue`), выключенный материал — 404. 409 `payload.code=checkpoints_disabled` — рубильник `MATERIAL_CHECKPOINTS_ENABLED` выключен (по умолчанию); 404 `payload.code=checkpoint_not_found`. Повтор разрешён; каждое обращение пишет `learning_events` `material_checkpoint` с `payload {material_id, checkpoint_id, correct, answer, first_attempt}`. Прохождение материала, статусы курса, попытки и `task_results` не меняются. |
+ | POST | `/learning/tasks/{task_id}/start-or-get-attempt` | Начать или получить текущую попытку по задаче. Гарантия: в ответе `GET /attempts/{id}` поле `attempt.meta.task_ids` (int[]) содержит как минимум этот `task_id`; при пустом/битом `meta` backend восстанавливает его при вызове. |
+ | GET | `/learning/tasks/{task_id}/state?student_id=` | Состояние задания: OPEN \| IN_PROGRESS \| PASSED \| FAILED \| BLOCKED_LIMIT. |
+ | POST | `/learning/tasks/{task_id}/request-help` | Запрос помощи (body: `student_id`, `message`). |
+@@ -891,6 +892,7 @@ API учебных материалов курса: CRUD, список по ку
+ 
+ - **GET** `/materials/search` — поиск материалов по title и external_uid (параметр q обязателен; course_id опционально — по всем курсам или по одному)
+ - **GET** `/courses/{course_id}/materials` — список материалов курса (параметр q — поиск по title/external_uid в рамках курса; фильтры: is_active, type; сортировка: order_position, title, created_at; пагинация skip/limit)
++- **tsk-998:** `content` текстового материала может нести `checkpoints: [{id, after_block, question, kind: single|short, options?, answer, explanation?}]` (формат и метка `<div data-cb-checkpoint="id"></div>` — `app/schemas/material_content.py`, `MaterialCheckpoint`). Ученику (`GET /materials/{id}` и список выше) точки отдаются без `answer`/`explanation`, а при выключенном `MATERIAL_CHECKPOINTS_ENABLED` — без `checkpoints`; сервисный ключ и teacher/methodist/admin получают content целиком.
+ - **POST** `/materials` — создание материала
+ - **GET** `/materials/{id}` — получение материала
+ - **PATCH** `/materials/{id}` — обновление материала (при изменении content передаётся полный объект content для типа)
+diff --git a/docs/openapi.json b/docs/openapi.json
+index 76b3de5..1c39b4a 100644
+--- a/docs/openapi.json
++++ b/docs/openapi.json
+@@ -19513,6 +19513,131 @@
+         }
+       }
+     },
++    "/api/v1/learning/materials/{material_id}/checkpoint/{checkpoint_id}": {
++      "post": {
++        "tags": [
++          "learning"
++        ],
++        "summary": "Ответ на контрольную точку в материале (tsk-998, П9)",
++        "description": "Проверить ответ ученика на вопрос «проверь себя» внутри материала.\n\nГейты — те же, что у выдачи материала ученику (`GET /materials/{id}`):\nзачисление в дерево курса и оплата (`assert_material_access`), выключенный\nматериал — 404. Ответ пишет событие `material_checkpoint` в `learning_events`\n(`first_attempt` — первая ли это попытка) и возвращает вердикт с пояснением.\nПовторный ответ разрешён. Прохождение материала, статусы курса, попытки и\n`task_results` от ответа НЕ меняются: это диагностика, а не гейт.",
++        "operationId": "answer_material_checkpoint_api_v1_learning_materials__material_id__checkpoint__checkpoint_id__post",
++        "security": [
++          {
++            "APIKeyHeader": []
++          },
++          {
++            "APIKeyQuery": []
++          }
++        ],
++        "parameters": [
++          {
++            "name": "material_id",
++            "in": "path",
++            "required": true,
++            "schema": {
++              "type": "integer",
++              "description": "ID материала",
++              "title": "Material Id"
++            },
++            "description": "ID материала"
++          },
++          {
++            "name": "checkpoint_id",
++            "in": "path",
++            "required": true,
++            "schema": {
++              "type": "string",
++              "maxLength": 64,
++              "description": "id контрольной точки",
++              "title": "Checkpoint Id"
++            },
++            "description": "id контрольной точки"
++          },
++          {
++            "name": "token",
++            "in": "query",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Token"
++            }
++          },
++          {
++            "name": "authorization",
++            "in": "header",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Authorization"
++            }
++          },
++          {
++            "name": "session",
++            "in": "cookie",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Session"
++            }
++          }
++        ],
++        "requestBody": {
++          "required": true,
++          "content": {
++            "application/json": {
++              "schema": {
++                "$ref": "#/components/schemas/MaterialCheckpointAnswerRequest"
++              }
++            }
++          }
++        },
++        "responses": {
++          "200": {
++            "description": "Successful Response",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/MaterialCheckpointAnswerResponse"
++                }
++              }
++            }
++          },
++          "403": {
++            "description": "Сервисный ключ (нужен ученик), ученик не зачислен в курс материала или просрочена оплата (tsk-010: занятия закрыты за просроченную оплату — `payload.code = payment_overdue` (сумма, месяцы, `payments_url`); tsk-673: тариф закрывает работу в курсе — `payload.code = course_work_closed` (так устроен «Выпускник»: материалы читаются, ответы не принимаются); либо чужой `student_id`.)"
++          },
++          "404": {
++            "description": "Материал не найден или выключен; code: checkpoint_not_found — в материале нет такой точки"
++          },
++          "409": {
++            "description": "code: checkpoints_disabled — рубильник MATERIAL_CHECKPOINTS_ENABLED выключен"
++          },
++          "422": {
++            "description": "Пустой ответ или длиннее 200 символов"
++          }
++        }
++      }
++    },
+     "/api/v1/learning/materials/{material_id}/skip": {
+       "post": {
+         "tags": [
+@@ -66788,6 +66913,65 @@
+         "title": "MaterialBulkUpdateResponse",
+         "description": "Ответ на массовое обновление активности."
+       },
++      "MaterialCheckpointAnswerRequest": {
++        "properties": {
++          "answer": {
++            "type": "string",
++            "maxLength": 200,
++            "minLength": 1,
++            "title": "Answer",
++            "description": "Ответ ученика: id варианта для single, текст для short"
++          }
++        },
++        "type": "object",
++        "required": [
++          "answer"
++        ],
++        "title": "MaterialCheckpointAnswerRequest",
++        "description": "Тело POST /learning/materials/{id}/checkpoint/{cp_id}."
++      },
++      "MaterialCheckpointAnswerResponse": {
++        "properties": {
++          "material_id": {
++            "type": "integer",
++            "title": "Material Id"
++          },
++          "checkpoint_id": {
++            "type": "string",
++            "title": "Checkpoint Id"
++          },
++          "correct": {
++            "type": "boolean",
++            "title": "Correct"
++          },
++          "explanation": {
++            "anyOf": [
++              {
++                "type": "string"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Explanation",
++            "description": "Пояснение автора, если есть"
++          },
++          "first_attempt": {
++            "type": "boolean",
++            "title": "First Attempt",
++            "description": "true — первый ответ ученика на эту точку (сигнал усвоения)"
++          }
++        },
++        "type": "object",
++        "required": [
++          "material_id",
++          "checkpoint_id",
++          "correct",
++          "first_attempt"
++        ],
++        "title": "MaterialCheckpointAnswerResponse",
++        "description": "Вердикт по контрольной точке. Правильный ответ не возвращается."
++      },
+       "MaterialCompleteRequest": {
+         "properties": {
+           "student_id": {
+diff --git a/reviews/2026-10-18-tsk998-material-checkpoint-review.md b/reviews/2026-10-18-tsk998-material-checkpoint-review.md
+new file mode 100644
+index 0000000..99dde4b
+--- /dev/null
++++ b/reviews/2026-10-18-tsk998-material-checkpoint-review.md
+@@ -0,0 +1,74 @@
++# Ревью: П9 — контрольная точка «Проверь себя» внутри материала (tsk-998)
++
++Дата: 2026-10-18. Постановка: `docs/briefs/2026-10-16-p6-p9-p10-review-sla-checkpoint-reflection.md`
++(LMS), Фаза C, шаги 12–15, критерии 1–3, 6–8. Ревью независимое, по диффам трёх репозиториев
++(ContentBackbone, LMS, SPW) до коммита. Диффы: `2026-10-18-tsk998-material-checkpoint.diff`
++(LMS), в CB — `reviews/2026-10-18-tsk998-lms-checkpoint.diff`, в SPW —
++`reviews/2026-10-18-tsk998-material-checkpoint.diff`.
++
++## Итог
++
++**ПРИНЯТО.** BLOCKER и MAJOR нет. Замечания MINOR и NIT исправлены до коммита (кроме пп. 7–8:
++это пункты для отчёта и проверки у оператора).
++
++## Утечка ответа ученику — проверено по всем путям
++
++Содержимое материала (`materials.content`) доходит до непривилегированного вызывающего только в
++двух местах; оба закрыты проекцией `material_checkpoints_service.student_content` через
++`materials_extra._read_for`:
++
++| Путь | Кто | Что отдаётся |
++|---|---|---|
++| `GET /materials/{id}` (в т.ч. вход по `?token=`) | ученик | точки без `answer`/`explanation`; рубильник выкл. — без `checkpoints` |
++| `GET /courses/{id}/materials` | ученик | то же |
++| `/materials/search`, PATCH, manual-edit | methodist/admin | целиком (нужно для правки) |
++| generic CRUD, move/copy, bulk-upsert | сервисный ключ | целиком (переиздание CB) |
++| next-item, `me/*`, лента, embed_api, learning_guest, гостевые воронки, public_course_offer, сообщения, отчёты преподавателя | — | `content` материала не отдают вовсе |
++
++Внутренний читатель `unseen_constructs_service` (не HTTP) — после правки не учитывает `checkpoints`.
++
++## Замечания и что сделано
++
++| # | Уровень | Суть | Решение |
++|---|---|---|---|
++| 1 | MINOR | Превращение уже опубликованного `control_question` в точку сдвигает `#qN` следующих заданий | Задокументировано в `docs/wp-content-contract.md` (CB): точку добавлять только новым блоком; добавление новой точки номера не сдвигает (тест) |
++| 2 | MINOR | CB не проверял лимиты LMS (ответ ≤ 200, вопрос, пояснение, ≤ 16 вариантов, ≤ 20 точек) — LMS отклонил бы весь материал раздела | Лимиты проверяются при разборе документа и сборке плана; тесты |
++| 3 | MINOR | Точки без теории терялись с предупреждением в журнале | Теперь `ValueError`; тест |
++| 4 | MINOR | Не описан авторский формат и не обновлён `contracts/spw.md` | `docs/wp-content-contract.md` и `docs/cross-project/contracts/spw.md` обновлены |
++| 5 | NIT | `unseen_constructs_service` засчитывал скрытый ответ точки как «встречалось в теории» | `checkpoints` пропускаются; тест |
++| 6 | NIT | Ответ из одних пробелов проходил и «съедал» первую попытку | Валидатор → 422; тест |
++| 7 | NIT | `topic_mastery_service` событие точки не читает; в предпросмотре staff точек не видно | В отчёт: что подключать и как проверять живьём (только под учеником) |
++| 8 | NIT | TG_LMS получает точки с ответами по сервисному ключу | Оговорено в cross-project CHANGELOG и контракте; проверить в TG_LMS, что бот `content.checkpoints` не показывает |
++
++## Проверено ревьюером и в порядке
++
++- CB без признака — байт в байт как раньше: фильтр блоков, разбивка по H2, рендер, `content = {text, format}`.
++- Номера материалов `#mN` и заданий `#qN` от добавления точки не сдвигаются (точка до первого H2 без
++  вводной теории уходит в первый раздел, а не заводит новый материал).
++- id точки: явный `checkpoint_id` или `cp-` + хеш вида вопроса и формулировки — не зависит от порядка блоков.
++- WP-рендер с признаком совпадает с рендером без него; ответ и пояснение на витрину не выходят; линтер
++  `content_lint` новых замечаний не даёт.
++- LMS: материал без точек валидируется в прежний вид; bulk-upsert точки не срезает; кривой формат — 422.
++- Гейты ответа — те же, что у чтения материала (`assert_material_access`: зачисление, оплата), выключенный
++  материал — 404, сервисный ключ — 403, рубильник выкл. — 409 `checkpoints_disabled`, ничего не пишется.
++- `first_attempt`: блокировка по паре (ученик, материал) + проверка + вставка в одной транзакции — гонки нет.
++- `/complete`, `student_material_progress`, попытки, `task_results`, аналитика пробелов не затрагиваются (тест).
++- Новый `event_type` не ломает чужие запросы к `learning_events` (в payload нет `task_id`; CHECK нет).
++- XSS: вопрос, варианты и пояснение рисуются через `SanitizedHTML` (DOMPurify); ответ ученика ≤ 200
++  (схема + срез + `maxLength`) и обратно не рисуется.
++- SPW: HTML режется по метке до санитайзера; без точек/без флага/с ответами в точках — как раньше.
++
++## Соответствие критериям
++
++| Пункт | Оценка |
++|---|---|
++| Шаг 12 — публикатор CB | ПРИНЯТО |
++| Шаг 13 — выдача без ответа, эндпоинт, событие | ПРИНЯТО |
++| Шаг 14 — сигнал усвоения | ПРИНЯТО (событие пишется; `topic_mastery` не подключён — что подключать, в отчёте) |
++| Шаг 15 — SPW | ПРИНЯТО |
++| Критерий 1 — pytest | ПРИНЯТО (сверка полного прогона с main — в итоговом отчёте) |
++| Критерий 2 — миграции | не относится: в фазе C миграций нет, голова `tsk999_help_reflection` |
++| Критерий 3 — рубильник выкл. = main | ПРИНЯТО (тесты tsk-303 и движка не правились) |
++| Критерий 6 — П9 | ПРИНЯТО |
++| Критерий 7 — tsc, eslint, vitest | ПРИНЯТО |
++| Критерий 8 — отчёт | в итоговом отчёте сессии |
+diff --git a/reviews/2026-10-18-tsk998-material-checkpoint.md b/reviews/2026-10-18-tsk998-material-checkpoint.md
+new file mode 100644
+index 0000000..f58be95
+--- /dev/null
++++ b/reviews/2026-10-18-tsk998-material-checkpoint.md
+@@ -0,0 +1,21 @@
++# tsk-998 (П9): контрольная точка «Проверь себя» внутри материала — LMS
++
++Постановка: `docs/briefs/2026-10-16-p6-p9-p10-review-sla-checkpoint-reflection.md`, фаза C, шаги 13–14.
++Ревью: `reviews/2026-10-18-tsk998-material-checkpoint-review.md` — ПРИНЯТО. Диф — `2026-10-18-tsk998-material-checkpoint.diff`.
++
++## Что сделано
++
++- `app/schemas/material_content.py`: `MaterialCheckpoint`, `TextContent.checkpoints` (без точек ключа нет — content прежний).
++- `app/services/material_checkpoints_service.py`: проекция для ученика (без `answer`/`explanation`; рубильник
++  выкл. — без `checkpoints`), проверка ответа, событие `learning_events.material_checkpoint` с `first_attempt`.
++- `app/api/v1/materials_extra.py`: проекция в `GET /materials/{id}` и `GET /courses/{id}/materials` для непривилегированных.
++- `app/api/v1/learning.py`: `POST /learning/materials/{id}/checkpoint/{cp_id}`.
++- `MATERIAL_CHECKPOINTS_ENABLED` (по умолчанию false), `.env.example`, `docs/api-reference.md`, `docs/openapi.json`.
++- `unseen_constructs_service`: скрытые ответы точек не считаются теорией.
++- Миграций нет; голова Alembic `tsk999_help_reflection`.
++
++## Проверки
++
++- `tests/test_tsk998_material_checkpoints.py` — 30 passed.
++- Полный `pytest` в облаке (пустая база + справочники ролей/сложности): ветка — 4345 passed, 55 failed, 17 errors;
++  main — 4315 passed, те же 55 failed и 17 errors (сверка списков — расхождений нет).
+diff --git a/tests/test_tsk998_material_checkpoints.py b/tests/test_tsk998_material_checkpoints.py
+new file mode 100644
+index 0000000..e04f0eb
+--- /dev/null
++++ b/tests/test_tsk998_material_checkpoints.py
+@@ -0,0 +1,410 @@
++"""tsk-998 (П9): контрольная точка внутри материала.
++
++Проверяется:
++- формат `content.checkpoints` принимается и хранится (bulk-upsert его не срезает),
++  кривой — отклоняется; content без точек не меняется;
++- ученику материал отдаётся БЕЗ `answer`/`explanation` в обоих путях выдачи
++  содержимого (`GET /materials/{id}`, `GET /courses/{id}/materials`), а при
++  выключенном рубильнике — без `checkpoints` вообще; сервисный ключ видит всё;
++- `POST /learning/materials/{id}/checkpoint/{cp_id}`: вердикт, пояснение, событие
++  `material_checkpoint` с `first_attempt`, повтор разрешён, гейты (зачисление,
++  выключенный материал, оплата), рубильник, длина ответа;
++- ответ не трогает прохождение материала, попытки и `task_results`.
++"""
++from __future__ import annotations
++
++import json
++import uuid
++
++import pytest
++from sqlalchemy import text
++
++from app.core.config import Settings
++from app.schemas.material_content import validate_material_content
++from app.services import material_checkpoints_service, payment_access_service
++from app.utils.exceptions import DomainError
++from test_help_ladder_endpoints_tsk303 import _bearer, _headers, _user
++
++pytestmark = pytest.mark.asyncio
++
++CP_SINGLE = {
++    "id": "cp-index",
++    "after_block": 1,
++    "question": "<p>Какой индекс у первого элемента?</p>",
++    "kind": "single",
++    "options": [{"id": "a", "text": "1"}, {"id": "b", "text": "0"}],
++    "answer": "b",
++    "explanation": "Счёт индексов идёт с нуля.",
++}
++CP_SHORT = {
++    "id": "cp-len",
++    "after_block": 2,
++    "question": "Что вернёт len([1, 2])?",
++    "kind": "short",
++    "answer": ["2", "два"],
++}
++HTML = (
++    "<p>Индексы.</p>\n<div data-cb-checkpoint=\"cp-index\"></div>\n"
++    "<p>Длина.</p>\n<div data-cb-checkpoint=\"cp-len\"></div>"
++)
++
++
++@pytest.fixture
++def checkpoints_on(monkeypatch):
++    """Включить рубильник контрольных точек на время теста."""
++    monkeypatch.setattr(
++        material_checkpoints_service._settings, "material_checkpoints_enabled", True
++    )
++
++
++async def _course(db) -> int:
++    return (
++        await db.execute(
++            text(
++                "INSERT INTO courses (title, access_level) "
++                "VALUES (:t, 'self_guided') RETURNING id"
++            ),
++            {"t": f"t998 курс {uuid.uuid4().hex[:8]}"},
++        )
++    ).scalar_one()
++
++
++async def _material(db, course_id: int, *, content: dict | None = None, is_active: bool = True) -> int:
++    body = content if content is not None else {
++        "text": HTML, "format": "html", "checkpoints": [CP_SINGLE, CP_SHORT],
++    }
++    return (
++        await db.execute(
++            text(
++                "INSERT INTO materials (title, type, content, course_id, is_active, external_uid) "
++                "VALUES (:t, 'text', CAST(:c AS jsonb), :cid, :act, :e) RETURNING id"
++            ),
++            {
++                "t": "t998 материал",
++                "c": json.dumps(body, ensure_ascii=False),
++                "cid": course_id,
++                "act": is_active,
++                "e": f"t998:{uuid.uuid4().hex}#m1",
++            },
++        )
++    ).scalar_one()
++
++
++async def _enroll(db, user_id: int, course_id: int) -> None:
++    await db.execute(
++        text(
++            "INSERT INTO user_courses (user_id, course_id, is_active, order_number) "
++            "VALUES (:u, :c, true, 1) ON CONFLICT DO NOTHING"
++        ),
++        {"u": user_id, "c": course_id},
++    )
++
++
++async def _setup(db, *, enrolled: bool = True, is_active: bool = True, content: dict | None = None):
++    sid, token = await _user(db, "t998 ученик", with_session=True)
++    cid = await _course(db)
++    mid = await _material(db, cid, content=content, is_active=is_active)
++    if enrolled:
++        await _enroll(db, sid, cid)
++    await db.commit()
++    return sid, token, cid, mid
++
++
++async def _answer(client, token: str, mid: int, cp_id: str, answer: str):
++    return await client.post(
++        f"/api/v1/learning/materials/{mid}/checkpoint/{cp_id}",
++        json={"answer": answer},
++        headers=_bearer(token),
++    )
++
++
++async def _events(db, sid: int) -> list[dict]:
++    rows = (
++        await db.execute(
++            text(
++                "SELECT payload FROM learning_events "
++                "WHERE student_id = :s AND event_type = 'material_checkpoint' ORDER BY id"
++            ),
++            {"s": sid},
++        )
++    ).fetchall()
++    return [r[0] for r in rows]
++
++
++# ── формат content ────────────────────────────────────────────────────────────
++
++
++async def test_switch_is_off_by_default():
++    """Выкат кода не меняет поведение, пока оператор не включит."""
++    assert Settings().material_checkpoints_enabled is False
++
++
++async def test_content_without_checkpoints_unchanged():
++    """Материал без точек валидируется в прежний вид — ключа checkpoints нет."""
++    assert validate_material_content("text", {"text": "<p>x</p>", "format": "html"}) == {
++        "text": "<p>x</p>", "format": "html",
++    }
++
++
++async def test_content_with_checkpoints_kept():
++    out = validate_material_content(
++        "text", {"text": HTML, "format": "html", "checkpoints": [CP_SINGLE, CP_SHORT]}
++    )
++    assert out["checkpoints"][0] == CP_SINGLE
++    assert out["checkpoints"][1] == CP_SHORT
++
++
++@pytest.mark.parametrize(
++    "bad",
++    [
++        {**CP_SINGLE, "answer": "z"},
++        {**CP_SINGLE, "options": [{"id": "a", "text": "1"}]},
++        {**CP_SHORT, "answer": []},
++        {**CP_SHORT, "options": [{"id": "a", "text": "1"}, {"id": "b", "text": "2"}]},
++        {**CP_SHORT, "id": "с пробелом"},
++        {**CP_SHORT, "kind": "multi"},
++    ],
++)
++async def test_bad_checkpoint_rejected(bad):
++    with pytest.raises(ValueError):
++        validate_material_content("text", {"text": HTML, "format": "html", "checkpoints": [bad]})
++
++
++async def test_duplicate_checkpoint_ids_rejected():
++    with pytest.raises(ValueError):
++        validate_material_content(
++            "text", {"text": HTML, "format": "html", "checkpoints": [CP_SHORT, CP_SHORT]}
++        )
++
++
++async def test_bulk_upsert_keeps_checkpoints(db, client):
++    """Публикатор CB пишет через bulk-upsert — точки не должны срезаться схемой."""
++    cid = await _course(db)
++    await db.commit()
++    ext = f"t998:{uuid.uuid4().hex}#m1"
++    resp = await client.post(
++        "/api/v1/materials/bulk-upsert",
++        json={"items": [{
++            "course_id": cid, "external_uid": ext, "title": "t998 урок", "type": "text",
++            "content": {"text": HTML, "format": "html", "checkpoints": [CP_SINGLE, CP_SHORT]},
++        }]},
++        headers=_headers(),
++    )
++    assert resp.status_code == 200, resp.text
++    stored = (
++        await db.execute(text("SELECT content FROM materials WHERE external_uid = :e"), {"e": ext})
++    ).scalar_one()
++    assert stored["checkpoints"] == [CP_SINGLE, CP_SHORT]
++
++
++# ── выдача ученику без ответа ────────────────────────────────────────────────
++
++
++def _assert_student_view(content: dict) -> None:
++    assert content["text"] == HTML
++    cps = content["checkpoints"]
++    assert [c["id"] for c in cps] == ["cp-index", "cp-len"]
++    for cp in cps:
++        assert "answer" not in cp
++        assert "explanation" not in cp
++    assert cps[0]["options"] == CP_SINGLE["options"]
++    assert cps[0]["question"] == CP_SINGLE["question"]
++    assert cps[1]["kind"] == "short"
++
++
++async def test_student_get_material_hides_answers(db, client, checkpoints_on):
++    _, token, _, mid = await _setup(db)
++    resp = await client.get(f"/api/v1/materials/{mid}", headers=_bearer(token))
++    assert resp.status_code == 200, resp.text
++    _assert_student_view(resp.json()["content"])
++    assert "Счёт индексов" not in resp.text
++
++
++async def test_student_course_list_hides_answers(db, client, checkpoints_on):
++    _, token, cid, _ = await _setup(db)
++    resp = await client.get(f"/api/v1/courses/{cid}/materials", headers=_bearer(token))
++    assert resp.status_code == 200, resp.text
++    items = resp.json()["items"]
++    assert len(items) == 1
++    _assert_student_view(items[0]["content"])
++    assert "Счёт индексов" not in resp.text
++
++
++async def test_switch_off_student_gets_no_checkpoints(db, client):
++    """Рубильник выключен: ученик получает материал как раньше — без checkpoints."""
++    _, token, cid, mid = await _setup(db)
++    one = await client.get(f"/api/v1/materials/{mid}", headers=_bearer(token))
++    many = await client.get(f"/api/v1/courses/{cid}/materials", headers=_bearer(token))
++    for content in (one.json()["content"], many.json()["items"][0]["content"]):
++        assert content == {"text": HTML, "format": "html"}
++
++
++async def test_service_key_sees_full_content(db, client):
++    """Сервисный ключ (переиздание CB, боты, кабинет методиста) получает content целиком."""
++    _, _, cid, mid = await _setup(db)
++    one = await client.get(f"/api/v1/materials/{mid}", headers=_headers())
++    many = await client.get(f"/api/v1/courses/{cid}/materials", headers=_headers())
++    assert one.json()["content"]["checkpoints"] == [CP_SINGLE, CP_SHORT]
++    assert many.json()["items"][0]["content"]["checkpoints"] == [CP_SINGLE, CP_SHORT]
++
++
++async def test_student_view_does_not_mutate_stored_content(db, client, checkpoints_on):
++    _, token, _, mid = await _setup(db)
++    await client.get(f"/api/v1/materials/{mid}", headers=_bearer(token))
++    stored = (await db.execute(text("SELECT content FROM materials WHERE id = :m"), {"m": mid})).scalar_one()
++    assert stored["checkpoints"] == [CP_SINGLE, CP_SHORT]
++
++
++async def test_material_without_checkpoints_unchanged_for_student(db, client, checkpoints_on):
++    _, token, _, mid = await _setup(db, content={"text": "<p>Теория</p>", "format": "html"})
++    resp = await client.get(f"/api/v1/materials/{mid}", headers=_bearer(token))
++    assert resp.json()["content"] == {"text": "<p>Теория</p>", "format": "html"}
++
++
++# ── ответ на точку ───────────────────────────────────────────────────────────
++
++
++async def test_answer_rejected_when_switch_off(db, client):
++    sid, token, _, mid = await _setup(db)
++    resp = await _answer(client, token, mid, "cp-index", "b")
++    assert resp.status_code == 409, resp.text
++    assert resp.json()["payload"]["code"] == "checkpoints_disabled"
++    assert await _events(db, sid) == []
++
++
++async def test_single_answer_verdict_and_event(db, client, checkpoints_on):
++    sid, token, _, mid = await _setup(db)
++    wrong = await _answer(client, token, mid, "cp-index", "a")
++    assert wrong.status_code == 200, wrong.text
++    assert wrong.json() == {
++        "material_id": mid, "checkpoint_id": "cp-index", "correct": False,
++        "explanation": "Счёт индексов идёт с нуля.", "first_attempt": True,
++    }
++    right = await _answer(client, token, mid, "cp-index", "b")
++    assert right.json()["correct"] is True
++    assert right.json()["first_attempt"] is False
++
++    events = await _events(db, sid)
++    assert events == [
++        {"material_id": mid, "checkpoint_id": "cp-index", "correct": False, "answer": "a", "first_attempt": True},
++        {"material_id": mid, "checkpoint_id": "cp-index", "correct": True, "answer": "b", "first_attempt": False},
++    ]
++
++
++async def test_short_answer_normalized(db, client, checkpoints_on):
++    sid, token, _, mid = await _setup(db)
++    resp = await _answer(client, token, mid, "cp-len", "  Два. ")
++    assert resp.status_code == 200, resp.text
++    assert resp.json()["correct"] is True
++    assert resp.json()["explanation"] is None
++    assert resp.json()["first_attempt"] is True
++    # Первая попытка считается по каждой точке отдельно.
++    other = await _answer(client, token, mid, "cp-index", "b")
++    assert other.json()["first_attempt"] is True
++    assert (await _answer(client, token, mid, "cp-len", "3")).json()["correct"] is False
++
++
++async def test_answer_too_long_rejected(db, client, checkpoints_on):
++    sid, token, _, mid = await _setup(db)
++    assert (await _answer(client, token, mid, "cp-len", "x" * 201)).status_code == 422
++    assert (await _answer(client, token, mid, "cp-len", "")).status_code == 422
++    assert (await _answer(client, token, mid, "cp-len", "   ")).status_code == 422
++    assert (await _answer(client, token, mid, "cp-len", "x" * 200)).status_code == 200
++    assert len((await _events(db, sid))[0]["answer"]) == 200
++
++
++async def test_unknown_checkpoint_404(db, client, checkpoints_on):
++    sid, token, _, mid = await _setup(db)
++    resp = await _answer(client, token, mid, "cp-nope", "b")
++    assert resp.status_code == 404
++    assert resp.json()["payload"]["code"] == "checkpoint_not_found"
++    assert await _events(db, sid) == []
++
++
++async def test_not_enrolled_forbidden(db, client, checkpoints_on):
++    sid, token, _, mid = await _setup(db, enrolled=False)
++    assert (await _answer(client, token, mid, "cp-index", "b")).status_code == 403
++    assert await _events(db, sid) == []
++
++
++async def test_inactive_material_404(db, client, checkpoints_on):
++    sid, token, _, mid = await _setup(db, is_active=False)
++    assert (await _answer(client, token, mid, "cp-index", "b")).status_code == 404
++    assert await _events(db, sid) == []
++
++
++async def test_missing_material_404(db, client, checkpoints_on):
++    _, token, _, _ = await _setup(db)
++    assert (await _answer(client, token, 10**9, "cp-index", "b")).status_code == 404
++
++
++async def test_payment_gate(db, client, checkpoints_on, monkeypatch):
++    """Просроченная оплата закрывает ответ так же, как чтение материала."""
++    sid, token, _, mid = await _setup(db)
++
++    async def _blocked(_db, student_id):
++        raise DomainError(detail="оплата", status_code=403, payload={"code": "payment_overdue"})
++
++    monkeypatch.setattr(payment_access_service, "assert_content_allowed", _blocked)
++    resp = await _answer(client, token, mid, "cp-index", "b")
++    assert resp.status_code == 403
++    assert resp.json()["payload"]["code"] == "payment_overdue"
++    assert (await client.get(f"/api/v1/materials/{mid}", headers=_bearer(token))).status_code == 403
++    assert await _events(db, sid) == []
++
++
++async def test_service_key_cannot_answer(db, client, checkpoints_on):
++    _, _, _, mid = await _setup(db)
++    resp = await client.post(
++        f"/api/v1/learning/materials/{mid}/checkpoint/cp-index",
++        json={"answer": "b"}, headers=_headers(),
++    )
++    assert resp.status_code == 403
++
++
++async def test_answer_does_not_touch_progress_or_results(db, client, checkpoints_on):
++    """Ответ — диагностика: ни прохождения материала, ни попыток, ни task_results."""
++    sid, token, _, mid = await _setup(db)
++    assert (await _answer(client, token, mid, "cp-index", "b")).json()["correct"] is True
++    assert (await _answer(client, token, mid, "cp-len", "5")).json()["correct"] is False
++
++    async def _count(sql: str) -> int:
++        return (await db.execute(text(sql), {"s": sid})).scalar_one()
++
++    assert await _count("SELECT count(*) FROM student_material_progress WHERE student_id = :s") == 0
++    assert await _count("SELECT count(*) FROM task_results WHERE user_id = :s") == 0
++    assert await _count("SELECT count(*) FROM attempts WHERE user_id = :s") == 0
++    assert await _count(
++        "SELECT count(*) FROM learning_events WHERE student_id = :s AND event_type <> 'material_checkpoint'"
++    ) == 0
++
++    # Прохождение материала работает как раньше и от ответа не зависит.
++    resp = await client.post(
++        f"/api/v1/learning/materials/{mid}/complete",
++        json={"student_id": sid}, headers=_bearer(token),
++    )
++    assert resp.status_code == 200, resp.text
++    assert resp.json()["status"] == "completed"
++
++
++async def test_learning_gaps_does_not_read_learning_events():
++    """Аналитика пробелов строится по task_results; событий точек она не читает."""
++    from pathlib import Path
++
++    from app.services import learning_gaps_service
++
++    src = Path(learning_gaps_service.__file__).read_text(encoding="utf-8")
++    assert "learning_events" not in src.replace("learning_events_service", "")
++    assert "material_checkpoint" not in src
++
++
++async def test_unseen_constructs_ignores_checkpoint_answers():
++    """Скрытый ответ точки не считается «встречалось в теории» (tsk-965)."""
++    from app.services.unseen_constructs_service import codes_in_material
++
++    probe = {"text": "<p>Просто теория.</p>", "format": "html", "checkpoints": [
++        {**CP_SHORT, "answer": ["'{}'.format(x)"], "explanation": "Это .format(x)"},
++    ]}
++    assert codes_in_material(json.dumps(probe), wanted={"format_method"}) == set()
++    plain = {"text": "<p>Метод .format(x) подставляет значения.</p>", "format": "html"}
++    assert codes_in_material(json.dumps(plain), wanted={"format_method"}) == {"format_method"}

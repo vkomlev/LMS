@@ -19513,6 +19513,131 @@
         }
       }
     },
+    "/api/v1/learning/materials/{material_id}/checkpoint/{checkpoint_id}": {
+      "post": {
+        "tags": [
+          "learning"
+        ],
+        "summary": "Ответ на контрольную точку в материале (tsk-998, П9)",
+        "description": "Проверить ответ ученика на вопрос «проверь себя» внутри материала.\n\nГейты — те же, что у выдачи материала ученику (`GET /materials/{id}`):\nзачисление в дерево курса и оплата (`assert_material_access`), выключенный\nматериал — 404. Ответ пишет событие `material_checkpoint` в `learning_events`\n(`first_attempt` — первая ли это попытка) и возвращает вердикт с пояснением.\nПовторный ответ разрешён. Прохождение материала, статусы курса, попытки и\n`task_results` от ответа НЕ меняются: это диагностика, а не гейт.",
+        "operationId": "answer_material_checkpoint_api_v1_learning_materials__material_id__checkpoint__checkpoint_id__post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "material_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "description": "ID материала",
+              "title": "Material Id"
+            },
+            "description": "ID материала"
+          },
+          {
+            "name": "checkpoint_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 64,
+              "description": "id контрольной точки",
+              "title": "Checkpoint Id"
+            },
+            "description": "id контрольной точки"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MaterialCheckpointAnswerRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MaterialCheckpointAnswerResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Сервисный ключ (нужен ученик), ученик не зачислен в курс материала или просрочена оплата (tsk-010: занятия закрыты за просроченную оплату — `payload.code = payment_overdue` (сумма, месяцы, `payments_url`); tsk-673: тариф закрывает работу в курсе — `payload.code = course_work_closed` (так устроен «Выпускник»: материалы читаются, ответы не принимаются); либо чужой `student_id`.)"
+          },
+          "404": {
+            "description": "Материал не найден или выключен; code: checkpoint_not_found — в материале нет такой точки"
+          },
+          "409": {
+            "description": "code: checkpoints_disabled — рубильник MATERIAL_CHECKPOINTS_ENABLED выключен"
+          },
+          "422": {
+            "description": "Пустой ответ или длиннее 200 символов"
+          }
+        }
+      }
+    },
     "/api/v1/learning/materials/{material_id}/skip": {
       "post": {
         "tags": [
@@ -66787,6 +66912,65 @@
         ],
         "title": "MaterialBulkUpdateResponse",
         "description": "Ответ на массовое обновление активности."
+      },
+      "MaterialCheckpointAnswerRequest": {
+        "properties": {
+          "answer": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Answer",
+            "description": "Ответ ученика: id варианта для single, текст для short"
+          }
+        },
+        "type": "object",
+        "required": [
+          "answer"
+        ],
+        "title": "MaterialCheckpointAnswerRequest",
+        "description": "Тело POST /learning/materials/{id}/checkpoint/{cp_id}."
+      },
+      "MaterialCheckpointAnswerResponse": {
+        "properties": {
+          "material_id": {
+            "type": "integer",
+            "title": "Material Id"
+          },
+          "checkpoint_id": {
+            "type": "string",
+            "title": "Checkpoint Id"
+          },
+          "correct": {
+            "type": "boolean",
+            "title": "Correct"
+          },
+          "explanation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Explanation",
+            "description": "Пояснение автора, если есть"
+          },
+          "first_attempt": {
+            "type": "boolean",
+            "title": "First Attempt",
+            "description": "true — первый ответ ученика на эту точку (сигнал усвоения)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "material_id",
+          "checkpoint_id",
+          "correct",
+          "first_attempt"
+        ],
+        "title": "MaterialCheckpointAnswerResponse",
+        "description": "Вердикт по контрольной точке. Правильный ответ не возвращается."
       },
       "MaterialCompleteRequest": {
         "properties": {

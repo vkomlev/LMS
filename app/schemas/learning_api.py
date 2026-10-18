@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 # ----- Next item -----
@@ -400,6 +400,38 @@ class HelpReflectionResponse(BaseModel):
     understood: Optional[bool] = None
     status: str = Field(..., description="Статус заявки после рефлексии: open | closed")
     escalated: bool = Field(False, description="true — заявка ушла методисту (только разбор)")
+
+
+# ----- Контрольная точка в материале (tsk-998, П9) -----
+
+
+class MaterialCheckpointAnswerRequest(BaseModel):
+    """Тело POST /learning/materials/{id}/checkpoint/{cp_id}."""
+    answer: str = Field(
+        ...,
+        min_length=1,
+        max_length=200,
+        description="Ответ ученика: id варианта для single, текст для short",
+    )
+
+    @field_validator("answer")
+    @classmethod
+    def _not_blank(cls, v: str) -> str:
+        """Ответ из одних пробелов — не ответ: иначе он «съел» бы первую попытку."""
+        if not v.strip():
+            raise ValueError("Пустой ответ")
+        return v
+
+
+class MaterialCheckpointAnswerResponse(BaseModel):
+    """Вердикт по контрольной точке. Правильный ответ не возвращается."""
+    material_id: int
+    checkpoint_id: str
+    correct: bool
+    explanation: Optional[str] = Field(None, description="Пояснение автора, если есть")
+    first_attempt: bool = Field(
+        ..., description="true — первый ответ ученика на эту точку (сигнал усвоения)"
+    )
 
 
 # ----- Hint events (этап 3.6) -----
