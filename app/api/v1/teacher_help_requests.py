@@ -5,6 +5,7 @@ GET /api/v1/teacher/help-requests — список заявок
 GET /api/v1/teacher/help-requests/{request_id} — карточка заявки
 POST /api/v1/teacher/help-requests/{request_id}/close — закрыть заявку
 POST /api/v1/teacher/help-requests/{request_id}/reply — ответить студенту
+POST /api/v1/teacher/help-requests/oral — записать устную просьбу ученика (tsk-1384)
 """
 from __future__ import annotations
 
@@ -32,6 +33,8 @@ from app.schemas.teacher_help_requests import (
     HelpRequestPendingCountResponse,
     WebinarLinkRequest,
     WebinarLinkResponse,
+    OralHelpRequestCreate,
+    OralHelpRequestCreateResponse,
     ReopenKpiItem,
     ReopenKpiResponse,
 )
@@ -48,6 +51,8 @@ from app.services.help_requests_service import (
     list_help_requests,
     get_help_request_detail,
     can_access_help_request,
+    can_access_student_course,
+    create_oral_help_request,
     help_request_exists,
     close_help_request,
     reply_help_request,
@@ -59,6 +64,7 @@ from app.services.help_requests_service import (
     MIN_REQUESTS_FOR_RATE,
 )
 from app.services import attachment_storage
+from app.services.tasks_service import TasksService
 from app.services.teacher_dashboard_service import get_teacher_dashboard
 from app.utils.exceptions import DomainError
 from app.services import audit_service, roles_service
@@ -71,6 +77,8 @@ from app.services.teacher_queue_service import (
     HelpClaimForbiddenError,
     HelpClaimNotFoundError,
 )
+
+_tasks_service = TasksService()
 
 router = APIRouter(prefix="/teacher/help-requests", tags=["teacher_help_requests"])
 logger = logging.getLogger("api.teacher_help_requests")
@@ -238,6 +246,74 @@ async def help_request_teacher_dashboard(
         min_requests=MIN_REQUESTS_FOR_RATE,
         items=[TeacherDashboardItem(**it) for it in items],
     )
+
+
+# ----- tsk-1384: устная просьба (маршрут до /{request_id}) -----
+
+
+@router.post(
+    "/oral",
+    response_model=OralHelpRequestCreateResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Записать устную просьбу ученика о помощи по заданию (tsk-1384)",
+    responses={
+        403: {"description": "Нет доступа к ученику (тот же ACL, что у заявок)"},
+        404: {"description": "Задание или ученик не найдены"},
+        409: {
+            "description": (
+                "`close=false`, а по заданию уже есть открытая заявка ученика: "
+                "`payload.code` = `help_request_open`, `payload.request_id` — её id"
+            )
+        },
+    },
+)
+async def help_request_oral(
+    body: OralHelpRequestCreate = Body(...),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_bare_db),
+) -> OralHelpRequestCreateResponse:
+    """Заявка `manual_help` от имени ученика с `origin='oral'`.
+
+    Права — как у ответа на заявку: вызывающий — сам `teacher_id` (или
+    сервисный ключ), доступ к ученику — тот же ACL, что у чтения заявок
+    (связь с учеником, курс задания в зоне преподавателя, роль методиста).
+    Гейт П4 не действует. По умолчанию заявка сразу закрыта — помощь
+    оказана; `close=false` — открыта со сроком, как обычная.
+    """
+    if not current_user.is_service and current_user.id != body.teacher_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
+    task = await _tasks_service.get_by_id(db, body.task_id)
+    if task is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Задание не найдено")
+    if not await can_access_student_course(
+        db, body.teacher_id, body.student_id, task.course_id
+    ):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Нет доступа к ученику")
+    data, err = await create_oral_help_request(
+        db,
+        teacher_id=body.teacher_id,
+        student_id=body.student_id,
+        task_id=body.task_id,
+        course_id=task.course_id,
+        note=body.note,
+        close=body.close,
+    )
+    if err == "already_open" and data is not None:
+        raise DomainError(
+            detail=(
+                "По этому заданию у ученика уже есть открытая заявка — ответьте на неё"
+            ),
+            status_code=409,
+            payload={"code": "help_request_open", "request_id": data["request_id"]},
+        )
+    if err == "student_not_found" or data is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ученик не найден")
+    await db.commit()
+    logger.info(
+        "POST /teacher/help-requests/oral: teacher_id=%s student_id=%s task_id=%s request_id=%s",
+        body.teacher_id, body.student_id, body.task_id, data["request_id"],
+    )
+    return OralHelpRequestCreateResponse(**data)
 
 
 @router.get(

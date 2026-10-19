@@ -128,6 +128,15 @@ class TaskHistoryHelpRequest(BaseModel):
     created_at: datetime
     closed_at: Optional[datetime] = None
     resolution_comment: Optional[str] = None
+    # tsk-1384: «устно» (записал преподаватель) и «не знает, с чего начать».
+    origin: Optional[Literal["student", "oral"]] = Field(
+        default=None,
+        description="oral — устная просьба, записанная преподавателем; null — ученик сам",
+    )
+    stuck_reason: Optional[Literal["no_start", "note"]] = Field(
+        default=None,
+        description="Основание помощи без сдачи: no_start | note; null — нет",
+    )
     # Обязательное (сервис всегда заполняет) — чтобы клиентский тип был не-optional.
     replies: List[TaskHistoryHelpReply] = Field(...)
 

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import AsyncIterator, Optional
+from typing import AsyncIterator, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
@@ -123,13 +123,17 @@ _SUBSCRIPTION_403 = {
     }
 }
 
+#: tsk-1384: заметка разговора, открытого кнопкой «Не понимаю, с чего начать».
+NO_START_TUTOR_NOTE = "Не понимаю, с чего начать"
+
 # tsk-993 (П4): отказ «сначала попробуй сам» на открытии нового разговора.
 _ATTEMPT_409 = {
     409: {
         "description": (
             "tsk-993: при HELP_REQUIRES_ATTEMPT=true новый разговор открывается "
             "только после своей сдачи по заданию или с описанием «где застрял» "
-            "(`stuck_note`, не короче 20 символов). `payload.code` = "
+            "(`stuck_note`, не короче 20 символов) либо `stuck_reason=no_start` "
+            "(tsk-1384). `payload.code` = "
             "`attempt_required`, `detail` — текст для ученика."
         )
     }
@@ -137,7 +141,12 @@ _ATTEMPT_409 = {
 
 
 async def _enforce_attempt_gate(
-    db: AsyncSession, *, owner: int, task_id: int, stuck_note: Optional[str]
+    db: AsyncSession,
+    *,
+    owner: int,
+    task_id: int,
+    stuck_note: Optional[str],
+    stuck_reason: Optional[str] = None,
 ) -> None:
     """Гейт П4 — только если разговор будет НОВЫМ (tsk-993).
 
@@ -155,7 +164,8 @@ async def _enforce_attempt_gate(
     if active is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"задание {task_id} не найдено или неактивно")
     await help_attempt_gate.enforce(
-        db, student_id=owner, task_id=task_id, stuck_note=stuck_note, surface="ai_tutor"
+        db, student_id=owner, task_id=task_id, stuck_note=stuck_note, surface="ai_tutor",
+        stuck_reason=stuck_reason,
     )
 
 
@@ -176,6 +186,14 @@ async def get_session(
             "открытии НОВОГО разговора: уходит в первую реплику наставника, а при "
             "HELP_REQUIRES_ATTEMPT=true без своей сдачи нужна заметка не короче "
             "20 символов"
+        ),
+    ),
+    stuck_reason: Optional[Literal["no_start"]] = Query(
+        None,
+        description=(
+            "tsk-1384: `no_start` — ученик нажал «Не понимаю, с чего начать»: "
+            "открывает НОВЫЙ разговор без своей сдачи и без заметки, как "
+            "заметка не короче 20 символов; наставник начинает с этого"
         ),
     ),
     db: AsyncSession = Depends(get_async_db),
@@ -218,7 +236,13 @@ async def get_session(
 
     # tsk-993 (П4): после тарифа — сначала «нельзя по тарифу», потом
     # «сначала попробуй сам»: апгрейд гейт попытки не снимет.
-    await _enforce_attempt_gate(db, owner=owner, task_id=task_id, stuck_note=stuck_note)
+    await _enforce_attempt_gate(
+        db, owner=owner, task_id=task_id, stuck_note=stuck_note, stuck_reason=stuck_reason
+    )
+    # tsk-1384: без своей заметки «не знаю, с чего начать» и есть заметка —
+    # наставник начинает разговор с первого шага, а не с разбора ответа.
+    if stuck_reason == help_attempt_gate.STUCK_REASON_NO_START and not (stuck_note or "").strip():
+        stuck_note = NO_START_TUTOR_NOTE
 
     try:
         session, _ = await session_service.get_or_create(

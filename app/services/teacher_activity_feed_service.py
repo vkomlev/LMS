@@ -173,7 +173,8 @@ async def _fetch_help_requested(
                        t.task_content->>'stem' AS stem, hr.status, hr.created_at AS event_at,
                        hr.material_id, m.title AS material_title,
                        hr.context_json->>'trigger' AS trigger,
-                       hr.context_json->>'base_attempts_added' AS added
+                       hr.context_json->>'base_attempts_added' AS added,
+                       hr.origin, hr.stuck_reason
                 FROM help_requests hr
                 JOIN users u ON u.id = hr.student_id
                 LEFT JOIN tasks t ON t.id = hr.task_id
@@ -207,6 +208,11 @@ async def _fetch_help_requested(
                     f"новые выданы автоматически{added}"
                 )
                 outcome = "auto_extended"
+            elif r["origin"] == "oral":
+                # tsk-1384: устную просьбу записал преподаватель.
+                summary = f"{student} — попросил помощи устно по заданию «{title}»"
+            elif r["stuck_reason"] == "no_start":
+                summary = f"{student} — не знает, с чего начать задание «{title}»"
             else:
                 summary = f"{student} — запросил помощь по заданию «{title}»"
         else:

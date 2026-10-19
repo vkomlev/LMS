@@ -84,6 +84,21 @@ class HelpRequestListItem(BaseModel):
     attachment_filename: Optional[str] = None
     attachment_content_type: Optional[str] = None
     attachment_size_bytes: Optional[int] = None
+    # tsk-1384: метки «не знает, с чего начать» и «устно» — видны уже в списке.
+    stuck_reason: Optional[Literal["no_start", "note"]] = Field(
+        None,
+        description=(
+            "Основание помощи без сдачи (tsk-1384): no_start — ученик нажал «Не "
+            "понимаю, с чего начать», note — описал, где застрял; null — нет"
+        ),
+    )
+    origin: Optional[Literal["student", "oral"]] = Field(
+        None,
+        description=(
+            "Откуда заявка (tsk-1384): oral — устная просьба ученика, записанная "
+            "преподавателем; null/student — ученик подал сам"
+        ),
+    )
 
 
 class HelpRequestListResponse(BaseModel):
@@ -313,6 +328,32 @@ class HelpRequestCloseResponse(BaseModel):
     closed_at: Optional[datetime] = None
     updated_at: datetime
     already_closed: bool = False
+
+
+# ----- tsk-1384: POST oral (устная просьба о помощи) -----
+
+class OralHelpRequestCreate(BaseModel):
+    """Тело записи устной просьбы ученика о помощи (tsk-1384)."""
+    teacher_id: int = Field(..., description="ID преподавателя/методиста, записывающего просьбу")
+    student_id: int = Field(..., description="ID ученика, который попросил помощи устно")
+    task_id: int = Field(..., description="ID задания, по которому просил помощи")
+    note: Optional[str] = Field(
+        None, max_length=2000, description="Что разобрали — коротко, для истории заявок"
+    )
+    close: bool = Field(
+        True,
+        description=(
+            "true (по умолчанию) — помощь уже оказана: заявка сразу закрыта, без "
+            "срока ответа; false — открыта со сроком, как обычная заявка"
+        ),
+    )
+
+
+class OralHelpRequestCreateResponse(BaseModel):
+    """Результат записи устной просьбы."""
+    request_id: int
+    status: HelpRequestStatus
+    origin: Literal["oral"] = "oral"
 
 
 # ----- POST reply -----

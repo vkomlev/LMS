@@ -146,6 +146,24 @@ class HelpRequests(Base):
         Text, nullable=True,
         comment="Где ученик застрял, своими словами (tsk-993). NULL — не описывал.",
     )
+    # tsk-1384: основание помощи без сдачи — `note` (заметка) или `no_start`
+    # («не понимаю, с чего начать»). CHECK в миграции tsk1384_help_stuck_reason.
+    stuck_reason: Mapped[Optional[str]] = mapped_column(
+        String(16), nullable=True,
+        comment=(
+            "Основание помощи без сдачи (tsk-1384): note — заметка «где застрял», "
+            "no_start — «не понимаю, с чего начать». NULL — не описывал и не нажимал."
+        ),
+    )
+    # tsk-1384: `oral` — устная просьба, записанная преподавателем; NULL/`student`
+    # — заявку подал ученик.
+    origin: Mapped[Optional[str]] = mapped_column(
+        String(16), nullable=True,
+        comment=(
+            "Откуда заявка (tsk-1384): oral — устная просьба, записанная "
+            "преподавателем; student или NULL — ученик сам."
+        ),
+    )
 
     # tsk-999 (П10): рефлексия ученика после ответа на заявку. `review_understood`
     # остаётся развилкой маршрута разбора; «понятно?» рефлексии — своя колонка.

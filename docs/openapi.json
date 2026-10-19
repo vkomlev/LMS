@@ -20213,7 +20213,7 @@
             "description": "tsk-301: разбор с преподавателем не входит в тариф. Тело содержит `payload.upgrade_hint` — что даёт апгрейд. Авто-заявка при исчерпании попыток этим гейтом не закрывается. tsk-010: занятия закрыты за просроченную оплату — `payload.code = payment_overdue` (сумма, месяцы, `payments_url`); tsk-673: тариф закрывает работу в курсе — `payload.code = course_work_closed` (так устроен «Выпускник»: материалы читаются, ответы не принимаются); либо чужой `student_id`."
           },
           "409": {
-            "description": "tsk-993: при HELP_REQUIRES_ATTEMPT=true — у ученика нет своей сдачи по заданию и `stuck_note` короче 20 символов. `payload.code` = `attempt_required`, `detail` — текст для ученика."
+            "description": "tsk-993: при HELP_REQUIRES_ATTEMPT=true — у ученика нет своей сдачи по заданию, `stuck_note` короче 20 символов и `stuck_reason` не `no_start` (tsk-1384). `payload.code` = `attempt_required`, `detail` — текст для ученика."
           },
           "422": {
             "description": "Validation Error",
@@ -22587,6 +22587,115 @@
           },
           "422": {
             "description": "date_from позже date_to"
+          }
+        }
+      }
+    },
+    "/api/v1/teacher/help-requests/oral": {
+      "post": {
+        "tags": [
+          "teacher_help_requests"
+        ],
+        "summary": "Записать устную просьбу ученика о помощи по заданию (tsk-1384)",
+        "description": "Заявка `manual_help` от имени ученика с `origin='oral'`.\n\nПрава — как у ответа на заявку: вызывающий — сам `teacher_id` (или\nсервисный ключ), доступ к ученику — тот же ACL, что у чтения заявок\n(связь с учеником, курс задания в зоне преподавателя, роль методиста).\nГейт П4 не действует. По умолчанию заявка сразу закрыта — помощь\nоказана; `close=false` — открыта со сроком, как обычная.",
+        "operationId": "help_request_oral_api_v1_teacher_help_requests_oral_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OralHelpRequestCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OralHelpRequestCreateResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Нет доступа к ученику (тот же ACL, что у заявок)"
+          },
+          "404": {
+            "description": "Задание или ученик не найдены"
+          },
+          "409": {
+            "description": "`close=false`, а по заданию уже есть открытая заявка ученика: `payload.code` = `help_request_open`, `payload.request_id` — её id"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
           }
         }
       }
@@ -47746,6 +47855,25 @@
             "description": "tsk-993: где ученик застрял, своими словами. Учитывается только при открытии НОВОГО разговора: уходит в первую реплику наставника, а при HELP_REQUIRES_ATTEMPT=true без своей сдачи нужна заметка не короче 20 символов"
           },
           {
+            "name": "stuck_reason",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "const": "no_start",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "tsk-1384: `no_start` — ученик нажал «Не понимаю, с чего начать»: открывает НОВЫЙ разговор без своей сдачи и без заметки, как заметка не короче 20 символов; наставник начинает с этого",
+              "title": "Stuck Reason"
+            },
+            "description": "tsk-1384: `no_start` — ученик нажал «Не понимаю, с чего начать»: открывает НОВЫЙ разговор без своей сдачи и без заметки, как заметка не короче 20 символов; наставник начинает с этого"
+          },
+          {
             "name": "token",
             "in": "query",
             "required": false,
@@ -47809,7 +47937,7 @@
             "description": "tsk-301: наставник не входит в тариф либо исчерпан месячный лимит. Тело содержит `payload.upgrade_hint` — что даёт апгрейд."
           },
           "409": {
-            "description": "tsk-993: при HELP_REQUIRES_ATTEMPT=true новый разговор открывается только после своей сдачи по заданию или с описанием «где застрял» (`stuck_note`, не короче 20 символов). `payload.code` = `attempt_required`, `detail` — текст для ученика."
+            "description": "tsk-993: при HELP_REQUIRES_ATTEMPT=true новый разговор открывается только после своей сдачи по заданию или с описанием «где застрял» (`stuck_note`, не короче 20 символов) либо `stuck_reason=no_start` (tsk-1384). `payload.code` = `attempt_required`, `detail` — текст для ученика."
           },
           "422": {
             "description": "Validation Error",
@@ -47938,7 +48066,7 @@
             "description": "tsk-301: наставник не входит в тариф либо исчерпан месячный лимит. Тело содержит `payload.upgrade_hint` — что даёт апгрейд."
           },
           "409": {
-            "description": "tsk-993: при HELP_REQUIRES_ATTEMPT=true новый разговор открывается только после своей сдачи по заданию или с описанием «где застрял» (`stuck_note`, не короче 20 символов). `payload.code` = `attempt_required`, `detail` — текст для ученика."
+            "description": "tsk-993: при HELP_REQUIRES_ATTEMPT=true новый разговор открывается только после своей сдачи по заданию или с описанием «где застрял» (`stuck_note`, не короче 20 символов) либо `stuck_reason=no_start` (tsk-1384). `payload.code` = `attempt_required`, `detail` — текст для ученика."
           },
           "422": {
             "description": "Validation Error",
@@ -62514,6 +62642,38 @@
             ],
             "title": "Attachment Size Bytes"
           },
+          "stuck_reason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "no_start",
+                  "note"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stuck Reason",
+            "description": "Основание помощи без сдачи (tsk-1384): no_start — ученик нажал «Не понимаю, с чего начать», note — описал, где застрял; null — нет"
+          },
+          "origin": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "student",
+                  "oral"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Origin",
+            "description": "Откуда заявка (tsk-1384): oral — устная просьба ученика, записанная преподавателем; null/student — ученик подал сам"
+          },
           "task_full_title": {
             "anyOf": [
               {
@@ -63001,6 +63161,38 @@
               }
             ],
             "title": "Attachment Size Bytes"
+          },
+          "stuck_reason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "no_start",
+                  "note"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stuck Reason",
+            "description": "Основание помощи без сдачи (tsk-1384): no_start — ученик нажал «Не понимаю, с чего начать», note — описал, где застрял; null — нет"
+          },
+          "origin": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "student",
+                  "oral"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Origin",
+            "description": "Откуда заявка (tsk-1384): oral — устная просьба ученика, записанная преподавателем; null/student — ученик подал сам"
           }
         },
         "type": "object",
@@ -69510,6 +69702,81 @@
         "type": "object",
         "title": "OperatingHoursUpdate"
       },
+      "OralHelpRequestCreate": {
+        "properties": {
+          "teacher_id": {
+            "type": "integer",
+            "title": "Teacher Id",
+            "description": "ID преподавателя/методиста, записывающего просьбу"
+          },
+          "student_id": {
+            "type": "integer",
+            "title": "Student Id",
+            "description": "ID ученика, который попросил помощи устно"
+          },
+          "task_id": {
+            "type": "integer",
+            "title": "Task Id",
+            "description": "ID задания, по которому просил помощи"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 2000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note",
+            "description": "Что разобрали — коротко, для истории заявок"
+          },
+          "close": {
+            "type": "boolean",
+            "title": "Close",
+            "description": "true (по умолчанию) — помощь уже оказана: заявка сразу закрыта, без срока ответа; false — открыта со сроком, как обычная заявка",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "teacher_id",
+          "student_id",
+          "task_id"
+        ],
+        "title": "OralHelpRequestCreate",
+        "description": "Тело записи устной просьбы ученика о помощи (tsk-1384)."
+      },
+      "OralHelpRequestCreateResponse": {
+        "properties": {
+          "request_id": {
+            "type": "integer",
+            "title": "Request Id"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "open",
+              "closed"
+            ],
+            "title": "Status"
+          },
+          "origin": {
+            "type": "string",
+            "const": "oral",
+            "title": "Origin",
+            "default": "oral"
+          }
+        },
+        "type": "object",
+        "required": [
+          "request_id",
+          "status"
+        ],
+        "title": "OralHelpRequestCreateResponse",
+        "description": "Результат записи устной просьбы."
+      },
       "PageMeta": {
         "properties": {
           "total": {
@@ -73573,6 +73840,22 @@
             ],
             "title": "Stuck Note",
             "description": "Где ученик застрял, своими словами. При HELP_REQUIRES_ATTEMPT=true без своей сдачи по заданию нужна заметка не короче 20 символов, иначе 409 `attempt_required`"
+          },
+          "stuck_reason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "no_start",
+                  "note"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stuck Reason",
+            "description": "tsk-1384: `no_start` — ученик нажал «Не понимаю, с чего начать»: открывает помощь без сдачи и без заметки. `note` — справочно, сервер сам ставит его по непустой `stuck_note`"
           }
         },
         "type": "object",
@@ -81157,6 +81440,38 @@
               }
             ],
             "title": "Resolution Comment"
+          },
+          "origin": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "student",
+                  "oral"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Origin",
+            "description": "oral — устная просьба, записанная преподавателем; null — ученик сам"
+          },
+          "stuck_reason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "no_start",
+                  "note"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stuck Reason",
+            "description": "Основание помощи без сдачи: no_start | note; null — нет"
           },
           "replies": {
             "items": {

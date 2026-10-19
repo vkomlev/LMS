@@ -10,7 +10,9 @@
   было — до закрытия преподавателем. Момент «взял заявку» в базе не хранится;
   первый ответ — то, что ученик реально увидел; закрытие без текста — устный
   разбор на занятии, тоже реакция. Медиана и доля уложившихся в порог; порог
-  свой для занятия и для времени вне его.
+  свой для занятия и для времени вне его. Устная просьба, записанная
+  преподавателем уже закрытой (tsk-1384), во время реакции не входит —
+  реакции там нет, есть только запись факта; в «Обработано» она «голосом».
 * **Обработано** — заявки, закрытые преподавателем, по способу помощи: тип
   последнего ответа (`help_request_replies.reply_kind`), закрыта без ответа —
   «голосом». Исключение — индивидуальный разбор (`individual_review`, tsk-303):
@@ -44,6 +46,7 @@ from app.services.help_requests_service import (
     LADDER_TYPES_SQL,
     MIN_REQUESTS_FOR_RATE,
     not_test_student_sql,
+    oral_closed_sql,
 )
 from app.services.lesson_window_sql import in_lesson_sql
 
@@ -116,6 +119,10 @@ async def get_teacher_dashboard(
             text(f"""
                 WITH cohort AS (
                     SELECT h.id, h.status, h.closed_by, h.created_at, h.closed_at, h.request_type,
+                           -- tsk-1384: устная просьба, записанная уже закрытой
+                           -- (без срока), — реакции в ней нет: закрытие и есть
+                           -- момент записи, не скорость ответа.
+                           {oral_closed_sql('h')} AS oral_closed,
                            {HELP_REQUEST_OWNER_SQL} AS owner_id,
                            {in_lesson} AS in_lesson
                       FROM help_requests h
@@ -127,10 +134,12 @@ async def get_teacher_dashboard(
                        c.in_lesson,
                        EXISTS (SELECT 1 FROM help_request_reopens x
                                 WHERE x.request_id = c.id) AS reopened,
+                       CASE WHEN NOT c.oral_closed THEN
                        EXTRACT(EPOCH FROM (
                            COALESCE(fr.first_at,
                                     CASE WHEN c.closed_by IS NOT NULL THEN c.closed_at END)
-                           - c.created_at)) / 60.0 AS reaction_min,
+                           - c.created_at)) / 60.0
+                       END AS reaction_min,
                        (c.status = 'closed'
                         AND (c.closed_by IS NOT NULL
                              OR c.request_type = 'individual_review')) AS processed,

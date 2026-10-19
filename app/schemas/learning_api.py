@@ -236,6 +236,16 @@ class RequestHelpRequest(BaseModel):
             "иначе 409 `attempt_required`"
         ),
     )
+    # tsk-1384: кнопка «Не понимаю, с чего начать» — основание для гейта П4
+    # наравне с заметкой; преподаватель видит метку в карточке заявки.
+    stuck_reason: Optional[Literal["no_start", "note"]] = Field(
+        default=None,
+        description=(
+            "tsk-1384: `no_start` — ученик нажал «Не понимаю, с чего начать»: "
+            "открывает помощь без сдачи и без заметки. `note` — справочно, "
+            "сервер сам ставит его по непустой `stuck_note`"
+        ),
+    )
 
 
 class RequestHelpResponse(BaseModel):

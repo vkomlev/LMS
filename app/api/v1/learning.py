@@ -835,7 +835,8 @@ async def get_task_state(
         409: {
             "description": (
                 "tsk-993: при HELP_REQUIRES_ATTEMPT=true — у ученика нет своей сдачи "
-                "по заданию и `stuck_note` короче 20 символов. `payload.code` = "
+                "по заданию, `stuck_note` короче 20 символов и `stuck_reason` не "
+                "`no_start` (tsk-1384). `payload.code` = "
                 "`attempt_required`, `detail` — текст для ученика."
             )
         },
@@ -900,6 +901,7 @@ async def request_help(
         task_id=task_id,
         stuck_note=body.stuck_note,
         surface="request_help",
+        stuck_reason=body.stuck_reason,
     )
     event_id, deduplicated = await record_help_requested(
         db, body.student_id, task_id, body.message
@@ -913,6 +915,7 @@ async def request_help(
         course_id=task.course_id,
         attempt_id=attempt_id,
         stuck_note=help_attempt_gate.normalize_stuck_note(body.stuck_note),
+        stuck_reason=help_attempt_gate.resolve_stuck_reason(body.stuck_note, body.stuck_reason),
         deduplicated=deduplicated,
         attachment_id=body.attachment_id,
         attachment_filename=body.attachment_filename,

@@ -51,6 +51,26 @@ from app.services.teacher_queue_service import (
 
 logger = logging.getLogger(__name__)
 
+def oral_closed_sql(alias: str = "hr") -> str:
+    """SQL-признак «устная просьба, записанная уже закрытой» (tsk-1384).
+
+    Такая заявка — запись факта, а не обращение, ждущее ответа: у неё нет
+    срока (`due_at IS NULL` — его ставит только открытая запись), поэтому она
+    не входит во время реакции (дашборд преподавателей), не становится
+    «текущей» заявкой ученика на экране задания (лестница tsk-303, рефлексия
+    П10) и не считается его повторным обращением. Единственное определение —
+    все три места читают его отсюда.
+
+    :param alias: алиас `help_requests`; только литералы из закрытого набора.
+    """
+    return (
+        f"COALESCE({alias}.origin = 'oral' AND {alias}.due_at IS NULL, false)"
+    )  # nosec B608 — alias из закрытого набора литералов
+
+
+#: tsk-1384: подпись причины `no_start` — в уведомлении преподавателю.
+NO_START_LABEL = "Не знает, с чего начать."
+
 # tsk-999: рубильник рефлексии читается из этого экземпляра — тесты подменяют
 # его атрибут, как `help_attempt_gate.settings` у гейта П4.
 _settings = Settings()
@@ -216,6 +236,7 @@ async def get_or_create_help_request(
     attachment_content_type: Optional[str] = None,
     attachment_size_bytes: Optional[int] = None,
     stuck_note: Optional[str] = None,
+    stuck_reason: Optional[str] = None,
 ) -> Tuple[int, bool]:
     """
     После record_help_requested: получить или создать запись в help_requests.
@@ -229,6 +250,8 @@ async def get_or_create_help_request(
 
     tsk-993 (П4): `stuck_note` («где застрял») и `attempt_id` (последняя своя
     сдача) пишутся так же — только при создании новой заявки.
+
+    tsk-1384: `stuck_reason` (`note` | `no_start`) — тоже только при создании.
     """
     r = await db.execute(
         text("SELECT id FROM help_requests WHERE event_id = :event_id LIMIT 1"),
@@ -252,10 +275,10 @@ async def get_or_create_help_request(
             INSERT INTO help_requests
             (status, request_type, auto_created, context_json, student_id, task_id, course_id, attempt_id, event_id, message, assigned_teacher_id,
              attachment_id, attachment_filename, attachment_content_type, attachment_size_bytes,
-             stuck_note, created_at, updated_at, due_at)
+             stuck_note, stuck_reason, created_at, updated_at, due_at)
             VALUES ('open', 'manual_help', false, '{{}}'::jsonb, :student_id, :task_id, :course_id, :attempt_id, :event_id, :message, :assigned_teacher_id,
                     :attachment_id, :attachment_filename, :attachment_content_type, :attachment_size_bytes,
-                    :stuck_note, now(), now(), {HELP_DUE_AT_SQL})
+                    :stuck_note, :stuck_reason, now(), now(), {HELP_DUE_AT_SQL})
             RETURNING id
         """),  # nosec B608 — HELP_DUE_AT_SQL литерал модуля help_sla
         {
@@ -272,6 +295,7 @@ async def get_or_create_help_request(
             "attachment_content_type": attachment_content_type,
             "attachment_size_bytes": attachment_size_bytes,
             "stuck_note": note_truncated,
+            "stuck_reason": stuck_reason,
         },
     )
     new_id = r.scalar()
@@ -294,6 +318,8 @@ async def get_or_create_help_request(
             content=head + (
                 msg_truncated
                 or (f"Где застрял: {note_truncated}" if note_truncated else None)
+                # tsk-1384: кнопка «Не понимаю, с чего начать» — без текста.
+                or (NO_START_LABEL if stuck_reason == "no_start" else None)
                 or "Ученик запросил помощь по заданию."
             ),
             payload={
@@ -581,10 +607,26 @@ async def can_access_help_request(
     row = r.fetchone()
     if row is None:
         return False
-    rid, assigned, student_id, course_id = row[0], row[1], row[2], row[3]
+    assigned, student_id, course_id = row[1], row[2], row[3]
 
     if assigned == teacher_id:
         return True
+    return await can_access_student_course(db, teacher_id, student_id, course_id)
+
+
+async def can_access_student_course(
+    db: AsyncSession,
+    teacher_id: int,
+    student_id: int,
+    course_id: Optional[int],
+) -> bool:
+    """Доступ преподавателя к ученику в курсе — ACL заявок без «назначен».
+
+    Связь student_teacher_links, или teacher_courses по `course_id`
+    (иерархически), или роль methodist. Та же проверка, что у
+    `can_access_help_request` (и у `HELP_REQUESTS_ACL_SQL`), — tsk-1384 берёт
+    её для записи устной просьбы, когда заявки ещё нет.
+    """
     r = await db.execute(
         text("""
             SELECT 1 FROM student_teacher_links
@@ -615,6 +657,124 @@ async def can_access_help_request(
     if r.fetchone() is not None:
         return True
     return False
+
+
+async def create_oral_help_request(
+    db: AsyncSession,
+    *,
+    teacher_id: int,
+    student_id: int,
+    task_id: int,
+    course_id: Optional[int],
+    note: Optional[str],
+    close: bool = True,
+) -> Tuple[Optional[dict[str, Any]], Optional[str]]:
+    """Записать устную просьбу ученика о помощи (tsk-1384).
+
+    Ученик без единой идеи просит преподавателя голосом — до tsk-1384 факт
+    обращения терялся. Преподаватель записывает его заявкой `manual_help` с
+    `origin='oral'`: она попадает в те же отчёты, что обычные (история заявок
+    ученика и преподавателя, недельный разбор трудных заданий), потому что
+    они читают `help_requests` напрямую.
+
+    Гейт П4 не действует — он про ученика. Событие `help_requested` в
+    `learning_events` НЕ пишется: по нему дедуплицируется собственная заявка
+    ученика (окно `HELP_DEDUPE_MINUTES`), и она склеилась бы с устной.
+
+    `close=True` (по умолчанию) — помощь уже оказана: заявка сразу закрыта
+    этим преподавателем, `due_at` пустой (П6: срока не было — не просрочена),
+    `closed_at = created_at`. Ответа (`help_request_replies`) нет, поэтому
+    рефлексия П10 у ученика не спрашивается, а уведомление о закрытии не
+    шлётся — ученик и так получил помощь лично. В метрике реакции дашборда
+    преподавателей такая заявка не участвует (`teacher_dashboard_service`).
+
+    Заметка закрытой заявки — `resolution_comment` («что разобрали»), а не
+    `message`: вопроса ученик не писал, и в его истории не должно появиться
+    «Мой вопрос» чужими словами.
+
+    `close=False` — открыта со сроком, как обычная (`HELP_DUE_AT_SQL`), и
+    назначена на записавшего преподавателя; заметка — в `message`, чтобы
+    было видно, о чём просил ученик.
+
+    Права проверяет вызывающий (`can_access_student_course`).
+
+    Returns:
+        (data, error). error: None | "student_not_found" | "already_open"
+        (`close=False`, а по паре уже есть открытая `manual_help`; в data —
+        её `request_id`).
+    """
+    exists = (
+        await db.execute(text("SELECT 1 FROM users WHERE id = :id"), {"id": student_id})
+    ).first()
+    if exists is None:
+        return (None, "student_not_found")
+    note_clean = (note or "").strip()[:2000] or None
+    if not close:
+        # Вторая открытая заявка по той же проблеме — два срока и два ответа.
+        existing = (
+            await db.execute(
+                text("""
+                    SELECT id FROM help_requests
+                    WHERE student_id = :student_id AND task_id = :task_id
+                      AND status = 'open' AND request_type = 'manual_help'
+                    ORDER BY created_at DESC LIMIT 1
+                """),
+                {"student_id": student_id, "task_id": task_id},
+            )
+        ).first()
+        if existing is not None:
+            return ({"request_id": int(existing[0])}, "already_open")
+    if close:
+        r = await db.execute(
+            text("""
+                INSERT INTO help_requests
+                (status, request_type, auto_created, context_json, student_id, task_id,
+                 course_id, message, assigned_teacher_id, origin,
+                 created_at, updated_at, closed_at, closed_by, resolution_comment, due_at)
+                VALUES ('closed', 'manual_help', false, '{}'::jsonb, :student_id, :task_id,
+                        :course_id, NULL, :teacher_id, 'oral',
+                        now(), now(), now(), :teacher_id, :note, NULL)
+                RETURNING id
+            """),
+            {
+                "student_id": student_id,
+                "task_id": task_id,
+                "course_id": course_id,
+                "note": note_clean,
+                "teacher_id": teacher_id,
+            },
+        )
+        new_id = int(r.scalar())
+        await record_help_request_closed(db, student_id, new_id, teacher_id, note_clean)
+        status_value = "closed"
+    else:
+        r = await db.execute(
+            text(f"""
+                INSERT INTO help_requests
+                (status, request_type, auto_created, context_json, student_id, task_id,
+                 course_id, message, assigned_teacher_id, origin,
+                 created_at, updated_at, due_at)
+                VALUES ('open', 'manual_help', false, '{{}}'::jsonb, :student_id, :task_id,
+                        :course_id, :note, :teacher_id, 'oral',
+                        now(), now(), {HELP_DUE_AT_SQL})
+                RETURNING id
+            """),  # nosec B608 — HELP_DUE_AT_SQL литерал модуля help_sla
+            {
+                "student_id": student_id,
+                "task_id": task_id,
+                "course_id": course_id,
+                "note": note_clean,
+                "teacher_id": teacher_id,
+                "help_sla_hours": help_sla_hours(),
+            },
+        )
+        new_id = int(r.scalar())
+        status_value = "open"
+    logger.info(
+        "oral help request: teacher_id=%s student_id=%s task_id=%s request_id=%s status=%s",
+        teacher_id, student_id, task_id, new_id, status_value,
+    )
+    return ({"request_id": new_id, "status": status_value, "origin": "oral"}, None)
 
 
 async def get_help_request_attachment(
@@ -795,7 +955,9 @@ async def list_help_requests(
                    hr.attachment_id, hr.attachment_filename,
                    hr.attachment_content_type, hr.attachment_size_bytes,
                    -- tsk-995: тот же предикат, что у фильтра overdue=1 и ячейки.
-                   {help_overdue_sql('hr')} AS is_overdue
+                   {help_overdue_sql('hr')} AS is_overdue,
+                   -- tsk-1384: колонки 31-32 — причина и источник заявки.
+                   hr.stuck_reason, hr.origin
             FROM help_requests hr
             LEFT JOIN users u ON u.id = hr.student_id
             LEFT JOIN tasks t ON t.id = hr.task_id
@@ -865,6 +1027,9 @@ async def list_help_requests(
             "attachment_filename": row[27] if len(row) > 27 else None,
             "attachment_content_type": row[28] if len(row) > 28 else None,
             "attachment_size_bytes": row[29] if len(row) > 29 else None,
+            # tsk-1384: причина «не знает, с чего начать» и «устно» — 31-32.
+            "stuck_reason": row[31] if len(row) > 31 else None,
+            "origin": row[32] if len(row) > 32 else None,
         })
     return (items, total)
 
@@ -916,7 +1081,9 @@ async def get_help_request_detail(
                    {help_overdue_sql('hr')} AS is_overdue,
                    -- tsk-999: колонки 39-42 — рефлексия ученика после ответа.
                    hr.reflection_main, hr.reflection_unclear,
-                   hr.reflection_understood, hr.reflection_at
+                   hr.reflection_understood, hr.reflection_at,
+                   -- tsk-1384: колонки 43-44 — причина и источник заявки.
+                   hr.stuck_reason, hr.origin
             FROM help_requests hr
             LEFT JOIN users u ON u.id = hr.student_id
             LEFT JOIN tasks t ON t.id = hr.task_id
@@ -1038,6 +1205,9 @@ async def get_help_request_detail(
         "reflection_unclear": row[40] if len(row) > 40 else None,
         "reflection_understood": row[41] if len(row) > 41 else None,
         "reflection_at": row[42] if len(row) > 42 else None,
+        # tsk-1384: «не знает, с чего начать» и «устно» — колонки 43-44.
+        "stuck_reason": row[43] if len(row) > 43 else None,
+        "origin": row[44] if len(row) > 44 else None,
         # tsk-303: колонки 24-27 — состояние лестницы помощи. Индексы считаются
         # от порядка SELECT выше; в этом же маппинге когда-то уже был сдвиг на
         # +1 (см. комментарий про off-by-one), поэтому новые поля добавлены в
@@ -1503,7 +1673,8 @@ async def _repeat_ask_count(
     return int(
         (
             await db.execute(
-                text("""
+                # tsk-1384: сразу закрытая устная запись — не обращение ученика.
+                text(f"""
                     SELECT
                       (SELECT COUNT(*) FROM help_request_reopens rr
                         WHERE rr.request_id = :request_id)
@@ -1512,8 +1683,9 @@ async def _repeat_ask_count(
                         WHERE hr.student_id = :student_id
                           AND hr.task_id = :task_id
                           AND hr.request_type = ANY(:types)
-                          AND hr.id <> :request_id)
-                """),
+                          AND hr.id <> :request_id
+                          AND NOT {oral_closed_sql('hr')})
+                """),  # nosec B608 — oral_closed_sql литерал модуля
                 {
                     "request_id": request_id,
                     "student_id": student_id,
@@ -1557,9 +1729,12 @@ async def get_student_help_request(
                 WHERE hr.student_id = :student_id
                   AND hr.task_id = :task_id
                   AND hr.request_type = ANY(:types)
+                  -- tsk-1384: сразу закрытая устная запись не подменяет
+                  -- собственную заявку ученика (лестница, рефлексия П10).
+                  AND NOT {oral_closed_sql('hr')}
                 ORDER BY hr.created_at DESC, hr.id DESC
                 LIMIT 1
-            """),  # nosec B608 — _REFLECTION_ANSWER_SQL литерал модуля
+            """),  # nosec B608 — _REFLECTION_ANSWER_SQL, oral_closed_sql — литералы модуля
             {"student_id": student_id, "task_id": task_id, "types": list(_LADDER_TYPES)},
         )
     ).fetchone()

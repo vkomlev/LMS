@@ -222,7 +222,9 @@ async def _load_help_requests(
         await db.execute(
             text(
                 "SELECT id AS request_id, status, request_type, message, "
-                "       created_at, closed_at, resolution_comment "
+                "       created_at, closed_at, resolution_comment, "
+                # tsk-1384: метки «устно» и «не знает, с чего начать».
+                "       origin, stuck_reason "
                 "FROM help_requests "
                 "WHERE student_id = :user_id AND task_id = :task_id "
                 "ORDER BY created_at ASC, id ASC"
