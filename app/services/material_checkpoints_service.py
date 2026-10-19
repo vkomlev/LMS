@@ -145,22 +145,26 @@ async def answer_checkpoint(
         text("SELECT pg_advisory_xact_lock(hashtextextended(:k, 0))"),
         {"k": f"{EVENT_TYPE}:{student_id}:{material_id}"},
     )
-    seen = (
+    prior = (
         await db.execute(
             text(
                 """
-                SELECT 1 FROM learning_events
+                SELECT count(*) AS total
+                FROM learning_events
                 WHERE student_id = :sid
                   AND event_type = :et
                   AND payload->>'material_id' = :mid
                   AND payload->>'checkpoint_id' = :cid
-                LIMIT 1
                 """
             ),
             {"sid": student_id, "et": EVENT_TYPE, "mid": str(material_id), "cid": checkpoint_id},
         )
-    ).first()
-    first_attempt = seen is None
+    ).one()
+    first_attempt = int(prior.total) == 0
+    # tsk-1373: пояснение обычно содержит ответ. После первой ошибки его не
+    # показываем — иначе «попробуй ещё раз» теряет смысл; показываем при верном
+    # ответе и на любой не первой попытке (вторая ошибка, повтор после верного).
+    reveal = correct or not first_attempt
 
     payload = {
         "material_id": material_id,
@@ -181,6 +185,8 @@ async def answer_checkpoint(
     explanation = checkpoint.get("explanation")
     return {
         "correct": correct,
-        "explanation": explanation if isinstance(explanation, str) and explanation.strip() else None,
+        "explanation": (
+            explanation if reveal and isinstance(explanation, str) and explanation.strip() else None
+        ),
         "first_attempt": first_attempt,
     }, None

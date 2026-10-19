@@ -278,10 +278,11 @@ async def test_single_answer_verdict_and_event(db, client, checkpoints_on):
     assert wrong.status_code == 200, wrong.text
     assert wrong.json() == {
         "material_id": mid, "checkpoint_id": "cp-index", "correct": False,
-        "explanation": "Счёт индексов идёт с нуля.", "first_attempt": True,
+        "explanation": None, "first_attempt": True,
     }
     right = await _answer(client, token, mid, "cp-index", "b")
     assert right.json()["correct"] is True
+    assert right.json()["explanation"] == "Счёт индексов идёт с нуля."
     assert right.json()["first_attempt"] is False
 
     events = await _events(db, sid)
@@ -289,6 +290,22 @@ async def test_single_answer_verdict_and_event(db, client, checkpoints_on):
         {"material_id": mid, "checkpoint_id": "cp-index", "correct": False, "answer": "a", "first_attempt": True},
         {"material_id": mid, "checkpoint_id": "cp-index", "correct": True, "answer": "b", "first_attempt": False},
     ]
+
+
+async def test_explanation_hidden_on_first_mistake_only(db, client, checkpoints_on):
+    """tsk-1373: первая ошибка — без пояснения; вторая ошибка и верный ответ — с ним."""
+    expl = CP_SINGLE["explanation"]
+    _, token, _, mid = await _setup(db)
+    first = (await _answer(client, token, mid, "cp-index", "a")).json()
+    assert (first["correct"], first["explanation"]) == (False, None)
+    second = (await _answer(client, token, mid, "cp-index", "a")).json()
+    assert (second["correct"], second["explanation"]) == (False, expl)
+    right = (await _answer(client, token, mid, "cp-index", "b")).json()
+    assert (right["correct"], right["explanation"]) == (True, expl)
+    # Верно с первой попытки — пояснение сразу.
+    _, token2, _, mid2 = await _setup(db)
+    ok = (await _answer(client, token2, mid2, "cp-index", "b")).json()
+    assert (ok["correct"], ok["explanation"]) == (True, expl)
 
 
 async def test_short_answer_normalized(db, client, checkpoints_on):
