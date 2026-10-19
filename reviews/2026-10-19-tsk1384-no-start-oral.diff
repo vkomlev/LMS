@@ -1,0 +1,1446 @@
+diff --git a/app/api/v1/ai_tutor.py b/app/api/v1/ai_tutor.py
+index 9d9ca3f..9fdaf93 100644
+--- a/app/api/v1/ai_tutor.py
++++ b/app/api/v1/ai_tutor.py
+@@ -12,7 +12,7 @@ from __future__ import annotations
+ 
+ import json
+ import logging
+-from typing import AsyncIterator, Optional
++from typing import AsyncIterator, Literal, Optional
+ 
+ from fastapi import APIRouter, Depends, HTTPException, Query, status
+ from fastapi.responses import StreamingResponse
+@@ -123,13 +123,17 @@ _SUBSCRIPTION_403 = {
+     }
+ }
+ 
++#: tsk-1384: заметка разговора, открытого кнопкой «Не понимаю, с чего начать».
++NO_START_TUTOR_NOTE = "Не понимаю, с чего начать"
++
+ # tsk-993 (П4): отказ «сначала попробуй сам» на открытии нового разговора.
+ _ATTEMPT_409 = {
+     409: {
+         "description": (
+             "tsk-993: при HELP_REQUIRES_ATTEMPT=true новый разговор открывается "
+             "только после своей сдачи по заданию или с описанием «где застрял» "
+-            "(`stuck_note`, не короче 20 символов). `payload.code` = "
++            "(`stuck_note`, не короче 20 символов) либо `stuck_reason=no_start` "
++            "(tsk-1384). `payload.code` = "
+             "`attempt_required`, `detail` — текст для ученика."
+         )
+     }
+@@ -137,7 +141,12 @@ _ATTEMPT_409 = {
+ 
+ 
+ async def _enforce_attempt_gate(
+-    db: AsyncSession, *, owner: int, task_id: int, stuck_note: Optional[str]
++    db: AsyncSession,
++    *,
++    owner: int,
++    task_id: int,
++    stuck_note: Optional[str],
++    stuck_reason: Optional[str] = None,
+ ) -> None:
+     """Гейт П4 — только если разговор будет НОВЫМ (tsk-993).
+ 
+@@ -155,7 +164,8 @@ async def _enforce_attempt_gate(
+     if active is None:
+         raise HTTPException(status.HTTP_404_NOT_FOUND, f"задание {task_id} не найдено или неактивно")
+     await help_attempt_gate.enforce(
+-        db, student_id=owner, task_id=task_id, stuck_note=stuck_note, surface="ai_tutor"
++        db, student_id=owner, task_id=task_id, stuck_note=stuck_note, surface="ai_tutor",
++        stuck_reason=stuck_reason,
+     )
+ 
+ 
+@@ -178,6 +188,14 @@ async def get_session(
+             "20 символов"
+         ),
+     ),
++    stuck_reason: Optional[Literal["no_start"]] = Query(
++        None,
++        description=(
++            "tsk-1384: `no_start` — ученик нажал «Не понимаю, с чего начать»: "
++            "открывает НОВЫЙ разговор без своей сдачи и без заметки, как "
++            "заметка не короче 20 символов; наставник начинает с этого"
++        ),
++    ),
+     db: AsyncSession = Depends(get_async_db),
+     current_user: CurrentUser = Depends(get_current_user),
+ ) -> TutorSessionRead:
+@@ -218,7 +236,13 @@ async def get_session(
+ 
+     # tsk-993 (П4): после тарифа — сначала «нельзя по тарифу», потом
+     # «сначала попробуй сам»: апгрейд гейт попытки не снимет.
+-    await _enforce_attempt_gate(db, owner=owner, task_id=task_id, stuck_note=stuck_note)
++    await _enforce_attempt_gate(
++        db, owner=owner, task_id=task_id, stuck_note=stuck_note, stuck_reason=stuck_reason
++    )
++    # tsk-1384: без своей заметки «не знаю, с чего начать» и есть заметка —
++    # наставник начинает разговор с первого шага, а не с разбора ответа.
++    if stuck_reason == help_attempt_gate.STUCK_REASON_NO_START and not (stuck_note or "").strip():
++        stuck_note = NO_START_TUTOR_NOTE
+ 
+     try:
+         session, _ = await session_service.get_or_create(
+diff --git a/app/api/v1/learning.py b/app/api/v1/learning.py
+index 757c849..4f6c447 100644
+--- a/app/api/v1/learning.py
++++ b/app/api/v1/learning.py
+@@ -835,7 +835,8 @@ async def get_task_state(
+         409: {
+             "description": (
+                 "tsk-993: при HELP_REQUIRES_ATTEMPT=true — у ученика нет своей сдачи "
+-                "по заданию и `stuck_note` короче 20 символов. `payload.code` = "
++                "по заданию, `stuck_note` короче 20 символов и `stuck_reason` не "
++                "`no_start` (tsk-1384). `payload.code` = "
+                 "`attempt_required`, `detail` — текст для ученика."
+             )
+         },
+@@ -900,6 +901,7 @@ async def request_help(
+         task_id=task_id,
+         stuck_note=body.stuck_note,
+         surface="request_help",
++        stuck_reason=body.stuck_reason,
+     )
+     event_id, deduplicated = await record_help_requested(
+         db, body.student_id, task_id, body.message
+@@ -913,6 +915,7 @@ async def request_help(
+         course_id=task.course_id,
+         attempt_id=attempt_id,
+         stuck_note=help_attempt_gate.normalize_stuck_note(body.stuck_note),
++        stuck_reason=help_attempt_gate.resolve_stuck_reason(body.stuck_note, body.stuck_reason),
+         deduplicated=deduplicated,
+         attachment_id=body.attachment_id,
+         attachment_filename=body.attachment_filename,
+diff --git a/app/api/v1/teacher_help_requests.py b/app/api/v1/teacher_help_requests.py
+index 1cc0d0d..5b27c25 100644
+--- a/app/api/v1/teacher_help_requests.py
++++ b/app/api/v1/teacher_help_requests.py
+@@ -5,6 +5,7 @@ GET /api/v1/teacher/help-requests — список заявок
+ GET /api/v1/teacher/help-requests/{request_id} — карточка заявки
+ POST /api/v1/teacher/help-requests/{request_id}/close — закрыть заявку
+ POST /api/v1/teacher/help-requests/{request_id}/reply — ответить студенту
++POST /api/v1/teacher/help-requests/oral — записать устную просьбу ученика (tsk-1384)
+ """
+ from __future__ import annotations
+ 
+@@ -32,6 +33,8 @@ from app.schemas.teacher_help_requests import (
+     HelpRequestPendingCountResponse,
+     WebinarLinkRequest,
+     WebinarLinkResponse,
++    OralHelpRequestCreate,
++    OralHelpRequestCreateResponse,
+     ReopenKpiItem,
+     ReopenKpiResponse,
+ )
+@@ -48,6 +51,8 @@ from app.services.help_requests_service import (
+     list_help_requests,
+     get_help_request_detail,
+     can_access_help_request,
++    can_access_student_course,
++    create_oral_help_request,
+     help_request_exists,
+     close_help_request,
+     reply_help_request,
+@@ -59,6 +64,7 @@ from app.services.help_requests_service import (
+     MIN_REQUESTS_FOR_RATE,
+ )
+ from app.services import attachment_storage
++from app.services.tasks_service import TasksService
+ from app.services.teacher_dashboard_service import get_teacher_dashboard
+ from app.utils.exceptions import DomainError
+ from app.services import audit_service, roles_service
+@@ -72,6 +78,8 @@ from app.services.teacher_queue_service import (
+     HelpClaimNotFoundError,
+ )
+ 
++_tasks_service = TasksService()
++
+ router = APIRouter(prefix="/teacher/help-requests", tags=["teacher_help_requests"])
+ logger = logging.getLogger("api.teacher_help_requests")
+ 
+@@ -240,6 +248,74 @@ async def help_request_teacher_dashboard(
+     )
+ 
+ 
++# ----- tsk-1384: устная просьба (маршрут до /{request_id}) -----
++
++
++@router.post(
++    "/oral",
++    response_model=OralHelpRequestCreateResponse,
++    status_code=status.HTTP_201_CREATED,
++    summary="Записать устную просьбу ученика о помощи по заданию (tsk-1384)",
++    responses={
++        403: {"description": "Нет доступа к ученику (тот же ACL, что у заявок)"},
++        404: {"description": "Задание или ученик не найдены"},
++        409: {
++            "description": (
++                "`close=false`, а по заданию уже есть открытая заявка ученика: "
++                "`payload.code` = `help_request_open`, `payload.request_id` — её id"
++            )
++        },
++    },
++)
++async def help_request_oral(
++    body: OralHelpRequestCreate = Body(...),
++    current_user: CurrentUser = Depends(get_current_user),
++    db: AsyncSession = Depends(get_bare_db),
++) -> OralHelpRequestCreateResponse:
++    """Заявка `manual_help` от имени ученика с `origin='oral'`.
++
++    Права — как у ответа на заявку: вызывающий — сам `teacher_id` (или
++    сервисный ключ), доступ к ученику — тот же ACL, что у чтения заявок
++    (связь с учеником, курс задания в зоне преподавателя, роль методиста).
++    Гейт П4 не действует. По умолчанию заявка сразу закрыта — помощь
++    оказана; `close=false` — открыта со сроком, как обычная.
++    """
++    if not current_user.is_service and current_user.id != body.teacher_id:
++        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
++    task = await _tasks_service.get_by_id(db, body.task_id)
++    if task is None:
++        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Задание не найдено")
++    if not await can_access_student_course(
++        db, body.teacher_id, body.student_id, task.course_id
++    ):
++        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Нет доступа к ученику")
++    data, err = await create_oral_help_request(
++        db,
++        teacher_id=body.teacher_id,
++        student_id=body.student_id,
++        task_id=body.task_id,
++        course_id=task.course_id,
++        note=body.note,
++        close=body.close,
++    )
++    if err == "already_open" and data is not None:
++        raise DomainError(
++            detail=(
++                "По этому заданию у ученика уже есть открытая заявка — ответьте на неё"
++            ),
++            status_code=409,
++            payload={"code": "help_request_open", "request_id": data["request_id"]},
++        )
++    if err == "student_not_found" or data is None:
++        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ученик не найден")
++    await db.commit()
++    logger.info(
++        "POST /teacher/help-requests/oral: teacher_id=%s student_id=%s task_id=%s request_id=%s",
++        body.teacher_id, body.student_id, body.task_id, data["request_id"],
++    )
++    return OralHelpRequestCreateResponse(**data)
++
++
+ @router.get(
+     "",
+     response_model=HelpRequestListResponse,
+diff --git a/app/db/migrations/versions/2026_10_19_tsk1384_help_stuck_reason_origin.py b/app/db/migrations/versions/2026_10_19_tsk1384_help_stuck_reason_origin.py
+new file mode 100644
+index 0000000..76d0fe6
+--- /dev/null
++++ b/app/db/migrations/versions/2026_10_19_tsk1384_help_stuck_reason_origin.py
+@@ -0,0 +1,83 @@
++"""tsk-1384: причина «не знаю, с чего начать» и устная заявка помощи.
++
++Доработка П4 (tsk-993, «сначала попробуй сам»):
++
++- `help_requests.stuck_reason` — на каком основании ученик открыл помощь без
++  своей сдачи: `note` — заметка «где застрял» (≥20 символов), `no_start` —
++  кнопка «Не понимаю, с чего начать». Пишется по факту обращения, независимо
++  от сдачи и гейта; NULL — не описывал и не нажимал. Уже записанные заметки
++  получают `note`.
++- `help_requests.origin` — откуда заявка: `oral` — преподаватель записал
++  устную просьбу ученика (на занятии), `student` или NULL — ученик сам (все
++  прежние заявки остаются NULL: колонка без значения по умолчанию).
++
++Обе колонки с CHECK на закрытый набор значений.
++
++Rollback: `alembic downgrade tsk999_help_reflection` — колонки снимаются,
++причины теряются; устные заявки остаются обычными заявками `manual_help`
++(без признака «устно»).
++
++Revision ID: tsk1384_help_stuck_reason
++Revises: tsk999_help_reflection
++Create Date: 2026-10-19
++"""
++from typing import Sequence, Union
++
++import sqlalchemy as sa
++from alembic import op
++
++revision: str = "tsk1384_help_stuck_reason"
++down_revision: Union[str, None] = "tsk999_help_reflection"
++branch_labels: Union[str, Sequence[str], None] = None
++depends_on: Union[str, Sequence[str], None] = None
++
++
++def upgrade() -> None:
++    """Добавить `stuck_reason` и `origin` в заявки помощи."""
++    op.add_column(
++        "help_requests",
++        sa.Column(
++            "stuck_reason",
++            sa.String(16),
++            nullable=True,
++            comment=(
++                "Основание помощи без сдачи (tsk-1384): note — заметка «где застрял», "
++                "no_start — «не понимаю, с чего начать». NULL — не описывал и не нажимал."
++            ),
++        ),
++    )
++    op.create_check_constraint(
++        "help_requests_stuck_reason_check",
++        "help_requests",
++        "stuck_reason IN ('no_start', 'note')",
++    )
++    op.add_column(
++        "help_requests",
++        sa.Column(
++            "origin",
++            sa.String(16),
++            nullable=True,
++            comment=(
++                "Откуда заявка (tsk-1384): oral — устная просьба, записанная "
++                "преподавателем; student или NULL — ученик сам."
++            ),
++        ),
++    )
++    op.create_check_constraint(
++        "help_requests_origin_check",
++        "help_requests",
++        "origin IN ('student', 'oral')",
++    )
++    # Заметки, оставленные до tsk-1384, — то же основание `note`.
++    op.execute(
++        "UPDATE help_requests SET stuck_reason = 'note' "
++        "WHERE stuck_note IS NOT NULL AND stuck_reason IS NULL"
++    )
++
++
++def downgrade() -> None:
++    """Снять `origin` и `stuck_reason`."""
++    op.drop_constraint("help_requests_origin_check", "help_requests", type_="check")
++    op.drop_column("help_requests", "origin")
++    op.drop_constraint("help_requests_stuck_reason_check", "help_requests", type_="check")
++    op.drop_column("help_requests", "stuck_reason")
+diff --git a/app/models/help_requests.py b/app/models/help_requests.py
+index ab86932..6b22526 100644
+--- a/app/models/help_requests.py
++++ b/app/models/help_requests.py
+@@ -146,6 +146,24 @@ class HelpRequests(Base):
+         Text, nullable=True,
+         comment="Где ученик застрял, своими словами (tsk-993). NULL — не описывал.",
+     )
++    # tsk-1384: основание помощи без сдачи — `note` (заметка) или `no_start`
++    # («не понимаю, с чего начать»). CHECK в миграции tsk1384_help_stuck_reason.
++    stuck_reason: Mapped[Optional[str]] = mapped_column(
++        String(16), nullable=True,
++        comment=(
++            "Основание помощи без сдачи (tsk-1384): note — заметка «где застрял», "
++            "no_start — «не понимаю, с чего начать». NULL — не описывал и не нажимал."
++        ),
++    )
++    # tsk-1384: `oral` — устная просьба, записанная преподавателем; NULL/`student`
++    # — заявку подал ученик.
++    origin: Mapped[Optional[str]] = mapped_column(
++        String(16), nullable=True,
++        comment=(
++            "Откуда заявка (tsk-1384): oral — устная просьба, записанная "
++            "преподавателем; student или NULL — ученик сам."
++        ),
++    )
+ 
+     # tsk-999 (П10): рефлексия ученика после ответа на заявку. `review_understood`
+     # остаётся развилкой маршрута разбора; «понятно?» рефлексии — своя колонка.
+diff --git a/app/schemas/learning_api.py b/app/schemas/learning_api.py
+index 5e03576..c89978f 100644
+--- a/app/schemas/learning_api.py
++++ b/app/schemas/learning_api.py
+@@ -236,6 +236,16 @@ class RequestHelpRequest(BaseModel):
+             "иначе 409 `attempt_required`"
+         ),
+     )
++    # tsk-1384: кнопка «Не понимаю, с чего начать» — основание для гейта П4
++    # наравне с заметкой; преподаватель видит метку в карточке заявки.
++    stuck_reason: Optional[Literal["no_start", "note"]] = Field(
++        default=None,
++        description=(
++            "tsk-1384: `no_start` — ученик нажал «Не понимаю, с чего начать»: "
++            "открывает помощь без сдачи и без заметки. `note` — справочно, "
++            "сервер сам ставит его по непустой `stuck_note`"
++        ),
++    )
+ 
+ 
+ class RequestHelpResponse(BaseModel):
+diff --git a/app/schemas/task_history.py b/app/schemas/task_history.py
+index e89889a..af73dbf 100644
+--- a/app/schemas/task_history.py
++++ b/app/schemas/task_history.py
+@@ -128,6 +128,15 @@ class TaskHistoryHelpRequest(BaseModel):
+     created_at: datetime
+     closed_at: Optional[datetime] = None
+     resolution_comment: Optional[str] = None
++    # tsk-1384: «устно» (записал преподаватель) и «не знает, с чего начать».
++    origin: Optional[Literal["student", "oral"]] = Field(
++        default=None,
++        description="oral — устная просьба, записанная преподавателем; null — ученик сам",
++    )
++    stuck_reason: Optional[Literal["no_start", "note"]] = Field(
++        default=None,
++        description="Основание помощи без сдачи: no_start | note; null — нет",
++    )
+     # Обязательное (сервис всегда заполняет) — чтобы клиентский тип был не-optional.
+     replies: List[TaskHistoryHelpReply] = Field(...)
+ 
+diff --git a/app/schemas/teacher_help_requests.py b/app/schemas/teacher_help_requests.py
+index 53896da..cf38184 100644
+--- a/app/schemas/teacher_help_requests.py
++++ b/app/schemas/teacher_help_requests.py
+@@ -84,6 +84,21 @@ class HelpRequestListItem(BaseModel):
+     attachment_filename: Optional[str] = None
+     attachment_content_type: Optional[str] = None
+     attachment_size_bytes: Optional[int] = None
++    # tsk-1384: метки «не знает, с чего начать» и «устно» — видны уже в списке.
++    stuck_reason: Optional[Literal["no_start", "note"]] = Field(
++        None,
++        description=(
++            "Основание помощи без сдачи (tsk-1384): no_start — ученик нажал «Не "
++            "понимаю, с чего начать», note — описал, где застрял; null — нет"
++        ),
++    )
++    origin: Optional[Literal["student", "oral"]] = Field(
++        None,
++        description=(
++            "Откуда заявка (tsk-1384): oral — устная просьба ученика, записанная "
++            "преподавателем; null/student — ученик подал сам"
++        ),
++    )
+ 
+ 
+ class HelpRequestListResponse(BaseModel):
+@@ -315,6 +330,32 @@ class HelpRequestCloseResponse(BaseModel):
+     already_closed: bool = False
+ 
+ 
++# ----- tsk-1384: POST oral (устная просьба о помощи) -----
++
++class OralHelpRequestCreate(BaseModel):
++    """Тело записи устной просьбы ученика о помощи (tsk-1384)."""
++    teacher_id: int = Field(..., description="ID преподавателя/методиста, записывающего просьбу")
++    student_id: int = Field(..., description="ID ученика, который попросил помощи устно")
++    task_id: int = Field(..., description="ID задания, по которому просил помощи")
++    note: Optional[str] = Field(
++        None, max_length=2000, description="Что разобрали — коротко, для истории заявок"
++    )
++    close: bool = Field(
++        True,
++        description=(
++            "true (по умолчанию) — помощь уже оказана: заявка сразу закрыта, без "
++            "срока ответа; false — открыта со сроком, как обычная заявка"
++        ),
++    )
++
++
++class OralHelpRequestCreateResponse(BaseModel):
++    """Результат записи устной просьбы."""
++    request_id: int
++    status: HelpRequestStatus
++    origin: Literal["oral"] = "oral"
++
++
+ # ----- POST reply -----
+ 
+ class HelpRequestReplyRequest(BaseModel):
+diff --git a/app/services/help_attempt_gate.py b/app/services/help_attempt_gate.py
+index 42216af..ff941c5 100644
+--- a/app/services/help_attempt_gate.py
++++ b/app/services/help_attempt_gate.py
+@@ -4,6 +4,10 @@
+ открываются, если у ученика есть хотя бы одна своя сдача по заданию ИЛИ он
+ описал, где застрял (не короче 20 символов после обрезки пробелов).
+ 
++tsk-1384: третье основание — кнопка «Не понимаю, с чего начать»
++(`stuck_reason='no_start'`): ученик без единой идеи не догадывался описать
++это словами и просил преподавателя устно, а факт обращения терялся.
++
+ Гейт глобальный, под рубильником `HELP_REQUIRES_ATTEMPT` (по умолчанию
+ выключен): выкат кода не меняет поведение, пока оператор не включит. Не
+ касается заявок по материалу и автозаявок `blocked_limit` — те и так
+@@ -30,6 +34,14 @@ STUCK_NOTE_MIN_LEN = 20
+ # Потолок заметки на уровне схем запросов.
+ STUCK_NOTE_MAX_LEN = 1000
+ 
++# tsk-1384: основания помощи без своей сдачи (`help_requests.stuck_reason`).
++# `no_start` — кнопка «Не понимаю, с чего начать»: у ученика нет ни одной идеи,
++# и описать, где застрял, ему нечем. Решение оператора 19.10 — допустимое
++# основание наравне с заметкой.
++STUCK_REASON_NOTE = "note"
++STUCK_REASON_NO_START = "no_start"
++STUCK_REASONS = (STUCK_REASON_NO_START, STUCK_REASON_NOTE)
++
+ ATTEMPT_REQUIRED_CODE = "attempt_required"
+ ATTEMPT_REQUIRED_TEXT = (
+     "Сначала попробуй решить сам — отправь ответ или опиши, где застрял"
+@@ -55,6 +67,22 @@ def stuck_note_sufficient(stuck_note: Optional[str]) -> bool:
+     return cleaned is not None and len(cleaned) >= STUCK_NOTE_MIN_LEN
+ 
+ 
++def resolve_stuck_reason(
++    stuck_note: Optional[str], stuck_reason: Optional[str]
++) -> Optional[str]:
++    """Что записать в `help_requests.stuck_reason` (tsk-1384).
++
++    `no_start` — если ученик нажал «Не понимаю, с чего начать»; иначе `note`,
++    если есть непустая заметка; иначе None. Пишется независимо от гейта: это
++    факт о самом обращении, преподаватель видит его в карточке.
++    """
++    if stuck_reason == STUCK_REASON_NO_START:
++        return STUCK_REASON_NO_START
++    if normalize_stuck_note(stuck_note) is not None:
++        return STUCK_REASON_NOTE
++    return None
++
++
+ async def is_required(db: AsyncSession, *, student_id: int, task_id: int) -> bool:
+     """Закрыта ли помощь до своей сдачи — сигнал клиенту (состояние задания).
+ 
+@@ -73,6 +101,7 @@ async def enforce(
+     task_id: int,
+     stuck_note: Optional[str],
+     surface: str,
++    stuck_reason: Optional[str] = None,
+ ) -> Optional[int]:
+     """Проверить гейт и вернуть ID попытки последней своей сдачи.
+ 
+@@ -88,14 +117,17 @@ async def enforce(
+         student_id: ID ученика.
+         task_id: ID задания.
+         stuck_note: описание «где застрял» (может быть None).
++        stuck_reason: `no_start` — ученик нажал «Не понимаю, с чего начать»
++            (tsk-1384): основание наравне с заметкой ≥20 символов. Иные
++            значения гейт не снимают.
+         surface: откуда вызов — для журнала (`request_help`/`ai_tutor`).
+ 
+     Returns:
+         ID попытки последней своей сдачи или None (сдачи нет либо гейт выключен).
+ 
+     Raises:
+-        DomainError: 409 `attempt_required` — нет своей сдачи и заметка короче
+-            порога.
++        DomainError: 409 `attempt_required` — нет своей сдачи, заметка короче
++            порога и не нажато «Не понимаю, с чего начать».
+     """
+     if not is_enabled():
+         return None
+@@ -104,6 +136,12 @@ async def enforce(
+         return attempt_id
+     if stuck_note_sufficient(stuck_note):
+         return None
++    if stuck_reason == STUCK_REASON_NO_START:
++        logger.info(
++            "help gate: no_start surface=%s student_id=%s task_id=%s",
++            surface, student_id, task_id,
++        )
++        return None
+     logger.info(
+         "help gate: отказ attempt_required surface=%s student_id=%s task_id=%s",
+         surface, student_id, task_id,
+diff --git a/app/services/help_requests_service.py b/app/services/help_requests_service.py
+index ce1cd68..82dc2b8 100644
+--- a/app/services/help_requests_service.py
++++ b/app/services/help_requests_service.py
+@@ -51,6 +51,26 @@ from app.services.teacher_queue_service import (
+ 
+ logger = logging.getLogger(__name__)
+ 
++def oral_closed_sql(alias: str = "hr") -> str:
++    """SQL-признак «устная просьба, записанная уже закрытой» (tsk-1384).
++
++    Такая заявка — запись факта, а не обращение, ждущее ответа: у неё нет
++    срока (`due_at IS NULL` — его ставит только открытая запись), поэтому она
++    не входит во время реакции (дашборд преподавателей), не становится
++    «текущей» заявкой ученика на экране задания (лестница tsk-303, рефлексия
++    П10) и не считается его повторным обращением. Единственное определение —
++    все три места читают его отсюда.
++
++    :param alias: алиас `help_requests`; только литералы из закрытого набора.
++    """
++    return (
++        f"COALESCE({alias}.origin = 'oral' AND {alias}.due_at IS NULL, false)"
++    )  # nosec B608 — alias из закрытого набора литералов
++
++
++#: tsk-1384: подпись причины `no_start` — в уведомлении преподавателю.
++NO_START_LABEL = "Не знает, с чего начать."
++
+ # tsk-999: рубильник рефлексии читается из этого экземпляра — тесты подменяют
+ # его атрибут, как `help_attempt_gate.settings` у гейта П4.
+ _settings = Settings()
+@@ -216,6 +236,7 @@ async def get_or_create_help_request(
+     attachment_content_type: Optional[str] = None,
+     attachment_size_bytes: Optional[int] = None,
+     stuck_note: Optional[str] = None,
++    stuck_reason: Optional[str] = None,
+ ) -> Tuple[int, bool]:
+     """
+     После record_help_requested: получить или создать запись в help_requests.
+@@ -229,6 +250,8 @@ async def get_or_create_help_request(
+ 
+     tsk-993 (П4): `stuck_note` («где застрял») и `attempt_id` (последняя своя
+     сдача) пишутся так же — только при создании новой заявки.
++
++    tsk-1384: `stuck_reason` (`note` | `no_start`) — тоже только при создании.
+     """
+     r = await db.execute(
+         text("SELECT id FROM help_requests WHERE event_id = :event_id LIMIT 1"),
+@@ -252,10 +275,10 @@ async def get_or_create_help_request(
+             INSERT INTO help_requests
+             (status, request_type, auto_created, context_json, student_id, task_id, course_id, attempt_id, event_id, message, assigned_teacher_id,
+              attachment_id, attachment_filename, attachment_content_type, attachment_size_bytes,
+-             stuck_note, created_at, updated_at, due_at)
++             stuck_note, stuck_reason, created_at, updated_at, due_at)
+             VALUES ('open', 'manual_help', false, '{{}}'::jsonb, :student_id, :task_id, :course_id, :attempt_id, :event_id, :message, :assigned_teacher_id,
+                     :attachment_id, :attachment_filename, :attachment_content_type, :attachment_size_bytes,
+-                    :stuck_note, now(), now(), {HELP_DUE_AT_SQL})
++                    :stuck_note, :stuck_reason, now(), now(), {HELP_DUE_AT_SQL})
+             RETURNING id
+         """),  # nosec B608 — HELP_DUE_AT_SQL литерал модуля help_sla
+         {
+@@ -272,6 +295,7 @@ async def get_or_create_help_request(
+             "attachment_content_type": attachment_content_type,
+             "attachment_size_bytes": attachment_size_bytes,
+             "stuck_note": note_truncated,
++            "stuck_reason": stuck_reason,
+         },
+     )
+     new_id = r.scalar()
+@@ -294,6 +318,8 @@ async def get_or_create_help_request(
+             content=head + (
+                 msg_truncated
+                 or (f"Где застрял: {note_truncated}" if note_truncated else None)
++                # tsk-1384: кнопка «Не понимаю, с чего начать» — без текста.
++                or (NO_START_LABEL if stuck_reason == "no_start" else None)
+                 or "Ученик запросил помощь по заданию."
+             ),
+             payload={
+@@ -581,10 +607,26 @@ async def can_access_help_request(
+     row = r.fetchone()
+     if row is None:
+         return False
+-    rid, assigned, student_id, course_id = row[0], row[1], row[2], row[3]
++    assigned, student_id, course_id = row[1], row[2], row[3]
+ 
+     if assigned == teacher_id:
+         return True
++    return await can_access_student_course(db, teacher_id, student_id, course_id)
++
++
++async def can_access_student_course(
++    db: AsyncSession,
++    teacher_id: int,
++    student_id: int,
++    course_id: Optional[int],
++) -> bool:
++    """Доступ преподавателя к ученику в курсе — ACL заявок без «назначен».
++
++    Связь student_teacher_links, или teacher_courses по `course_id`
++    (иерархически), или роль methodist. Та же проверка, что у
++    `can_access_help_request` (и у `HELP_REQUESTS_ACL_SQL`), — tsk-1384 берёт
++    её для записи устной просьбы, когда заявки ещё нет.
++    """
+     r = await db.execute(
+         text("""
+             SELECT 1 FROM student_teacher_links
+@@ -617,6 +659,124 @@ async def can_access_help_request(
+     return False
+ 
+ 
++async def create_oral_help_request(
++    db: AsyncSession,
++    *,
++    teacher_id: int,
++    student_id: int,
++    task_id: int,
++    course_id: Optional[int],
++    note: Optional[str],
++    close: bool = True,
++) -> Tuple[Optional[dict[str, Any]], Optional[str]]:
++    """Записать устную просьбу ученика о помощи (tsk-1384).
++
++    Ученик без единой идеи просит преподавателя голосом — до tsk-1384 факт
++    обращения терялся. Преподаватель записывает его заявкой `manual_help` с
++    `origin='oral'`: она попадает в те же отчёты, что обычные (история заявок
++    ученика и преподавателя, недельный разбор трудных заданий), потому что
++    они читают `help_requests` напрямую.
++
++    Гейт П4 не действует — он про ученика. Событие `help_requested` в
++    `learning_events` НЕ пишется: по нему дедуплицируется собственная заявка
++    ученика (окно `HELP_DEDUPE_MINUTES`), и она склеилась бы с устной.
++
++    `close=True` (по умолчанию) — помощь уже оказана: заявка сразу закрыта
++    этим преподавателем, `due_at` пустой (П6: срока не было — не просрочена),
++    `closed_at = created_at`. Ответа (`help_request_replies`) нет, поэтому
++    рефлексия П10 у ученика не спрашивается, а уведомление о закрытии не
++    шлётся — ученик и так получил помощь лично. В метрике реакции дашборда
++    преподавателей такая заявка не участвует (`teacher_dashboard_service`).
++
++    Заметка закрытой заявки — `resolution_comment` («что разобрали»), а не
++    `message`: вопроса ученик не писал, и в его истории не должно появиться
++    «Мой вопрос» чужими словами.
++
++    `close=False` — открыта со сроком, как обычная (`HELP_DUE_AT_SQL`), и
++    назначена на записавшего преподавателя; заметка — в `message`, чтобы
++    было видно, о чём просил ученик.
++
++    Права проверяет вызывающий (`can_access_student_course`).
++
++    Returns:
++        (data, error). error: None | "student_not_found" | "already_open"
++        (`close=False`, а по паре уже есть открытая `manual_help`; в data —
++        её `request_id`).
++    """
++    exists = (
++        await db.execute(text("SELECT 1 FROM users WHERE id = :id"), {"id": student_id})
++    ).first()
++    if exists is None:
++        return (None, "student_not_found")
++    note_clean = (note or "").strip()[:2000] or None
++    if not close:
++        # Вторая открытая заявка по той же проблеме — два срока и два ответа.
++        existing = (
++            await db.execute(
++                text("""
++                    SELECT id FROM help_requests
++                    WHERE student_id = :student_id AND task_id = :task_id
++                      AND status = 'open' AND request_type = 'manual_help'
++                    ORDER BY created_at DESC LIMIT 1
++                """),
++                {"student_id": student_id, "task_id": task_id},
++            )
++        ).first()
++        if existing is not None:
++            return ({"request_id": int(existing[0])}, "already_open")
++    if close:
++        r = await db.execute(
++            text("""
++                INSERT INTO help_requests
++                (status, request_type, auto_created, context_json, student_id, task_id,
++                 course_id, message, assigned_teacher_id, origin,
++                 created_at, updated_at, closed_at, closed_by, resolution_comment, due_at)
++                VALUES ('closed', 'manual_help', false, '{}'::jsonb, :student_id, :task_id,
++                        :course_id, NULL, :teacher_id, 'oral',
++                        now(), now(), now(), :teacher_id, :note, NULL)
++                RETURNING id
++            """),
++            {
++                "student_id": student_id,
++                "task_id": task_id,
++                "course_id": course_id,
++                "note": note_clean,
++                "teacher_id": teacher_id,
++            },
++        )
++        new_id = int(r.scalar())
++        await record_help_request_closed(db, student_id, new_id, teacher_id, note_clean)
++        status_value = "closed"
++    else:
++        r = await db.execute(
++            text(f"""
++                INSERT INTO help_requests
++                (status, request_type, auto_created, context_json, student_id, task_id,
++                 course_id, message, assigned_teacher_id, origin,
++                 created_at, updated_at, due_at)
++                VALUES ('open', 'manual_help', false, '{{}}'::jsonb, :student_id, :task_id,
++                        :course_id, :note, :teacher_id, 'oral',
++                        now(), now(), {HELP_DUE_AT_SQL})
++                RETURNING id
++            """),  # nosec B608 — HELP_DUE_AT_SQL литерал модуля help_sla
++            {
++                "student_id": student_id,
++                "task_id": task_id,
++                "course_id": course_id,
++                "note": note_clean,
++                "teacher_id": teacher_id,
++                "help_sla_hours": help_sla_hours(),
++            },
++        )
++        new_id = int(r.scalar())
++        status_value = "open"
++    logger.info(
++        "oral help request: teacher_id=%s student_id=%s task_id=%s request_id=%s status=%s",
++        teacher_id, student_id, task_id, new_id, status_value,
++    )
++    return ({"request_id": new_id, "status": status_value, "origin": "oral"}, None)
++
++
+ async def get_help_request_attachment(
+     db: AsyncSession,
+     request_id: int,
+@@ -795,7 +955,9 @@ async def list_help_requests(
+                    hr.attachment_id, hr.attachment_filename,
+                    hr.attachment_content_type, hr.attachment_size_bytes,
+                    -- tsk-995: тот же предикат, что у фильтра overdue=1 и ячейки.
+-                   {help_overdue_sql('hr')} AS is_overdue
++                   {help_overdue_sql('hr')} AS is_overdue,
++                   -- tsk-1384: колонки 31-32 — причина и источник заявки.
++                   hr.stuck_reason, hr.origin
+             FROM help_requests hr
+             LEFT JOIN users u ON u.id = hr.student_id
+             LEFT JOIN tasks t ON t.id = hr.task_id
+@@ -865,6 +1027,9 @@ async def list_help_requests(
+             "attachment_filename": row[27] if len(row) > 27 else None,
+             "attachment_content_type": row[28] if len(row) > 28 else None,
+             "attachment_size_bytes": row[29] if len(row) > 29 else None,
++            # tsk-1384: причина «не знает, с чего начать» и «устно» — 31-32.
++            "stuck_reason": row[31] if len(row) > 31 else None,
++            "origin": row[32] if len(row) > 32 else None,
+         })
+     return (items, total)
+ 
+@@ -916,7 +1081,9 @@ async def get_help_request_detail(
+                    {help_overdue_sql('hr')} AS is_overdue,
+                    -- tsk-999: колонки 39-42 — рефлексия ученика после ответа.
+                    hr.reflection_main, hr.reflection_unclear,
+-                   hr.reflection_understood, hr.reflection_at
++                   hr.reflection_understood, hr.reflection_at,
++                   -- tsk-1384: колонки 43-44 — причина и источник заявки.
++                   hr.stuck_reason, hr.origin
+             FROM help_requests hr
+             LEFT JOIN users u ON u.id = hr.student_id
+             LEFT JOIN tasks t ON t.id = hr.task_id
+@@ -1038,6 +1205,9 @@ async def get_help_request_detail(
+         "reflection_unclear": row[40] if len(row) > 40 else None,
+         "reflection_understood": row[41] if len(row) > 41 else None,
+         "reflection_at": row[42] if len(row) > 42 else None,
++        # tsk-1384: «не знает, с чего начать» и «устно» — колонки 43-44.
++        "stuck_reason": row[43] if len(row) > 43 else None,
++        "origin": row[44] if len(row) > 44 else None,
+         # tsk-303: колонки 24-27 — состояние лестницы помощи. Индексы считаются
+         # от порядка SELECT выше; в этом же маппинге когда-то уже был сдвиг на
+         # +1 (см. комментарий про off-by-one), поэтому новые поля добавлены в
+@@ -1503,7 +1673,8 @@ async def _repeat_ask_count(
+     return int(
+         (
+             await db.execute(
+-                text("""
++                # tsk-1384: сразу закрытая устная запись — не обращение ученика.
++                text(f"""
+                     SELECT
+                       (SELECT COUNT(*) FROM help_request_reopens rr
+                         WHERE rr.request_id = :request_id)
+@@ -1512,8 +1683,9 @@ async def _repeat_ask_count(
+                         WHERE hr.student_id = :student_id
+                           AND hr.task_id = :task_id
+                           AND hr.request_type = ANY(:types)
+-                          AND hr.id <> :request_id)
+-                """),
++                          AND hr.id <> :request_id
++                          AND NOT {oral_closed_sql('hr')})
++                """),  # nosec B608 — oral_closed_sql литерал модуля
+                 {
+                     "request_id": request_id,
+                     "student_id": student_id,
+@@ -1557,9 +1729,12 @@ async def get_student_help_request(
+                 WHERE hr.student_id = :student_id
+                   AND hr.task_id = :task_id
+                   AND hr.request_type = ANY(:types)
++                  -- tsk-1384: сразу закрытая устная запись не подменяет
++                  -- собственную заявку ученика (лестница, рефлексия П10).
++                  AND NOT {oral_closed_sql('hr')}
+                 ORDER BY hr.created_at DESC, hr.id DESC
+                 LIMIT 1
+-            """),  # nosec B608 — _REFLECTION_ANSWER_SQL литерал модуля
++            """),  # nosec B608 — _REFLECTION_ANSWER_SQL, oral_closed_sql — литералы модуля
+             {"student_id": student_id, "task_id": task_id, "types": list(_LADDER_TYPES)},
+         )
+     ).fetchone()
+diff --git a/app/services/task_history_service.py b/app/services/task_history_service.py
+index d6eff23..475d7b9 100644
+--- a/app/services/task_history_service.py
++++ b/app/services/task_history_service.py
+@@ -222,7 +222,9 @@ async def _load_help_requests(
+         await db.execute(
+             text(
+                 "SELECT id AS request_id, status, request_type, message, "
+-                "       created_at, closed_at, resolution_comment "
++                "       created_at, closed_at, resolution_comment, "
++                # tsk-1384: метки «устно» и «не знает, с чего начать».
++                "       origin, stuck_reason "
+                 "FROM help_requests "
+                 "WHERE student_id = :user_id AND task_id = :task_id "
+                 "ORDER BY created_at ASC, id ASC"
+diff --git a/app/services/teacher_activity_feed_service.py b/app/services/teacher_activity_feed_service.py
+index e6c65c3..5ad95e9 100644
+--- a/app/services/teacher_activity_feed_service.py
++++ b/app/services/teacher_activity_feed_service.py
+@@ -173,7 +173,8 @@ async def _fetch_help_requested(
+                        t.task_content->>'stem' AS stem, hr.status, hr.created_at AS event_at,
+                        hr.material_id, m.title AS material_title,
+                        hr.context_json->>'trigger' AS trigger,
+-                       hr.context_json->>'base_attempts_added' AS added
++                       hr.context_json->>'base_attempts_added' AS added,
++                       hr.origin, hr.stuck_reason
+                 FROM help_requests hr
+                 JOIN users u ON u.id = hr.student_id
+                 LEFT JOIN tasks t ON t.id = hr.task_id
+@@ -207,6 +208,11 @@ async def _fetch_help_requested(
+                     f"новые выданы автоматически{added}"
+                 )
+                 outcome = "auto_extended"
++            elif r["origin"] == "oral":
++                # tsk-1384: устную просьбу записал преподаватель.
++                summary = f"{student} — попросил помощи устно по заданию «{title}»"
++            elif r["stuck_reason"] == "no_start":
++                summary = f"{student} — не знает, с чего начать задание «{title}»"
+             else:
+                 summary = f"{student} — запросил помощь по заданию «{title}»"
+         else:
+diff --git a/app/services/teacher_dashboard_service.py b/app/services/teacher_dashboard_service.py
+index 1d90176..0fca3ba 100644
+--- a/app/services/teacher_dashboard_service.py
++++ b/app/services/teacher_dashboard_service.py
+@@ -10,7 +10,9 @@
+   было — до закрытия преподавателем. Момент «взял заявку» в базе не хранится;
+   первый ответ — то, что ученик реально увидел; закрытие без текста — устный
+   разбор на занятии, тоже реакция. Медиана и доля уложившихся в порог; порог
+-  свой для занятия и для времени вне его.
++  свой для занятия и для времени вне его. Устная просьба, записанная
++  преподавателем уже закрытой (tsk-1384), во время реакции не входит —
++  реакции там нет, есть только запись факта; в «Обработано» она «голосом».
+ * **Обработано** — заявки, закрытые преподавателем, по способу помощи: тип
+   последнего ответа (`help_request_replies.reply_kind`), закрыта без ответа —
+   «голосом». Исключение — индивидуальный разбор (`individual_review`, tsk-303):
+@@ -44,6 +46,7 @@ from app.services.help_requests_service import (
+     LADDER_TYPES_SQL,
+     MIN_REQUESTS_FOR_RATE,
+     not_test_student_sql,
++    oral_closed_sql,
+ )
+ from app.services.lesson_window_sql import in_lesson_sql
+ 
+@@ -116,6 +119,10 @@ async def get_teacher_dashboard(
+             text(f"""
+                 WITH cohort AS (
+                     SELECT h.id, h.status, h.closed_by, h.created_at, h.closed_at, h.request_type,
++                           -- tsk-1384: устная просьба, записанная уже закрытой
++                           -- (без срока), — реакции в ней нет: закрытие и есть
++                           -- момент записи, не скорость ответа.
++                           {oral_closed_sql('h')} AS oral_closed,
+                            {HELP_REQUEST_OWNER_SQL} AS owner_id,
+                            {in_lesson} AS in_lesson
+                       FROM help_requests h
+@@ -127,10 +134,12 @@ async def get_teacher_dashboard(
+                        c.in_lesson,
+                        EXISTS (SELECT 1 FROM help_request_reopens x
+                                 WHERE x.request_id = c.id) AS reopened,
++                       CASE WHEN NOT c.oral_closed THEN
+                        EXTRACT(EPOCH FROM (
+                            COALESCE(fr.first_at,
+                                     CASE WHEN c.closed_by IS NOT NULL THEN c.closed_at END)
+-                           - c.created_at)) / 60.0 AS reaction_min,
++                           - c.created_at)) / 60.0
++                       END AS reaction_min,
+                        (c.status = 'closed'
+                         AND (c.closed_by IS NOT NULL
+                              OR c.request_type = 'individual_review')) AS processed,
+diff --git a/tests/test_tsk1384_help_no_start_oral.py b/tests/test_tsk1384_help_no_start_oral.py
+new file mode 100644
+index 0000000..0d73691
+--- /dev/null
++++ b/tests/test_tsk1384_help_no_start_oral.py
+@@ -0,0 +1,492 @@
++"""tsk-1384: «Не понимаю, с чего начать» (А) и устная просьба о помощи (Б).
++
++А. Кнопка ученика `stuck_reason='no_start'` — основание гейта П4 наравне с
++заметкой ≥20 символов: заявка и новый разговор с наставником открываются без
++сдачи и без заметки; преподаватель видит причину в списке и карточке.
++
++Б. Преподаватель записывает устную просьбу ученика (`origin='oral'`):
++- права — как у ответа на заявку, доступ к ученику — ACL чтения заявок;
++- сразу закрытая — без срока: не «просрочено» и не в метрике реакции, без
++  рефлексии П10 у ученика;
++- открытая — срок как у обычной;
++- попадает в историю заявок и в недельный разбор трудных заданий.
++"""
++from __future__ import annotations
++
++import importlib.util
++import re
++from datetime import datetime, timedelta, timezone
++from pathlib import Path
++
++import pytest
++from sqlalchemy import text
++
++from app.services import help_attempt_gate, help_requests_service
++from app.services import entitlements_service as ent
++from app.services.ai_tutor import session_service
++from app.services.ai_tutor.prompt import STUDENT_DATA_OPEN
++from app.services.help_requests_service import (
++    get_student_help_request,
++    list_help_requests,
++)
++from app.services.task_history_service import _load_help_requests
++from app.services.teacher_dashboard_service import get_teacher_dashboard
++from tests.test_tsk993_help_attempt_gate import (
++    _bearer,
++    _course,
++    _link_teacher,
++    _request_help,
++    _task,
++    _user,
++)
++
++pytestmark = pytest.mark.asyncio
++
++
++@pytest.fixture
++def gate_on(monkeypatch):
++    """Рубильник П4 включён, подписной гейт выключен."""
++    monkeypatch.setattr(ent.settings, "subscription_gate_mode", "off")
++    monkeypatch.setattr(help_attempt_gate.settings, "help_requires_attempt", True)
++
++
++async def _row(db, request_id: int):
++    return (
++        await db.execute(
++            text(
++                "SELECT status, stuck_reason, stuck_note, origin, due_at, closed_at, "
++                "       closed_by, resolution_comment, message, assigned_teacher_id, "
++                "       created_at "
++                "FROM help_requests WHERE id = :id"
++            ),
++            {"id": request_id},
++        )
++    ).fetchone()
++
++
++async def _oral(client, token: str, **body):
++    return await client.post(
++        "/api/v1/teacher/help-requests/oral", headers=_bearer(token), json=body
++    )
++
++
++# ───────────────────── А. «Не понимаю, с чего начать» ────────────────────────
++
++
++async def test_no_start_opens_request_without_attempt_and_note(db, client, gate_on) -> None:
++    student_id, s_token = await _user(db, "s")
++    teacher_id, t_token = await _user(db, "t")
++    await _link_teacher(db, student_id, teacher_id)
++    task_id = await _task(db, await _course(db))
++
++    resp = await client.post(
++        f"/api/v1/learning/tasks/{task_id}/request-help",
++        headers=_bearer(s_token),
++        json={"student_id": student_id, "stuck_reason": "no_start"},
++    )
++    assert resp.status_code == 200, resp.text
++    request_id = resp.json()["request_id"]
++
++    row = await _row(db, request_id)
++    assert row.stuck_reason == "no_start"
++    assert row.stuck_note is None
++    assert row.origin is None
++    assert row.status == "open"
++    assert row.due_at is not None, "заявка ученика — со сроком П6"
++
++    detail = await client.get(
++        f"/api/v1/teacher/help-requests/{request_id}?teacher_id={teacher_id}",
++        headers=_bearer(t_token),
++    )
++    assert detail.status_code == 200, detail.text
++    assert detail.json()["stuck_reason"] == "no_start"
++
++    lst = await client.get(
++        f"/api/v1/teacher/help-requests?teacher_id={teacher_id}", headers=_bearer(t_token)
++    )
++    item = next(i for i in lst.json()["items"] if i["request_id"] == request_id)
++    assert item["stuck_reason"] == "no_start"
++
++    # Уведомление преподавателю — с меткой, а не «запросил помощь» без смысла.
++    content = (
++        await db.execute(
++            text(
++                "SELECT content FROM notifications WHERE user_id = :t "
++                "AND kind = 'help_request_opened' ORDER BY id DESC LIMIT 1"
++            ),
++            {"t": teacher_id},
++        )
++    ).scalar()
++    assert content is not None and "с чего начать" in content
++
++
++async def test_note_reason_is_stored(db, client, gate_on) -> None:
++    """Обычная заметка ≥20 символов — `stuck_reason='note'`."""
++    student_id, token = await _user(db, "s")
++    task_id = await _task(db, await _course(db))
++    resp = await _request_help(
++        client, token, student_id, task_id,
++        stuck_note="Не понимаю, как перевести число в двоичную систему",
++    )
++    assert resp.status_code == 200, resp.text
++    assert (await _row(db, resp.json()["request_id"])).stuck_reason == "note"
++
++
++async def test_other_reason_does_not_open_gate(db, client, gate_on) -> None:
++    """`note` без заметки гейт не снимает — снимает только `no_start`."""
++    student_id, token = await _user(db, "s")
++    task_id = await _task(db, await _course(db))
++    resp = await _request_help(client, token, student_id, task_id, stuck_reason="note")
++    assert resp.status_code == 409, resp.text
++    assert resp.json()["payload"]["code"] == "attempt_required"
++
++
++async def test_unknown_reason_is_422(db, client, gate_on) -> None:
++    student_id, token = await _user(db, "s")
++    task_id = await _task(db, await _course(db))
++    resp = await _request_help(client, token, student_id, task_id, stuck_reason="lazy")
++    assert resp.status_code == 422, resp.text
++
++
++async def test_no_start_opens_tutor_session(db, client, gate_on) -> None:
++    student_id, token = await _user(db, "s")
++    task_id = await _task(db, await _course(db))
++
++    resp = await client.get(
++        f"/api/v1/ai-tutor/tasks/{task_id}",
++        params={"stuck_reason": "no_start"},
++        headers=_bearer(token),
++    )
++    assert resp.status_code == 200, resp.text
++
++    session, created = await session_service.get_or_create(
++        db, student_id=student_id, task_id=task_id
++    )
++    assert created is False
++    assert session.stuck_note == "Не понимаю, с чего начать"
++    messages = await session_service.build_llm_messages(db, session, None)
++    opening = messages[-1].content
++    assert "с чего начать" in opening
++    assert STUDENT_DATA_OPEN in opening
++
++
++async def test_db_rejects_unknown_reason_and_origin(db) -> None:
++    student_id, _ = await _user(db, "s")
++    task_id = await _task(db, await _course(db))
++    for column in ("stuck_reason", "origin"):
++        with pytest.raises(Exception):
++            async with db.begin_nested():
++                await db.execute(
++                    text(
++                        f"INSERT INTO help_requests (student_id, task_id, {column}) "  # nosec B608
++                        "VALUES (:s, :t, 'bogus')"
++                    ),
++                    {"s": student_id, "t": task_id},
++                )
++
++
++# ───────────────────── Б. устная просьба преподавателю ───────────────────────
++
++
++async def test_oral_closed_by_default(db, client, gate_on, monkeypatch) -> None:
++    """Сразу закрыта, без срока; гейт П4 не действует; без рефлексии П10."""
++    monkeypatch.setattr(help_requests_service._settings, "help_reflection_enabled", True)
++    student_id, _ = await _user(db, "s")
++    teacher_id, t_token = await _user(db, "t")
++    await _link_teacher(db, student_id, teacher_id)
++    task_id = await _task(db, await _course(db))
++
++    resp = await _oral(
++        client, t_token,
++        teacher_id=teacher_id, student_id=student_id, task_id=task_id,
++        note="  Разобрали, с чего начать перевод  ",
++    )
++    assert resp.status_code == 201, resp.text
++    body = resp.json()
++    assert body["status"] == "closed" and body["origin"] == "oral"
++
++    row = await _row(db, body["request_id"])
++    assert row.origin == "oral"
++    assert row.status == "closed"
++    assert row.due_at is None
++    assert row.closed_at is not None and row.closed_by == teacher_id
++    assert row.resolution_comment == "Разобрали, с чего начать перевод"
++    assert row.message is None, "вопроса ученик не писал — заметка не «его вопрос»"
++    assert row.assigned_teacher_id == teacher_id
++
++    # Ни рефлексии П10, ни лестницы: на экране задания ученика запись не
++    # становится «его заявкой» (ответа нет — спрашивать не о чем).
++    assert await get_student_help_request(db, student_id, task_id) is None
++
++    # Ученику не шлём «ваш вопрос закрыт» — он и так получил помощь лично.
++    sent = (
++        await db.execute(
++            text("SELECT COUNT(*) FROM notifications WHERE user_id = :s"), {"s": student_id}
++        )
++    ).scalar()
++    assert sent == 0
++
++
++async def test_oral_open_has_regular_due(db, client) -> None:
++    student_id, _ = await _user(db, "s")
++    teacher_id, t_token = await _user(db, "t")
++    await _link_teacher(db, student_id, teacher_id)
++    task_id = await _task(db, await _course(db))
++
++    resp = await _oral(
++        client, t_token,
++        teacher_id=teacher_id, student_id=student_id, task_id=task_id,
++        note="Просил разобрать после урока", close=False,
++    )
++    assert resp.status_code == 201, resp.text
++    assert resp.json()["status"] == "open"
++    row = await _row(db, resp.json()["request_id"])
++    assert row.status == "open" and row.origin == "oral"
++    assert row.message == "Просил разобрать после урока"
++    assert row.due_at is not None
++    sla = timedelta(hours=help_requests_service.help_sla_hours())
++    assert abs((row.due_at - row.created_at) - sla) < timedelta(seconds=1)
++
++
++async def test_oral_foreign_student_is_403(db, client) -> None:
++    student_id, _ = await _user(db, "s")
++    teacher_id, _ = await _user(db, "t")
++    stranger_id, stranger_token = await _user(db, "x")
++    await _link_teacher(db, student_id, teacher_id)
++    task_id = await _task(db, await _course(db))
++
++    resp = await _oral(
++        client, stranger_token,
++        teacher_id=stranger_id, student_id=student_id, task_id=task_id,
++    )
++    assert resp.status_code == 403, resp.text
++    count = (
++        await db.execute(
++            text("SELECT COUNT(*) FROM help_requests WHERE student_id = :s"), {"s": student_id}
++        )
++    ).scalar()
++    assert count == 0
++
++
++async def test_oral_on_behalf_of_other_teacher_is_403(db, client) -> None:
++    """Записать можно только от своего имени (как ответ на заявку)."""
++    student_id, _ = await _user(db, "s")
++    teacher_id, _ = await _user(db, "t")
++    other_id, other_token = await _user(db, "o")
++    await _link_teacher(db, student_id, teacher_id)
++    task_id = await _task(db, await _course(db))
++    resp = await _oral(
++        client, other_token,
++        teacher_id=teacher_id, student_id=student_id, task_id=task_id,
++    )
++    assert resp.status_code == 403, resp.text
++
++
++async def test_oral_missing_task_is_404(db, client) -> None:
++    student_id, _ = await _user(db, "s")
++    teacher_id, t_token = await _user(db, "t")
++    await _link_teacher(db, student_id, teacher_id)
++    resp = await _oral(
++        client, t_token, teacher_id=teacher_id, student_id=student_id, task_id=999999999
++    )
++    assert resp.status_code == 404, resp.text
++
++
++async def test_oral_closed_not_overdue_and_listed_with_label(db, client) -> None:
++    """Закрытая устная: не в «просрочено», в списке закрытых — с меткой oral."""
++    student_id, _ = await _user(db, "s")
++    teacher_id, t_token = await _user(db, "t")
++    await _link_teacher(db, student_id, teacher_id)
++    task_id = await _task(db, await _course(db))
++    resp = await _oral(
++        client, t_token, teacher_id=teacher_id, student_id=student_id, task_id=task_id
++    )
++    request_id = resp.json()["request_id"]
++    # Даже «старая» закрытая устная не становится просроченной.
++    await db.execute(
++        text(
++            "UPDATE help_requests SET created_at = now() - interval '3 days', "
++            "closed_at = now() - interval '3 days' WHERE id = :id"
++        ),
++        {"id": request_id},
++    )
++    await db.commit()
++
++    overdue, _ = await list_help_requests(
++        db, teacher_id, status_filter="all", overdue=True, student_id=student_id
++    )
++    assert request_id not in [i["request_id"] for i in overdue]
++
++    closed, _ = await list_help_requests(
++        db, teacher_id, status_filter="closed", student_id=student_id
++    )
++    item = next(i for i in closed if i["request_id"] == request_id)
++    assert item["origin"] == "oral" and item["is_overdue"] is False
++
++    detail = await client.get(
++        f"/api/v1/teacher/help-requests/{request_id}?teacher_id={teacher_id}",
++        headers=_bearer(t_token),
++    )
++    assert detail.status_code == 200, detail.text
++    assert detail.json()["origin"] == "oral"
++
++
++async def test_oral_closed_excluded_from_reaction_metric(db, client) -> None:
++    """В дашборде: заявка посчитана и обработана «голосом», но без реакции."""
++    student_id, _ = await _user(db, "s")
++    teacher_id, t_token = await _user(db, "t")
++    await _link_teacher(db, student_id, teacher_id)
++    task_id = await _task(db, await _course(db))
++    resp = await _oral(
++        client, t_token, teacher_id=teacher_id, student_id=student_id, task_id=task_id
++    )
++    assert resp.status_code == 201, resp.text
++
++    today = datetime.now(timezone.utc).date()
++    items = await get_teacher_dashboard(
++        db, date_from=today - timedelta(days=1), date_to=today + timedelta(days=1)
++    )
++    row = next(i for i in items if i["teacher_id"] == teacher_id)
++    sides = [row["in_lesson"], row["off_lesson"]]
++    assert sum(s["requests"] for s in sides) == 1
++    assert sum(s["processed"] for s in sides) == 1
++    assert sum(s["by_kind"]["voice"] for s in sides) == 1
++    assert sum(s["reacted"] for s in sides) == 0, "устная закрытая — не реакция"
++
++
++async def test_regular_request_reaction_still_counted(db, client) -> None:
++    """Контроль: обычная заявка, закрытая без ответа, остаётся реакцией."""
++    student_id, _ = await _user(db, "s")
++    teacher_id, _ = await _user(db, "t")
++    await _link_teacher(db, student_id, teacher_id)
++    task_id = await _task(db, await _course(db))
++    rid = (
++        await db.execute(
++            text(
++                "INSERT INTO help_requests (status, student_id, task_id, request_type, "
++                "assigned_teacher_id, due_at) VALUES ('open', :s, :t, 'manual_help', :tt, "
++                "now() + interval '1 day') RETURNING id"
++            ),
++            {"s": student_id, "t": task_id, "tt": teacher_id},
++        )
++    ).scalar_one()
++    await help_requests_service.close_help_request(db, rid, teacher_id)
++    await db.commit()
++    today = datetime.now(timezone.utc).date()
++    items = await get_teacher_dashboard(
++        db, date_from=today - timedelta(days=1), date_to=today + timedelta(days=1)
++    )
++    row = next(i for i in items if i["teacher_id"] == teacher_id)
++    assert row["in_lesson"]["reacted"] + row["off_lesson"]["reacted"] == 1
++
++
++async def test_oral_in_task_history(db, client) -> None:
++    student_id, _ = await _user(db, "s")
++    teacher_id, t_token = await _user(db, "t")
++    await _link_teacher(db, student_id, teacher_id)
++    task_id = await _task(db, await _course(db))
++    resp = await _oral(
++        client, t_token, teacher_id=teacher_id, student_id=student_id, task_id=task_id,
++        note="Разобрали первый шаг",
++    )
++    history = await _load_help_requests(db, user_id=student_id, task_id=task_id)
++    assert len(history) == 1
++    assert history[0]["request_id"] == resp.json()["request_id"]
++    assert history[0]["origin"] == "oral"
++    assert history[0]["resolution_comment"] == "Разобрали первый шаг"
++
++
++def _weekly_signals_sql() -> str:
++    """SQL недельного разбора (`scripts/weekly_hard_tasks.py`) в синтаксисе bind."""
++    path = Path(__file__).resolve().parents[1] / "scripts" / "weekly_hard_tasks.py"
++    spec = importlib.util.spec_from_file_location("weekly_hard_tasks_tsk1384", path)
++    mod = importlib.util.module_from_spec(spec)
++    assert spec.loader is not None
++    spec.loader.exec_module(mod)
++    return re.sub(r"%\((\w+)\)s", r":\1", mod.SELECT_SIGNALS)
++
++
++async def test_oral_counts_in_weekly_hard_tasks(db, client) -> None:
++    student_id, _ = await _user(db, "s")
++    teacher_id, t_token = await _user(db, "t")
++    await _link_teacher(db, student_id, teacher_id)
++    task_id = await _task(db, await _course(db))
++    resp = await _oral(
++        client, t_token, teacher_id=teacher_id, student_id=student_id, task_id=task_id
++    )
++    assert resp.status_code == 201, resp.text
++
++    rows = (
++        await db.execute(text(_weekly_signals_sql()), {"days": "7", "min_failed": 2})
++    ).mappings().fetchall()
++    row = next(r for r in rows if r["task_id"] == task_id)
++    assert row["help_requests"] == 1
++
++
++
++async def test_oral_closed_does_not_replace_student_own_request(db, client, gate_on) -> None:
++    """Ревью MAJOR-1: своя открытая заявка остаётся «текущей» на экране задания,
++    устная закрытая не считается повторным обращением (лестница tsk-303)."""
++    student_id, s_token = await _user(db, "s")
++    teacher_id, t_token = await _user(db, "t")
++    await _link_teacher(db, student_id, teacher_id)
++    task_id = await _task(db, await _course(db))
++
++    own = await client.post(
++        f"/api/v1/learning/tasks/{task_id}/request-help",
++        headers=_bearer(s_token),
++        json={"student_id": student_id, "stuck_reason": "no_start"},
++    )
++    assert own.status_code == 200, own.text
++    own_id = own.json()["request_id"]
++
++    oral = await _oral(
++        client, t_token, teacher_id=teacher_id, student_id=student_id, task_id=task_id
++    )
++    assert oral.status_code == 201, oral.text
++
++    view = await get_student_help_request(db, student_id, task_id)
++    assert view is not None and view["request_id"] == own_id
++    assert view["status"] == "open"
++    repeat = await help_requests_service._repeat_ask_count(db, own_id, student_id, task_id)
++    assert repeat == 0
++
++
++async def test_oral_closed_alone_not_shown_as_student_request(db, client) -> None:
++    """Ученик не подавал заявку — «Всё равно не понял» по чужой записи не предлагаем."""
++    student_id, _ = await _user(db, "s")
++    teacher_id, t_token = await _user(db, "t")
++    await _link_teacher(db, student_id, teacher_id)
++    task_id = await _task(db, await _course(db))
++    resp = await _oral(
++        client, t_token, teacher_id=teacher_id, student_id=student_id, task_id=task_id
++    )
++    assert resp.status_code == 201, resp.text
++    assert await get_student_help_request(db, student_id, task_id) is None
++
++
++async def test_oral_open_conflicts_with_existing_open_request(db, client, gate_on) -> None:
++    """Ревью MINOR-4: вторая открытая заявка по той же паре — 409 с id первой."""
++    student_id, s_token = await _user(db, "s")
++    teacher_id, t_token = await _user(db, "t")
++    await _link_teacher(db, student_id, teacher_id)
++    task_id = await _task(db, await _course(db))
++    own = await client.post(
++        f"/api/v1/learning/tasks/{task_id}/request-help",
++        headers=_bearer(s_token),
++        json={"student_id": student_id, "stuck_reason": "no_start"},
++    )
++    own_id = own.json()["request_id"]
++
++    resp = await _oral(
++        client, t_token, teacher_id=teacher_id, student_id=student_id, task_id=task_id,
++        close=False,
++    )
++    assert resp.status_code == 409, resp.text
++    assert resp.json()["payload"] == {"code": "help_request_open", "request_id": own_id}
++
++    # Закрытую запись факта при этом сделать можно.
++    closed = await _oral(
++        client, t_token, teacher_id=teacher_id, student_id=student_id, task_id=task_id
++    )
++    assert closed.status_code == 201, closed.text
