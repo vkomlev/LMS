@@ -7,6 +7,7 @@ from datetime import datetime
 from sqlalchemy import (
     Boolean,
     DateTime,
+    ForeignKey,
     Integer,
     ForeignKeyConstraint,
     PrimaryKeyConstraint,
@@ -112,6 +113,20 @@ class Tasks(Base):
         Integer,
         nullable=True,
         comment="Место в списке заданий курса, для которого подкурс прозрачен",
+    )
+    # tsk-996 (ADR-0008): материал своего узла, сразу после которого задание
+    # стоит в учебном порядке (`app/services/node_sequence.py`). NULL — в конце
+    # узла. Инвариант «тот же курс» держит триггер `trg_tasks_anchor_guard`.
+    anchor_material_id: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        ForeignKey("materials.id", ondelete="SET NULL", name="tasks_anchor_material_id_fkey"),
+        nullable=True,
+        comment="Материал того же курса, после которого стоит задание; NULL — в конце узла",
+    )
+    anchor_source: Mapped[Optional[str]] = mapped_column(
+        String(16),
+        nullable=True,
+        comment="Кто поставил якорь: manual (методист) или publish (публикатор)",
     )
 
     is_active: Mapped[bool] = mapped_column(

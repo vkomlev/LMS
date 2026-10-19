@@ -73,6 +73,7 @@ from app.services.learning_engine_service import LearningEngineService
 from app.services.node_sequence import (
     HEAD,
     TAIL,
+    anchor_of,
     node_sequence,
     node_sequence_enabled,
     segment_entries,
@@ -399,15 +400,22 @@ async def _tree_task_rows(db: AsyncSession, course_ids: list[int]) -> list[dict[
     rows = (
         await db.execute(
             text(
-                "SELECT id, course_id, external_uid, order_position, host_order_position, "
-                "       task_content->>'type' AS task_type, "
-                "       task_content->>'title' AS tc_title, task_content->>'stem' AS tc_stem, "
-                "       COALESCE((solution_rules->>'manual_review_required')::boolean, false) "
-                "         AS manual_review_required "
-                "FROM tasks "
-                "WHERE course_id = ANY(:course_ids) AND is_active = true "
-                "  AND requirement_level = ANY(:levels) "
-                "ORDER BY course_id, order_position ASC NULLS LAST, id"
+                "SELECT t.id, t.course_id, t.external_uid, t.order_position, "
+                "       t.host_order_position, "
+                "       t.task_content->>'type' AS task_type, "
+                "       t.task_content->>'title' AS tc_title, t.task_content->>'stem' AS tc_stem, "
+                "       COALESCE((t.solution_rules->>'manual_review_required')::boolean, false) "
+                "         AS manual_review_required, "
+                # tsk-996 (фаза B): действующий якорь — материал того же курса
+                # (любой, и неактивный); другой курс/удалённый — NULL.
+                "       am.id AS anchor_material_id, "
+                "       am.order_position AS anchor_order_position "
+                "FROM tasks t "
+                "LEFT JOIN materials am "
+                "  ON am.id = t.anchor_material_id AND am.course_id = t.course_id "
+                "WHERE t.course_id = ANY(:course_ids) AND t.is_active = true "
+                "  AND t.requirement_level = ANY(:levels) "
+                "ORDER BY t.course_id, t.order_position ASC NULLS LAST, t.id"
             ),
             {"course_ids": course_ids, "levels": list(_REQUIREMENT_LEVELS)},
         )
@@ -1562,8 +1570,9 @@ async def _progress_items_by_sequence(
 ) -> list[dict[str, Any]]:
     """Плоский список карточки прогресса по шагам `node_sequence` (tsk-996).
 
-    Строка узла ``course`` — в начале головы узла, затем голова (материалы;
-    фаза B — и задания с якорем), подразделы, хвост (задания). Элементы
+    Строка узла ``course`` — в начале головы узла, затем голова (материалы и,
+    фаза B, задания с якорем сразу после своего материала), подразделы, хвост
+    (задания без якоря). Элементы
     берутся уже собранными (`per_course_items` — материалы,
     `per_course_tasks` — задания, в том же порядке, что их исходные строки).
     """
@@ -1590,6 +1599,11 @@ async def _progress_items_by_sequence(
                         task_key(
                             t["order_position"], int(t["id"]),
                             host_order_position=t["host_order_position"],
+                            absorbed=bool(t.get("_absorbed")),
+                        ),
+                        anchor_of(
+                            t.get("anchor_material_id"), t.get("anchor_order_position"),
+                            int(t.get("_src_course_id", t["course_id"])),
                             absorbed=bool(t.get("_absorbed")),
                         ),
                     )

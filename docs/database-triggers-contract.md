@@ -695,6 +695,25 @@ return await self.repo.reorder_tasks(db, course_id, task_orders)
 
 ---
 
+### 16. Якорь задания к материалу: страж «тот же курс» и обнуление при переездах (tsk-996)
+
+`tasks.anchor_material_id` — материал того же курса, сразу после которого задание стоит в
+учебном порядке узла (ADR-0008, `app/services/node_sequence.py`); `tasks.anchor_source` —
+`manual` | `publish` | NULL. Порядок `order_position` и его триггеры (разделы 13–15, tsk-813)
+якорь не трогает.
+
+| Объект | Когда | Что делает |
+|---|---|---|
+| `trg_tasks_anchor_guard` → `tasks_anchor_guard()` | BEFORE INSERT / UPDATE OF `course_id`, `anchor_material_id` на `tasks` | Переезд задания в другой курс, если якорь в том же UPDATE не сменили на другой материал, — обнуляет `anchor_material_id` и `anchor_source`. Якорь снят удалением материала (FK SET NULL) — обнуляет и `anchor_source`. Якорь на материал другого курса или несуществующий — `RAISE ... check_violation` (23514); материал читается `FOR SHARE`. Сдвиги позиций (UPDATE только `order_position`) его не запускают. |
+| `trg_materials_anchor_on_move` → `materials_anchor_on_move()` | AFTER UPDATE OF `course_id` на `materials` | Материал уехал в другой курс — якоря заданий старого узла на него обнуляются вместе с источником. |
+| FK `tasks_anchor_material_id_fkey` | DELETE материала | `ON DELETE SET NULL`: задания уходят в конец узла; источник обнуляет страж. |
+| `ck_tasks_anchor_source` | всегда | `anchor_source` ∈ {NULL, `publish`, `manual`}. |
+
+Миграция: `app/db/migrations/versions/2026_10_19_tsk996_task_anchor.py`. Тесты:
+`tests/test_tsk996_anchor.py`.
+
+---
+
 ## 🔍 Как проверить наличие триггеров
 
 ```sql
@@ -749,6 +768,15 @@ WHERE constraint_schema = 'public';
 ---
 
 ## 📝 История изменений
+
+### 2026-10-19: Якорь задания к материалу (tsk-996, фаза B)
+
+**Добавлено:** колонки `tasks.anchor_material_id` (FK `ON DELETE SET NULL`) и
+`tasks.anchor_source` (CHECK), частичный индекс `ix_tasks_anchor_material`, триггеры
+`trg_tasks_anchor_guard` и `trg_materials_anchor_on_move` — раздел 16. Триггеры
+`order_position` и UNIQUE tsk-813 не менялись.
+
+**Authority:** `app/db/migrations/versions/2026_10_19_tsk996_task_anchor.py`, ADR-0008.
 
 ### 2026-05-21: Добавлены триггеры order_position для tasks (зеркало materials)
 

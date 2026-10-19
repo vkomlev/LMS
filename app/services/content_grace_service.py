@@ -94,6 +94,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.services.learning_gaps_service import learning_path_results_filter
 from app.services.node_sequence import (
     NodeEntry,
+    anchor_of,
     node_sequence,
     node_sequence_enabled,
     segment_entries,
@@ -142,6 +143,10 @@ class _Item:
     created_at: Optional[datetime]  # None — «существовало всегда»
     done: bool  # ученик элемент закрыл
     done_at: Optional[datetime]  # когда закрыл; None при done=True — неизвестно
+    # tsk-996 (фаза B): действующий якорь задания — (id, order_position)
+    # материала своего курса; None — задание в конце узла.
+    anchor_material_id: Optional[int] = None
+    anchor_order_position: Optional[int] = None
 
 
 @dataclass
@@ -259,8 +264,14 @@ SELECT
         WHEN lp.max_score > 0
              AND lp.score::float / lp.max_score >= :pass_threshold
             THEN lp.submitted_at
-    END AS done_at
+    END AS done_at,
+    -- tsk-996 (фаза B): действующий якорь задания (материал того же курса,
+    -- любой — и неактивный); иначе NULL — задание в конце узла.
+    am.id AS anchor_material_id,
+    am.order_position AS anchor_order_position
 FROM tasks t
+LEFT JOIN materials am
+    ON am.id = t.anchor_material_id AND am.course_id = t.course_id
 LEFT JOIN last_per_task lp ON lp.task_id = t.id
 LEFT JOIN student_task_progress stp
     ON stp.task_id = t.id AND stp.student_id = :student_id
@@ -278,7 +289,9 @@ SELECT
     CASE
         WHEN smp.status IN ('completed', 'skipped')
             THEN COALESCE(smp.completed_at, smp.skipped_at)
-    END
+    END,
+    NULL,
+    NULL
 FROM materials m
 LEFT JOIN student_material_progress smp
     ON smp.material_id = m.id AND smp.student_id = :student_id
@@ -558,7 +571,10 @@ async def compute_grace_reasons(
             parent.children.append(int(child_id))
             parent.child_order.append((order_number, int(child_id)))
 
-    for kind, item_id, course_id, order_position, created_at, done, done_at in item_rows:
+    for (
+        kind, item_id, course_id, order_position, created_at, done, done_at,
+        anchor_material_id, anchor_order_position,
+    ) in item_rows:
         node = nodes.get(int(course_id))
         if node is None:
             continue
@@ -571,6 +587,8 @@ async def compute_grace_reasons(
                 created_at=created_at,
                 done=bool(done),
                 done_at=done_at,
+                anchor_material_id=anchor_material_id,
+                anchor_order_position=anchor_order_position,
             )
         )
 
@@ -691,7 +709,11 @@ def _walk_sequence_by_node_sequence(nodes: Dict[int, _Node], root_id: int) -> Li
                     for i in node.own if i.kind == "material"
                 ],
                 tasks=[
-                    (i.item_id, task_key(i.order_position, i.item_id))
+                    (
+                        i.item_id,
+                        task_key(i.order_position, i.item_id),
+                        anchor_of(i.anchor_material_id, i.anchor_order_position, i.course_id),
+                    )
                     for i in node.own if i.kind == "task"
                 ],
             )

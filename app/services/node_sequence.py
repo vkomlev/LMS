@@ -31,6 +31,19 @@ ADR-0008 (`docs/ai/adr/0008-interleave-theory-practice-anchor.md`), фаза A
 проверяет `tests/test_tsk996_node_sequence.py` (выдача при
 ``NODE_SEQUENCE_ENABLED=true`` и ``false`` совпадает).
 
+Фаза B (якорь, `tasks.anchor_material_id`): задание с действующим якорем
+получает ключ своего материала с хвостиком ``task_key`` и встаёт сразу после
+него — в голове узла, внутри группы по ``task_key``. Действующий якорь —
+материал того же курса, что и задание (вызывающий отбирает его тем же
+запросом заданий: ``JOIN materials ON id = anchor AND course_id = курс
+задания``). Неактивный или «рекомендуемый» материал в выдачу не попадает, но
+его задания стоят на его месте: ключ считается по позиции материала, а не по
+его присутствию в списке. Якорь на материал другого курса или удалённый —
+задание в хвосте, как без якоря. Задания прозрачного подкурса в списке хозяина
+(tsk-1198) якорь не учитывают — они в хвосте хозяина, как раньше. Прежний путь
+(``NODE_SEQUENCE_ENABLED=false``) якоря не читает вовсе: откат рубильником
+возвращает и прежний порядок.
+
 Модуль чистый: ни запросов к БД, ни сессии. Данные узла загружает
 вызывающий — каждый своим (уже существующим) запросом, поэтому число
 запросов не меняется.
@@ -41,6 +54,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from typing import (
+    Any,
     Awaitable,
     Callable,
     Generator,
@@ -70,6 +84,9 @@ SeqKey = tuple
 Step = Tuple[int, Segment]
 # Подраздел узла: (child_id, order_number).
 ChildRow = Tuple[int, Optional[int]]
+# Действующий якорь задания (tsk-996, фаза B): (material_id, order_position
+# материала, course_id материала). None — якоря нет или он недействителен.
+Anchor = Tuple[int, Optional[int], int]
 
 
 def node_sequence_enabled() -> bool:
@@ -104,13 +121,38 @@ def material_seq_key(
     return (SEG_HEAD, course_id, order_key(order_position, material_id))
 
 
-def task_seq_key(key: TaskKey) -> SeqKey:
-    """Ключ задания: в фазе A якорей нет — задание в хвосте узла.
+def task_seq_key(key: TaskKey, anchor: Optional[Anchor] = None) -> SeqKey:
+    """Ключ задания в последовательности узла.
 
     ``key`` — `transparent_subcourse.task_key` (у задания прозрачного
-    подкурса — место в хозяине).
+    подкурса — место в хозяине). Без якоря задание в хвосте узла. С якорем
+    (tsk-996, фаза B) — ключ его материала с хвостиком ``key``: материал —
+    префикс ключа и потому идёт раньше своих заданий, следующий материал —
+    позже всех; внутри группы задания по ``key``.
     """
-    return (SEG_TAIL, key)
+    if anchor is None:
+        return (SEG_TAIL, key)
+    material_id, order_position, course_id = anchor
+    return material_seq_key(order_position, int(material_id), int(course_id)) + (key,)
+
+
+def anchor_of(
+    anchor_material_id: Optional[int],
+    anchor_order_position: Optional[int],
+    task_course_id: int,
+    *,
+    absorbed: bool = False,
+) -> Optional[Anchor]:
+    """Действующий якорь задания из строки запроса либо None (tsk-996).
+
+    ``anchor_material_id`` — id материала из ``LEFT JOIN materials ON id =
+    tasks.anchor_material_id AND course_id = tasks.course_id``: NULL, если
+    якоря нет, материал удалён или он из другого курса. Задание прозрачного
+    подкурса в списке хозяина (``absorbed``) якорь не учитывает.
+    """
+    if anchor_material_id is None or absorbed:
+        return None
+    return (int(anchor_material_id), anchor_order_position, int(task_course_id))
 
 
 def child_seq_key(order_number: Optional[int], child_id: int) -> SeqKey:
@@ -139,27 +181,29 @@ class NodeEntry:
 def node_sequence(
     *,
     materials: Iterable[Tuple[int, Optional[int], int]] = (),
-    tasks: Iterable[Tuple[int, TaskKey]] = (),
+    tasks: Iterable[Tuple[Any, ...]] = (),
 ) -> List[NodeEntry]:
     """Элементы одного узла в учебном порядке: ``[(kind, id)]`` с ключами.
 
     Args:
         materials: ``(material_id, order_position, course_id)`` материалов узла.
-        tasks: ``(task_id, task_key)`` заданий узла (с влитыми заданиями
-            прозрачных подкурсов, если вызывающий их показывает).
+        tasks: ``(task_id, task_key)`` или ``(task_id, task_key, anchor)``
+            заданий узла (с влитыми заданиями прозрачных подкурсов, если
+            вызывающий их показывает). ``anchor`` — `anchor_of(...)`: задание
+            с якорем встаёт сразу после своего материала (tsk-996, фаза B),
+            даже если самого материала в ``materials`` нет (неактивный).
 
     Подразделы в список не входят: их место (между головой и хвостом) задаёт
     обход дерева `walk_steps`. Чтобы отдать один шаг, вызывающий берёт
     элементы с ``segment_of(entry.key) == шаг``.
-
-    Фаза B добавит сюда якорь задания: задание с якорем получит ключ своего
-    материала с хвостиком ``(1, task_key)`` и встанет сразу после него.
     """
     entries = [
         NodeEntry("material", int(mid), material_seq_key(op, int(mid), int(cid)))
         for mid, op, cid in materials
     ]
-    entries.extend(NodeEntry("task", int(tid), task_seq_key(key)) for tid, key in tasks)
+    for row in tasks:
+        anchor = row[2] if len(row) > 2 else None
+        entries.append(NodeEntry("task", int(row[0]), task_seq_key(row[1], anchor)))
     entries.sort(key=lambda e: e.key)
     return entries
 
@@ -237,9 +281,11 @@ def post_order_courses(steps: Iterable[Step]) -> List[int]:
 
 
 __all__ = [
+    "Anchor",
     "HEAD",
     "TAIL",
     "NodeEntry",
+    "anchor_of",
     "Step",
     "child_seq_key",
     "material_seq_key",

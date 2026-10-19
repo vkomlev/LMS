@@ -307,6 +307,36 @@ class TasksService(BaseService[Tasks]):
         
         return await super().update(db, db_obj, obj_in)
 
+    async def validate_anchor(
+        self, db: AsyncSession, task: Tasks, anchor_material_id: Optional[int]
+    ) -> None:
+        """Проверить якорь задания к материалу (tsk-996, ADR-0008).
+
+        Якорь — материал того же курса, что и задание (любой, в том числе
+        неактивный: его задания стоят на его месте). ``None`` — снять якорь
+        («в конце раздела»), всегда допустимо. Тот же инвариант держит
+        триггер `trg_tasks_anchor_guard`; здесь он проверяется заранее, чтобы
+        методист получил понятный 422, а не ошибку базы.
+
+        Raises:
+            DomainError: материала нет или он из другого курса.
+        """
+        if anchor_material_id is None:
+            return
+        material_course = (
+            await db.execute(
+                text("SELECT course_id FROM materials WHERE id = :mid"),
+                {"mid": anchor_material_id},
+            )
+        ).scalar()
+        if material_course is None:
+            raise DomainError(f"Материал {anchor_material_id} не найден")
+        if int(material_course) != int(task.course_id):
+            raise DomainError(
+                f"Материал {anchor_material_id} из другого раздела: якорь задания "
+                "может указывать только на материал раздела самого задания"
+            )
+
     async def get_by_external_uid(
         self,
         db: AsyncSession,

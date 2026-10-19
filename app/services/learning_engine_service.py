@@ -11,7 +11,8 @@ import logging
 from datetime import datetime
 from typing import Any, List, Optional, Sequence, Tuple
 
-from sqlalchemy import select, text, func
+from sqlalchemy import and_, select, text, func
+from sqlalchemy.orm import aliased
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.attempts import Attempts
@@ -41,7 +42,9 @@ from app.services.task_sampling import sample_task_ids
 from app.services.transparent_subcourse import TaskKey, task_key, transparent_links
 from app.services.node_sequence import (
     HEAD,
+    Anchor,
     NodeEntry,
+    anchor_of,
     Segment,
     material_seq_key,
     node_sequence,
@@ -1225,8 +1228,22 @@ class LearningEngineService:
                     material_seq_key(row[1], after_material_id, int(row[0])), None,
                 )
         if after_task_id is not None:
+            # tsk-996 (фаза B): якорь — тем же запросом. Задание с действующим
+            # якорем стоит в голове узла сразу после своего материала, и курсор
+            # режет голову по его ключу.
+            anchor_m = aliased(Materials)
             r = await db.execute(
-                select(Tasks.course_id, Tasks.order_position, Tasks.host_order_position)
+                select(
+                    Tasks.course_id, Tasks.order_position, Tasks.host_order_position,
+                    anchor_m.id, anchor_m.order_position,
+                )
+                .outerjoin(
+                    anchor_m,
+                    and_(
+                        anchor_m.id == Tasks.anchor_material_id,
+                        anchor_m.course_id == Tasks.course_id,
+                    ),
+                )
                 .where(Tasks.id == after_task_id)
             )
             row = r.fetchone()
@@ -1234,6 +1251,7 @@ class LearningEngineService:
                 host = (await transparent_links(db)).get(int(row[0]))
                 host_alt = None
                 if host is not None:
+                    # В списке хозяина якорь не учитывается (tsk-1198).
                     host_alt = (
                         host,
                         task_seq_key(
@@ -1245,7 +1263,11 @@ class LearningEngineService:
                     )
                 return (
                     int(row[0]), "task", after_task_id,
-                    task_seq_key(task_key(row[1], after_task_id)), host_alt,
+                    task_seq_key(
+                        task_key(row[1], after_task_id),
+                        anchor_of(row[3], row[4], int(row[0])),
+                    ),
+                    host_alt,
                 )
         return None
 
@@ -1558,11 +1580,15 @@ class LearningEngineService:
             # незавершённый с начала этого корня.
             position = None
 
+        # tsk-996: задания узла нужны и голове (якоря), и хвосту — читаются
+        # один раз на узел за вызов.
+        task_rows_cache: dict[int, List[Tuple[int, TaskKey, Optional[Anchor]]]] = {}
         for offset, (cid, segment) in enumerate(steps[start_index:]):
             if cid in absorbed_here:
                 continue
             entries = await self._effective_segment(
-                db, cid, segment, student_id, root_course_id=root_id
+                db, cid, segment, student_id, root_course_id=root_id,
+                task_rows_cache=task_rows_cache,
             )
             if position is not None and offset == 0:
                 pos_key = position[3]
@@ -1581,26 +1607,41 @@ class LearningEngineService:
         segment: Segment,
         student_id: int,
         root_course_id: Optional[int] = None,
+        task_rows_cache: Optional[dict] = None,
     ) -> List[NodeEntry]:
         """Элементы одного шага узла, которые ученик реально видит (tsk-996).
 
-        Списки — те же `_effective_material_rows` / `_effective_task_rows`
-        (выборка tsk-314, правило tsk-692/1261, программа tsk-798), порядок —
-        `node_sequence`. В фазе A голова узла — только материалы, хвост — только
-        задания, поэтому шаг читает ровно тот список, что и прежний обход, и
-        число запросов не меняется. Фаза B (якоря) добавит в голову задания узла.
+        Списки — те же, что у прежнего обхода (выборка tsk-314, правило
+        tsk-692/1261, программа tsk-798), порядок — `node_sequence`.
+
+        Голова — материалы узла и (фаза B) задания с якорем на них. Задания
+        голова читает, только если у узла есть якоря: признак приходит тем же
+        запросом материалов (`_node_material_rows`), поэтому узел без якорей
+        стоит ровно столько запросов, сколько и прежде. Хвост — задания без
+        действующего якоря. `task_rows_cache` — задания узла, уже прочитанные
+        в этом вызове (голова и хвост одного узла).
         """
-        if segment == HEAD:
-            rows = await self._effective_material_rows(
+        async def task_rows() -> List[Tuple[int, TaskKey, Optional[Anchor]]]:
+            if task_rows_cache is not None and course_id in task_rows_cache:
+                return task_rows_cache[course_id]
+            rows = await self._effective_task_rows_anchored(
                 db, course_id, student_id, root_course_id=root_course_id
             )
-            seq = node_sequence(materials=[(i, op, course_id) for i, op in rows])
-        else:
-            seq = node_sequence(
-                tasks=await self._effective_task_rows(
-                    db, course_id, student_id, root_course_id=root_course_id
-                )
+            if task_rows_cache is not None:
+                task_rows_cache[course_id] = rows
+            return rows
+
+        if segment == HEAD:
+            mats, has_anchors = await self._node_material_rows(db, course_id)
+            rows = await self._effective_material_rows(
+                db, course_id, student_id, root_course_id=root_course_id, rows=mats
             )
+            seq = node_sequence(
+                materials=[(i, op, course_id) for i, op in rows],
+                tasks=await task_rows() if has_anchors else (),
+            )
+        else:
+            seq = node_sequence(tasks=await task_rows())
         return segment_entries(seq, segment)
 
     async def _first_incomplete_entry(
@@ -1613,11 +1654,20 @@ class LearningEngineService:
     ) -> Optional[NextItemResult]:
         """Первый незавершённый элемент шага по порядку последовательности.
 
-        Подряд идущие элементы одного вида проверяются одним пакетом — теми же
-        `_first_incomplete_material` / `_first_incomplete_task`, что и прежде
-        (у заданий — лимит попыток в границах корня, tsk-264). Пустой шаг
-        запросов не делает.
+        Шаг из элементов одного вида (узел без якорей — всегда так) проверяется
+        теми же `_first_incomplete_material` / `_first_incomplete_task`, что и
+        прежде (у заданий — лимит попыток в границах корня, tsk-264). Пустой
+        шаг запросов не делает.
+
+        tsk-996 (фаза B): голова с якорями чередует материалы и задания. Её
+        проверяет `_first_incomplete_mixed` — одним пакетом на весь шаг, иначе
+        каждая группа «материал → его задания» стоила бы своих запросов, и
+        обход пройденного узла дорожал бы с числом групп (класс tsk-655/1250).
         """
+        if len({e.kind for e in entries}) > 1:
+            return await self._first_incomplete_mixed(
+                db, student_id, course_id, entries, root_course_id=root_course_id
+            )
         i = 0
         while i < len(entries):
             kind = entries[i].kind
@@ -1650,6 +1700,77 @@ class LearningEngineService:
             if task_id is not None:
                 logger.info("resolve_next_item: student_id=%s next=task course_id=%s task_id=%s", student_id, course_id, task_id)
                 return NextItemResult(type="task", course_id=course_id, root_course_id=root_course_id, task_id=task_id, reason="Следующее задание")
+        return None
+
+    async def _first_incomplete_mixed(
+        self,
+        db: AsyncSession,
+        student_id: int,
+        course_id: int,
+        entries: List[NodeEntry],
+        root_course_id: Optional[int] = None,
+    ) -> Optional[NextItemResult]:
+        """Первый незавершённый элемент шага со смешанными видами (tsk-996).
+
+        Те же правила, что у `_first_incomplete_material` и
+        `_first_incomplete_task` (материал закрыт — `completed`/`skipped`;
+        задание пропущено — дальше; `BLOCKED_LIMIT` — замок; `OPEN`/
+        `IN_PROGRESS`/`FAILED` — следующее задание), но запросов три на весь
+        шаг, сколько бы групп в нём ни было: завершённость материалов,
+        пропуски заданий и пакет состояний заданий.
+        """
+        material_ids = [e.item_id for e in entries if e.kind == "material"]
+        task_ids = [e.item_id for e in entries if e.kind == "task"]
+        r = await db.execute(
+            text("""
+                SELECT material_id FROM student_material_progress
+                WHERE student_id = :student_id
+                  AND material_id = ANY(:ids)
+                  AND status IN ('completed', 'skipped')
+            """),
+            {"student_id": student_id, "ids": material_ids},
+        )
+        completed_ids = {int(row[0]) for row in r.fetchall()}
+        skipped_rows = await db.execute(
+            text("""
+                SELECT task_id
+                FROM student_task_progress
+                WHERE student_id = :student_id
+                  AND task_id = ANY(:task_ids)
+                  AND status = 'skipped'
+            """),
+            {"student_id": student_id, "task_ids": task_ids},
+        )
+        skipped_ids = {int(row[0]) for row in skipped_rows.fetchall()}
+        candidates = [tid for tid in task_ids if tid not in skipped_ids]
+        states = (
+            await self.compute_task_states_batch(
+                db, student_id, candidates, root_course_id=root_course_id
+            )
+            if candidates
+            else {}
+        )
+
+        for entry in entries:
+            if entry.kind == "material":
+                if entry.item_id in completed_ids:
+                    continue
+                logger.info("resolve_next_item: student_id=%s next=material course_id=%s material_id=%s", student_id, course_id, entry.item_id)
+                return NextItemResult(type="material", course_id=course_id, root_course_id=root_course_id, material_id=entry.item_id, reason="Следующий материал")
+            state_result = states.get(entry.item_id)
+            if state_result is None:
+                continue
+            if state_result.state == "BLOCKED_LIMIT":
+                return NextItemResult(
+                    type="blocked_limit",
+                    course_id=course_id,
+                    root_course_id=root_course_id,
+                    task_id=entry.item_id,
+                    reason="Исчерпан лимит попыток",
+                )
+            if state_result.state in ("OPEN", "IN_PROGRESS", "FAILED"):
+                logger.info("resolve_next_item: student_id=%s next=task course_id=%s task_id=%s", student_id, course_id, entry.item_id)
+                return NextItemResult(type="task", course_id=course_id, root_course_id=root_course_id, task_id=entry.item_id, reason="Следующее задание")
         return None
 
     async def _collect_courses_in_order(self, db: AsyncSession, root_id: int) -> List[int]:
@@ -1834,10 +1955,34 @@ class LearningEngineService:
         ключ `transparent_subcourse.task_key`, а не сырой `order_position`:
         сравнивать позиции хозяина и подборки можно только по нему.
         """
+        return [(i, key) for i, key, _anchor in await self._ordered_task_rows_anchored(db, course_id)]
+
+    async def _ordered_task_rows_anchored(
+        self, db: AsyncSession, course_id: int
+    ) -> List[Tuple[int, TaskKey, Optional[Anchor]]]:
+        """То же, что `_ordered_task_rows`, плюс действующий якорь (tsk-996).
+
+        Якорь читается тем же запросом: `LEFT JOIN materials` по id якоря И
+        курсу задания — якорь на материал другого курса или удалённый даёт
+        NULL, то есть «без якоря». Материал берётся любой (и неактивный): его
+        задания стоят на его месте. У заданий прозрачного подкурса в списке
+        хозяина якорь не учитывается (`anchor_of(..., absorbed=True)`).
+        """
         links = await transparent_links(db)
         absorbed = [c for c, h in links.items() if h == course_id]
+        anchor_m = aliased(Materials)
         tasks_stmt = (
-            select(Tasks.id, Tasks.order_position, Tasks.host_order_position, Tasks.course_id)
+            select(
+                Tasks.id, Tasks.order_position, Tasks.host_order_position, Tasks.course_id,
+                anchor_m.id, anchor_m.order_position,
+            )
+            .outerjoin(
+                anchor_m,
+                and_(
+                    anchor_m.id == Tasks.anchor_material_id,
+                    anchor_m.course_id == Tasks.course_id,
+                ),
+            )
             .where(
                 Tasks.course_id.in_([course_id, *absorbed]),
                 Tasks.is_active.is_(True),
@@ -1845,19 +1990,55 @@ class LearningEngineService:
             )
         )
         r = await db.execute(tasks_stmt)
-        rows = [
-            (
+        rows = []
+        for row in r.fetchall():
+            is_absorbed = int(row[3]) != course_id
+            rows.append((
                 int(row[0]),
                 task_key(
                     row[1], int(row[0]),
                     host_order_position=row[2],
-                    absorbed=int(row[3]) != course_id,
+                    absorbed=is_absorbed,
                 ),
-            )
-            for row in r.fetchall()
-        ]
+                anchor_of(row[4], row[5], int(row[3]), absorbed=is_absorbed),
+            ))
         rows.sort(key=lambda x: x[1])
         return rows
+
+    async def _node_material_rows(
+        self, db: AsyncSession, course_id: int
+    ) -> Tuple[List[Tuple[int, Optional[int]]], bool]:
+        """Материалы узла для головы `node_sequence` и признак якорей (tsk-996).
+
+        Первый элемент — ровно `_ordered_material_rows` (активные, уровни
+        `required`/`skippable`, тот же порядок). Второй — есть ли у узла
+        задания с действующим якорем: тот же запрос отдаёт и материалы вне
+        обхода (неактивные, `recommended`), если на них стоит якорь, и признак
+        по каждой строке — поэтому узел без якорей стоит один запрос, как и
+        прежде, а задания голова читает только когда они ей нужны.
+        """
+        r = await db.execute(
+            text(
+                "SELECT m.id, m.order_position, "
+                "       (m.is_active AND m.requirement_level IN ('required', 'skippable')) "
+                "         AS in_walk, "
+                "       EXISTS (SELECT 1 FROM tasks t "
+                "               WHERE t.anchor_material_id = m.id "
+                "                 AND t.course_id = m.course_id) AS anchored "
+                "FROM materials m "
+                "WHERE m.course_id = :cid "
+                "ORDER BY m.order_position ASC NULLS LAST, m.id ASC"
+            ),
+            {"cid": course_id},
+        )
+        rows: List[Tuple[int, Optional[int]]] = []
+        has_anchors = False
+        for mid, op, in_walk, anchored in r.fetchall():
+            if in_walk:
+                rows.append((int(mid), op))
+            if anchored:
+                has_anchors = True
+        return rows, has_anchors
 
     async def _ordered_material_ids(self, db: AsyncSession, course_id: int) -> List[int]:
         """ID материалов курса в порядке обхода (order_position ASC NULLS LAST, id)."""
@@ -2019,6 +2200,25 @@ class LearningEngineService:
     ) -> List[Tuple[int, TaskKey]]:
         """(id, ключ порядка) заданий курса, которые студент реально видит.
 
+        Подробности — `_effective_task_rows_anchored` (тот же список и те же
+        запросы, без якоря).
+        """
+        return [
+            (i, key)
+            for i, key, _anchor in await self._effective_task_rows_anchored(
+                db, course_id, student_id, root_course_id=root_course_id
+            )
+        ]
+
+    async def _effective_task_rows_anchored(
+        self,
+        db: AsyncSession,
+        course_id: int,
+        student_id: int,
+        root_course_id: Optional[int] = None,
+    ) -> List[Tuple[int, TaskKey, Optional[Anchor]]]:
+        """(id, ключ порядка) заданий курса, которые студент реально видит.
+
         С учётом выборки по сложности (tsk-314): если на курсе включена
         выборка, исключает НЕ отобранные EASY/NORMAL задания. THEORY и любая
         сложность вне EASY/NORMAL (HARD/PROJECT) выборке не подлежат —
@@ -2030,7 +2230,7 @@ class LearningEngineService:
         (оно смотрит и на предков узла); без него правило видит только сам
         курс и потому прощает меньше, а не больше.
         """
-        rows = await self._ordered_task_rows(db, course_id)
+        rows = await self._ordered_task_rows_anchored(db, course_id)
         if not rows:
             return rows
 
@@ -2052,9 +2252,7 @@ class LearningEngineService:
         graced = await compute_graced_items(db, student_id, root_course_id or course_id)
         if not dropped and not graced.tasks:
             return rows
-        return [
-            (i, op) for i, op in rows if i not in dropped and i not in graced.tasks
-        ]
+        return [row for row in rows if row[0] not in dropped and row[0] not in graced.tasks]
 
     async def _effective_material_rows(
         self,
@@ -2062,14 +2260,19 @@ class LearningEngineService:
         course_id: int,
         student_id: int,
         root_course_id: Optional[int] = None,
+        rows: Optional[List[Tuple[int, Optional[int]]]] = None,
     ) -> List[Tuple[int, Optional[int]]]:
         """(id, order_position) материалов курса, которые студент реально видит.
 
         tsk-692: без материалов, добавленных после того, как ученик прошёл
         тему. Парный к `_effective_task_rows`; выборки по сложности у
         материалов нет, поэтому здесь только это правило.
+
+        `rows` — уже прочитанный `_ordered_material_rows` (tsk-996: голова
+        узла читает материалы вместе с признаком якорей).
         """
-        rows = await self._ordered_material_rows(db, course_id)
+        if rows is None:
+            rows = await self._ordered_material_rows(db, course_id)
         if not rows:
             return rows
         # tsk-798: у выпавшего номера прячется и теория — иначе ученик получил

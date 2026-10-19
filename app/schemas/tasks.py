@@ -112,6 +112,22 @@ class TaskRead(BaseModel):
             "в норме всегда заполнен после INSERT триггером)."
         ),
     )
+    anchor_material_id: Optional[int] = Field(
+        default=None,
+        description=(
+            "tsk-996: материал того же раздела, сразу после которого задание "
+            "стоит в учебном порядке. NULL — в конце раздела (после всех "
+            "материалов и подразделов). Порядок ученику отдаёт сервер."
+        ),
+    )
+    anchor_source: Optional[Literal["publish", "manual"]] = Field(
+        default=None,
+        description=(
+            "tsk-996: кто поставил якорь — `manual` (методист в кабинете) или "
+            "`publish` (публикатор). Переиздание не перезаписывает `manual`, "
+            "в том числе сознательное «в конце раздела» (якорь NULL)."
+        ),
+    )
     content_provenance: Optional[dict[str, Any]] = Field(
         default=None,
         description=(

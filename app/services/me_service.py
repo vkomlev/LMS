@@ -19,7 +19,7 @@ from app.schemas.task_content import QUIZ_TASK_TYPES
 # и «следующий шаг» считали долг одинаково.
 from app.services.content_grace_service import compute_graced_items, done_among
 from app.services.requirement_override_service import reason_payload, resolve_levels
-from app.services.node_sequence import node_sequence, node_sequence_enabled
+from app.services.node_sequence import anchor_of, node_sequence, node_sequence_enabled
 from app.services.transparent_subcourse import absorbed_in_tree, task_key
 # Y-3.2 (S3-A4): единая точка правды — учебный движок.
 from app.services.learning_engine_service import PASS_THRESHOLD_RATIO, is_mentor_reviewed
@@ -935,8 +935,16 @@ SELECT
     END AS attempts_limit_effective,
     EXISTS (
         SELECT 1 FROM open_course_attempt oc WHERE oc.course_id = t.course_id
-    ) AS has_open_attempt
+    ) AS has_open_attempt,
+    -- tsk-996 (фаза B): действующий якорь — материал того же курса (любой,
+    -- и неактивный: его задания стоят на его месте). Другой курс или
+    -- удалённый материал дают NULL — задание в конце узла.
+    am.id AS anchor_material_id,
+    am.order_position AS anchor_order_position
 FROM tasks t
+LEFT JOIN materials am
+    ON am.id = t.anchor_material_id
+   AND am.course_id = t.course_id
 LEFT JOIN last_per_task lp ON lp.task_id = t.id
 LEFT JOIN attempts_per_task ap ON ap.task_id = t.id
 LEFT JOIN override_per_task op ON op.task_id = t.id
@@ -1395,6 +1403,7 @@ async def get_syllabus_states(
     if node_sequence_enabled():
         # tsk-996: порядок элементов раздела — общая `node_sequence` (голова,
         # затем хвост узла; подразделы идут своими секциями, как и прежде).
+        # Фаза B: задание с якорем — сразу после своего материала.
         for cid in tree_ids:
             mats = {int(m["material_id"]): m for m in materials_by_course.get(cid, [])}
             tsks = {int(t["task_id"]): t for t in tasks_by_course.get(cid, [])}
@@ -1409,6 +1418,10 @@ async def get_syllabus_states(
                             t["order_position"], tid,
                             host_order_position=t["host_order_position"],
                             absorbed=bool(t.get("_absorbed")),
+                        ),
+                        anchor_of(
+                            t["anchor_material_id"], t["anchor_order_position"],
+                            int(t["course_id"]), absorbed=bool(t.get("_absorbed")),
                         ),
                     )
                     for tid, t in tsks.items()

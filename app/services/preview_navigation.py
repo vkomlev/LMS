@@ -18,7 +18,8 @@ import logging
 from dataclasses import dataclass
 from typing import AsyncIterator, List, Literal, Optional, Tuple
 
-from sqlalchemy import select
+from sqlalchemy import and_, exists, select
+from sqlalchemy.orm import aliased
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.association_tables import t_course_parents
@@ -27,6 +28,7 @@ from app.models.tasks import Tasks
 from app.services.learning_engine_service import LearningEngineService
 from app.services.node_sequence import (
     HEAD,
+    anchor_of,
     node_sequence,
     node_sequence_enabled,
     segment_entries,
@@ -99,14 +101,56 @@ async def _ordered_items_by_sequence(
 ) -> AsyncIterator[Tuple[ItemKind, int, bool]]:
     """`_ordered_items` по шагам `node_sequence` (tsk-996).
 
-    Шаг узла — его голова (материалы) или хвост (задания со влитыми заданиями
-    прозрачных подкурсов, tsk-1198); каждый шаг читает только свою часть, как
-    и прежде. Фаза B (якоря) добавит в голову задания узла.
+    Шаг узла — его голова (материалы и, фаза B, задания с якорем на них) или
+    хвост (задания без якоря со влитыми заданиями прозрачных подкурсов,
+    tsk-1198). Задания узла читаются один раз: головой — только если у узла
+    есть якоря (признак приходит запросом материалов), иначе хвостом, как и
+    прежде.
     """
     steps = await engine._collect_node_steps(db, root_id)  # noqa: SLF001
     tree = {cid for cid, _ in steps}
     links = await transparent_links(db)
     absorbed_here = {c for c, h in links.items() if c in tree and h in tree}
+    task_cache: dict[int, Tuple[list, dict[Tuple[str, int], bool]]] = {}
+
+    async def load_tasks(cid: int) -> Tuple[list, dict[Tuple[str, int], bool]]:
+        if cid in task_cache:
+            return task_cache[cid]
+        absorbed = [c for c, h in links.items() if h == cid and c in tree]
+        anchor_m = aliased(Materials)
+        rows = (
+            await db.execute(
+                select(
+                    Tasks.id, Tasks.order_position, Tasks.host_order_position,
+                    Tasks.course_id, Tasks.requirement_level,
+                    anchor_m.id, anchor_m.order_position,
+                )
+                .outerjoin(
+                    anchor_m,
+                    and_(
+                        anchor_m.id == Tasks.anchor_material_id,
+                        anchor_m.course_id == Tasks.course_id,
+                    ),
+                )
+                .where(Tasks.course_id.in_([cid, *absorbed]), Tasks.is_active.is_(True))
+            )
+        ).all()
+        tasks = []
+        eligible: dict[Tuple[str, int], bool] = {}
+        for r in rows:
+            is_absorbed = int(r[3]) != cid
+            tasks.append((
+                int(r[0]),
+                task_key(
+                    r[1], int(r[0]),
+                    host_order_position=r[2],
+                    absorbed=is_absorbed,
+                ),
+                anchor_of(r[5], r[6], int(r[3]), absorbed=is_absorbed),
+            ))
+            eligible[("task", int(r[0]))] = r[4] in _WALK_LEVELS
+        task_cache[cid] = (tasks, eligible)
+        return task_cache[cid]
 
     for cid, segment in steps:
         if cid in absorbed_here:
@@ -115,36 +159,31 @@ async def _ordered_items_by_sequence(
         if segment == HEAD:
             rows = (
                 await db.execute(
-                    select(Materials.id, Materials.order_position, Materials.requirement_level)
-                    .where(Materials.course_id == cid, Materials.is_active.is_(True))
+                    select(
+                        Materials.id, Materials.order_position, Materials.requirement_level,
+                        Materials.is_active,
+                        exists().where(
+                            Tasks.anchor_material_id == Materials.id,
+                            Tasks.course_id == Materials.course_id,
+                        ),
+                    ).where(Materials.course_id == cid)
                 )
             ).all()
             materials = []
+            has_anchors = False
             for r in rows:
+                has_anchors = has_anchors or bool(r[4])
+                if not r[3]:
+                    continue
                 materials.append((int(r[0]), r[1], cid))
                 eligible[("material", int(r[0]))] = r[2] in _WALK_LEVELS
-            seq = node_sequence(materials=materials)
+            tasks: list = []
+            if has_anchors:
+                tasks, task_eligible = await load_tasks(cid)
+                eligible.update(task_eligible)
+            seq = node_sequence(materials=materials, tasks=tasks)
         else:
-            absorbed = [c for c, h in links.items() if h == cid and c in tree]
-            rows = (
-                await db.execute(
-                    select(
-                        Tasks.id, Tasks.order_position, Tasks.host_order_position,
-                        Tasks.course_id, Tasks.requirement_level,
-                    ).where(Tasks.course_id.in_([cid, *absorbed]), Tasks.is_active.is_(True))
-                )
-            ).all()
-            tasks = []
-            for r in rows:
-                tasks.append((
-                    int(r[0]),
-                    task_key(
-                        r[1], int(r[0]),
-                        host_order_position=r[2],
-                        absorbed=int(r[3]) != cid,
-                    ),
-                ))
-                eligible[("task", int(r[0]))] = r[4] in _WALK_LEVELS
+            tasks, eligible = await load_tasks(cid)
             seq = node_sequence(tasks=tasks)
         for entry in segment_entries(seq, segment):
             yield entry.kind, entry.item_id, eligible[(entry.kind, entry.item_id)]

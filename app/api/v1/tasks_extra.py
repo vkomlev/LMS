@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Body, Query, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, or_
 from typing import Any, List, Literal, Optional, Dict
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import logging
 
 from datetime import datetime, timezone
@@ -1573,6 +1573,16 @@ class TaskManualPatch(BaseModel):
     is_active: Optional[bool] = None
     order_position: Optional[int] = None
     requirement_level: Optional[str] = None
+    anchor_material_id: Optional[int] = Field(
+        default=None,
+        description=(
+            "tsk-996: материал раздела, сразу после которого задание стоит у "
+            "ученика. Явный `null` — «в конце раздела» (якорь снят); поле не "
+            "передано — якорь не меняется. Материал обязан быть из курса "
+            "задания, иначе 422. Ручная правка ставит `anchor_source='manual'` "
+            "— переиздание из ContentBackbone такой якорь не перезаписывает."
+        ),
+    )
 
 
 @router.patch(
@@ -1584,7 +1594,12 @@ class TaskManualPatch(BaseModel):
         401: {"description": "Не аутентифицирован"},
         403: {"description": "Роль не позволяет править задания"},
         404: {"description": "Задание не существует"},
-        422: {"description": "Правило проверки не соответствует содержимому"},
+        422: {
+            "description": (
+                "Правило проверки не соответствует содержимому либо якорь "
+                "указывает на материал не из раздела задания"
+            )
+        },
     },
 )
 async def patch_task_manual(
@@ -1620,6 +1635,14 @@ async def patch_task_manual(
         return task
 
     service = TasksService()
+    if "anchor_material_id" in changed:
+        # tsk-996: якорь ставит или снимает методист — источник `manual`,
+        # переиздание его не трогает (ADR-0008 «Владение якорем»).
+        try:
+            await service.validate_anchor(db, task, changed["anchor_material_id"])
+        except DomainError as e:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e)) from e
+        changed["anchor_source"] = "manual"
     try:
         updated = await service.update(db, task, dict(changed))
     except DomainError as e:
@@ -1628,6 +1651,14 @@ async def patch_task_manual(
         raise
     except ValueError as e:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e)) from e
+
+    if "anchor_source" in changed:
+        logger.info(
+            "tsk-996: якорь задания %s — материал %s (пользователь %s)",
+            task_id,
+            changed["anchor_material_id"],
+            current_user.id,
+        )
 
     touched_content = {"task_content", "solution_rules"} & set(changed)
     if touched_content:
