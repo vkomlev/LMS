@@ -180,6 +180,59 @@ async def test_reupload_same_task_replaces_file(client, db):
         await _cleanup(db, course_id=course_id, student_id=student_id)
 
 
+async def _submit_with_file(client, attempt_id: int, task_id: int, up) -> None:
+    body = up.json()
+    resp = await client.post(
+        f"/api/v1/attempts/{attempt_id}/answers",
+        json={"items": [{"task_id": task_id, "answer": {
+            "type": "SA", "response": {"value": "готово", "meta": {"attachments": [{
+                "attachment_id": body["attachment_id"], "filename": body["filename"],
+                "size_bytes": body["size_bytes"]}]}}}}]},
+        headers=_headers(),
+    )
+    assert resp.status_code == 200, resp.text
+
+
+async def test_resubmit_with_file_keeps_submitted_file(client, db):
+    """tsk-1381: файл уже сданной работы не вытесняется следующей загрузкой."""
+    student_id = await _make_student(db)
+    course_id = await _make_course(db)
+    task_id = await _make_sa_task(db, course_id, requires_attachment=False)
+    attempt_id = await _create_attempt(client, student_id=student_id, course_id=course_id)
+    try:
+        first = await _upload(client, attempt_id, "v1.py", task_id=task_id)
+        assert first.status_code == 201, first.text
+        await _submit_with_file(client, attempt_id, task_id, first)
+
+        # Черновик после сдачи вытесняется следующим черновиком — как раньше.
+        draft = await _upload(client, attempt_id, "draft.py", task_id=task_id)
+        second = await _upload(client, attempt_id, "v2.py", task_id=task_id)
+        assert draft.status_code == 201 and second.status_code == 201
+        await _submit_with_file(client, attempt_id, task_id, second)
+
+        upload_dir = _settings.attempt_attachments_upload_dir
+        assert not (upload_dir / draft.json()["attachment_id"]).exists()
+
+        # Обе сданные работы отдают СВОЙ файл.
+        for up, name in ((first, "v1.py"), (second, "v2.py")):
+            download = await client.get(
+                f"/api/v1/attempts/{attempt_id}/attachments/{up.json()['attachment_id']}",
+                headers=_headers(),
+            )
+            assert download.status_code == 200, name
+            assert download.content == f"print('{name}')".encode()
+
+        rows = (await db.execute(
+            text("SELECT answer_json FROM task_results WHERE attempt_id = :a ORDER BY id"),
+            {"a": attempt_id},
+        )).scalars().all()
+        ids = [r["response"]["meta"]["attachments"][0]["attachment_id"] for r in rows]
+        assert ids == [first.json()["attachment_id"], second.json()["attachment_id"]]
+    finally:
+        _cleanup_attachments(attempt_id)
+        await _cleanup(db, course_id=course_id, student_id=student_id)
+
+
 # ── (в) обратная совместимость со старым клиентом ────────────────────────────
 
 

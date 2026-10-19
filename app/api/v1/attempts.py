@@ -1549,7 +1549,8 @@ async def upload_attempt_attachment(
 
     # Список того, что вытесняет эта загрузка, снимаем ДО записи нового файла:
     # так в него заведомо не попадёт он сам.
-    existing_files = await names_replaced_by_upload(attempt_id, task_id)
+    # tsk-1381: файлы, ушедшие в сдачу, сюда не попадают — их не вытесняем.
+    existing_files = await names_replaced_by_upload(db, attempt_id, task_id)
     original_name = safe_upload_filename(file.filename)
     attachment_id = build_attachment_id(attempt_id, task_id, original_name)
 
@@ -1604,8 +1605,9 @@ async def upload_attempt_attachment(
         404: {"description": "Попытка не найдена либо имя вложения некорректно/чужое"},
         410: {
             "description": (
-                "Имя вложения разобрано, но файла на сервере нет: утрачен (tsk-575) "
-                "или вытеснен перезаливкой того же задания. Восстановлению не подлежит."
+                "Имя вложения разобрано, но файла на сервере нет: утрачен (tsk-575, "
+                "до tsk-1381 — и при перезаливке после сдачи) или это несданный "
+                "черновик, вытесненный перезаливкой. Восстановлению не подлежит."
             )
         },
     },

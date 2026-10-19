@@ -37,6 +37,9 @@ import re
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 from uuid import uuid4
 
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.services import attachment_storage
 
 logger = logging.getLogger("app.attempt_attachments")
@@ -105,20 +108,45 @@ async def attempt_attachment_names(
     return sorted(picked)
 
 
-async def names_replaced_by_upload(attempt_id: int, task_id: Optional[int]) -> List[str]:
-    """
-    Файлы, которые вытесняет новая загрузка: СТРОГО та же пара (попытка, задание).
+async def submitted_attachment_ids(db: AsyncSession, attempt_id: int) -> Set[str]:
+    """Имена вложений, на которые ссылается хоть одна сданная работа попытки (tsk-1381)."""
+    rows = await db.execute(
+        text("SELECT answer_json FROM task_results WHERE attempt_id = :aid AND answer_json IS NOT NULL"),
+        {"aid": attempt_id},
+    )
+    referenced: Set[str] = set()
+    for (answer_json,) in rows:
+        referenced.update(collect_attachment_ids(answer_json))
+    return referenced
 
-    Инвариант — «одно актуальное вложение на пару», а не на попытку. Загрузка
-    без `task_id` вытесняет только такие же файлы без метки: у неё нет данных,
-    чтобы отличить своё задание от чужого, и стереть файл соседнего задания
-    (то, из-за чего и заведена tsk-575) она не должна.
+
+async def names_replaced_by_upload(
+    db: AsyncSession, attempt_id: int, task_id: Optional[int]
+) -> List[str]:
     """
-    return sorted(
+    Файлы, которые вытесняет новая загрузка: та же пара (попытка, задание)
+    и при этом НЕ ушедшие в сдачу.
+
+    Инвариант — «одно актуальное ЧЕРНОВОЕ вложение на пару». Загрузка без
+    `task_id` вытесняет только такие же файлы без метки: стереть файл
+    соседнего задания (tsk-575) она не должна.
+
+    tsk-1381: попытка — это сессия, внутри которой ученик сдаёт одно задание
+    несколько раз. Файл прошлой сдачи вытеснялся следующей загрузкой, и
+    история с проверкой преподавателя теряли его (~45 файлов в неделю).
+    Поэтому файл, на который ссылается `task_results.answer_json`, не
+    трогаем никогда; вытесняется только черновик, ещё не сданный. Объём
+    сданных файлов мал (~100 МБ в неделю, замер 19.10).
+    """
+    candidates = [
         name
         for name in await attachment_storage.list_names(SPACE, f"{attempt_id}_")
         if parse_attachment_id(name) == (attempt_id, task_id)
-    )
+    ]
+    if not candidates:
+        return []
+    submitted = await submitted_attachment_ids(db, attempt_id)
+    return sorted(name for name in candidates if name not in submitted)
 
 
 async def attachment_exists(attachment_id: Any) -> bool:

@@ -1,0 +1,171 @@
+diff --git a/app/api/v1/attempts.py b/app/api/v1/attempts.py
+index 8671fff..f45de1b 100644
+--- a/app/api/v1/attempts.py
++++ b/app/api/v1/attempts.py
+@@ -1549,7 +1549,8 @@ async def upload_attempt_attachment(
+ 
+     # Список того, что вытесняет эта загрузка, снимаем ДО записи нового файла:
+     # так в него заведомо не попадёт он сам.
+-    existing_files = await names_replaced_by_upload(attempt_id, task_id)
++    # tsk-1381: файлы, ушедшие в сдачу, сюда не попадают — их не вытесняем.
++    existing_files = await names_replaced_by_upload(db, attempt_id, task_id)
+     original_name = safe_upload_filename(file.filename)
+     attachment_id = build_attachment_id(attempt_id, task_id, original_name)
+ 
+@@ -1604,8 +1605,9 @@ async def upload_attempt_attachment(
+         404: {"description": "Попытка не найдена либо имя вложения некорректно/чужое"},
+         410: {
+             "description": (
+-                "Имя вложения разобрано, но файла на сервере нет: утрачен (tsk-575) "
+-                "или вытеснен перезаливкой того же задания. Восстановлению не подлежит."
++                "Имя вложения разобрано, но файла на сервере нет: утрачен (tsk-575, "
++                "до tsk-1381 — и при перезаливке после сдачи) или это несданный "
++                "черновик, вытесненный перезаливкой. Восстановлению не подлежит."
+             )
+         },
+     },
+diff --git a/app/services/attempt_attachments.py b/app/services/attempt_attachments.py
+index 995e968..1e30ff5 100644
+--- a/app/services/attempt_attachments.py
++++ b/app/services/attempt_attachments.py
+@@ -37,6 +37,9 @@ import re
+ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
+ from uuid import uuid4
+ 
++from sqlalchemy import text
++from sqlalchemy.ext.asyncio import AsyncSession
++
+ from app.services import attachment_storage
+ 
+ logger = logging.getLogger("app.attempt_attachments")
+@@ -105,20 +108,45 @@ async def attempt_attachment_names(
+     return sorted(picked)
+ 
+ 
+-async def names_replaced_by_upload(attempt_id: int, task_id: Optional[int]) -> List[str]:
+-    """
+-    Файлы, которые вытесняет новая загрузка: СТРОГО та же пара (попытка, задание).
++async def submitted_attachment_ids(db: AsyncSession, attempt_id: int) -> Set[str]:
++    """Имена вложений, на которые ссылается хоть одна сданная работа попытки (tsk-1381)."""
++    rows = await db.execute(
++        text("SELECT answer_json FROM task_results WHERE attempt_id = :aid AND answer_json IS NOT NULL"),
++        {"aid": attempt_id},
++    )
++    referenced: Set[str] = set()
++    for (answer_json,) in rows:
++        referenced.update(collect_attachment_ids(answer_json))
++    return referenced
+ 
+-    Инвариант — «одно актуальное вложение на пару», а не на попытку. Загрузка
+-    без `task_id` вытесняет только такие же файлы без метки: у неё нет данных,
+-    чтобы отличить своё задание от чужого, и стереть файл соседнего задания
+-    (то, из-за чего и заведена tsk-575) она не должна.
++
++async def names_replaced_by_upload(
++    db: AsyncSession, attempt_id: int, task_id: Optional[int]
++) -> List[str]:
+     """
+-    return sorted(
++    Файлы, которые вытесняет новая загрузка: та же пара (попытка, задание)
++    и при этом НЕ ушедшие в сдачу.
++
++    Инвариант — «одно актуальное ЧЕРНОВОЕ вложение на пару». Загрузка без
++    `task_id` вытесняет только такие же файлы без метки: стереть файл
++    соседнего задания (tsk-575) она не должна.
++
++    tsk-1381: попытка — это сессия, внутри которой ученик сдаёт одно задание
++    несколько раз. Файл прошлой сдачи вытеснялся следующей загрузкой, и
++    история с проверкой преподавателя теряли его (~45 файлов в неделю).
++    Поэтому файл, на который ссылается `task_results.answer_json`, не
++    трогаем никогда; вытесняется только черновик, ещё не сданный. Объём
++    сданных файлов мал (~100 МБ в неделю, замер 19.10).
++    """
++    candidates = [
+         name
+         for name in await attachment_storage.list_names(SPACE, f"{attempt_id}_")
+         if parse_attachment_id(name) == (attempt_id, task_id)
+-    )
++    ]
++    if not candidates:
++        return []
++    submitted = await submitted_attachment_ids(db, attempt_id)
++    return sorted(name for name in candidates if name not in submitted)
+ 
+ 
+ async def attachment_exists(attachment_id: Any) -> bool:
+diff --git a/docs/ai/ERRORS.md b/docs/ai/ERRORS.md
+index e0db117..3149b25 100644
+--- a/docs/ai/ERRORS.md
++++ b/docs/ai/ERRORS.md
+@@ -29,6 +29,7 @@
+ 
+ | 2026-07-17 | LMS | tsk-262 (вынесена из tsk-261): нормализация ответа-кода через AST. Класс найден при простановке флага `code_ast` — сработал контроль самого скрипта («code_ast и lower вместе бессмысленны») | Регулярка-классификатор `CODE_RX` в `scripts/fix_code_answer_lower_tsk261.py` молча теряла три из семи веток. Задания с эталоном `import random` / `import math` / `import turtle` (5468, 5617, 5748) не попали в фикс tsk-261 и **сохранили `lower`** — то есть `IMPORT RANDOM` продолжал засчитываться за `import random` на проде ещё сутки после «закрытия» жалобы QA | Регулярка написана в синтаксисе **Python**, но исполняется **PostgreSQL** (`a->>'value' ~ $1`). В PG ARE `\b` — это символ **backspace**, а не граница слова (граница — `\y`). Поэтому ветки `\bprint\b\|\bimport\b\|\bdef\b` не совпадали никогда, и задания ловились только по скобкам/точке/`=`/`[...]`. У голого `import X` ничего этого нет. Ошибка бесшумна: невалидного синтаксиса нет, PG просто не находит совпадений, и выборка молча оказывается уже задуманной | LOGIC (точнее: «regex-dialect-mismatch») | S2 (живой ложный зачёт на проде; тихий недоохват выборки — класс, который прячет масштаб правки) | Контроль внутри `scripts/set_code_ast_flag_tsk262.py` перед прод-записью (assert «у code_ast не должно быть lower») + прямая проверка в PG: `select 'import random' ~ '\bimport\b'` → false, `~ '\yimport\y'` → true | Данные исправлены `set_code_ast_flag_tsk262.py --apply` (52 задания, `lower` снят у всех, включая 3 пропущенных). Живая проверка на проде: `IMPORT RANDOM` → незачёт. Дефектные регулярки помечены комментарием в `fix_code_answer_lower_tsk261.py` и `measure_ast_normalization_tsk262.py` (не перезапускать, не копировать) | (a) **Регулярка, уезжающая в SQL, — не Python-регулярка.** Перед использованием проверять её В САМОЙ БД (`select '<пример>' ~ '<rx>'`), а не в голове и не в Python. Различия: `\b` (PG: backspace, граница — `\y`), lookbehind `(?<=)` не поддерживается, именованные группы `(?P<x>)` не поддерживаются, флаги `re.I/re.S` → `~*` или `(?i)/(?s)`. Совпадают: `\d`, `\s`, `\w`, `\r`, `\n`, `\.` — проверено на проде 2026-07-17. (b) Аудит проекта проведён: PG-регулярки есть **только** в разовых `scripts/` (6 штук), в боевом коде `app/` их нет вообще; из шести дефектна одна — `CODE_RX`. Соседние проекты (ContentBackbone, TG_LMS) чисты — их `\b` живут в `re.compile`, то есть Python-side. (c) **Не классифицировать домен регуляркой там, где есть разбор.** Для «код ли это» надёжна не регулярка, а `ast.parse` + признак «нет кириллицы в именах»: этот путь не зависит от диалекта БД вообще. (d) Осторожно и при проверке: в `grep -E` шаблон `\b` — тоже граница слова; искать литерал нужно `grep -F '\b'` (на этом сам аудит споткнулся с первого захода) | FIXED |
+ | 2026-07-17 (tsk-278) | LMS / ContentBackbone / TG_LMS | Follow-up tsk-262: исчерпывающий аудит класса «`\b` в PG-регексе» по трём проектам + добор остаточных данных | Мёртвая ветка `\bimport\b|\bdef\b|\bprint\b` из `fix_code_answer_lower_tsk261` оставила остаточный `lower` не только у 3 заданий с голым `import X` (их добрал tsk-262), но и у код-заданий с **неполным сниппетом-эталоном** (`while True:`, `for jivotnoe in spisok:`, `return rezultat`): AST-классификатор tsk-262 их отверг, т.к. `ast.parse` не разбирает неполный оператор → `lower` уцелел → ложный зачёт (`while true:` засчитан за `while True:`, хотя `true` — не Python) | Тот же корень, что у tsk-262 (regex-dialect-mismatch, `\b`=backspace в PG ARE). Новое: остаточные данные не покрылись ни регуляркой (мёртвая), ни AST (неполный сниппет не парсится) — попали в зазор между двумя подходами | LOGIC + DATA | S2 (живой ложный зачёт на 4 активных заданиях) | Кросс-сверка «файл содержит И PG-regex-оператор И `\b`» по всем 3 деревьям (read-only) + прод-запрос активных заданий с `lower` и код-эталоном | **Аудит регулярок: класс единичный, других PG-`\b` регулярок нет** — ни в LMS `app/`, ни в CB `monolith/external_tasks`+repos, ни в TG_LMS. Все прочие `\b` — Python `re` (HTML/PDF/текст-парсеры) или валидные PG-эскейпы (`\s`,`\.`,классы). **Данные:** снят `lower` у 5527/5613/5636/5768 через `scripts/fix_code_lower_incomplete_tsk278.py` (dry-run→apply, /db-check), верифицировано read-only. `code_ast` не добавлялся — по движку (`checking_service._matches_short_answer`) он инертен для непарсящихся сниппетов, чинит именно снятие `lower`. Спорные keyword-задания («назови слово маленькими буквами»: 8626/6124/8653 и elif/for/input) оставлены сознательно (решение оператора) | (a) **Guard НЕ заводим** (anti-bloat): находок `\b`-в-PG вне уже известной `CODE_RX` — ноль; grep-правило «`\b` в строке для PG» дало бы шумные ложные срабатывания на десятках легитимных Python-`re` с `\b` при нулевой ценности для единичного исторического случая. Записи в ERRORS достаточно. (b) Метод аудита на будущее: кандидат = файл, где PG-regex-оператор (`~`,`~*`,`!~`,`regexp_*`,`SIMILAR TO`) И литерал `\b` встречаются вместе; голый grep по `\b` их не различает — нужна кросс-сверка + глаза. (c) При правке нормализации сверять с движком оценки: `code_ast` — только доп. путь к зачёту, ужесточить проверку он не может, для неполных сниппетов инертен | FIXED |
++| 2026-10-19 | LMS | tsk-1381: «файл утрачен» у попытки 1 задания 2216, попытка 2 на месте | Вложения уже сданных работ терялись: ~45 файлов в неделю (`attachment_missing_seen`, рост 14→47 с 24.08) | `upload` вытеснял ВСЕ прежние файлы пары (попытка, задание) по инварианту tsk-575, но попытка — это сессия с несколькими сдачами одного задания: файл, на который ссылается `task_results.answer_json` прошлой сдачи, удалялся следующей загрузкой. Бакет без версионирования — восстановить нечем | DATA | S2 | жалоба оператора + прод-БД + проверка бакета (versioning пуст) | `names_replaced_by_upload` исключает имена из `answer_json` сданных работ попытки; вытесняется только несданный черновик. Тест повторной сдачи с файлом | Инвариант «одно на X» проверять против РЕАЛЬНОЙ единицы истории (сдача), а не единицы сессии; удаление файла, на который может ссылаться запись БД, — только после сверки ссылок | FIXED |
+ 
+ | 2026-10-13 | LMS + SPW | tsk-1338: лента уведомлений кабинетов | Оператор: «лента обрывается на 11.10», счётчик в шапке не сбрасывается («9+») | События создавались (прод-БД: до 13.10 18:54 МСК). SPW брал `GET /me/notifications?limit=50` без догрузки — всё старше 50-й записи пропадало; «Прочитать все» и отметка при просмотре работали только по видимым 50. У оператора 899 непрочитанных при 13 видимых — счётчик не мог обнулиться | LOGIC | S2 | жалоба оператора + прод-БД + live-browse (ровно 50 строк, нет «Показать ещё») | LMS `POST /me/notifications/read-all {up_to}`; SPW: открытие ленты отмечает всё до самой свежей загруженной записи, «Показать ещё» | Список с серверной пагинацией без догрузки на клиенте = скрытые данные; массовое действие («прочитать все») — серверным запросом по всему множеству, а не циклом по видимой странице | FIXED |
+ | 2026-10-06 | LMS (+ n8n курса tsk-1257) | tsk-1259 (выявлено в tsk-1257, находка 10 прогона М2): n8n → CloseRouter, `anthropic/claude-haiku-4.5`, system «ассистент руководителя» | Модель отвечала «я помогаю с разработкой: баги, рефакторинг, команды», на `/start` — по-английски. Прямое воспроизведение 06.10 (скрипт мимо n8n, 2 образца роли × 3 размещения × 2 прогона): `haiku-4.5` — роль то держит, то отвечает «I'm Claude Code… can't take on a different identity» (срыв и в system, и в user); `sonnet-4.6` — роль не держит НИ в system, НИ в user («Я claude-sonnet-4-6 — среда разработки»); `sonnet-5` — держит; `gpt-5.4-mini`, `gemini-3.6-flash` — держат всегда. Гейт наставника `scripts/tutor_role_gate.py`: `sonnet-4.6` (запасная, вторая после `gpt-5.5` с 01.10) — НЕ ПРОШЁЛ 2/2 (31.08 проходил 2/2), страж вывода оба раза вырезал готовую программу; `haiku-4.5` — прошёл | CloseRouter отдаёт модели Anthropic через Claude Code (на их странице: «/v1/messages → Claude Code → Anthropic») и подмешивает свою скрытую системную инструкцию Claude Code; её видно по раздутому `prompt_tokens` (на ~40 токенов запроса: gemini 52, haiku 89, sonnet-4.6 109, sonnet-5 368). Клиентская system-инструкция идёт уже вторым голосом и проигрывает нестабильно. Дублирование в user — НЕ надёжный обход (haiku сорвалась и так). Параметра отключения в документации closerouter.dev нет. Поведение поменялось после 31.08 без изменений у нас | INTEGRATION | S2 | прогон курса оператором + прямое воспроизведение + гейт наставника | Наставник: ученик не получил решения (страж режет), но при промахе `gpt-5.5` (~18% таймаутов) получает обрезанные ответы от запасной `sonnet-4.6` — решение о составе цепочки вынесено оператору. Курс: для сценариев с ролью — модель не-Anthropic через CloseRouter | (a) любая модель `anthropic/*` через CloseRouter — роль не гарантирована, перепроверять гейтом роли при каждом выборе и периодически, а не раз; (b) признак подмены — `prompt_tokens` ответа заметно больше посчитанного по своему запросу; (c) в ролевых сценариях (наставник, курсовые боты) ни голова, ни запасная — не `anthropic/*` без перепрогона гейта роли, либо прямой ключ Anthropic | OPEN |
+diff --git a/tests/test_attempt_attachments_per_task_tsk575.py b/tests/test_attempt_attachments_per_task_tsk575.py
+index 605b712..a849f7c 100644
+--- a/tests/test_attempt_attachments_per_task_tsk575.py
++++ b/tests/test_attempt_attachments_per_task_tsk575.py
+@@ -180,6 +180,59 @@ async def test_reupload_same_task_replaces_file(client, db):
+         await _cleanup(db, course_id=course_id, student_id=student_id)
+ 
+ 
++async def _submit_with_file(client, attempt_id: int, task_id: int, up) -> None:
++    body = up.json()
++    resp = await client.post(
++        f"/api/v1/attempts/{attempt_id}/answers",
++        json={"items": [{"task_id": task_id, "answer": {
++            "type": "SA", "response": {"value": "готово", "meta": {"attachments": [{
++                "attachment_id": body["attachment_id"], "filename": body["filename"],
++                "size_bytes": body["size_bytes"]}]}}}}]},
++        headers=_headers(),
++    )
++    assert resp.status_code == 200, resp.text
++
++
++async def test_resubmit_with_file_keeps_submitted_file(client, db):
++    """tsk-1381: файл уже сданной работы не вытесняется следующей загрузкой."""
++    student_id = await _make_student(db)
++    course_id = await _make_course(db)
++    task_id = await _make_sa_task(db, course_id, requires_attachment=False)
++    attempt_id = await _create_attempt(client, student_id=student_id, course_id=course_id)
++    try:
++        first = await _upload(client, attempt_id, "v1.py", task_id=task_id)
++        assert first.status_code == 201, first.text
++        await _submit_with_file(client, attempt_id, task_id, first)
++
++        # Черновик после сдачи вытесняется следующим черновиком — как раньше.
++        draft = await _upload(client, attempt_id, "draft.py", task_id=task_id)
++        second = await _upload(client, attempt_id, "v2.py", task_id=task_id)
++        assert draft.status_code == 201 and second.status_code == 201
++        await _submit_with_file(client, attempt_id, task_id, second)
++
++        upload_dir = _settings.attempt_attachments_upload_dir
++        assert not (upload_dir / draft.json()["attachment_id"]).exists()
++
++        # Обе сданные работы отдают СВОЙ файл.
++        for up, name in ((first, "v1.py"), (second, "v2.py")):
++            download = await client.get(
++                f"/api/v1/attempts/{attempt_id}/attachments/{up.json()['attachment_id']}",
++                headers=_headers(),
++            )
++            assert download.status_code == 200, name
++            assert download.content == f"print('{name}')".encode()
++
++        rows = (await db.execute(
++            text("SELECT answer_json FROM task_results WHERE attempt_id = :a ORDER BY id"),
++            {"a": attempt_id},
++        )).scalars().all()
++        ids = [r["response"]["meta"]["attachments"][0]["attachment_id"] for r in rows]
++        assert ids == [first.json()["attachment_id"], second.json()["attachment_id"]]
++    finally:
++        _cleanup_attachments(attempt_id)
++        await _cleanup(db, course_id=course_id, student_id=student_id)
++
++
+ # ── (в) обратная совместимость со старым клиентом ────────────────────────────
+ 
+ 
