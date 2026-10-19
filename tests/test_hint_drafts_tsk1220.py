@@ -7,7 +7,8 @@
 - (б) генерация: промпт содержит условие, подсказки и ответы; пропуск модели;
   локальный линтер ловит код и эталон;
 - (в) запись: черновик с метками линтера в очередь не принимается;
-- (г) вычитка: approve дописывает в конец `hints_text`, не трогая прежние;
+- (г) вычитка: approve дописывает в конец `hints_text`, не трогая прежние,
+  и ставит пометку ручной правки (tsk-1385); reject пометку не ставит;
   сервисный ключ не подтверждает; повторная обработка — 409;
 - (д) роль: ученик очередь не видит.
 """
@@ -323,8 +324,17 @@ async def test_approve_appends_to_hints_text(db, client):
 
     content = await db.scalar(text("SELECT task_content FROM tasks WHERE id=:t"), {"t": task_id})
     assert content["hints_text"] == [_OLD_HINT, edited] and content["has_hints"] is True
+    # tsk-1385: одобрение — правка человека, переиздание из CB её не затирает.
     prov = await db.scalar(text("SELECT content_provenance FROM tasks WHERE id=:t"), {"t": task_id})
-    assert prov is None
+    mid = await db.scalar(text("SELECT reviewed_by FROM task_hint_drafts WHERE id=:d"), {"d": draft_id})
+    assert prov["source"] == "manual_web" and prov["edited_by"] == mid
+    assert sorted(prov["fields"]) == ["solution_rules", "task_content"]
+    assert prov["reason"] == f"hint-draft:{draft_id}" and prov["edited_at"]
+    from app.models.tasks import Tasks
+    from app.services.tasks_service import _manually_edited_task_fields
+    row = await db.get(Tasks, task_id)
+    await db.refresh(row)
+    assert _manually_edited_task_fields(row) == {"task_content", "solution_rules"}
 
     again = await client.post(
         f"/api/v1/tasks/hint-drafts/{draft_id}/review", headers=_bearer(mtoken), json={"action": "reject"}
@@ -351,6 +361,9 @@ async def test_reject_leaves_hints_untouched(db, client):
     assert resp.status_code == 200 and resp.json()["draft"]["status"] == "rejected"
     content = await db.scalar(text("SELECT task_content FROM tasks WHERE id=:t"), {"t": task_id})
     assert content["hints_text"] == []
+    # отклонение — не правка: пометка не ставится
+    prov = await db.scalar(text("SELECT content_provenance FROM tasks WHERE id=:t"), {"t": task_id})
+    assert prov is None
 
 
 async def test_queue_requires_role(db, client):

@@ -425,8 +425,15 @@ async def review(
 
     `approve` дописывает текст в КОНЕЦ `hints_text` под блокировкой строки
     задания: существующие подсказки не трогаются, повтор того же текста не
-    дублируется. `content_provenance` не ставится — по той же причине, что в
-    `PATCH /tasks/{id}/hints` (tsk-808): иначе замёрзнет условие задания.
+    дублируется.
+
+    Подтверждённая подсказка — правка человека, поэтому `approve` ставит
+    `content_provenance` (`manual_web`, пара `task_content`+`solution_rules`)
+    — как кабинет методиста и подтверждение критериев (tsk-951). Без пометки
+    переиздание курса из ContentBackbone затирало одобренные подсказки, а
+    чек cb-drift показывал их как «правки без пометки» (tsk-1385). Цена —
+    условие задания уходит из-под источника; так же устроены все пути ручной
+    правки (tsk-760), снять пометку можно `DELETE /tasks/{id}/manual-edit`.
 
     :returns: черновик и итоговый `hints_text` задания.
     :raises HintDraftError: черновика нет или он уже не в очереди.
@@ -457,6 +464,14 @@ async def review(
         content["hints_text"] = hints
         content["has_hints"] = bool(hints) or bool(content.get("hints_video"))
         task.task_content = content
+        task.content_provenance = {
+            "source": "manual_web",
+            "edited_at": now.isoformat(),
+            "edited_by": reviewer_id,
+            # пара целиком: см. _manually_edited_task_fields (tasks_service)
+            "fields": ["solution_rules", "task_content"],
+            "reason": f"hint-draft:{draft.id}",
+        }
         draft.status = "approved"
     elif action == "reject":
         draft.status = "rejected"
