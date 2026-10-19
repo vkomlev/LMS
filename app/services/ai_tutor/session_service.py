@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy import text
@@ -326,6 +327,58 @@ async def note_turn(
     """), {
         "sid": session_id, "model": model,
         "hit": json.dumps(guard_hit, ensure_ascii=False) if guard_hit else None,
+    })
+
+
+# Хвост журнала сбоев в `meta`: разбору нужны последние, а не вся история.
+FAILURES_KEEP = 10
+
+
+async def note_failure(
+    db: AsyncSession,
+    session_id: int,
+    *,
+    turn: int,
+    error: str,
+    attempts: list[dict] | tuple = (),
+) -> None:
+    """Записать в сессию ход, на который наставник не ответил (tsk-1376).
+
+    До этого неудачный ход не оставлял в сессии следа вовсе: `meta` пустой,
+    реплики наставника нет — и разбор не отличал «цепочка упала» от «ответ
+    потерялся при записи». Пишется счётчик `failed_turns` и хвост `failures`
+    с исходом каждой модели. Слияние — тем же приёмом, что в `note_turn`.
+    """
+    entry = {
+        "turn": turn,
+        "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "error": error[:300],
+        "attempts": list(attempts),
+    }
+    await db.execute(text("""
+        WITH cur AS (
+            SELECT id,
+                   CASE WHEN jsonb_typeof(meta) = 'object' THEN meta ELSE '{}'::jsonb END AS base
+            FROM ai_tutor_session WHERE id = :sid
+        ), merged AS (
+            SELECT id, base,
+                   COALESCE(base -> 'failures', '[]'::jsonb) || jsonb_build_array(CAST(:entry AS jsonb)) AS arr
+            FROM cur
+        )
+        UPDATE ai_tutor_session s
+        SET meta = m.base || jsonb_build_object(
+                'failed_turns', COALESCE(CAST(m.base ->> 'failed_turns' AS int), 0) + 1,
+                'failures', (
+                    SELECT COALESCE(jsonb_agg(e ORDER BY i), '[]'::jsonb)
+                    FROM jsonb_array_elements(m.arr) WITH ORDINALITY AS t(e, i)
+                    WHERE i > jsonb_array_length(m.arr) - :keep
+                )
+            )
+        FROM merged m WHERE s.id = m.id
+    """), {
+        "sid": session_id,
+        "entry": json.dumps(entry, ensure_ascii=False),
+        "keep": FAILURES_KEEP,
     })
 
 

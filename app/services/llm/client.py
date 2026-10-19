@@ -496,6 +496,10 @@ async def stream(
     ready = _ready_chain(_rotate_by_cooldown(_models_for(model, providers.tutor_models())))
     chain = [candidate for candidate, _ in ready]
     last_error: Optional[LLMError] = None
+    # tsk-1376: что сделала КАЖДАЯ модель цепочки. Наружу уходит одна последняя
+    # ошибка, а разбор «почему наставник промолчал» требует всех: 18.10 цепочка
+    # дала 404, подмену и таймаут — в журнале остался только таймаут.
+    attempts: list[dict] = []
     # Потолок на ВЕСЬ вызов, а не на каждую модель по отдельности (tsk-671).
     # Ученик ждёт один раз: четыре модели по 40 c — это не «надёжность», это
     # три минуты в «Наставник думает…» с заблокированным полем ввода.
@@ -674,6 +678,12 @@ async def stream(
                 meta={"message": str(last_error)[:300],
                       **_stream_meta(started, first_at, text_len)},
             )
+            attempts.append({
+                "model": candidate,
+                "outcome": type(last_error).__name__,
+                "ms": duration_ms,
+                "message": str(last_error)[:160],
+            })
 
             if got_any:
                 # Поток уже начался — обрыв показываем как незавершённый ответ,
@@ -694,10 +704,13 @@ async def stream(
                 cooldown.start("model:" + candidate,
                                providers.model_cooldown_seconds())
             if not last_error.try_next_model:
+                last_error.attempts = attempts
                 raise last_error
             logger.warning(
                 "LLM: модель %s не подошла (%s), беру следующую из цепочки",
                 candidate, type(last_error).__name__,
             )
 
-    raise last_error or LLMUnavailable("цепочка моделей исчерпана без результата")
+    final = last_error or LLMUnavailable("цепочка моделей исчерпана без результата")
+    final.attempts = attempts
+    raise final

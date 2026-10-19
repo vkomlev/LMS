@@ -352,10 +352,22 @@ async def ask(
                     yield _sse("delta", {"text": safe})
         except LLMError as exc:
             # Деградация: наставник молчит, но ученик не в тупике.
-            logger.warning(
-                "ai_tutor: сбой наставника session=%s student=%s: %s",
-                session.id, owner, exc,
+            # tsk-1376: ERROR, а не WARNING, и с исходом каждой модели: ход без
+            # ответа — это ученик без помощи, его должен видеть любой чек логов.
+            attempts = list(getattr(exc, "attempts", ()) or ())
+            logger.error(
+                "ai_tutor: ход без ответа session=%s student=%s turn=%s: %s; цепочка: %s",
+                session.id, owner, session.turns + 1, exc,
+                ", ".join(f"{a['model']}={a['outcome']}/{a['ms']}мс" for a in attempts) or "—",
             )
+            try:
+                await session_service.note_failure(
+                    db, session.id, turn=session.turns + 1,
+                    error=f"{type(exc).__name__}: {exc}", attempts=attempts,
+                )
+            except Exception:  # noqa: BLE001 — журнал не должен отнять у ученика ответ
+                logger.exception("ai_tutor: не записан сбой хода session=%s", session.id)
+                await db.rollback()
             # tsk-301: единица списана до вызова — возвращаем её. Ученик не
             # обязан платить лимитом за наш сбой; без явной отдачи потеря была
             # бы молчаливой и накапливалась бы ровно в дни неполадок провайдера.

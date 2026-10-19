@@ -173,6 +173,8 @@ class LLMError(Exception):
     retryable: bool = False
     try_next_model: bool = False
     alert_staff: bool = False
+    # tsk-1376: исходы всех моделей цепочки до этой ошибки (заполняет `stream`).
+    attempts: "list[dict] | tuple" = ()
 
 
 class LLMRateLimited(LLMError):
