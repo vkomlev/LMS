@@ -18,7 +18,7 @@ Rollback: `alembic downgrade tsk999_help_reflection` — колонки сним
 (без признака «устно»).
 
 Revision ID: tsk1384_help_stuck_reason
-Revises: tsk999_help_reflection
+Revises: tsk996_task_anchor
 Create Date: 2026-10-19
 """
 from typing import Sequence, Union
@@ -27,7 +27,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "tsk1384_help_stuck_reason"
-down_revision: Union[str, None] = "tsk999_help_reflection"
+down_revision: Union[str, None] = "tsk996_task_anchor"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
