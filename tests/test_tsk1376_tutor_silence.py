@@ -64,6 +64,58 @@ async def test_exhausted_chain_reports_every_model(monkeypatch) -> None:
     assert all(isinstance(a["ms"], int) for a in attempts)
 
 
+def _plain_handler(seen: list[str], ids: dict[str, str]):
+    import httpx
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        import json
+
+        model = json.loads(request.content)["model"]
+        seen.append(model)
+        return httpx.Response(200, json={
+            "id": ids[model], "model": model,
+            "choices": [{"message": {"content": '{"score": 7}'}}],
+            "usage": {"prompt_tokens": 11, "completion_tokens": 7},
+        })
+    return handler
+
+
+@pytest.mark.asyncio
+async def test_judge_rejects_substitutes_without_stream(monkeypatch) -> None:
+    """Судья (батч) проверку id не проходил вовсе: 304 вердикта от подмен за неделю.
+
+    id — с пробы 19.10: gemini-3.6 `msg_<hex>`, gpt-5.6-sol `chatcmpl-msg_01…`.
+    """
+    from app.services.llm import client as llm_client
+
+    seen: list[str] = []
+    _mount(monkeypatch, _plain_handler(seen, {
+        "google/gemini-3.6-flash": "msg_7b6584027c8be489d2e59371",
+        "openai/gpt-5.6-sol": "chatcmpl-msg_01LKs767Upt1k8w5SYBtZ94XQf",
+        "openai/gpt-5.6-luna": "chatcmpl-1792414895091029348",
+    }))
+    monkeypatch.setenv(
+        "LLM_JUDGE_MODELS",
+        "google/gemini-3.6-flash,openai/gpt-5.6-sol,openai/gpt-5.6-luna",
+    )
+    result = await llm_client.complete(MSGS, purpose="code_review")
+    assert seen == ["google/gemini-3.6-flash", "openai/gpt-5.6-sol", "openai/gpt-5.6-luna"]
+    assert result.model == "openai/gpt-5.6-luna"
+
+
+@pytest.mark.asyncio
+async def test_judge_accepts_native_gemini_id(monkeypatch) -> None:
+    from app.services.llm import client as llm_client
+
+    seen: list[str] = []
+    _mount(monkeypatch, _plain_handler(seen, {
+        "google/gemini-3.7-flash": "NBTWar_uGYewjuMPidrguA4",
+    }))
+    monkeypatch.setenv("LLM_JUDGE_MODELS", "google/gemini-3.7-flash")
+    result = await llm_client.complete(MSGS, purpose="code_review")
+    assert result.model == "google/gemini-3.7-flash"
+
+
 @pytest.mark.asyncio
 async def test_failed_turn_is_journaled_in_session(db):
     """Сессии 232/235/240/244/246: ход без ответа не оставлял в `meta` ничего."""

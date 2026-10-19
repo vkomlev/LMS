@@ -369,7 +369,13 @@ async def complete(
                         raise LLMMalformed(f"ответ не JSON: {body[:200]}") from exc
                     if cfg.name == anthropic_direct.PROVIDER_NAME:
                         payload = anthropic_direct.normalize_message(payload)
-                        check_response_id(candidate, payload.get("id"))
+                    # tsk-1376: отпечаток id — для ВСЕХ провайдеров, как в потоке.
+                    # Раньше проверка стояла внутри ветки прямого API, и судья через
+                    # маршрутизатор её не проходил вовсе: за 12–19.10 он принял 304
+                    # вердикта от подмен (gemini-3.6 → `msg_<hex>`, gpt-5.6-sol →
+                    # `chatcmpl-msg_01…`, 2093 токена подмешанной инструкции).
+                    response_id = str(payload.get("id") or "")
+                    check_response_id(candidate, response_id)
                     _check_payload_error(payload)
 
                     choices = payload.get("choices") or []
@@ -391,7 +397,7 @@ async def complete(
                         # Разбор замедления упёрся ровно в это — по учёту расхода
                         # ответить было нечем.
                         meta={"attempt": attempts, "chain_pos": chain.index(candidate) + 1,
-                              "chain_len": len(chain)},
+                              "chain_len": len(chain), "response_id": response_id[:40]},
                     )
                     return LLMResult(
                         text=text_out, model=candidate,
