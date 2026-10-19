@@ -248,6 +248,18 @@ class TaskUpsertItem(BaseModel):
         ),
     )
     difficulty_provenance: dict[str, Any] | None = None
+    anchor_external_uid: str | None = Field(
+        default=None,
+        description=(
+            "tsk-996 (ADR-0008): external_uid материала, сразу после которого "
+            "задание стоит в учебном порядке узла (публикатор ContentBackbone "
+            "ставит материал H2-раздела задания, `{base}#m{N}`). Ищется только "
+            "среди материалов курса самого задания; не найден — якорь не "
+            "ставится, в ответе предупреждение. Ставит `anchor_source='publish'` "
+            "и не трогает ручной якорь методиста (`manual`). Поле не передано — "
+            "якорь не меняется; явный null снимает якорь публикатора."
+        ),
+    )
 
 
 class TaskBulkUpsertRequest(BaseModel):
@@ -269,8 +281,12 @@ class TaskBulkUpsertResultItem(BaseModel):
 class TaskBulkUpsertResponse(BaseModel):
     """
     Ответ bulk-upsert'а задач.
+
+    `warnings` (tsk-996) — что принято, но применено не целиком: якорь
+    `anchor_external_uid`, не найденный среди материалов узла задания.
     """
     results: List[TaskBulkUpsertResultItem]
+    warnings: List[str] = Field(default_factory=list)
 
 class TaskValidateRequest(BaseModel):
     """

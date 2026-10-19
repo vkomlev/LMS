@@ -1,0 +1,887 @@
+diff --git a/docs/cli-reference.md b/docs/cli-reference.md
+index 5a956e1..6c04d55 100644
+--- a/docs/cli-reference.md
++++ b/docs/cli-reference.md
+@@ -904,6 +904,7 @@ python -m monolith lms-publish-lesson --lesson-file exports/wp-blocks/urok.json
+ | `--lms-uid-base <base>` | Префикс `external_uid` (`{base}#mN`/`#qN`); по умолчанию = `--lms-course-uid` (tsk-136) | = таргет |
+ | `--republish` | Осознанное переиздание: обновлять задания, которые в LMS уже есть. Не трогает те, что правили в кабинете или после нашей публикации (tsk-760) | не переиздавать |
+ | `--force-task <uid>` | Перезаписать это задание, даже если его правили в LMS. Ключ называется поимённо, флаг повторяется; «перезаписать всё» намеренно нет (tsk-853) | ничего не форсируется |
++| `--no-anchors` | Не передавать якоря заданий к материалам их H2-раздела (tsk-996). Существующие якоря в LMS не меняются; снять их — скриптом LMS `scripts/tsk996_clear_publish_anchors.py` (план по умолчанию, `--apply` — запись) | якоря передаются |
+ | `--prune-courses` | Отвязать подкурсы внутри корня графа, которых в графе нет. Только отвязка от родителей внутри корня (чужие родители сохраняются), курс не удаляется. Без флага список таких подкурсов печатается предупреждением (tsk-1265) | не отвязывать |
+ | `--config <path>` | YAML с `lms_publish` (prune_orphans, course_uid_prefix) | `config/pipelines/lms_lesson_publish.yaml` |
+ 
+@@ -914,6 +915,23 @@ python -m monolith lms-publish-lesson --lesson-file exports/wp-blocks/urok.json
+ затем дерево сверяется повторно — строка «Повторная сверка: расхождений 0». Если существующие задания
+ пропущены без `--republish`, в конце выводится отдельное предупреждение.
+ 
++**Якоря заданий к материалам (tsk-996, ADR-0008 LMS).** Задание, стоящее в уроке под H2-разделом,
++уходит в LMS с `anchor_external_uid` = external_uid материала этого раздела (`{base}#m{N}`, номер —
++из той же разбивки, что и материалы: вводный материал до первого H2 занимает `#m1`, контрольные точки
++номер не занимают). LMS ставит задание сразу после этого материала — теория и практика чередуются.
++Задание до первого H2 и задания урока без H2 якоря не получают (в конце раздела, как раньше); урок,
++где все задания стоят в последнем разделе (чередования нет), якорей не получает вовсе — иначе задания
++поднялись бы над подкурсами узла. Когда якоря передаются (ADR-0008: «только при переиздании»):
++с `--republish` — у всех записываемых заданий узла; без него — только если в узле ещё нет ни одного
++задания урока (первая публикация), иначе в итоге предупреждение «чередование ставится при --republish».
++Задания, правленные в LMS, переиздание пропускает — их якорь не обновляется, список в предупреждении
++(поправить в редакторе задания SPW). Ручной якорь методиста (`manual`) не трогается; не найденный в
++узле материал — предупреждение, не ошибка. Dry-run показывает вычисленный якорь каждого задания
++(поле `anchor`), без учёта того, что из этого реально запишется.
++Ограничение: если при переиздании задание ушло из раздела (выше первого H2) или урок перестал
++чередоваться, поле не передаётся и прежний якорь `publish` в LMS остаётся — снять скриптом LMS
++`scripts/tsk996_clear_publish_anchors.py` (явный `null` при `--republish` — возможный следующий шаг).
++
+ ---
+ 
+ ## Autocheck Tasks
+diff --git a/docs/cross-project/CHANGELOG.md b/docs/cross-project/CHANGELOG.md
+index 6fba228..2dad89e 100644
+--- a/docs/cross-project/CHANGELOG.md
++++ b/docs/cross-project/CHANGELOG.md
+@@ -6,6 +6,14 @@ Backfill ограничен последними 7 днями (Q-CPM-3 реше
+ 
+ ---
+ 
++## 2026-10-19 — CB+LMS: публикатор ставит якоря заданий к материалам раздела (tsk-996, П7, фаза C)
++
++- **Project:** ContentBackbone, LMS · **Class:** расширение контракта `POST /tasks/bulk-upsert` (аддитивно: поле запроса + `warnings` в ответе) + флаг CLI. Миграций нет (колонки якоря — фаза B, ревизия `tsk996_task_anchor`).
++- **Change:** CB `lms-publish-lesson` шлёт у задания `anchor_external_uid` = `{base}#m{N}` материала его H2-раздела (до первого H2 и в уроке без H2 — без поля); `--no-anchors` — не слать. LMS резолвит его в `tasks.anchor_material_id` только в курсе задания, ставит `anchor_source='publish'`, ручной `manual` не трогает, отсутствие поля — якорь прежний, не найден — предупреждение. Скрипт отката LMS `scripts/tsk996_clear_publish_anchors.py` (план по умолчанию, `--apply`).
++- **Impact:** порядок узла у ученика меняется только у заданий, получивших якорь при публикации (чередование теория–задания). SPW — нет (порядок с сервера); TG_LMS — нет. Якоря идут только при `--republish` или первой публикации узла и только у уроков с чередованием.
++- **Action:** выкат LMS → CB; затем переиздать один урок пилотного курса (`--republish`) и сверить порядок с уроком (решение оператора о пилоте).
++- **Authority:** `contracts/lms-api.md` § «Якорь задания к материалу узла»; `D:\Work\LMS\docs\briefs\2026-10-19-p7-anchor-implementation.md` (фаза C). **Refs:** tsk-996.
++
+ ## 2026-10-18 — CB+LMS+SPW: контрольная точка «Проверь себя» внутри материала (tsk-998, П9)
+ 
+ - **Project:** ContentBackbone, LMS, SPW · **Class:** новый формат контента материала (аддитивно) + новый эндпоинт + рубильник. Миграций нет.
+diff --git a/docs/cross-project/contracts/lms-api.md b/docs/cross-project/contracts/lms-api.md
+index e13bd7f..e046935 100644
+--- a/docs/cross-project/contracts/lms-api.md
++++ b/docs/cross-project/contracts/lms-api.md
+@@ -6324,3 +6324,44 @@ teacher/methodist/admin проходит гейт попытки — превь
+   в обоих списках; 404 — ученик не записан на курс к выключению.
+ - `GET /api/v1/users/{user_id}/courses?role=student` и `UserCourseRead` теперь несут `is_active: bool`
+   (раньше выключенные записи было не отличить).
++
++## Якорь задания к материалу узла: `PATCH /tasks/{id}` и `POST /tasks/bulk-upsert` (tsk-996, 2026-10-19)
++
++ADR LMS-0008 (`D:\Work\LMS\docs\ai\adr\0008-interleave-theory-practice-anchor.md`). Задание может
++ссылаться на материал своего же курса (`tasks.anchor_material_id`, источник `tasks.anchor_source` =
++`publish` | `manual`); учебный порядок узла: материал → его задания → следующий материал → … →
++подразделы → задания без якоря. Все якоря NULL — прежний порядок.
++
++**Фаза B (в main):** `PATCH /tasks/{id}` принимает `anchor_material_id` (материал того же курса,
++иначе 422; явный `null` — «в конце раздела»), ставит `anchor_source='manual'`; выдача задания
++методисту отдаёт оба поля. Триггер-страж в БД не даёт якорь на материал другого курса.
++
++**Фаза C — `POST /tasks/bulk-upsert` (аддитивно):**
++
++| вход | поведение |
++|---|---|
++| `items[].anchor_external_uid` отсутствует | якорь не меняется (старый CB, `--no-anchors`) |
++| строка, материал с таким `external_uid` есть в курсе задания | `anchor_material_id` = он, `anchor_source='publish'` |
++| строка, материала нет в курсе задания (нет вовсе или только в другом курсе) | якорь не меняется, `warnings[]` в ответе; задание записано |
++| явный `null` | снять якорь публикатора (`anchor_material_id`/`anchor_source` = NULL) |
++| у задания `anchor_source='manual'` | любое значение игнорируется — ручную работу методиста переиздание не затирает |
++
++Ответ: `{results: [...], warnings: string[]}` (`warnings` — новое, по умолчанию `[]`). Якорь
++резолвится в курсе НАЗНАЧЕНИЯ после маршрутизации HARD (tsk-347). Смена якоря не двигает
++`tasks.updated_at` — переиздание не примет задание за правленное руками (tsk-760).
++
++**ContentBackbone (`lms-publish-lesson`):** шлёт `anchor_external_uid` = `{base}#m{N}` материала
++H2-раздела, под которым задание стоит в уроке (номер — из той же разбивки, что и материалы; контрольные
++точки П9 номер не занимают); задание до первого H2, задания урока без H2 и урока без чередования (все
++задания в последнем разделе) — без поля. Без `--republish` поле идёт только при первой публикации узла
++(в LMS ещё нет его заданий), с `--republish` — у всех записываемых. Материалы узла публикуются раньше
++его заданий. `--no-anchors` — поле не передаётся. Предупреждения LMS — в
++`warnings` итога публикации.
++
++**Совместимость.** `TaskUpsertItem` без `extra='forbid'` — старый LMS лишнее поле молча игнорирует;
++старый CB поле не шлёт — новый LMS якорь не трогает. Порядок выката любой; осмысленный — LMS, затем CB.
++
++**Откат.** Флаг CB `--no-anchors` (новые якоря не ставятся) + скрипт LMS
++`scripts/tsk996_clear_publish_anchors.py --courses <id,...> [--apply]` (по умолчанию план; снимает
++только `publish`, ручные не трогает).
++
+diff --git a/monolith/cli/lms.py b/monolith/cli/lms.py
+index 3a0e39a..a8b7f82 100644
+--- a/monolith/cli/lms.py
++++ b/monolith/cli/lms.py
+@@ -96,6 +96,7 @@ def _cmd_lms_publish_lesson(args: argparse.Namespace, cfg: dict, run_id: str) ->
+         republish=bool(getattr(args, "republish", False)),
+         force_task_uids=set(getattr(args, "force_task", None) or ()),
+         prune_courses=bool(getattr(args, "prune_courses", False)),
++        anchors=not bool(getattr(args, "no_anchors", False)),
+     )
+     # Человекочитаемая сводка идёт в stderr: stdout закреплён за JSON-envelope (main.py).
+     report = result.get("report") or {}
+diff --git a/monolith/cli/parser.py b/monolith/cli/parser.py
+index 196fb84..7a597fc 100644
+--- a/monolith/cli/parser.py
++++ b/monolith/cli/parser.py
+@@ -50,6 +50,7 @@ def build_arg_parser(commands: Iterable[str]) -> argparse.ArgumentParser:
+     parser.add_argument("--per-task", action="store_true", dest="per_task", help="lms-drift-audit: спрашивать LMS про каждое задание отдельно, без чтения пачкой (tsk-852). Медленно (около секунды на задание), нужен как запасной путь, если эндпоинт списка заданий отказал или врёт")
+     parser.add_argument("--no-snapshots", action="store_true", dest="no_snapshots", help="lms-drift-audit: не подмешивать снимки партий из data/lms_drift (партии, уехавшие в LMS мимо базы CB, например tg:ege — tsk-760). По умолчанию подмешиваются: без них сверка на такую партию слепа")
+     parser.add_argument("--republish", action="store_true", dest="republish", help="lms-publish-lesson / subsystem-c-run --stage sync: осознанное переиздание — обновлять задания, которые в LMS уже есть. Без флага они не трогаются: там выверенная человеком версия (tsk-734). Задания, правленные в кабинете методиста, не трогаются и с флагом — их печатает списком; по перезаписанным пишется снимок «до» в out/republish-snapshots/ (tsk-760)")
++    parser.add_argument("--no-anchors", action="store_true", dest="no_anchors", help="lms-publish-lesson: не передавать якоря заданий к материалам их H2-раздела (по умолчанию задание встаёт в LMS сразу после материала своего раздела, tsk-996). Существующие якоря в LMS не меняются; снять их — скриптом LMS scripts/tsk996_clear_publish_anchors.py")
+     parser.add_argument("--prune-courses", action="store_true", dest="prune_courses", help="lms-publish-lesson: отвязать подкурсы внутри корня графа, которых в графе нет (только отвязка от родителей внутри корня, курс не удаляется; список виден и в dry-run, tsk-1265)")
+     parser.add_argument("--force-task", action="append", dest="force_task", metavar="UID", help="lms-publish-lesson --republish: перезаписать это задание, даже если его правили в LMS. Ключ называется поимённо (можно повторять флаг) — переиздание не должно затирать чужую работу скопом (tsk-853)")
+     parser.add_argument("--lms-course-uid", type=str, dest="lms_course_uid", help="lms-publish-lesson: публиковать урок в существующий узел-подкурс LMS с этим course_uid (вместо wp:{course-code}); create запрещён; применим к одному уроку (tsk-136)")
+diff --git a/monolith/lms_client/contracts.py b/monolith/lms_client/contracts.py
+index 9c160d9..16e3e69 100644
+--- a/monolith/lms_client/contracts.py
++++ b/monolith/lms_client/contracts.py
+@@ -110,6 +110,10 @@ class TaskPayload:
+     solution_rules: Optional[dict[str, Any]] = None
+     difficulty_id: Optional[int] = None
+     max_score: Optional[int] = None
++    # tsk-996 (ADR-0008 LMS): external_uid материала того же узла, после
++    # которого задание стоит в учебном порядке. LMS резолвит его в
++    # `tasks.anchor_material_id`; None — поле не передаётся, якорь в LMS не меняется.
++    anchor_external_uid: Optional[str] = None
+ 
+ 
+ def task_payload_to_dict(p: TaskPayload) -> dict[str, Any]:
+@@ -130,6 +134,8 @@ def task_payload_to_dict(p: TaskPayload) -> dict[str, Any]:
+         d["difficulty_id"] = p.difficulty_id
+     if p.max_score is not None:
+         d["max_score"] = p.max_score
++    if p.anchor_external_uid is not None:
++        d["anchor_external_uid"] = p.anchor_external_uid
+     return d
+ 
+ 
+diff --git a/monolith/lms_publish/blocks_to_lms.py b/monolith/lms_publish/blocks_to_lms.py
+index 3542a3f..46135da 100644
+--- a/monolith/lms_publish/blocks_to_lms.py
++++ b/monolith/lms_publish/blocks_to_lms.py
+@@ -101,6 +101,10 @@ class LmsTask:
+     # Нужен content_lint: по готовому HTML контекст прозой (`context_kind: text`)
+     # от самого условия не отличить.
+     has_context: bool = False
++    # tsk-996 (ADR-0008 LMS): external_uid материала H2-раздела, под которым
++    # задание стоит в уроке (`{base}#m{N}`). LMS ставит задание сразу после этого
++    # материала. None — задание до первого H2 или урок без H2: якоря нет.
++    anchor_material_uid: Optional[str] = None
+ 
+ 
+ @dataclass
+@@ -224,6 +228,29 @@ def build_materials(doc: ContentDoc) -> list[LmsMaterial]:
+     а уходит в начало первого раздела.
+     """
+     base = sanitize_uid(doc.global_uid)
++    seen_ids: dict[str, str] = {}
++    materials: list[LmsMaterial] = []
++    for i, (title, blocks) in enumerate(_material_sections(doc), start=1):
++        external_uid = f"{base}#m{i}"
++        html, checkpoints = _render_material(doc, blocks, external_uid=external_uid, seen_ids=seen_ids)
++        materials.append(LmsMaterial(
++            external_uid=external_uid,
++            title=title,
++            html=html,
++            order_position=i,
++            checkpoints=checkpoints,
++        ))
++    return materials
++
++
++def _material_sections(doc: ContentDoc) -> list[tuple[str, list[dict[str, Any]]]]:
++    """Разбивка теории урока на разделы-материалы: [(заголовок, блоки)] в порядке #m1, #m2, …
++
++    Одна функция на материалы (`build_materials`) и на якоря заданий
++    (`_section_anchor_uids`, tsk-996): номер раздела задания обязан совпадать
++    с номером материала, иначе якорь встанет не на тот раздел.
++    """
++    base = sanitize_uid(doc.global_uid)
+     body = drop_redundant_title_heading(doc.title, [
+         b for b in doc.blocks if _in_material(b)
+     ])  # ведущий H2 == заголовок урока убираем — иначе дубль-материал (P1)
+@@ -251,20 +278,30 @@ def build_materials(doc: ContentDoc) -> list[LmsMaterial]:
+             f"контрольные точки в документе {base} стоят без теории: материала для них нет — "
+             f"добавь текст урока или сними lms_checkpoint"
+         )
++    return sections
+ 
+-    seen_ids: dict[str, str] = {}
+-    materials: list[LmsMaterial] = []
+-    for i, (title, blocks) in enumerate(sections, start=1):
+-        external_uid = f"{base}#m{i}"
+-        html, checkpoints = _render_material(doc, blocks, external_uid=external_uid, seen_ids=seen_ids)
+-        materials.append(LmsMaterial(
+-            external_uid=external_uid,
+-            title=title,
+-            html=html,
+-            order_position=i,
+-            checkpoints=checkpoints,
+-        ))
+-    return materials
++
++def _section_anchor_uids(doc: ContentDoc) -> dict[int, str]:
++    """Якоря заданий урока (tsk-996, ADR-0008 LMS): id(блок-заголовок H2) → `{base}#m{N}`.
++
++    Якорь получает задание, стоящее под H2-разделом, и только в уроке, где
++    задания чередуются с теорией (есть задание не в последнем разделе) —
++    см. конец `extract_lms_tasks`.
++
++    Ключ — H2, открывающие раздел-материал в `_material_sections`, значение —
++    external_uid этого материала. Задание стоит под последним таким H2 перед
++    ним в `doc.blocks`. Номер берётся из той же разбивки, что и у материалов,
++    поэтому совпадает с ним и в краевых случаях: вводный материал до первого
++    H2 занимает #m1, контрольные точки (П9) номер не занимают, H2 с
++    `lms_skip` и ведущий H2, равный названию урока, раздел не открывают.
++    """
++    base = sanitize_uid(doc.global_uid)
++    anchors: dict[int, str] = {}
++    for i, (_title, blocks) in enumerate(_material_sections(doc), start=1):
++        for b in blocks:
++            if b.get("type") == "heading" and int(b.get("level") or 2) == 2:
++                anchors[id(b)] = f"{base}#m{i}"
++    return anchors
+ 
+ 
+ # Метка места контрольной точки в HTML материала. Пустой div без текста: в любом
+@@ -523,10 +560,15 @@ def extract_lms_tasks(doc: ContentDoc) -> list[LmsTask]:
+     """
+     base_uid = sanitize_uid(doc.global_uid)
+     version = task_uid_version(doc)
++    section_anchors = _section_anchor_uids(doc)
+     tasks: list[LmsTask] = []
+     seq = 0
++    anchor_uid: Optional[str] = None  # до первого H2 якоря нет (tsk-996)
+     for block in doc.blocks:
+         btype = block.get("type")
++        if id(block) in section_anchors:
++            anchor_uid = section_anchors[id(block)]
++            continue
+         if btype not in INTERACTIVE_BLOCK_TYPES:
+             continue
+         if block.get("lms_skip"):  # WP-only интерактив (например, навигация) — не в LMS
+@@ -545,10 +587,23 @@ def extract_lms_tasks(doc: ContentDoc) -> list[LmsTask]:
+         else:
+             task = _build_task_task(block, external_uid, seq, context_html)
+         if task is not None:
++            task.anchor_material_uid = anchor_uid
+             tasks.append(task)
++    # ADR-0008 LMS: якоря — только если задания чередуются с теорией. Когда все
++    # задания стоят после последнего раздела, якорь на него лишь поднял бы их над
++    # подкурсами узла (порядок «материалы → подкурсы → задания»), а чередования нет.
++    last_uid = max(section_anchors.values(), key=_material_number, default=None)
++    if all(t.anchor_material_uid in (None, last_uid) for t in tasks):
++        for t in tasks:
++            t.anchor_material_uid = None
+     return tasks
+ 
+ 
++def _material_number(uid: str) -> int:
++    """`{base}#m{N}` → N (для выбора последнего раздела урока)."""
++    return int(uid.rsplit("#m", 1)[1])
++
++
+ def _task_context_html(block: dict[str, Any]) -> str:
+     """HTML-контекст (исходник или условие) для вшивания в задание.
+ 
+@@ -877,12 +932,18 @@ def to_task_payloads(
+     plan: LmsLessonPlan,
+     course_id: int,
+     difficulty_map: Optional[dict[str, int]] = None,
++    *,
++    anchors: bool = True,
+ ) -> list[TaskPayload]:
+     """LmsLessonPlan.tasks → list[TaskPayload] (LMS bulk-upsert).
+ 
+     difficulty_map (code→id из LMS difficulty-levels) резолвит обязательное
+     difficulty_id. Если код не найден в карте — difficulty_id остаётся None
+     (LMS вернёт валидационную ошибку, что лучше тихого дефолта).
++
++    anchors (tsk-996): передавать ли `anchor_external_uid` — материал раздела
++    задания. False (CLI `--no-anchors`) — поле не передаётся вовсе, и LMS
++    существующие якоря не меняет. У задания без раздела поля нет и при True.
+     """
+     dmap = difficulty_map or {}
+     return [
+@@ -895,6 +956,7 @@ def to_task_payloads(
+             # tasks.max_score обязан совпадать с solution_rules.max_score (контракт LMS).
+             # Авто-задания — 1 или авторский `max_score` блока (tsk-1077); у TA — сумма весов рубрики.
+             max_score=int(t.solution_rules.get("max_score") or 1),
++            anchor_external_uid=(t.anchor_material_uid if anchors else None),
+         )
+         for t in plan.tasks
+     ]
+diff --git a/monolith/lms_publish/lesson_publisher.py b/monolith/lms_publish/lesson_publisher.py
+index 0aa38a6..925c285 100644
+--- a/monolith/lms_publish/lesson_publisher.py
++++ b/monolith/lms_publish/lesson_publisher.py
+@@ -16,11 +16,13 @@ from typing import Any, Optional
+ import yaml
+ 
+ from monolith.lms_client.create_only import (
++    CreateOnlyGuardError,
+     MODE_CREATE_ONLY,
+     MODE_REPUBLISH,
+     SKIPPED_EXISTING_KEY,
+     SKIPPED_MANUAL_KEY,
+     SNAPSHOT_KEY,
++    existing_external_uids,
+ )
+ from monolith.lms_publish.blocks_to_lms import (
+     LmsLessonPlan,
+@@ -181,6 +183,8 @@ class LessonLmsPublisher:
+         # (tsk-734). Переиздание включается параметром publish(republish=True).
+         self._task_write_mode: str = MODE_CREATE_ONLY
+         self._published_at: dict[str, str] = {}
++        # tsk-996: передавать ли якоря заданий к материалам (CLI --no-anchors → False).
++        self._anchors: bool = True
+ 
+     def course_uid_for(self, course_slug: Optional[str]) -> Optional[str]:
+         if not course_slug:
+@@ -219,6 +223,7 @@ class LessonLmsPublisher:
+         prune: Optional[bool] = None,
+         republish: bool = False,
+         force_task_uids: Optional[set[str]] = None,
++        anchors: bool = True,
+     ) -> list[PlanOutcome]:
+         """Резолвит курс, делает bulk-upsert material + tasks, пишет publication/link_map.
+ 
+@@ -232,6 +237,8 @@ class LessonLmsPublisher:
+         republish: осознанное переиздание курса человеком (tsk-760). False —
+         существующие задания не трогаются (tsk-734); True — обновляются, кроме
+         правленных в кабинете методиста.
++        anchors: передавать якоря заданий к материалам их H2-раздела (tsk-996).
++        False (CLI --no-anchors) — поле не передаётся, якоря в LMS не меняются.
+         """
+         from monolith.lms_client import LMSClient
+ 
+@@ -241,6 +248,7 @@ class LessonLmsPublisher:
+ 
+         self._task_write_mode = MODE_REPUBLISH if republish else MODE_CREATE_ONLY
+         self._force_task_uids = set(force_task_uids or ())
++        self._anchors = bool(anchors)
+         # Переиздание сверяет отметку правки задания в LMS с датой НАШЕЙ
+         # публикации: правка новее публикации — значит после нас в задании
+         # работал кто-то ещё (tsk-760). Даты берём из content_hub.publication.
+@@ -565,7 +573,11 @@ class LessonLmsPublisher:
+         tasks_upserted = tasks_failed = tasks_skipped_existing = 0
+         tasks_skipped_manual: list[str] = []
+         replaced_snapshot: list[dict[str, Any]] = []
+-        task_payloads = to_task_payloads(content, course_id, difficulty_map)
++        warnings: list[str] = []
++        task_payloads = to_task_payloads(
++            content, course_id, difficulty_map,
++            anchors=self._anchors_for_node(client, content, course_id, warnings),
++        )
+         if task_payloads:
+             task_res = client.bulk_upsert_tasks(
+                 task_payloads, mode=self._task_write_mode, published_at=self._published_at,
+@@ -588,6 +600,13 @@ class LessonLmsPublisher:
+                 replaced_snapshot = [
+                     r for r in (res_data.get(SNAPSHOT_KEY) or []) if isinstance(r, dict)
+                 ]
++                # tsk-996: якорь, который LMS не смогла поставить (материала раздела
++                # нет в узле), — не сбой публикации, а предупреждение: задание
++                # остаётся в конце узла, как без якоря.
++                warnings.extend(
++                    f"курс {course_id}: {w}" for w in (res_data.get("warnings") or [])
++                    if isinstance(w, str)
++                )
+                 tasks_failed = max(
+                     0,
+                     len(task_payloads)
+@@ -600,6 +619,14 @@ class LessonLmsPublisher:
+                         "lms_publish.create_only.skipped_existing: курс %s, заданий %s",
+                         course_id, tasks_skipped_existing,
+                     )
++                if tasks_skipped_manual and any(p.anchor_external_uid for p in task_payloads):
++                    # Их якорь publish не обновился: после перестановки разделов
++                    # он может указывать на соседний материал — поправить в LMS.
++                    warnings.append(
++                        f"курс {course_id}: якоря {len(tasks_skipped_manual)} заданий, правленных "
++                        f"в LMS, не обновлены (задания не перезаписывались): "
++                        f"{', '.join(tasks_skipped_manual[:5])}"
++                    )
+                 if tasks_skipped_manual:
+                     logger.info(
+                         "lms_publish.republish.skipped_manually_edited: курс %s, заданий %s (%s)",
+@@ -607,7 +634,6 @@ class LessonLmsPublisher:
+                     )
+ 
+         rules_upserted = 0
+-        warnings: list[str] = []
+         all_rules = [r for t in content.tasks for r in t.assign_rules]
+         # quiz_scale — правила курс-уровня (накопление scale_scores по курсу, tsk-122):
+         # привязываем к текущему курсу по course_id (на этапе сборки блока он неизвестен).
+@@ -654,6 +680,37 @@ class LessonLmsPublisher:
+             warnings=warnings,
+         )
+ 
++    def _anchors_for_node(
++        self, client: Any, content: Any, course_id: int, warnings: list[str],
++    ) -> bool:
++        """Передавать ли якоря заданий этого узла (tsk-996, ADR-0008 LMS).
++
++        Переиздание (`--republish`) — да: обновляются все записываемые задания
++        узла. Обычная публикация пишет только новые задания (tsk-734) — якорь
++        только у них дал бы смешанный порядок (новое задание за своим материалом,
++        старые того же раздела — в конце узла). Поэтому без переиздания якоря
++        идут, только если в узле ещё нет ни одного задания урока (первая
++        публикация). Проверка недоступна — якорей нет (заслон create-only всё
++        равно не даст записать).
++        """
++        if not self._anchors:
++            return False
++        if not any(t.anchor_material_uid for t in content.tasks):
++            return False
++        if self._task_write_mode != MODE_CREATE_ONLY:
++            return True
++        try:
++            existing = existing_external_uids(client, [t.external_uid for t in content.tasks])
++        except CreateOnlyGuardError:
++            return False
++        if existing:
++            warnings.append(
++                f"курс {course_id}: якоря заданий не переданы — урок уже опубликован "
++                f"({len(existing)} заданий в LMS), чередование ставится при --republish"
++            )
++            return False
++        return True
++
+     # ---------------------------------------------------------------
+     # Prune (деактивация сирот) — tsk-123
+     # ---------------------------------------------------------------
+diff --git a/monolith/lms_publish/run.py b/monolith/lms_publish/run.py
+index 7b81a5e..0caf114 100644
+--- a/monolith/lms_publish/run.py
++++ b/monolith/lms_publish/run.py
+@@ -824,6 +824,7 @@ def run_lms_publish_lessons(
+     republish: bool = False,
+     force_task_uids: Optional[set[str]] = None,
+     prune_courses: bool = False,
++    anchors: bool = True,
+ ) -> dict[str, Any]:
+     """tsk-079 вторая очередь: публикация блочных авторских документов в LMS.
+ 
+@@ -846,6 +847,10 @@ def run_lms_publish_lessons(
+     (чтение LMS, если заданы CB_LMS_BASE_URL/CB_LMS_TOKEN); в write — запись и
+     повторная сверка. prune_courses=True — ещё и отвязка подкурсов внутри корня,
+     которых нет в графе (только отвязка, курс не удаляется).
++
++    anchors=False (CLI --no-anchors, tsk-996): якоря заданий к материалам их
++    H2-раздела не передаются — LMS существующие якоря не меняет. Снять уже
++    поставленные якоря — скрипт LMS `scripts/tsk996_clear_publish_anchors.py`.
+     """
+     from monolith.lms_publish.blocks_to_lms import build_lesson_plan, is_lms_publishable
+     from monolith.lms_publish.lesson_publisher import (
+@@ -1050,7 +1055,8 @@ def run_lms_publish_lessons(
+                 ],
+                 "tasks": [
+                     {"external_uid": t.external_uid, "target_type": t.target_type,
+-                     "has_answer": t.has_answer, "stem": t.stem_preview}
++                     "has_answer": t.has_answer, "stem": t.stem_preview,
++                     "anchor": (t.anchor_material_uid if anchors else None)}
+                     for t in p.tasks
+                 ],
+                 "rules": sum(len(t.assign_rules) for t in p.tasks),
+@@ -1080,7 +1086,10 @@ def run_lms_publish_lessons(
+             error_class=err_class or "validation", affected_rows=0, error_message=err_msg,
+         )
+ 
+-    outcomes = publisher.publish(plans, cfg, prune=prune, republish=republish, force_task_uids=force_task_uids)
++    outcomes = publisher.publish(
++        plans, cfg, prune=prune, republish=republish, force_task_uids=force_task_uids,
++        anchors=anchors,
++    )
+     tree_sync = _tree_sync_write(cfg, plans, outcomes, publisher, prune_courses)
+     successful = sum(1 for o in outcomes if o.success)
+     failed = len(outcomes) - successful
+diff --git a/tests/test_tsk996_publish_anchors.py b/tests/test_tsk996_publish_anchors.py
+new file mode 100644
+index 0000000..fd25465
+--- /dev/null
++++ b/tests/test_tsk996_publish_anchors.py
+@@ -0,0 +1,388 @@
++# tsk-996 (фаза C, ADR-0008 LMS): публикатор передаёт якорь задания к материалу его H2-раздела.
++#
++# Задание стоит в уроке под каким-то H2-разделом; материал этого раздела в LMS —
++# `{base}#m{N}`. Публикатор шлёт у задания `anchor_external_uid` = этот uid, и LMS
++# ставит задание сразу после материала (чередование теории и практики). Номер
++# раздела обязан совпадать с номером материала из `build_materials` — проверяется
++# здесь на краевых случаях (вводный материал, контрольные точки П9, ведущий H2 =
++# названию урока, lms_skip, подкурсы). Плюс флаг `--no-anchors` и предупреждения LMS.
++from __future__ import annotations
++
++import json
++import sys
++from pathlib import Path
++from typing import Any, Optional
++
++_root = Path(__file__).resolve().parent.parent
++if str(_root) not in sys.path:
++    sys.path.insert(0, str(_root))
++
++from monolith.lms_client.contracts import LMSClientResult, task_payload_to_dict
++from monolith.lms_publish.blocks_to_lms import (
++    build_lesson_plan,
++    build_materials,
++    extract_lms_tasks,
++    to_task_payloads,
++)
++from monolith.lms_publish.lesson_publisher import LessonLmsPublisher
++from monolith.wp_publish.blocks import parse_content_doc
++
++BASE = "authored:tsk996:lesson"
++
++
++def _h2(text: str, **extra: Any) -> dict:
++    return {"type": "heading", "level": 2, "text": text, **extra}
++
++
++def _p(text: str) -> dict:
++    return {"type": "paragraph", "html": text}
++
++
++def _q(stem: str, **extra: Any) -> dict:
++    return {"type": "control_question", "qtype": "SA", "stem": stem, "answer": "1", **extra}
++
++
++def _task(stem: str) -> dict:
++    return {"type": "task", "ttype": "SA", "stem": stem, "answer": "42"}
++
++
++def _cp(stem: str) -> dict:
++    return {"type": "control_question", "qtype": "SA", "stem": stem, "answer": "да",
++            "lms_checkpoint": True}
++
++
++def _doc(blocks: list[dict], title: str = "Урок про якоря", **extra: Any):
++    return parse_content_doc({
++        "kind": "lesson", "title": title, "global_uid": BASE,
++        "course_slug": "tsk996", "blocks": blocks, **extra,
++    })
++
++
++def _anchors(doc) -> dict[str, Optional[str]]:
++    """Стем задания → якорь (uid материала) — читаемее, чем по номерам."""
++    return {t.task_content["stem"]: t.anchor_material_uid for t in extract_lms_tasks(doc)}
++
++
++def _material_of(doc, uid: str) -> str:
++    """HTML материала с данным external_uid (проверка «якорь — на раздел задания»)."""
++    return next(m.html for m in build_materials(doc) if m.external_uid == uid)
++
++
++# --- извлечение якоря ------------------------------------------------------
++
++
++def test_theory_tasks_theory_tasks_anchor_to_own_sections():
++    """«Теория — задания — теория — задания»: задания каждого раздела — на его материал."""
++    doc = _doc([
++        _h2("Циклы"), _p("теория циклов"), _q("цикл 1"), _task("цикл 2"),
++        _h2("Функции"), _p("теория функций"), _q("функция 1"), _task("функция 2"),
++    ])
++    assert [m.external_uid for m in build_materials(doc)] == [f"{BASE}#m1", f"{BASE}#m2"]
++    assert _anchors(doc) == {
++        "цикл 1": f"{BASE}#m1", "цикл 2": f"{BASE}#m1",
++        "функция 1": f"{BASE}#m2", "функция 2": f"{BASE}#m2",
++    }
++    assert "теория циклов" in _material_of(doc, f"{BASE}#m1")
++    assert "теория функций" in _material_of(doc, f"{BASE}#m2")
++
++
++def test_lesson_without_h2_has_no_anchors():
++    """Урок без H2 — один материал, якорей нет, поля в payload нет."""
++    doc = _doc([_p("теория"), _q("вопрос"), _p("ещё теория"), _task("задача")])
++    assert len(build_materials(doc)) == 1
++    assert _anchors(doc) == {"вопрос": None, "задача": None}
++    plan = build_lesson_plan(doc)
++    assert all("anchor_external_uid" not in task_payload_to_dict(p) for p in to_task_payloads(plan, 7))
++
++
++def test_task_before_first_h2_has_no_anchor_and_intro_takes_m1():
++    """Вводная теория до H2 — материал #m1; задание до первого H2 якоря не получает,
++    а первый H2-раздел — это #m2 (номер сверен с build_materials)."""
++    doc = _doc([
++        _p("вводная"), _q("до раздела"),
++        _h2("Раздел"), _p("теория раздела"), _q("в разделе"),
++        _h2("Итог"), _p("итог"), _q("в итоге"),
++    ])
++    assert [m.external_uid for m in build_materials(doc)] == [f"{BASE}#m1", f"{BASE}#m2", f"{BASE}#m3"]
++    assert _anchors(doc) == {"до раздела": None, "в разделе": f"{BASE}#m2", "в итоге": f"{BASE}#m3"}
++    assert "теория раздела" in _material_of(doc, f"{BASE}#m2")
++
++
++def test_checkpoints_do_not_shift_section_numbers():
++    """Контрольные точки П9 номер раздела не занимают — ни до первого H2, ни внутри раздела."""
++    doc = _doc([
++        _cp("точка до всего"),
++        _h2("Первый"), _p("теория 1"), _cp("точка 1"), _q("после точки 1"),
++        _h2("Второй"), _p("теория 2"), _cp("точка 2"), _task("после точки 2"),
++    ])
++    materials = build_materials(doc)
++    assert [m.external_uid for m in materials] == [f"{BASE}#m1", f"{BASE}#m2"]
++    assert _anchors(doc) == {"после точки 1": f"{BASE}#m1", "после точки 2": f"{BASE}#m2"}
++    assert "теория 2" in _material_of(doc, f"{BASE}#m2")
++    # Точки — в материалах, а не в заданиях.
++    assert len(extract_lms_tasks(doc)) == 2
++
++
++def test_title_heading_and_lms_skip_heading_do_not_open_section():
++    """Ведущий H2 = названию урока снимается и раздел не открывает; H2 с lms_skip —
++    тоже (его текст в LMS не идёт). Номер якоря — номер реального материала."""
++    doc = _doc([
++        _h2("Урок про якоря"), _p("вступление"), _q("под заголовком урока"),
++        _h2("Раздел А"), _p("теория А"), _q("в А"),
++        _h2("Только для сайта", lms_skip=True), _p("теория А, продолжение"), _q("после skip-H2"),
++        _h2("Раздел Б"), _p("теория Б"), _q("в Б"),
++    ])
++    uids = [m.external_uid for m in build_materials(doc)]
++    assert uids == [f"{BASE}#m1", f"{BASE}#m2", f"{BASE}#m3"]
++    assert _anchors(doc) == {
++        "под заголовком урока": None,
++        "в А": f"{BASE}#m2",
++        "после skip-H2": f"{BASE}#m2",
++        "в Б": f"{BASE}#m3",
++    }
++    assert "теория Б" in _material_of(doc, f"{BASE}#m3")
++
++
++def test_h3_does_not_open_section():
++    """Подзаголовок H3 — часть раздела: во вводной части якоря не даёт, в H2-разделе
++    якорь прежний."""
++    h3 = {"type": "heading", "level": 3, "text": "Пример"}
++    doc = _doc([
++        _p("вводная"), dict(h3), _p("пример во вводной"), _q("после H3 во вводной"),
++        _h2("Раздел"), _p("теория"), dict(h3), _p("пример"), _q("после H3"),
++        _h2("Итог"), _p("итог"), _q("в итоге"),
++    ])
++    assert _anchors(doc) == {
++        "после H3 во вводной": None, "после H3": f"{BASE}#m2", "в итоге": f"{BASE}#m3",
++    }
++
++
++def test_anchor_uses_uid_base_and_task_uid_version():
++    """Якорь строится от той же базы, что и материалы (lms_uid_base), версия ключей
++    заданий (tsk-1284) на якорь не влияет."""
++    doc = _doc([_h2("Раздел"), _p("теория"), _q("вопрос"), _h2("Итог"), _p("итог"), _q("итог")],
++               lms_task_uid_version="v2")
++    plan = build_lesson_plan(doc, lms_uid_base="wp:node-base")
++    assert plan.materials[0].external_uid == "wp:node-base#m1"
++    assert plan.tasks[0].external_uid == "wp:node-base#v2q1"
++    assert plan.tasks[0].anchor_material_uid == "wp:node-base#m1"
++
++
++def test_subcourse_tasks_anchor_to_own_node_materials():
++    """У подкурса своя база: якоря его заданий — на материалы этого же подкурса."""
++    two = [_h2("Раздел 1"), _p("теория 1"), _q("в 1"), _h2("Раздел 2"), _p("теория 2"), _q("в 2")]
++    doc = _doc(two, subcourses=[{"course_uid": "wp:sub", "title": "Подкурс", "blocks": two}])
++    plan = build_lesson_plan(doc)
++    assert plan.tasks[0].anchor_material_uid == f"{BASE}#m1"
++    sub = plan.subcourses[0]
++    assert [t.anchor_material_uid for t in sub.tasks] == ["wp:sub#m1", "wp:sub#m2"]
++    assert {m.external_uid for m in sub.materials} == {"wp:sub#m1", "wp:sub#m2"}
++
++
++def test_tasks_only_after_last_section_get_no_anchors():
++    """Нет чередования (все задания в последнем разделе) — якорей нет: иначе они
++    поднялись бы над подкурсами узла, хотя в уроке стоят в конце (ADR-0008)."""
++    doc = _doc([
++        _h2("A"), _p("теория a"), _h2("B"), _p("теория b"), _q("в конце 1"), _task("в конце 2"),
++    ])
++    assert len(build_materials(doc)) == 2
++    assert _anchors(doc) == {"в конце 1": None, "в конце 2": None}
++    # Одно задание до первого H2 + остальные в последнем разделе — тоже не чередование.
++    doc = _doc([_p("вводная"), _q("вводный"), _h2("A"), _p("теория a"), _q("в конце")])
++    assert _anchors(doc) == {"вводный": None, "в конце": None}
++
++
++def test_every_anchor_points_to_material_of_same_node():
++    """Инвариант на смешанном уроке: каждый якорь — uid материала того же плана."""
++    doc = _doc([
++        _p("вводная"), _cp("точка"), _q("q-intro"),
++        _h2("A"), _p("a"), _q("q-a"), _cp("точка a"),
++        _h2("Урок про якоря"),  # дубль заголовка урока — снимается
++        _q("q-a2"),
++        _h2("B"), _cp("точка b"), _p("b"), _task("t-b"), _q("q-b"),
++    ])
++    plan = build_lesson_plan(doc)
++    material_uids = {m.external_uid for m in plan.materials}
++    anchors = [t.anchor_material_uid for t in plan.tasks if t.anchor_material_uid]
++    assert anchors and set(anchors) <= material_uids
++    assert _anchors(doc)["q-a2"] == _anchors(doc)["q-a"], "снятый дубль-заголовок открыл раздел"
++
++
++# --- payload и --no-anchors -------------------------------------------------
++
++
++def test_payload_carries_anchor_and_no_anchors_drops_field():
++    doc = _doc([_h2("Раздел"), _p("теория"), _q("вопрос"), _h2("Итог"), _p("итог"), _q("итог")])
++    plan = build_lesson_plan(doc)
++    with_anchor = task_payload_to_dict(to_task_payloads(plan, 7)[0])
++    assert with_anchor["anchor_external_uid"] == f"{BASE}#m1"
++    without = task_payload_to_dict(to_task_payloads(plan, 7, anchors=False)[0])
++    assert "anchor_external_uid" not in without
++    assert {k: v for k, v in with_anchor.items() if k != "anchor_external_uid"} == without
++
++
++class _FakeLMS:
++    """LMS-клиент публикатора: записывает пакеты заданий, отдаёт предупреждения."""
++
++    sent: list = []
++    warnings: list = []
++    existing: set = set()
++    skipped_manual: list = []
++
++    def __init__(self, *a: Any, **k: Any) -> None:
++        pass
++
++    def get_difficulty_levels(self):
++        return LMSClientResult(ok=True, data=[{"id": 2, "code": "EASY"}, {"id": 3, "code": "NORMAL"}])
++
++    def get_course_by_code(self, code):
++        return LMSClientResult(ok=True, data={"id": 7})
++
++    def bulk_upsert_materials(self, payloads):
++        return LMSClientResult(ok=True, data={"items": [
++            {"external_uid": p.external_uid, "material_id": 100 + i} for i, p in enumerate(payloads)
++        ]})
++
++    def find_tasks_by_external(self, uids):
++        return LMSClientResult(ok=True, data={"items": [
++            {"external_uid": u, "id": 1} for u in uids if u in _FakeLMS.existing
++        ]})
++
++    def bulk_upsert_tasks(self, payloads, *, mode=None, force_uids=None, published_at=None):
++        _FakeLMS.sent.append([task_payload_to_dict(p) for p in payloads])
++        return LMSClientResult(ok=True, data={
++            "skipped_manually_edited": list(_FakeLMS.skipped_manual),
++            "results": [
++                {"external_uid": p.external_uid, "id": 200 + i, "action": "created"}
++                for i, p in enumerate(payloads)
++            ],
++            "warnings": list(_FakeLMS.warnings),
++        })
++
++    def get_materials_by_course(self, course_id, query=None):
++        return LMSClientResult(ok=True, data={"items": []})
++
++    def get_tasks_by_course(self, course_id):
++        return LMSClientResult(ok=True, data=[])
++
++    def get_course_children(self, parent_id):
++        return LMSClientResult(ok=True, data=[])
++
++
++class _FakeHub:
++    def __init__(self, *a: Any, **k: Any) -> None:
++        pass
++
++    def upsert_publication(self, payload):
++        return type("R", (), {"ok": True})()
++
++    def upsert_link_map(self, payload):
++        return type("R", (), {"ok": True})()
++
++
++_CFG = {"CB_CONTENT_HUB_DSN": "postgresql://x", "CB_LMS_BASE_URL": "http://lms",
++        "CB_LMS_TOKEN": "t", "run_id": "tsk996"}
++
++
++def _publish(
++    monkeypatch, *, anchors: bool, warnings: Optional[list] = None, republish: bool = False,
++    existing: Optional[set] = None, skipped_manual: Optional[list] = None,
++):
++    import content_hub_client.client as hub_mod
++    import monolith.lms_client as lms_mod
++
++    monkeypatch.setattr(lms_mod, "LMSClient", _FakeLMS)
++    monkeypatch.setattr(hub_mod, "ContentHubClient", _FakeHub)
++    _FakeLMS.sent = []
++    _FakeLMS.warnings = list(warnings or [])
++    _FakeLMS.existing = set(existing or ())
++    _FakeLMS.skipped_manual = list(skipped_manual or [])
++    doc = _doc([_h2("A"), _p("теория a"), _q("a"), _h2("B"), _p("теория b"), _q("b")])
++    return LessonLmsPublisher().publish(
++        [build_lesson_plan(doc)], _CFG, anchors=anchors, republish=republish,
++    )
++
++
++def test_publisher_sends_anchors_by_default(monkeypatch):
++    outcome = _publish(monkeypatch, anchors=True)[0]
++    assert outcome.success
++    assert [i.get("anchor_external_uid") for i in _FakeLMS.sent[0]] == [f"{BASE}#m1", f"{BASE}#m2"]
++
++
++def test_publish_without_republish_skips_anchors_for_published_lesson(monkeypatch):
++    """Без --republish пишутся только новые задания: якорь только у них дал бы
++    смешанный порядок — поэтому у уже опубликованного урока якорей нет вовсе."""
++    outcome = _publish(monkeypatch, anchors=True, existing={f"{BASE}#q1"})[0]
++    assert all("anchor_external_uid" not in i for i in _FakeLMS.sent[0])
++    assert any("--republish" in w for w in outcome.warnings)
++
++
++def test_republish_sends_anchors_for_published_lesson(monkeypatch):
++    _publish(monkeypatch, anchors=True, republish=True, existing={f"{BASE}#q1", f"{BASE}#q2"})
++    assert [i.get("anchor_external_uid") for i in _FakeLMS.sent[0]] == [f"{BASE}#m1", f"{BASE}#m2"]
++
++
++def test_republish_warns_about_skipped_edited_tasks_anchors(monkeypatch):
++    """Задание, правленное в LMS, переиздание не пишет — его якорь не обновлён; это
++    видно в итоге."""
++    outcome = _publish(monkeypatch, anchors=True, republish=True, skipped_manual=[f"{BASE}#q2"])[0]
++    assert any("не обновлены" in w and f"{BASE}#q2" in w for w in outcome.warnings)
++
++
++def test_publisher_no_anchors_sends_no_field(monkeypatch):
++    outcome = _publish(monkeypatch, anchors=False)[0]
++    assert outcome.success
++    assert all("anchor_external_uid" not in i for i in _FakeLMS.sent[0])
++
++
++def test_publisher_surfaces_lms_anchor_warnings(monkeypatch):
++    """Якорь, который LMS не поставила, — предупреждение в итоге, публикация успешна."""
++    outcome = _publish(monkeypatch, anchors=True, warnings=[f"{BASE}#q1: якорь не поставлен"])[0]
++    assert outcome.success
++    assert any("якорь не поставлен" in w for w in outcome.warnings)
++
++
++def test_cli_flag_no_anchors_reaches_run(monkeypatch):
++    """`--no-anchors` в парсере → anchors=False в run_lms_publish_lessons."""
++    from monolith.cli import lms as cli_lms
++    from monolith.app_cli.main import COMMANDS
++    from monolith.cli.parser import build_arg_parser
++
++    def build_parser():
++        return build_arg_parser(COMMANDS)
++
++    args = build_parser().parse_args(["lms-publish-lesson", "--global-uid", "g", "--no-anchors"])
++    assert args.no_anchors is True
++    seen: dict = {}
++
++    def fake_run(cfg, run_id, **kwargs):
++        seen.update(kwargs)
++        return {"status": "success", "report": {}}
++
++    monkeypatch.setattr(cli_lms, "run_lms_publish_lessons", fake_run)
++    handler = cli_lms._cmd_lms_publish_lesson  # noqa: SLF001
++    handler(args, {}, "rid")
++    assert seen["anchors"] is False
++    args = build_parser().parse_args(["lms-publish-lesson", "--global-uid", "g"])
++    handler(args, {}, "rid")
++    assert seen["anchors"] is True
++
++
++def test_dry_run_reports_anchor_per_task(monkeypatch):
++    """Dry-run показывает якорь каждого задания (сверка с уроком до записи); --no-anchors — None."""
++    from monolith.lms_publish import run as run_mod
++    from monolith.wp_publish import repo as repo_mod
++    from monolith.wp_publish.contracts import LessonCandidate
++
++    body = {"kind": "lesson", "title": "Урок", "global_uid": BASE, "course_slug": "tsk996",
++            "blocks": [_h2("A"), _p("теория a"), _q("a"), _h2("B"), _p("теория b"), _q("b")]}
++    cand = LessonCandidate(global_uid=BASE, title="Урок", body=json.dumps(body, ensure_ascii=False),
++                           course_slug="tsk996", content_type="blocks", kind="lesson")
++    monkeypatch.setattr(repo_mod, "get_lesson_candidates", lambda *a, **k: [cand])
++    for anchors, expected in ((True, f"{BASE}#m1"), (False, None)):
++        out = run_mod.run_lms_publish_lessons(
++            {"CB_CONTENT_HUB_DSN": "postgresql://x"}, "rid", dry_run=True, global_uid=BASE,
++            allow_course_fallback=True, anchors=anchors,
++        )
++        assert out["status"] == "success", out
++        assert out["report"]["items"][0]["tasks"][0]["anchor"] == expected

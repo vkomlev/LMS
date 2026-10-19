@@ -756,11 +756,14 @@ async def bulk_upsert_tasks_endpoint(
 
     Правила:
     - если external_uid не найден → создаём задачу (action = 'created');
-    - если найден → обновляем существующую задачу (action = 'updated').
+    - если найден → обновляем существующую задачу (action = 'updated');
+    - `anchor_external_uid` (tsk-996) — якорь задания к материалу его узла;
+      не найденный в узле — в `warnings`, задание записывается без якоря.
 
     Это позволяет существенно ускорить импорт из Google Sheets:
     одно HTTP-обращение вместо сотен.
     """
+    warnings: list[str] = []
     raw_results = await tasks_service.bulk_upsert(
         db,
         # exclude_unset: «поле не передали» ≠ «передали значение по умолчанию».
@@ -769,6 +772,7 @@ async def bulk_upsert_tasks_endpoint(
         # переиздании задания (tsk-377). Поля, которые клиент прислал явно,
         # в словаре остаются и перезаписываются как раньше.
         items=[item.model_dump(exclude_unset=True) for item in payload.items],
+        warnings=warnings,
     )
 
     results = [
@@ -780,7 +784,7 @@ async def bulk_upsert_tasks_endpoint(
         for external_uid, action, task_id in raw_results
     ]
 
-    return TaskBulkUpsertResponse(results=results)
+    return TaskBulkUpsertResponse(results=results, warnings=warnings)
 
 @router.post(
     "/courses/{course_id}/tasks/reorder",

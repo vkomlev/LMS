@@ -358,6 +358,8 @@ class TasksService(BaseService[Tasks]):
         self,
         db: AsyncSession,
         items: Sequence[Dict[str, Any]],
+        *,
+        warnings: Optional[List[str]] = None,
     ) -> List[Tuple[str, str, int]]:
         """
         Массовый upsert задач по external_uid.
@@ -378,13 +380,21 @@ class TasksService(BaseService[Tasks]):
         описывает уже не то значение.
 
         :param db: асинхронная сессия БД.
+        Якорь к материалу ``anchor_external_uid`` (tsk-996, ADR-0008) — см.
+        :meth:`_publish_anchor_fields`: «поле не передано» — якорь не трогаем,
+        ручной якорь методиста (``manual``) переиздание не перезаписывает.
+
         :param items: список словарей с полями задачи
                       (external_uid, course_id, difficulty_id, task_content,
-                       solution_rules, max_score).
+                       solution_rules, max_score, anchor_external_uid).
+        :param warnings: сюда дописываются предупреждения (якорь не найден в
+                         узле задания); запись задания они не отменяют.
         :return: список кортежей (external_uid, action, id), где
                  action ∈ {"created", "updated"}.
         """
         results: List[Tuple[str, str, int]] = []
+        if warnings is None:
+            warnings = []
         # tsk-345: курсы, где после этого батча order_position может нарушать
         # порядок THEORY→EASY→NORMAL→HARD→PROJECT — пересортируем в конце.
         courses_needing_reorder: Set[int] = set()
@@ -392,6 +402,8 @@ class TasksService(BaseService[Tasks]):
         # tsk-347: HARD-задания курса, у которого есть подкурс сложных, уходят
         # в этот подкурс, а сам подкурс держит уровень `recommended`.
         hard_twins, twin_course_ids = await self._resolve_hard_routing(db, items)
+        # tsk-996: материалы-якоря батча одним запросом, а не по запросу на задание.
+        anchor_materials = await self._load_anchor_materials(db, items)
 
         for data in items:
             external_uid = data["external_uid"]
@@ -403,6 +415,10 @@ class TasksService(BaseService[Tasks]):
                 courses_needing_reorder.add(data["course_id"])
                 courses_needing_reorder.add(twin_course_id)
                 data = {**data, "course_id": twin_course_id}
+                # tsk-996: материал раздела остался в номерном курсе — якорь в
+                # подкурсе сложных невозможен; это штатный переезд, не сбой
+                # публикации, поэтому без предупреждения: поле как не пришло.
+                data.pop("anchor_external_uid", None)
             # Решает КУРС НАЗНАЧЕНИЯ этого задания, а не наличие подкурса
             # сложных у курса батча: иначе не-HARD задание, приехавшее в одном
             # батче с HARD, тоже получило бы `recommended` (поймано тестом).
@@ -433,6 +449,10 @@ class TasksService(BaseService[Tasks]):
                 db,
                 {"external_uid": external_uid},
             )
+            # Якорь резолвится в КУРСЕ НАЗНАЧЕНИЯ (после маршрутизации HARD).
+            anchor_fields = self._publish_anchor_fields(
+                data, existing, anchor_materials, warnings
+            )
 
             if existing is None:
                 # CREATE
@@ -451,6 +471,7 @@ class TasksService(BaseService[Tasks]):
                     # tsk-381: без явного обоснования уровень остаётся
                     # неподтверждённым — это честнее выдуманного происхождения.
                     "difficulty_provenance": data.get("difficulty_provenance"),
+                    **anchor_fields,
                 }
                 # используем наш переопределенный create для валидации
                 # (tsk-114: INSERT не аудируется — task_audit фиксирует ИЗМЕНЕНИЯ
@@ -564,6 +585,7 @@ class TasksService(BaseService[Tasks]):
                 explicit_order_position = data.get("order_position") is not None
                 if explicit_order_position:
                     obj_in["order_position"] = data["order_position"]
+                obj_in.update(anchor_fields)
                 # tsk-114: update() коммитит построчно (repo.update commit=True
                 # по умолчанию) — метка session-var транзакционна (is_local=true,
                 # см. app/db/audit_context.py), ставим заново перед КАЖДЫМ
@@ -593,6 +615,84 @@ class TasksService(BaseService[Tasks]):
             await db.commit()
 
         return results
+
+    async def _load_anchor_materials(
+        self, db: AsyncSession, items: Sequence[Dict[str, Any]]
+    ) -> dict[str, dict[int, int]]:
+        """Материалы, на которые ссылаются ``anchor_external_uid`` батча (tsk-996).
+
+        :return: ``{external_uid материала: {course_id: material_id}}``. У
+            материала ключ уникален только внутри курса
+            (``uq_materials_course_external_uid``), поэтому значение — по курсам:
+            задание резолвит якорь только в своём курсе.
+        """
+        uids = sorted({
+            data["anchor_external_uid"]
+            for data in items
+            if isinstance(data.get("anchor_external_uid"), str)
+        })
+        if not uids:
+            return {}
+        rows = (
+            await db.execute(
+                text(
+                    "SELECT external_uid, course_id, id FROM materials "
+                    "WHERE external_uid = ANY(:uids)"
+                ),
+                {"uids": uids},
+            )
+        ).fetchall()
+        found: dict[str, dict[int, int]] = {}
+        for uid, course_id, material_id in rows:
+            found.setdefault(uid, {})[int(course_id)] = int(material_id)
+        return found
+
+    @staticmethod
+    def _publish_anchor_fields(
+        data: Dict[str, Any],
+        existing: Optional[Tasks],
+        anchor_materials: dict[str, dict[int, int]],
+        warnings: List[str],
+    ) -> Dict[str, Any]:
+        """Поля якоря задания из импорта (tsk-996, ADR-0008 «Владение якорем»).
+
+        * ключа ``anchor_external_uid`` нет — ``{}``: якорь не трогаем
+          (отсутствие поля ≠ «обнулить», тот же принцип, что у tsk-377);
+        * у задания ручной якорь (``anchor_source='manual'``) — ``{}``: работу
+          методиста переиздание не перезаписывает, в том числе его осознанное
+          «в конце раздела» (``manual`` при пустом якоре);
+        * материал найден среди материалов КУРСА ЗАДАНИЯ — якорь на него,
+          источник ``publish``;
+        * не найден или только в чужом курсе — ``{}`` и предупреждение: якорь
+          на чужой узел запрещён (триггер ``trg_tasks_anchor_guard`` уронил бы
+          весь пакет), задание записывается как без поля — прежний якорь
+          остаётся, у нового задания якоря нет;
+        * явный ``null`` — снять якорь публикатора (источник тоже ``NULL``).
+        """
+        if "anchor_external_uid" not in data:
+            return {}
+        if existing is not None and existing.anchor_source == "manual":
+            logger_provenance.info(
+                "tsk-996: задание %s — ручной якорь методиста, импорт его не трогает",
+                existing.id,
+            )
+            return {}
+        anchor_uid = data["anchor_external_uid"]
+        if anchor_uid is None:
+            return {"anchor_material_id": None, "anchor_source": None}
+        course_id = data.get("course_id")
+        by_course = anchor_materials.get(anchor_uid, {})
+        material_id = by_course.get(course_id) if isinstance(course_id, int) else None
+        if material_id is None:
+            reason = (
+                "материал из другого раздела" if by_course else "материала нет в разделе"
+            )
+            warnings.append(
+                f"{data['external_uid']}: якорь {anchor_uid} не поставлен — {reason} "
+                f"(курс задания {course_id}); якорь задания не изменён"
+            )
+            return {}
+        return {"anchor_material_id": material_id, "anchor_source": "publish"}
 
     async def _resolve_hard_routing(
         self, db: AsyncSession, items: Sequence[Dict[str, Any]]

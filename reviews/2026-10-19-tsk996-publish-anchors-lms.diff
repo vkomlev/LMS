@@ -1,0 +1,937 @@
+diff --git a/app/api/v1/tasks_extra.py b/app/api/v1/tasks_extra.py
+index e1b328f..ed8e836 100644
+--- a/app/api/v1/tasks_extra.py
++++ b/app/api/v1/tasks_extra.py
+@@ -756,11 +756,14 @@ async def bulk_upsert_tasks_endpoint(
+ 
+     Правила:
+     - если external_uid не найден → создаём задачу (action = 'created');
+-    - если найден → обновляем существующую задачу (action = 'updated').
++    - если найден → обновляем существующую задачу (action = 'updated');
++    - `anchor_external_uid` (tsk-996) — якорь задания к материалу его узла;
++      не найденный в узле — в `warnings`, задание записывается без якоря.
+ 
+     Это позволяет существенно ускорить импорт из Google Sheets:
+     одно HTTP-обращение вместо сотен.
+     """
++    warnings: list[str] = []
+     raw_results = await tasks_service.bulk_upsert(
+         db,
+         # exclude_unset: «поле не передали» ≠ «передали значение по умолчанию».
+@@ -769,6 +772,7 @@ async def bulk_upsert_tasks_endpoint(
+         # переиздании задания (tsk-377). Поля, которые клиент прислал явно,
+         # в словаре остаются и перезаписываются как раньше.
+         items=[item.model_dump(exclude_unset=True) for item in payload.items],
++        warnings=warnings,
+     )
+ 
+     results = [
+@@ -780,7 +784,7 @@ async def bulk_upsert_tasks_endpoint(
+         for external_uid, action, task_id in raw_results
+     ]
+ 
+-    return TaskBulkUpsertResponse(results=results)
++    return TaskBulkUpsertResponse(results=results, warnings=warnings)
+ 
+ @router.post(
+     "/courses/{course_id}/tasks/reorder",
+diff --git a/app/schemas/tasks.py b/app/schemas/tasks.py
+index 9116583..41be8b1 100644
+--- a/app/schemas/tasks.py
++++ b/app/schemas/tasks.py
+@@ -248,6 +248,18 @@ class TaskUpsertItem(BaseModel):
+         ),
+     )
+     difficulty_provenance: dict[str, Any] | None = None
++    anchor_external_uid: str | None = Field(
++        default=None,
++        description=(
++            "tsk-996 (ADR-0008): external_uid материала, сразу после которого "
++            "задание стоит в учебном порядке узла (публикатор ContentBackbone "
++            "ставит материал H2-раздела задания, `{base}#m{N}`). Ищется только "
++            "среди материалов курса самого задания; не найден — якорь не "
++            "ставится, в ответе предупреждение. Ставит `anchor_source='publish'` "
++            "и не трогает ручной якорь методиста (`manual`). Поле не передано — "
++            "якорь не меняется; явный null снимает якорь публикатора."
++        ),
++    )
+ 
+ 
+ class TaskBulkUpsertRequest(BaseModel):
+@@ -269,8 +281,12 @@ class TaskBulkUpsertResultItem(BaseModel):
+ class TaskBulkUpsertResponse(BaseModel):
+     """
+     Ответ bulk-upsert'а задач.
++
++    `warnings` (tsk-996) — что принято, но применено не целиком: якорь
++    `anchor_external_uid`, не найденный среди материалов узла задания.
+     """
+     results: List[TaskBulkUpsertResultItem]
++    warnings: List[str] = Field(default_factory=list)
+ 
+ class TaskValidateRequest(BaseModel):
+     """
+diff --git a/app/services/tasks_service.py b/app/services/tasks_service.py
+index 20b3a1c..f02af9b 100644
+--- a/app/services/tasks_service.py
++++ b/app/services/tasks_service.py
+@@ -358,6 +358,8 @@ class TasksService(BaseService[Tasks]):
+         self,
+         db: AsyncSession,
+         items: Sequence[Dict[str, Any]],
++        *,
++        warnings: Optional[List[str]] = None,
+     ) -> List[Tuple[str, str, int]]:
+         """
+         Массовый upsert задач по external_uid.
+@@ -378,13 +380,21 @@ class TasksService(BaseService[Tasks]):
+         описывает уже не то значение.
+ 
+         :param db: асинхронная сессия БД.
++        Якорь к материалу ``anchor_external_uid`` (tsk-996, ADR-0008) — см.
++        :meth:`_publish_anchor_fields`: «поле не передано» — якорь не трогаем,
++        ручной якорь методиста (``manual``) переиздание не перезаписывает.
++
+         :param items: список словарей с полями задачи
+                       (external_uid, course_id, difficulty_id, task_content,
+-                       solution_rules, max_score).
++                       solution_rules, max_score, anchor_external_uid).
++        :param warnings: сюда дописываются предупреждения (якорь не найден в
++                         узле задания); запись задания они не отменяют.
+         :return: список кортежей (external_uid, action, id), где
+                  action ∈ {"created", "updated"}.
+         """
+         results: List[Tuple[str, str, int]] = []
++        if warnings is None:
++            warnings = []
+         # tsk-345: курсы, где после этого батча order_position может нарушать
+         # порядок THEORY→EASY→NORMAL→HARD→PROJECT — пересортируем в конце.
+         courses_needing_reorder: Set[int] = set()
+@@ -392,6 +402,8 @@ class TasksService(BaseService[Tasks]):
+         # tsk-347: HARD-задания курса, у которого есть подкурс сложных, уходят
+         # в этот подкурс, а сам подкурс держит уровень `recommended`.
+         hard_twins, twin_course_ids = await self._resolve_hard_routing(db, items)
++        # tsk-996: материалы-якоря батча одним запросом, а не по запросу на задание.
++        anchor_materials = await self._load_anchor_materials(db, items)
+ 
+         for data in items:
+             external_uid = data["external_uid"]
+@@ -403,6 +415,10 @@ class TasksService(BaseService[Tasks]):
+                 courses_needing_reorder.add(data["course_id"])
+                 courses_needing_reorder.add(twin_course_id)
+                 data = {**data, "course_id": twin_course_id}
++                # tsk-996: материал раздела остался в номерном курсе — якорь в
++                # подкурсе сложных невозможен; это штатный переезд, не сбой
++                # публикации, поэтому без предупреждения: поле как не пришло.
++                data.pop("anchor_external_uid", None)
+             # Решает КУРС НАЗНАЧЕНИЯ этого задания, а не наличие подкурса
+             # сложных у курса батча: иначе не-HARD задание, приехавшее в одном
+             # батче с HARD, тоже получило бы `recommended` (поймано тестом).
+@@ -433,6 +449,10 @@ class TasksService(BaseService[Tasks]):
+                 db,
+                 {"external_uid": external_uid},
+             )
++            # Якорь резолвится в КУРСЕ НАЗНАЧЕНИЯ (после маршрутизации HARD).
++            anchor_fields = self._publish_anchor_fields(
++                data, existing, anchor_materials, warnings
++            )
+ 
+             if existing is None:
+                 # CREATE
+@@ -451,6 +471,7 @@ class TasksService(BaseService[Tasks]):
+                     # tsk-381: без явного обоснования уровень остаётся
+                     # неподтверждённым — это честнее выдуманного происхождения.
+                     "difficulty_provenance": data.get("difficulty_provenance"),
++                    **anchor_fields,
+                 }
+                 # используем наш переопределенный create для валидации
+                 # (tsk-114: INSERT не аудируется — task_audit фиксирует ИЗМЕНЕНИЯ
+@@ -564,6 +585,7 @@ class TasksService(BaseService[Tasks]):
+                 explicit_order_position = data.get("order_position") is not None
+                 if explicit_order_position:
+                     obj_in["order_position"] = data["order_position"]
++                obj_in.update(anchor_fields)
+                 # tsk-114: update() коммитит построчно (repo.update commit=True
+                 # по умолчанию) — метка session-var транзакционна (is_local=true,
+                 # см. app/db/audit_context.py), ставим заново перед КАЖДЫМ
+@@ -594,6 +616,84 @@ class TasksService(BaseService[Tasks]):
+ 
+         return results
+ 
++    async def _load_anchor_materials(
++        self, db: AsyncSession, items: Sequence[Dict[str, Any]]
++    ) -> dict[str, dict[int, int]]:
++        """Материалы, на которые ссылаются ``anchor_external_uid`` батча (tsk-996).
++
++        :return: ``{external_uid материала: {course_id: material_id}}``. У
++            материала ключ уникален только внутри курса
++            (``uq_materials_course_external_uid``), поэтому значение — по курсам:
++            задание резолвит якорь только в своём курсе.
++        """
++        uids = sorted({
++            data["anchor_external_uid"]
++            for data in items
++            if isinstance(data.get("anchor_external_uid"), str)
++        })
++        if not uids:
++            return {}
++        rows = (
++            await db.execute(
++                text(
++                    "SELECT external_uid, course_id, id FROM materials "
++                    "WHERE external_uid = ANY(:uids)"
++                ),
++                {"uids": uids},
++            )
++        ).fetchall()
++        found: dict[str, dict[int, int]] = {}
++        for uid, course_id, material_id in rows:
++            found.setdefault(uid, {})[int(course_id)] = int(material_id)
++        return found
++
++    @staticmethod
++    def _publish_anchor_fields(
++        data: Dict[str, Any],
++        existing: Optional[Tasks],
++        anchor_materials: dict[str, dict[int, int]],
++        warnings: List[str],
++    ) -> Dict[str, Any]:
++        """Поля якоря задания из импорта (tsk-996, ADR-0008 «Владение якорем»).
++
++        * ключа ``anchor_external_uid`` нет — ``{}``: якорь не трогаем
++          (отсутствие поля ≠ «обнулить», тот же принцип, что у tsk-377);
++        * у задания ручной якорь (``anchor_source='manual'``) — ``{}``: работу
++          методиста переиздание не перезаписывает, в том числе его осознанное
++          «в конце раздела» (``manual`` при пустом якоре);
++        * материал найден среди материалов КУРСА ЗАДАНИЯ — якорь на него,
++          источник ``publish``;
++        * не найден или только в чужом курсе — ``{}`` и предупреждение: якорь
++          на чужой узел запрещён (триггер ``trg_tasks_anchor_guard`` уронил бы
++          весь пакет), задание записывается как без поля — прежний якорь
++          остаётся, у нового задания якоря нет;
++        * явный ``null`` — снять якорь публикатора (источник тоже ``NULL``).
++        """
++        if "anchor_external_uid" not in data:
++            return {}
++        if existing is not None and existing.anchor_source == "manual":
++            logger_provenance.info(
++                "tsk-996: задание %s — ручной якорь методиста, импорт его не трогает",
++                existing.id,
++            )
++            return {}
++        anchor_uid = data["anchor_external_uid"]
++        if anchor_uid is None:
++            return {"anchor_material_id": None, "anchor_source": None}
++        course_id = data.get("course_id")
++        by_course = anchor_materials.get(anchor_uid, {})
++        material_id = by_course.get(course_id) if isinstance(course_id, int) else None
++        if material_id is None:
++            reason = (
++                "материал из другого раздела" if by_course else "материала нет в разделе"
++            )
++            warnings.append(
++                f"{data['external_uid']}: якорь {anchor_uid} не поставлен — {reason} "
++                f"(курс задания {course_id}); якорь задания не изменён"
++            )
++            return {}
++        return {"anchor_material_id": material_id, "anchor_source": "publish"}
++
+     async def _resolve_hard_routing(
+         self, db: AsyncSession, items: Sequence[Dict[str, Any]]
+     ) -> Tuple[dict[int, int], set[int]]:
+diff --git a/docs/briefs/2026-10-19-p7-anchor-implementation.md b/docs/briefs/2026-10-19-p7-anchor-implementation.md
+index 76531d6..edcd52f 100644
+--- a/docs/briefs/2026-10-19-p7-anchor-implementation.md
++++ b/docs/briefs/2026-10-19-p7-anchor-implementation.md
+@@ -107,7 +107,7 @@
+ - [ ] Фаза A: `node_sequence`, перевод мест, переключатель, тест эквивалентности, скрипт снимка
+ - [ ] Перед выкатом A: снимок порядка на проде по 30 узлам (read-only) — сверка `true`/`false`
+ - [ ] Фаза B: миграция, страж, переезды, API, SPW-поле, тесты
+-- [ ] Фаза C: CB-извлечение якорей, bulk-upsert с правилом владения, `--no-anchors`, тесты
++- [x] Фаза C: CB-извлечение якорей, bulk-upsert с правилом владения, `--no-anchors`, тесты (ветки `claude/tsk-996-publish-anchors`, 19.10)
+ - [ ] Ревью по каждой фазе ПРИНЯТО; коммиты на русском `(tsk-996)`; в облаке — ветки `claude/tsk-996-*`
+ - [ ] После C: пилотный курс — решение оператора; замер — tsk-1372
+ 
+diff --git a/docs/openapi.json b/docs/openapi.json
+index 4d3e05f..c70ec0d 100644
+--- a/docs/openapi.json
++++ b/docs/openapi.json
+@@ -9997,7 +9997,7 @@
+           "tasks"
+         ],
+         "summary": "Массовый upsert задач по external_uid",
+-        "description": "Массовый upsert задач.\n\nПравила:\n- если external_uid не найден → создаём задачу (action = 'created');\n- если найден → обновляем существующую задачу (action = 'updated').\n\nЭто позволяет существенно ускорить импорт из Google Sheets:\nодно HTTP-обращение вместо сотен.",
++        "description": "Массовый upsert задач.\n\nПравила:\n- если external_uid не найден → создаём задачу (action = 'created');\n- если найден → обновляем существующую задачу (action = 'updated');\n- `anchor_external_uid` (tsk-996) — якорь задания к материалу его узла;\n  не найденный в узле — в `warnings`, задание записывается без якоря.\n\nЭто позволяет существенно ускорить импорт из Google Sheets:\nодно HTTP-обращение вместо сотен.",
+         "operationId": "bulk_upsert_tasks_endpoint_api_v1_tasks_bulk_upsert_post",
+         "requestBody": {
+           "content": {
+@@ -80700,6 +80700,13 @@
+             },
+             "type": "array",
+             "title": "Results"
++          },
++          "warnings": {
++            "items": {
++              "type": "string"
++            },
++            "type": "array",
++            "title": "Warnings"
+           }
+         },
+         "type": "object",
+@@ -80707,7 +80714,7 @@
+           "results"
+         ],
+         "title": "TaskBulkUpsertResponse",
+-        "description": "Ответ bulk-upsert'а задач."
++        "description": "Ответ bulk-upsert'а задач.\n\n`warnings` (tsk-996) — что принято, но применено не целиком: якорь\n`anchor_external_uid`, не найденный среди материалов узла задания."
+       },
+       "TaskBulkUpsertResultItem": {
+         "properties": {
+@@ -83649,6 +83656,18 @@
+               }
+             ],
+             "title": "Difficulty Provenance"
++          },
++          "anchor_external_uid": {
++            "anyOf": [
++              {
++                "type": "string"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Anchor External Uid",
++            "description": "tsk-996 (ADR-0008): external_uid материала, сразу после которого задание стоит в учебном порядке узла (публикатор ContentBackbone ставит материал H2-раздела задания, `{base}#m{N}`). Ищется только среди материалов курса самого задания; не найден — якорь не ставится, в ответе предупреждение. Ставит `anchor_source='publish'` и не трогает ручной якорь методиста (`manual`). Поле не передано — якорь не меняется; явный null снимает якорь публикатора."
+           }
+         },
+         "type": "object",
+diff --git a/scripts/tsk996_clear_publish_anchors.py b/scripts/tsk996_clear_publish_anchors.py
+new file mode 100644
+index 0000000..868f628
+--- /dev/null
++++ b/scripts/tsk996_clear_publish_anchors.py
+@@ -0,0 +1,233 @@
++# -*- coding: utf-8 -*-
++"""tsk-996 (фаза C): снять якоря заданий, поставленные публикатором. По умолчанию — только план.
++
++Откат шага 3 ADR-0008 («Публикатор CB ставит якоря»). Флаг публикатора
++ContentBackbone `--no-anchors` лишь перестаёт присылать якоря — уже
++поставленные остаются. Снять их — этим скриптом: у заданий выбранных курсов
++`anchor_source = 'publish'` → `anchor_material_id = NULL, anchor_source = NULL`,
++и задания возвращаются в конец своего узла (как до фазы C).
++
++Курсы выбираются поимённо, без поддерева: публикатор ставит якоря и в
++подкурсах урока — их id перечислить в `--courses` тоже (или `--all`).
++
++Ручные якоря методиста (`anchor_source = 'manual'`) скрипт не трогает никогда —
++ни поставленные, ни «в конце раздела» (`manual` при пустом якоре).
++
++Отметка правки задания (`tasks.updated_at`, tsk-760) от снятия якоря не
++двигается (триггер `trg_task_set_updated_at` смотрит только на содержимое) —
++следующее переиздание из CB не примет задание за правленное руками.
++
++Протокол: без `--apply` — план (сколько и какие задания) в транзакции только
++для чтения; с `--apply` — одна транзакция, после UPDATE пересчёт: у выбранных
++курсов не осталось якорей `publish`, число ручных якорей не изменилось; при
++расхождении — откат.
++
++Запуск (DSN — `DATABASE_URL` из окружения или `.env`):
++
++    python scripts/tsk996_clear_publish_anchors.py --courses 871,1165
++    python scripts/tsk996_clear_publish_anchors.py --courses 871,1165 --apply
++    python scripts/tsk996_clear_publish_anchors.py --all [--apply]
++
++Код возврата: 0 — успех (в том числе «снимать нечего»), 1 — проверка после
++записи не сошлась (откат), 2 — ошибка запуска.
++"""
++from __future__ import annotations
++
++import argparse
++import asyncio
++import json
++import logging
++import os
++import sys
++from pathlib import Path
++from typing import Any, Dict, List, Optional
++from urllib.parse import urlsplit
++
++PROJECT_ROOT = Path(__file__).resolve().parents[1]
++sys.path.insert(0, str(PROJECT_ROOT))
++
++logger = logging.getLogger("tsk996_clear_publish_anchors")
++
++# Сколько заданий показать в плане поимённо (остальное — счётчиком).
++SAMPLE_LIMIT = 50
++
++
++def _parse_ids(raw: str) -> List[int]:
++    """`871,1165 1200` → [871, 1165, 1200]."""
++    return [int(x) for x in raw.replace(",", " ").split() if x.strip()]
++
++
++def _scope_sql(course_ids: Optional[List[int]]) -> str:
++    """Условие на курсы: список или все (`None`)."""
++    return "TRUE" if course_ids is None else "t.course_id = ANY(:courses)"
++
++
++async def clear_publish_anchors(
++    conn: Any, course_ids: Optional[List[int]], *, apply: bool
++) -> Dict[str, Any]:
++    """План или снятие якорей публикатора у заданий курсов на открытом соединении.
++
++    Транзакцией управляет вызывающий: при `apply=False` записи нет вовсе, при
++    `apply=True` UPDATE выполняется и проверяется здесь же — несошедшаяся
++    проверка поднимает RuntimeError, и вызывающий откатывает транзакцию.
++
++    :param conn: AsyncConnection/AsyncSession SQLAlchemy.
++    :param course_ids: id курсов; `None` — все курсы.
++    :param apply: выполнить запись.
++    :return: отчёт: сколько якорей `publish` найдено/снято, образец заданий,
++        число ручных якорей до/после.
++    :raises RuntimeError: проверка после записи не сошлась.
++    """
++    from sqlalchemy import text
++
++    if course_ids is not None and not course_ids:
++        raise ValueError("пустой список курсов: передай --courses или --all")
++    scope = _scope_sql(course_ids)
++    params: Dict[str, Any] = {} if course_ids is None else {"courses": course_ids}
++
++    rows = (
++        await conn.execute(
++            text(
++                "SELECT t.id, t.course_id, t.external_uid, t.anchor_material_id, "
++                "       m.external_uid AS material_uid "
++                "FROM tasks t LEFT JOIN materials m ON m.id = t.anchor_material_id "
++                f"WHERE t.anchor_source = 'publish' AND {scope} "
++                "ORDER BY t.course_id, t.id"
++            ),
++            params,
++        )
++    ).fetchall()
++    manual_before = int(
++        (
++            await conn.execute(
++                text(f"SELECT count(*) FROM tasks t WHERE t.anchor_source = 'manual' AND {scope}"),
++                params,
++            )
++        ).scalar_one()
++    )
++    report: Dict[str, Any] = {
++        "mode": "apply" if apply else "dry-run",
++        "courses": course_ids if course_ids is not None else "all",
++        "publish_anchors": len(rows),
++        "by_course": {},
++        "sample": [
++            {
++                "task_id": int(r[0]), "course_id": int(r[1]), "external_uid": r[2],
++                "anchor_material_id": r[3], "material_uid": r[4],
++            }
++            for r in rows[:SAMPLE_LIMIT]
++        ],
++        "manual_anchors_untouched": manual_before,
++        "cleared": 0,
++    }
++    for r in rows:
++        key = str(int(r[1]))
++        report["by_course"][key] = report["by_course"].get(key, 0) + 1
++    if not apply or not rows:
++        return report
++
++    ids = [int(r[0]) for r in rows]
++    result = await conn.execute(
++        text(
++            "UPDATE tasks SET anchor_material_id = NULL, anchor_source = NULL "
++            "WHERE id = ANY(:ids) AND anchor_source = 'publish'"
++        ),
++        {"ids": ids},
++    )
++    cleared = int(result.rowcount or 0)
++    left = int(
++        (
++            await conn.execute(
++                text(f"SELECT count(*) FROM tasks t WHERE t.anchor_source = 'publish' AND {scope}"),
++                params,
++            )
++        ).scalar_one()
++    )
++    manual_after = int(
++        (
++            await conn.execute(
++                text(f"SELECT count(*) FROM tasks t WHERE t.anchor_source = 'manual' AND {scope}"),
++                params,
++            )
++        ).scalar_one()
++    )
++    report["cleared"] = cleared
++    if cleared != len(ids) or left != 0 or manual_after != manual_before:
++        raise RuntimeError(
++            f"проверка не сошлась: снято {cleared} из {len(ids)}, осталось publish {left}, "
++            f"ручных якорей было {manual_before}, стало {manual_after}"
++        )
++    return report
++
++
++async def run(dsn: str, course_ids: Optional[List[int]], apply: bool) -> Dict[str, Any]:
++    """Подключиться, выполнить план/снятие в одной транзакции, вернуть отчёт."""
++    from sqlalchemy.ext.asyncio import create_async_engine
++
++    engine = create_async_engine(dsn)
++    try:
++        async with engine.connect() as conn:
++            trans = await conn.begin()
++            try:
++                # Один снимок на план, UPDATE и проверку: параллельная публикация,
++                # поставившая якорь после UPDATE, не даст ложного «не сошлось».
++                await conn.exec_driver_sql("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
++                if not apply:
++                    await conn.exec_driver_sql("SET TRANSACTION READ ONLY")
++                report = await clear_publish_anchors(conn, course_ids, apply=apply)
++            except Exception:
++                await trans.rollback()
++                raise
++            if apply:
++                await trans.commit()
++            else:
++                await trans.rollback()
++    finally:
++        await engine.dispose()
++    report["db_host"] = urlsplit(dsn.replace("+asyncpg", "")).hostname
++    return report
++
++
++def main(argv: Optional[List[str]] = None) -> int:
++    """CLI: `--courses` или `--all`; без `--apply` — только план."""
++    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
++    parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
++    target = parser.add_mutually_exclusive_group(required=True)
++    target.add_argument("--courses", help="id курсов через запятую или пробел")
++    target.add_argument("--all", action="store_true", help="все курсы")
++    parser.add_argument(
++        "--apply", action="store_true", help="выполнить запись (по умолчанию — только план)"
++    )
++    parser.add_argument(
++        "--dry-run", action="store_true",
++        help="только план (так и по умолчанию; флаг для явности, сильнее --apply)",
++    )
++    args = parser.parse_args(argv)
++
++    from dotenv import load_dotenv
++
++    load_dotenv(PROJECT_ROOT / ".env", encoding="utf-8-sig")
++    dsn = os.environ.get("DATABASE_URL")
++    if not dsn:
++        print("DATABASE_URL не задан (окружение или .env)", file=sys.stderr)
++        return 2
++    try:
++        course_ids = None if args.all else _parse_ids(args.courses)
++    except ValueError:
++        print(f"--courses: ожидались числа, получено {args.courses!r}", file=sys.stderr)
++        return 2
++    if course_ids is not None and not course_ids:
++        print("--courses: пустой список", file=sys.stderr)
++        return 2
++    apply = bool(args.apply) and not args.dry_run
++    try:
++        report = asyncio.run(run(dsn, course_ids, apply))
++    except RuntimeError as e:
++        logger.error("откат: %s", e)
++        return 1
++    print(json.dumps(report, ensure_ascii=False, indent=2))
++    return 0
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+diff --git a/tests/test_tsk996_publish_anchor.py b/tests/test_tsk996_publish_anchor.py
+new file mode 100644
+index 0000000..d34a6a0
+--- /dev/null
++++ b/tests/test_tsk996_publish_anchor.py
+@@ -0,0 +1,383 @@
++"""tsk-996 (фаза C): якоря заданий от публикатора ContentBackbone через bulk-upsert.
++
++ADR-0008 «Владение якорем», постановка `docs/briefs/2026-10-19-p7-anchor-implementation.md`,
++шаги 12–14. Публикатор шлёт у задания `anchor_external_uid` — external_uid
++материала H2-раздела, под которым задание стоит в уроке (`{base}#m{N}`).
++Здесь проверяется приём на стороне LMS:
++
++* якорь резолвится только среди материалов курса задания; чужой узел или
++  несуществующий материал — предупреждение в ответе, задание записано, пакет
++  не падает;
++* `publish` и пустой якорь переиздание перезаписывает, `manual` — нет (в том
++  числе «в конце раздела» — `manual` при пустом якоре);
++* поле не пришло — якорь не меняется; явный null снимает только якорь публикатора;
++* пересортировка по сложности (`_reorder_tasks_by_difficulty`) меняет порядок
++  внутри группы, но не разбивает группы: каждое задание остаётся за своим
++  материалом, цепочка next-item проходит каждый элемент ровно один раз;
++* материал, появившийся позже задания, подхватывается следующим переизданием;
++* скрипт снятия якорей публикатора: план ничего не пишет, `--apply` снимает
++  только `publish`.
++"""
++from __future__ import annotations
++
++from typing import Any
++from uuid import uuid4
++
++import pytest
++from sqlalchemy import text
++
++from app.core.config import Settings
++from scripts.tsk996_clear_publish_anchors import clear_publish_anchors
++from tests.test_tsk996_anchor import M, T, _anchor, _anchor_row, _assert_once, _chain_items
++from tests.test_tsk996_node_sequence import _course, _student
++
++_settings = Settings()
++
++EASY, NORMAL, HARD = 2, 3, 4
++
++
++# ─── Помощники: тот же поток, что у публикатора CB ──────────────────────────
++
++
++def _api_key() -> dict[str, str]:
++    return {"api_key": next(iter(_settings.valid_api_keys))}
++
++
++async def _publish_materials(client, course_id: int, base: str, n: int) -> list[str]:
++    """bulk-upsert материалов `{base}#m1..#mN` (публикатор шлёт их раньше заданий)."""
++    uids = [f"{base}#m{i}" for i in range(1, n + 1)]
++    items = [
++        {
++            "course_id": course_id,
++            "external_uid": uid,
++            "title": f"Раздел {i}",
++            "type": "text",
++            "content": {"text": f"<p>Теория раздела {i} урока про якоря</p>", "format": "html"},
++            "order_position": i,
++        }
++        for i, uid in enumerate(uids, start=1)
++    ]
++    r = await client.post("/api/v1/materials/bulk-upsert", params=_api_key(), json={"items": items})
++    assert r.status_code == 200, r.text
++    return uids
++
++
++def _task_item(uid: str, course_id: int, difficulty_id: int = NORMAL, **extra: Any) -> dict:
++    item = {
++        "external_uid": uid,
++        "course_id": course_id,
++        "difficulty_id": difficulty_id,
++        "task_content": {
++            "type": "SC", "stem": f"Вопрос {uid}",
++            "options": [{"id": "a", "text": "A"}, {"id": "b", "text": "B"}],
++        },
++        "solution_rules": {"type": "SC", "correct_options": ["a"], "max_score": 1},
++        "max_score": 1,
++    }
++    item.update(extra)
++    return item
++
++
++async def _publish_tasks(client, items: list[dict]) -> dict:
++    r = await client.post("/api/v1/tasks/bulk-upsert", params=_api_key(), json={"items": items})
++    assert r.status_code == 200, r.text
++    return r.json()
++
++
++async def _material_id(db, course_id: int, uid: str) -> int:
++    return int(
++        (
++            await db.execute(
++                text("SELECT id FROM materials WHERE course_id = :c AND external_uid = :u"),
++                {"c": course_id, "u": uid},
++            )
++        ).scalar_one()
++    )
++
++
++async def _task_id(db, uid: str) -> int:
++    return int(
++        (await db.execute(text("SELECT id FROM tasks WHERE external_uid = :u"), {"u": uid}))
++        .scalar_one()
++    )
++
++
++async def _lesson(db, client) -> dict[str, Any]:
++    """Урок «теория — задания — теория — задания», опубликованный как CB.
++
++    Раздел 1: q1 (HARD), q2 (EASY); раздел 2: q3 (EASY), q4 (NORMAL). В пакете
++    задания идут в порядке урока; пересортировка по сложности ставит позиции
++    q2 q3 q4 q1 — группы разделов по позициям перемешаны.
++    """
++    root = await _course(db, "публикация якорей")
++    base = f"wp:tsk996c:{uuid4().hex[:8]}"
++    m_uids = await _publish_materials(client, root, base, 2)
++    q = [f"{base}#q{i}" for i in range(1, 5)]
++    body = await _publish_tasks(client, [
++        _task_item(q[0], root, HARD, anchor_external_uid=m_uids[0]),
++        _task_item(q[1], root, EASY, anchor_external_uid=m_uids[0]),
++        _task_item(q[2], root, EASY, anchor_external_uid=m_uids[1]),
++        _task_item(q[3], root, NORMAL, anchor_external_uid=m_uids[1]),
++    ])
++    assert body["warnings"] == []
++    s: dict[str, Any] = {"root": root, "base": base, "m_uids": m_uids, "q_uids": q}
++    s["m1"] = await _material_id(db, root, m_uids[0])
++    s["m2"] = await _material_id(db, root, m_uids[1])
++    for i, uid in enumerate(q, start=1):
++        s[f"t{i}"] = await _task_id(db, uid)
++    return s
++
++
++# ─── Приём и резолв ─────────────────────────────────────────────────────────
++
++
++@pytest.mark.asyncio
++async def test_publish_sets_anchor_to_own_section(db, client):
++    """Каждое задание получает якорь на материал своего раздела, источник publish."""
++    s = await _lesson(db, client)
++    assert await _anchor_row(db, s["t1"]) == (s["m1"], "publish")
++    assert await _anchor_row(db, s["t2"]) == (s["m1"], "publish")
++    assert await _anchor_row(db, s["t3"]) == (s["m2"], "publish")
++    assert await _anchor_row(db, s["t4"]) == (s["m2"], "publish")
++
++
++@pytest.mark.asyncio
++async def test_reorder_by_difficulty_keeps_groups_and_chain_once(db, client, monkeypatch):
++    """Пересортировка по сложности не разбивает группы; next-item — каждый элемент раз.
++
++    Позиции после пересортировки: q2 q3 q4 q1 (EASY, EASY, NORMAL, HARD) —
++    задания разделов по позициям перемешаны. Порядок узла: материал 1 → его
++    задания по позиции (q2, q1) → материал 2 → его задания (q3, q4).
++    """
++    monkeypatch.setenv("NODE_SEQUENCE_ENABLED", "true")
++    s = await _lesson(db, client)
++    positions = dict(
++        (
++            await db.execute(
++                text("SELECT id, order_position FROM tasks WHERE course_id = :c"),
++                {"c": s["root"]},
++            )
++        ).fetchall()
++    )
++    assert sorted(positions, key=positions.get) == [s["t2"], s["t3"], s["t4"], s["t1"]], (
++        "пересортировка по сложности не сработала — тест не проверяет то, что заявлено"
++    )
++    student = await _student(db, s["root"])
++    await db.commit()
++    chain = await _chain_items(db, student, s["root"])
++    _assert_once(chain, [M(s["m1"]), T(s["t2"]), T(s["t1"]), M(s["m2"]), T(s["t3"]), T(s["t4"])])
++
++    # Новое задание раздела 1 (EASY) — снова пересортировка; группы держатся.
++    q5 = f"{s['base']}#q5"
++    await _publish_tasks(client, [_task_item(q5, s["root"], EASY, anchor_external_uid=s["m_uids"][0])])
++    t5 = await _task_id(db, q5)
++    await db.commit()
++    chain = await _chain_items(db, student, s["root"])
++    group1 = chain[1:chain.index(M(s["m2"]))]
++    assert set(group1) == {T(s["t1"]), T(s["t2"]), T(t5)}, chain
++    _assert_once(chain, [M(s["m1"]), *group1, M(s["m2"]), T(s["t3"]), T(s["t4"])])
++
++
++@pytest.mark.asyncio
++async def test_without_anchors_tasks_after_all_materials(db, client, monkeypatch):
++    """Контроль: тот же урок без поля — прежний порядок «все материалы, затем задания»."""
++    monkeypatch.setenv("NODE_SEQUENCE_ENABLED", "true")
++    root = await _course(db, "без якорей")
++    base = f"wp:tsk996c:{uuid4().hex[:8]}"
++    m_uids = await _publish_materials(client, root, base, 2)
++    q = [f"{base}#q{i}" for i in (1, 2)]
++    body = await _publish_tasks(client, [_task_item(q[0], root, EASY), _task_item(q[1], root, EASY)])
++    assert body["warnings"] == []
++    t1, t2 = await _task_id(db, q[0]), await _task_id(db, q[1])
++    assert await _anchor_row(db, t1) == (None, None)
++    student = await _student(db, root)
++    await db.commit()
++    chain = await _chain_items(db, student, root)
++    m1, m2 = await _material_id(db, root, m_uids[0]), await _material_id(db, root, m_uids[1])
++    _assert_once(chain, [M(m1), M(m2), T(t1), T(t2)])
++
++
++@pytest.mark.asyncio
++async def test_foreign_or_missing_material_warns_without_failing(db, client):
++    """Чужой узел и несуществующий материал — предупреждение; задания записаны без якоря."""
++    s = await _lesson(db, client)
++    other = await _course(db, "чужой узел")
++    other_base = f"wp:tsk996c:{uuid4().hex[:8]}"
++    other_m = (await _publish_materials(client, other, other_base, 1))[0]
++    q_foreign, q_missing, q_ok = (f"{s['base']}#q{i}" for i in (11, 12, 13))
++    body = await _publish_tasks(client, [
++        _task_item(q_foreign, s["root"], anchor_external_uid=other_m),
++        _task_item(q_missing, s["root"], anchor_external_uid=f"{s['base']}#m99"),
++        _task_item(q_ok, s["root"], anchor_external_uid=s["m_uids"][1]),
++    ])
++    assert [r["action"] for r in body["results"]] == ["created"] * 3
++    assert len(body["warnings"]) == 2, body["warnings"]
++    assert q_foreign in body["warnings"][0] and "другого раздела" in body["warnings"][0]
++    assert q_missing in body["warnings"][1] and "нет в разделе" in body["warnings"][1]
++    assert await _anchor_row(db, await _task_id(db, q_foreign)) == (None, None)
++    assert await _anchor_row(db, await _task_id(db, q_missing)) == (None, None)
++    assert await _anchor_row(db, await _task_id(db, q_ok)) == (s["m2"], "publish")
++
++    # Существующий якорь publish при ненайденном материале не обнуляется.
++    body = await _publish_tasks(client, [
++        _task_item(s["q_uids"][0], s["root"], HARD, anchor_external_uid=f"{s['base']}#m99"),
++    ])
++    assert len(body["warnings"]) == 1
++    assert await _anchor_row(db, s["t1"]) == (s["m1"], "publish")
++
++
++@pytest.mark.asyncio
++async def test_hard_routed_task_gets_no_anchor_and_no_warning(db, client):
++    """HARD уходит в подкурс сложных (tsk-347): материала раздела там нет — якоря нет,
++    пакет не падает и предупреждением не шумит; прежний якорь снимает триггер переезда."""
++    s = await _lesson(db, client)
++    twin = await _course(db, "сложные")
++    await db.execute(
++        text("UPDATE courses SET course_uid = :u WHERE id = :c"),
++        {"u": f"lms:tsk347:hard:{s['root']}", "c": twin},
++    )
++    await db.commit()
++    body = await _publish_tasks(client, [
++        _task_item(s["q_uids"][0], s["root"], HARD, anchor_external_uid=s["m_uids"][0]),
++    ])
++    assert body["warnings"] == []
++    row = (
++        await db.execute(text("SELECT course_id FROM tasks WHERE id = :t"), {"t": s["t1"]})
++    ).scalar_one()
++    assert row == twin
++    assert await _anchor_row(db, s["t1"]) == (None, None)
++
++
++# ─── Владение якорем ────────────────────────────────────────────────────────
++
++
++@pytest.mark.asyncio
++async def test_republish_overwrites_publish_anchor(db, client):
++    """Якорь publish перезаписывается переизданием (задание переехало в другой раздел)."""
++    s = await _lesson(db, client)
++    await _publish_tasks(client, [
++        _task_item(s["q_uids"][0], s["root"], HARD, anchor_external_uid=s["m_uids"][1]),
++    ])
++    assert await _anchor_row(db, s["t1"]) == (s["m2"], "publish")
++
++
++@pytest.mark.asyncio
++async def test_republish_sets_anchor_on_task_without_anchor(db, client):
++    """Задание, опубликованное до фазы C (якоря нет), получает якорь при переиздании."""
++    root = await _course(db, "до фазы C")
++    base = f"wp:tsk996c:{uuid4().hex[:8]}"
++    m_uids = await _publish_materials(client, root, base, 2)
++    uid = f"{base}#q1"
++    await _publish_tasks(client, [_task_item(uid, root)])
++    tid = await _task_id(db, uid)
++    assert await _anchor_row(db, tid) == (None, None)
++    await _publish_tasks(client, [_task_item(uid, root, anchor_external_uid=m_uids[1])])
++    assert await _anchor_row(db, tid) == (await _material_id(db, root, m_uids[1]), "publish")
++
++
++@pytest.mark.asyncio
++async def test_manual_anchor_survives_republish(db, client, monkeypatch):
++    """Ручной якорь методиста и его «в конце раздела» переиздание не трогает."""
++    monkeypatch.setenv("NODE_SEQUENCE_ENABLED", "true")
++    s = await _lesson(db, client)
++    # Методист перенёс q3 к материалу 1, а q4 — «в конце раздела».
++    await _anchor(db, s["t3"], s["m1"], source="manual")
++    await _anchor(db, s["t4"], None, source="manual")
++    await db.commit()
++    student = await _student(db, s["root"])
++    await db.commit()
++    before = await _chain_items(db, student, s["root"])
++
++    body = await _publish_tasks(client, [
++        _task_item(uid, s["root"], d, anchor_external_uid=s["m_uids"][sect])
++        for uid, d, sect in zip(s["q_uids"], (HARD, EASY, EASY, NORMAL), (0, 0, 1, 1))
++    ])
++    assert body["warnings"] == []
++    assert await _anchor_row(db, s["t3"]) == (s["m1"], "manual")
++    assert await _anchor_row(db, s["t4"]) == (None, "manual")
++    # Явный null публикатора ручной якорь тоже не снимает.
++    await _publish_tasks(client, [_task_item(s["q_uids"][2], s["root"], EASY, anchor_external_uid=None)])
++    assert await _anchor_row(db, s["t3"]) == (s["m1"], "manual")
++    await db.commit()
++    assert await _chain_items(db, student, s["root"]) == before, "переиздание сдвинуло ручной порядок"
++
++
++@pytest.mark.asyncio
++async def test_absent_field_keeps_anchor_and_null_clears_publish(db, client):
++    """Поле не пришло (старый публикатор, --no-anchors) — якорь прежний; null — снять publish."""
++    s = await _lesson(db, client)
++    await _publish_tasks(client, [_task_item(s["q_uids"][0], s["root"], HARD)])
++    assert await _anchor_row(db, s["t1"]) == (s["m1"], "publish")
++
++    await _publish_tasks(client, [
++        _task_item(s["q_uids"][0], s["root"], HARD, anchor_external_uid=None),
++    ])
++    assert await _anchor_row(db, s["t1"]) == (None, None)
++
++
++@pytest.mark.asyncio
++async def test_material_published_later_is_picked_up_on_republish(db, client):
++    """Материала раздела ещё нет — предупреждение; следующее переиздание ставит якорь."""
++    root = await _course(db, "материал позже")
++    base = f"wp:tsk996c:{uuid4().hex[:8]}"
++    uid = f"{base}#q1"
++    body = await _publish_tasks(client, [_task_item(uid, root, anchor_external_uid=f"{base}#m1")])
++    assert len(body["warnings"]) == 1
++    tid = await _task_id(db, uid)
++    assert await _anchor_row(db, tid) == (None, None)
++    m_uids = await _publish_materials(client, root, base, 1)
++    body = await _publish_tasks(client, [_task_item(uid, root, anchor_external_uid=m_uids[0])])
++    assert body["warnings"] == []
++    assert await _anchor_row(db, tid) == (await _material_id(db, root, m_uids[0]), "publish")
++
++
++@pytest.mark.asyncio
++async def test_anchor_does_not_bump_updated_at(db, client):
++    """Смена якоря не двигает отметку правки (tsk-760): переиздание не сочтёт задание правленным."""
++    s = await _lesson(db, client)
++    row = "SELECT updated_at FROM tasks WHERE id = :t"
++    before = (await db.execute(text(row), {"t": s["t1"]})).scalar()
++    await _publish_tasks(client, [
++        _task_item(s["q_uids"][0], s["root"], HARD, anchor_external_uid=s["m_uids"][1]),
++    ])
++    assert await _anchor_row(db, s["t1"]) == (s["m2"], "publish")
++    assert (await db.execute(text(row), {"t": s["t1"]})).scalar() == before
++
++
++# ─── Скрипт снятия якорей публикатора ──────────────────────────────────────
++
++
++@pytest.mark.asyncio
++async def test_clear_script_dry_run_and_apply(db, client):
++    """План ничего не пишет; --apply снимает только publish выбранных курсов."""
++    s = await _lesson(db, client)
++    other = await _lesson(db, client)
++    await _anchor(db, s["t3"], s["m1"], source="manual")
++
++    plan = await clear_publish_anchors(db, [s["root"]], apply=False)
++    assert plan["publish_anchors"] == 3 and plan["cleared"] == 0
++    assert plan["manual_anchors_untouched"] == 1
++    assert await _anchor_row(db, s["t1"]) == (s["m1"], "publish")
++
++    done = await clear_publish_anchors(db, [s["root"]], apply=True)
++    assert done["cleared"] == 3
++    for key in ("t1", "t2", "t4"):
++        assert await _anchor_row(db, s[key]) == (None, None)
++    assert await _anchor_row(db, s["t3"]) == (s["m1"], "manual")
++    assert await _anchor_row(db, other["t1"]) == (other["m1"], "publish"), "чужой курс тронут"
++
++    again = await clear_publish_anchors(db, [s["root"]], apply=True)
++    assert again["publish_anchors"] == 0 and again["cleared"] == 0
++
++
++@pytest.mark.asyncio
++async def test_clear_script_refuses_empty_course_list(db):
++    with pytest.raises(ValueError):
++        await clear_publish_anchors(db, [], apply=True)
++
++
++def test_clear_script_cli_requires_target():
++    from scripts.tsk996_clear_publish_anchors import main
++
++    with pytest.raises(SystemExit):
++        main([])
