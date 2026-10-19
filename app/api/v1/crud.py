@@ -1,7 +1,8 @@
 # app/api/v1/crud.py
 
 import logging
-from typing import Any, Dict, List, Type, TypeVar
+from datetime import datetime, timezone
+from typing import Any, Dict, FrozenSet, List, Optional, Type, TypeVar
 from fastapi import APIRouter, Depends, HTTPException, Response, status, Body
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,6 +18,34 @@ ModelT = TypeVar("ModelT")
 SchemaReadT = TypeVar("SchemaReadT")
 SchemaCreateT = TypeVar("SchemaCreateT")
 SchemaUpdateT = TypeVar("SchemaUpdateT")
+
+
+def mark_manual_edit(
+    db_obj: Any, update_data: Dict[str, Any], fields: Optional[FrozenSet[str]], reason: str
+) -> bool:
+    """Поставить пометку ручной правки (`content_provenance`), если правилось содержимое.
+
+    Нужна, чтобы переиздание из ContentBackbone не затёрло правку и чек
+    cb-drift не показывал её как «правку без пометки» (tsk-1385, tsk-1388).
+    Пометка ставится на пару полей целиком, как в кабинете методиста
+    (`PATCH /tasks/{id}`). Если клиент сам прислал `content_provenance`,
+    его значение не перебивается.
+
+    :returns: True, если пометка поставлена.
+    """
+    if not fields or "content_provenance" in update_data:
+        return False
+    if not fields & set(update_data):
+        return False
+    db_obj.content_provenance = {
+        "source": "manual_web",
+        "edited_at": datetime.now(timezone.utc).isoformat(),
+        # общий роутер работает по api_key, пользователя он не знает
+        "edited_by": "api_key",
+        "fields": sorted(fields),
+        "reason": reason,
+    }
+    return True
 
 def create_composite_router(
     *,
@@ -94,6 +123,7 @@ def create_crud_router(
     update_schema: Type[BaseModel],
     pk_type: type = int,
     include_delete: bool = True,
+    manual_edit_fields: Optional[FrozenSet[str]] = None,
 ) -> APIRouter:
     """
     Генерирует CRUD-роутер.
@@ -101,6 +131,8 @@ def create_crud_router(
     :param include_delete: регистрировать ли generic DELETE /{item_id}.
         Отключается, когда ресурс предоставляет собственный обработчик удаления
         (например, courses — см. courses_extra.delete_course_endpoint, tsk-121).
+    :param manual_edit_fields: поля содержимого; их правка через `PUT /{item_id}`
+        ставит пометку ручной правки (`content_provenance`, tsk-1388).
     """
     router = APIRouter(prefix=prefix, tags=tags)
 
@@ -172,6 +204,12 @@ def create_crud_router(
             # None значения для обязательных полей фильтруются в репозитории
             update_data = obj_in.model_dump(exclude_unset=True)
             updated = await service.update(db, db_obj, update_data)
+            # tsk-1388: правка содержимого — правка человека. Решение tsk-808
+            # (пометку ставит только кабинет методиста) отменено оператором 19.10.2026.
+            if mark_manual_edit(updated, update_data, manual_edit_fields, "generic-put"):
+                await db.commit()
+                await db.refresh(updated)
+                logger.info(f"[{prefix}] update id=%s помечено как ручная правка", item_id)
             logger.info(f"[{prefix}] update id=%s success", item_id)
             return updated
         except Exception as e:

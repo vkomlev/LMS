@@ -1728,16 +1728,15 @@ async def clear_task_manual_edit(
 class TaskHintsPatch(BaseModel):
     """Подсказки задания: ссылки на видеоразборы и текстовые подсказки.
 
-    Отдельно от `PATCH /tasks/{id}`, а не полем в `TaskManualPatch`, по одной
-    причине: тот обработчик ставит `content_provenance = manual_web` и тем
-    самым выводит условие и правило проверки из-под источника навсегда.
-    Прикрепить разбор — не то же самое, что переписать условие: замораживать
-    из-за подсказки весь текст задания нельзя. Поэтому здесь пометка не
-    ставится.
+    Отдельно от `PATCH /tasks/{id}`, а не полем в `TaskManualPatch`: здесь
+    меняются только списки подсказок, остальное содержимое не принимается.
 
-    От переиздания подсказка при этом защищена: правка `task_content` двигает
-    `tasks.updated_at` (триггер `trg_task_set_updated_at`), а ContentBackbone
-    сверяет её с датой своей публикации и такое задание не трогает.
+    Пометка ручной правки (`content_provenance = manual_web`) ставится, как в
+    кабинете методиста и при одобрении черновика подсказки. Решение tsk-808
+    («здесь пометку не ставить, чтобы не замораживать условие») отменено
+    оператором 19.10.2026 (tsk-1388): без пометки переиздание из
+    ContentBackbone затирало подсказки, а cb-drift показывал их как правки без
+    пометки (tsk-1385). Снять пометку — `DELETE /tasks/{id}/manual-edit`.
 
     Передаётся только то, что меняем: `None` — «не трогать», пустой список —
     «снять все». `has_hints` не принимается, он считается сам.
@@ -1802,6 +1801,15 @@ async def patch_task_hints(
     content["has_hints"] = bool(content.get("hints_text")) or bool(content.get("hints_video"))
 
     task.task_content = content
+    # tsk-1388: решение tsk-808 «без пометки» отменено оператором 19.10.2026.
+    task.content_provenance = {
+        "source": "manual_web",
+        "edited_at": datetime.now(timezone.utc).isoformat(),
+        "edited_by": current_user.id,
+        # пара целиком: см. _manually_edited_task_fields (tasks_service)
+        "fields": ["solution_rules", "task_content"],
+        "reason": "hints-patch",
+    }
     await db.commit()
     await db.refresh(task)
     logger.info(

@@ -1,11 +1,11 @@
-"""tsk-808: подсказки задания правит методист, а условие остаётся под источником.
+"""tsk-808: подсказки задания правит методист отдельным эндпоинтом.
 
 Ради чего отдельный эндпоинт. Соседний `PATCH /tasks/{id}` ставит
 `content_provenance = manual_web` и тем выводит условие и правило проверки
 из-под источника навсегда. Прикрепить видеоразбор — не то же самое, что
 переписать условие: замораживать из-за подсказки весь текст задания нельзя.
 Поэтому проверяем ровно две вещи, ради которых эндпоинт и заведён: подсказка
-доезжает и считается в `has_hints`, а пометка ручной правки НЕ ставится.
+доезжает и считается в `has_hints`, а пометка ручной правки ставится (tsk-1388; до 19.10.2026 — не ставилась).
 
 Третья проверка — про мусор в ссылке: у ученика подсказка становится плеером
 ВК (SPW, components/media/VideoEmbed.tsx), и строка вроде «спросить у Виктора»
@@ -148,11 +148,11 @@ async def test_hint_attached_and_counted(db, client):
 
 
 @pytest.mark.asyncio
-async def test_hint_does_not_freeze_task_under_source(db, client):
-    """Прикреплённая подсказка не помечает задание как правленое вручную.
+async def test_hint_marks_manual_edit(db, client):
+    """Прикреплённая подсказка ставит пометку ручной правки (tsk-1388).
 
-    Иначе источник перестал бы обновлять условие у каждого задания, которому
-    просто довезли разбор.
+    Решение tsk-808 «без пометки» отменено оператором 19.10.2026: без неё
+    переиздание из ContentBackbone затирало подсказки (tsk-1385).
     """
     task_id, uid, token = await _seed(db, client)
     r = await client.patch(
@@ -161,11 +161,13 @@ async def test_hint_does_not_freeze_task_under_source(db, client):
     assert r.status_code == 200, r.text
 
     after = await _row(db, uid)
-    assert after.content_provenance is None, (
-        "подсказка не должна выводить условие из-под источника — "
-        "для этого есть отдельный PATCH /tasks/{id}"
-    )
-    assert r.json().get("content_provenance") is None
+    prov = after.content_provenance
+    assert prov is not None, "подсказка — ручная правка, пометка обязательна"
+    assert prov["source"] == "manual_web"
+    assert prov["fields"] == ["solution_rules", "task_content"]
+    assert prov["reason"] == "hints-patch"
+    assert isinstance(prov["edited_by"], int)
+    assert r.json().get("content_provenance") is not None
 
 
 @pytest.mark.asyncio

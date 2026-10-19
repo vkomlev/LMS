@@ -319,6 +319,8 @@ app.include_router(
         prefix="/tasks", tags=["tasks"],
         service=TasksService(),
         create_schema=TaskCreate, read_schema=TaskRead, update_schema=TaskUpdate,
+        # tsk-1388: правка условия/правила через общий PUT — ручная правка
+        manual_edit_fields=frozenset({"task_content", "solution_rules"}),
     ),
     prefix=API_PREFIX,
 )
