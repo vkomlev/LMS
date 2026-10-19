@@ -104,6 +104,21 @@ async def test_judge_rejects_substitutes_without_stream(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_all_substituted_judge_chain_is_retryable(monkeypatch) -> None:
+    """19.10 13:15: gemini-3.7 тоже пришла подменой. Разбор должен повториться позже."""
+    from app.services.llm import client as llm_client
+
+    seen: list[str] = []
+    _mount(monkeypatch, _plain_handler(seen, {
+        "google/gemini-3.7-flash": "msg_d3db901addf994ce9a17",
+    }))
+    monkeypatch.setenv("LLM_JUDGE_MODELS", "google/gemini-3.7-flash")
+    with pytest.raises(LLMIdentityMismatch) as info:
+        await llm_client.complete(MSGS, purpose="code_review")
+    assert info.value.retryable is True
+
+
+@pytest.mark.asyncio
 async def test_judge_accepts_native_gemini_id(monkeypatch) -> None:
     from app.services.llm import client as llm_client
 
