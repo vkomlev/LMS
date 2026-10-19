@@ -92,6 +92,14 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.learning_gaps_service import learning_path_results_filter
+from app.services.node_sequence import (
+    NodeEntry,
+    node_sequence,
+    node_sequence_enabled,
+    segment_entries,
+    walk_steps,
+)
+from app.services.transparent_subcourse import task_key
 
 logger = logging.getLogger(__name__)
 
@@ -648,6 +656,54 @@ def _order_key(order_position: Optional[int], item_id: int) -> Tuple[int, int, i
 
 def _walk_sequence(nodes: Dict[int, _Node], root_id: int) -> List[_Item]:
     """Все обязательные элементы дерева в порядке учебного обхода.
+
+    tsk-996: порядок узла и обход — общая `node_sequence`; при
+    NODE_SEQUENCE_ENABLED=false — прежний код (`_walk_sequence_legacy`).
+    """
+    if node_sequence_enabled():
+        return _walk_sequence_by_node_sequence(nodes, root_id)
+    return _walk_sequence_legacy(nodes, root_id)
+
+
+def _walk_sequence_by_node_sequence(nodes: Dict[int, _Node], root_id: int) -> List[_Item]:
+    """`_walk_sequence` по шагам `node_sequence` (tsk-996).
+
+    Дерево уже загружено целиком (три запроса на дерево), поэтому обход идёт
+    без запросов: подразделы узла — его `child_order`. Прозрачные подкурсы
+    правило по-прежнему обходит как обычные подразделы.
+    """
+    def children_of(course_id: int) -> List[Tuple[int, Optional[int]]]:
+        node = nodes.get(course_id)
+        if node is None:
+            return []
+        return [(child_id, order_number) for order_number, child_id in node.child_order]
+
+    sequence: List[_Item] = []
+    by_node: Dict[int, List[NodeEntry]] = {}
+    for course_id, segment in walk_steps(root_id, children_of):
+        node = nodes.get(course_id)
+        if node is None:
+            continue
+        if course_id not in by_node:
+            by_node[course_id] = node_sequence(
+                materials=[
+                    (i.item_id, i.order_position, i.course_id)
+                    for i in node.own if i.kind == "material"
+                ],
+                tasks=[
+                    (i.item_id, task_key(i.order_position, i.item_id))
+                    for i in node.own if i.kind == "task"
+                ],
+            )
+        items = {(i.kind, i.item_id): i for i in node.own}
+        sequence.extend(
+            items[(e.kind, e.item_id)] for e in segment_entries(by_node[course_id], segment)
+        )
+    return sequence
+
+
+def _walk_sequence_legacy(nodes: Dict[int, _Node], root_id: int) -> List[_Item]:
+    """Прежний `_walk_sequence` — путь NODE_SEQUENCE_ENABLED=false (tsk-996).
 
     Порядок тот же, что у `LearningEngineService._walk_tree` (tsk-1250):
     материалы узла, затем его подкурсы по `order_number`, затем задания узла.

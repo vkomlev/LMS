@@ -19,6 +19,7 @@ from app.schemas.task_content import QUIZ_TASK_TYPES
 # и «следующий шаг» считали долг одинаково.
 from app.services.content_grace_service import compute_graced_items, done_among
 from app.services.requirement_override_service import reason_payload, resolve_levels
+from app.services.node_sequence import node_sequence, node_sequence_enabled
 from app.services.transparent_subcourse import absorbed_in_tree, task_key
 # Y-3.2 (S3-A4): единая точка правды — учебный движок.
 from app.services.learning_engine_service import PASS_THRESHOLD_RATIO, is_mentor_reviewed
@@ -1186,6 +1187,71 @@ async def _collect_section_meta(
     return result
 
 
+def _syllabus_material_item(m: dict, graced: Any, reasons: dict) -> dict:
+    """Элемент `items[]` программы курса для материала (вынесено, tsk-996)."""
+    return {
+        "kind": "material",
+        "material_id": int(m["material_id"]),
+        "course_id": int(m["course_id"]),
+        "status": (
+            "skipped"
+            if m["progress_status"] == "skipped"
+            else "completed" if m["completed_at"] is not None else "not_started"
+        ),
+        "requirement_level": (
+            "recommended"
+            if int(m["material_id"]) in graced.materials
+            else m["requirement_level"]
+        ),
+        "requirement_reason": (
+            reason_payload(reasons.get(("material", int(m["material_id"]))))
+            if int(m["material_id"]) in graced.materials
+            else None
+        ),
+        "is_active": bool(m["is_active"]),
+        "completed_at": m["completed_at"],
+        "title": m["title"],
+        "material_type": m["material_type"],
+    }
+
+
+def _syllabus_task_item(t: dict, graced: Any, reasons: dict) -> dict:
+    """Элемент `items[]` программы курса для задания (вынесено, tsk-996)."""
+    return {
+        "kind": "task",
+        "task_id": int(t["task_id"]),
+        "course_id": int(t["course_id"]),
+        "status": _compute_syllabus_task_status(t),
+        "requirement_level": (
+            "recommended"
+            if int(t["task_id"]) in graced.tasks
+            else t["requirement_level"]
+        ),
+        "requirement_reason": (
+            reason_payload(reasons.get(("task", int(t["task_id"]))))
+            if int(t["task_id"]) in graced.tasks
+            else None
+        ),
+        "is_active": bool(t["is_active"]),
+        "attempts_used": int(t["attempts_used"] or 0),
+        "attempts_limit_effective": int(t["attempts_limit_effective"] or 0),
+        "attempts_unlimited": is_mentor_reviewed(
+            t["task_type"], t["manual_review_required"]
+        ),
+        "last_score": int(t["last_score"]) if t["last_score"] is not None else None,
+        "last_max_score": (
+            int(t["last_max_score"]) if t["last_max_score"] is not None else None
+        ),
+        "last_submitted_at": t["last_submitted_at"],
+        "external_uid": t["external_uid"],
+        # Пустая строка и NULL для клиента — одно и то же «названия
+        # нет»; отдаём одну форму, чтобы он не проверял обе.
+        "title": (t["curated_title"] or "").strip() or None,
+        "task_type": t["task_type"],
+        "stem_preview": _syllabus_stem_preview(t["stem_head"]),
+    }
+
+
 async def get_syllabus_states(
     db: AsyncSession,
     user_id: int,
@@ -1302,6 +1368,8 @@ async def get_syllabus_states(
     materials_by_course: dict[int, list[dict]] = {}
     for r in material_rows:
         m = dict(r)
+        # tsk-996: настоящий курс материала — для ключа `node_sequence`.
+        m["_src_course_id"] = int(m["course_id"])
         m["course_id"] = absorbed.get(int(m["course_id"]), m["course_id"])
         materials_by_course.setdefault(m["course_id"], []).append(m)
     tasks_by_course: dict[int, list[dict]] = {}
@@ -1324,70 +1392,39 @@ async def get_syllabus_states(
         tree_ids = [c for c in tree_ids if c not in absorbed]
 
     items: list[dict] = []
-    for cid in tree_ids:
-        for m in materials_by_course.get(cid, []):
-            items.append(
-                {
-                    "kind": "material",
-                    "material_id": int(m["material_id"]),
-                    "course_id": int(m["course_id"]),
-                    "status": (
-                        "skipped"
-                        if m["progress_status"] == "skipped"
-                        else "completed" if m["completed_at"] is not None else "not_started"
-                    ),
-                    "requirement_level": (
-                        "recommended"
-                        if int(m["material_id"]) in graced.materials
-                        else m["requirement_level"]
-                    ),
-                    "requirement_reason": (
-                        reason_payload(reasons.get(("material", int(m["material_id"]))))
-                        if int(m["material_id"]) in graced.materials
-                        else None
-                    ),
-                    "is_active": bool(m["is_active"]),
-                    "completed_at": m["completed_at"],
-                    "title": m["title"],
-                    "material_type": m["material_type"],
-                }
+    if node_sequence_enabled():
+        # tsk-996: порядок элементов раздела — общая `node_sequence` (голова,
+        # затем хвост узла; подразделы идут своими секциями, как и прежде).
+        for cid in tree_ids:
+            mats = {int(m["material_id"]): m for m in materials_by_course.get(cid, [])}
+            tsks = {int(t["task_id"]): t for t in tasks_by_course.get(cid, [])}
+            seq = node_sequence(
+                materials=[
+                    (mid, m["order_position"], m["_src_course_id"]) for mid, m in mats.items()
+                ],
+                tasks=[
+                    (
+                        tid,
+                        task_key(
+                            t["order_position"], tid,
+                            host_order_position=t["host_order_position"],
+                            absorbed=bool(t.get("_absorbed")),
+                        ),
+                    )
+                    for tid, t in tsks.items()
+                ],
             )
-        for t in tasks_by_course.get(cid, []):
-            items.append(
-                {
-                    "kind": "task",
-                    "task_id": int(t["task_id"]),
-                    "course_id": int(t["course_id"]),
-                    "status": _compute_syllabus_task_status(t),
-                    "requirement_level": (
-                        "recommended"
-                        if int(t["task_id"]) in graced.tasks
-                        else t["requirement_level"]
-                    ),
-                    "requirement_reason": (
-                        reason_payload(reasons.get(("task", int(t["task_id"]))))
-                        if int(t["task_id"]) in graced.tasks
-                        else None
-                    ),
-                    "is_active": bool(t["is_active"]),
-                    "attempts_used": int(t["attempts_used"] or 0),
-                    "attempts_limit_effective": int(t["attempts_limit_effective"] or 0),
-                    "attempts_unlimited": is_mentor_reviewed(
-                        t["task_type"], t["manual_review_required"]
-                    ),
-                    "last_score": int(t["last_score"]) if t["last_score"] is not None else None,
-                    "last_max_score": (
-                        int(t["last_max_score"]) if t["last_max_score"] is not None else None
-                    ),
-                    "last_submitted_at": t["last_submitted_at"],
-                    "external_uid": t["external_uid"],
-                    # Пустая строка и NULL для клиента — одно и то же «названия
-                    # нет»; отдаём одну форму, чтобы он не проверял обе.
-                    "title": (t["curated_title"] or "").strip() or None,
-                    "task_type": t["task_type"],
-                    "stem_preview": _syllabus_stem_preview(t["stem_head"]),
-                }
-            )
+            for entry in seq:
+                if entry.kind == "material":
+                    items.append(_syllabus_material_item(mats[entry.item_id], graced, reasons))
+                else:
+                    items.append(_syllabus_task_item(tsks[entry.item_id], graced, reasons))
+    else:
+        for cid in tree_ids:
+            for m in materials_by_course.get(cid, []):
+                items.append(_syllabus_material_item(m, graced, reasons))
+            for t in tasks_by_course.get(cid, []):
+                items.append(_syllabus_task_item(t, graced, reasons))
 
     return {
         "course_id": root_course_id,

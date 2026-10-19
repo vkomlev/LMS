@@ -39,6 +39,19 @@ from app.services.attempt_attachments import (
 )
 from app.services.task_sampling import sample_task_ids
 from app.services.transparent_subcourse import TaskKey, task_key, transparent_links
+from app.services.node_sequence import (
+    HEAD,
+    NodeEntry,
+    Segment,
+    material_seq_key,
+    node_sequence,
+    node_sequence_enabled,
+    post_order_courses,
+    segment_entries,
+    segment_of,
+    task_seq_key,
+    walk_steps_async,
+)
 # tsk-798: персональный объём программы. Порог выборки зависит от срока и темпа
 # КОНКРЕТНОГО ученика, и знать это может только его план — общая настройка
 # подкурса не различает ноябрьского новичка и того, кто идёт с сентября.
@@ -1181,6 +1194,61 @@ class LearningEngineService:
                 )
         return None
 
+    async def _locate_item_position(
+        self,
+        db: AsyncSession,
+        *,
+        after_material_id: Optional[int],
+        after_task_id: Optional[int],
+    ) -> Optional[Tuple[int, str, int, tuple, Optional[Tuple[int, tuple]]]]:
+        """Позиция ученика с ключом последовательности узла (tsk-996).
+
+        То же, что `_locate_item_course` (те же запросы, те же правила про
+        `recommended`-элементы и прозрачные подкурсы), но ключ — из
+        `node_sequence`: по нему курсор находит и шаг позиции (голова/хвост
+        узла), и всё, что стоит после неё, без ветвления по типу элемента.
+
+        Returns:
+            (course_id, kind, item_id, ключ последовательности, host_alt) либо
+            None. `host_alt` — (хозяин, ключ задания в списке хозяина) или None.
+        """
+        if after_material_id is not None:
+            r = await db.execute(
+                select(Materials.course_id, Materials.order_position).where(
+                    Materials.id == after_material_id
+                )
+            )
+            row = r.fetchone()
+            if row is not None:
+                return (
+                    int(row[0]), "material", after_material_id,
+                    material_seq_key(row[1], after_material_id, int(row[0])), None,
+                )
+        if after_task_id is not None:
+            r = await db.execute(
+                select(Tasks.course_id, Tasks.order_position, Tasks.host_order_position)
+                .where(Tasks.id == after_task_id)
+            )
+            row = r.fetchone()
+            if row is not None:
+                host = (await transparent_links(db)).get(int(row[0]))
+                host_alt = None
+                if host is not None:
+                    host_alt = (
+                        host,
+                        task_seq_key(
+                            task_key(
+                                None, after_task_id,
+                                host_order_position=row[2], absorbed=True,
+                            )
+                        ),
+                    )
+                return (
+                    int(row[0]), "task", after_task_id,
+                    task_seq_key(task_key(row[1], after_task_id)), host_alt,
+                )
+        return None
+
     async def resolve_next_item(
         self,
         db: AsyncSession,
@@ -1273,8 +1341,13 @@ class LearningEngineService:
             )
             return NextItemResult(type="none", reason="Нет активных курсов в плане")
 
+        # tsk-996: при NODE_SEQUENCE_ENABLED порядок узла и курсор берутся из
+        # общей `node_sequence`; при false — прежний код ниже без изменений.
+        use_node_sequence = node_sequence_enabled()
+        locate = self._locate_item_position if use_node_sequence else self._locate_item_course
+
         # tsk-261: позиция не зависит от корня — резолвим один раз до цикла.
-        located = await self._locate_item_course(
+        located = await locate(
             db, after_material_id=after_material_id, after_task_id=after_task_id
         )
 
@@ -1336,6 +1409,14 @@ class LearningEngineService:
 
             # Обход дерева: root + дети по order_number
             flat_courses = await self._collect_courses_in_order(db, current_root_id)
+
+            if use_node_sequence:
+                found = await self._next_in_root_by_sequence(
+                    db, student_id, current_root_id, flat_courses, located
+                )
+                if found is not None:
+                    return found
+                continue
 
             # tsk-261: начать обход с курса текущей позиции, а не с начала дерева.
             # Позиция резолвится одним запросом (material/task → course_id), поэтому
@@ -1436,6 +1517,141 @@ class LearningEngineService:
 
         return NextItemResult(type="none", reason="Все элементы пройдены или заблокированы")
 
+    async def _next_in_root_by_sequence(
+        self,
+        db: AsyncSession,
+        student_id: int,
+        root_id: int,
+        flat_courses: List[int],
+        located: Optional[Tuple[int, str, int, tuple, Optional[Tuple[int, tuple]]]],
+    ) -> Optional[NextItemResult]:
+        """Следующий элемент в дереве одного корня по `node_sequence` (tsk-996).
+
+        Тот же обход, что и прежний цикл `resolve_next_item`, но шаг узла —
+        часть его последовательности (голова или хвост), а курсор режет шаг
+        позиции по ключу последовательности: «всё, что после позиции», без
+        особых случаев по типу элемента (прежнее `material_ids = []` для
+        задания). Позиция на `recommended`-элементе, которого нет в обходе,
+        работает так же: ключ считается по самому элементу.
+
+        Returns:
+            Результат next-item или None — в этом дереве впереди ничего нет.
+        """
+        # tsk-1198: прозрачный подкурс, чей хозяин в этом дереве, отдельным
+        # шагом не обходится — его задания идут в списке хозяина.
+        links = await transparent_links(db)
+        flat_set = set(flat_courses)
+        absorbed_here = {c for c, h in links.items() if c in flat_set and h in flat_set}
+
+        steps = await self._collect_node_steps(db, root_id)
+
+        start_index = 0
+        position = located
+        if position is not None and position[0] in absorbed_here and position[4]:
+            # Задание подборки — позиция в списке хозяина.
+            host, host_key = position[4]
+            position = (host, position[1], position[2], host_key, None)
+        if position is not None and position[0] in flat_set:
+            start_index = steps.index((position[0], segment_of(position[3])))
+        else:
+            # Позиция в другом дереве (или элемент удалён) — первый
+            # незавершённый с начала этого корня.
+            position = None
+
+        for offset, (cid, segment) in enumerate(steps[start_index:]):
+            if cid in absorbed_here:
+                continue
+            entries = await self._effective_segment(
+                db, cid, segment, student_id, root_course_id=root_id
+            )
+            if position is not None and offset == 0:
+                pos_key = position[3]
+                entries = [e for e in entries if e.key > pos_key]
+            found = await self._first_incomplete_entry(
+                db, student_id, cid, entries, root_course_id=root_id
+            )
+            if found is not None:
+                return found
+        return None
+
+    async def _effective_segment(
+        self,
+        db: AsyncSession,
+        course_id: int,
+        segment: Segment,
+        student_id: int,
+        root_course_id: Optional[int] = None,
+    ) -> List[NodeEntry]:
+        """Элементы одного шага узла, которые ученик реально видит (tsk-996).
+
+        Списки — те же `_effective_material_rows` / `_effective_task_rows`
+        (выборка tsk-314, правило tsk-692/1261, программа tsk-798), порядок —
+        `node_sequence`. В фазе A голова узла — только материалы, хвост — только
+        задания, поэтому шаг читает ровно тот список, что и прежний обход, и
+        число запросов не меняется. Фаза B (якоря) добавит в голову задания узла.
+        """
+        if segment == HEAD:
+            rows = await self._effective_material_rows(
+                db, course_id, student_id, root_course_id=root_course_id
+            )
+            seq = node_sequence(materials=[(i, op, course_id) for i, op in rows])
+        else:
+            seq = node_sequence(
+                tasks=await self._effective_task_rows(
+                    db, course_id, student_id, root_course_id=root_course_id
+                )
+            )
+        return segment_entries(seq, segment)
+
+    async def _first_incomplete_entry(
+        self,
+        db: AsyncSession,
+        student_id: int,
+        course_id: int,
+        entries: List[NodeEntry],
+        root_course_id: Optional[int] = None,
+    ) -> Optional[NextItemResult]:
+        """Первый незавершённый элемент шага по порядку последовательности.
+
+        Подряд идущие элементы одного вида проверяются одним пакетом — теми же
+        `_first_incomplete_material` / `_first_incomplete_task`, что и прежде
+        (у заданий — лимит попыток в границах корня, tsk-264). Пустой шаг
+        запросов не делает.
+        """
+        i = 0
+        while i < len(entries):
+            kind = entries[i].kind
+            j = i
+            while j < len(entries) and entries[j].kind == kind:
+                j += 1
+            ids = [e.item_id for e in entries[i:j]]
+            i = j
+            if kind == "material":
+                mat = await self._first_incomplete_material(
+                    db, student_id, course_id, material_ids=ids,
+                    root_course_id=root_course_id,
+                )
+                if mat is not None:
+                    logger.info("resolve_next_item: student_id=%s next=material course_id=%s material_id=%s", student_id, course_id, mat)
+                    return NextItemResult(type="material", course_id=course_id, root_course_id=root_course_id, material_id=mat, reason="Следующий материал")
+                continue
+            task_id, blocked = await self._first_incomplete_task(
+                db, student_id, course_id, task_ids=ids,
+                root_course_id=root_course_id,
+            )
+            if blocked is not None:
+                return NextItemResult(
+                    type="blocked_limit",
+                    course_id=course_id,
+                    root_course_id=root_course_id,
+                    task_id=blocked,
+                    reason="Исчерпан лимит попыток",
+                )
+            if task_id is not None:
+                logger.info("resolve_next_item: student_id=%s next=task course_id=%s task_id=%s", student_id, course_id, task_id)
+                return NextItemResult(type="task", course_id=course_id, root_course_id=root_course_id, task_id=task_id, reason="Следующее задание")
+        return None
+
     async def _collect_courses_in_order(self, db: AsyncSession, root_id: int) -> List[int]:
         """
         Курсы для обхода: потомки (рекурсивно, по course_parents.order_number),
@@ -1488,13 +1704,68 @@ class LearningEngineService:
         теории в подразделах (решение оператора 06.10). Порядок курсов тот же,
         что у `_collect_courses_in_order` (дедупликация по первому вхождению).
         """
-        _courses, steps = await self._walk_tree(db, root_id)
+        _courses, steps = await self._walk_tree_legacy(db, root_id)
+        return list(steps)
+
+    async def _collect_node_steps(
+        self, db: AsyncSession, root_id: int
+    ) -> List[Tuple[int, Segment]]:
+        """Шаги учебного обхода по `node_sequence`: (course_id, "head" | "tail").
+
+        tsk-996: голова узла — его материалы (фаза B — и задания с якорем),
+        затем подразделы, затем хвост — задания узла. В фазе A шаги один в один
+        соответствуют прежним `("materials", "tasks")` из `_collect_steps_in_order`
+        (тот остаётся для пути NODE_SEQUENCE_ENABLED=false).
+        """
+        _courses, steps = await self._walk_node_tree(db, root_id)
         return list(steps)
 
     async def _walk_tree(
         self, db: AsyncSession, root_id: int
     ) -> Tuple[List[int], List[Tuple[int, str]]]:
+        """Обход дерева: по `node_sequence` (tsk-996) или прежний — по рубильнику.
+
+        Список курсов у обоих одинаковый; шаги различаются только именами
+        частей узла. `_collect_steps_in_order` всегда берёт прежние шаги.
+        """
+        if node_sequence_enabled():
+            return await self._walk_node_tree(db, root_id)
+        return await self._walk_tree_legacy(db, root_id)
+
+    async def _walk_node_tree(
+        self, db: AsyncSession, root_id: int
+    ) -> Tuple[List[int], List[Tuple[int, str]]]:
+        """Один обход дерева на корень за сессию по правилу `node_sequence`.
+
+        Тот же порядок и те же запросы, что у `_walk_tree_legacy` (подразделы
+        узла — `get_child_rows`, запрос на узел в прежнем порядке), и тот же
+        кеш на сессию (tsk-662/1250). Ключ кеша свой (`"node_walk"`): шаги
+        названы по-другому, и смена рубильника посреди сессии не должна
+        отдать прежнему пути чужие шаги.
+        """
+        cache: dict[Any, Any] = course_tree_cache(db)
+        key = ("node_walk", root_id)
+        cached = cache.get(key)
+        if cached is not None:
+            return cached
+
+        async def load_children(course_id: int) -> List[Tuple[int, Optional[int]]]:
+            # tsk-662: только id и порядок, без подгрузки родителей узла.
+            rows = await self._courses_repo.get_child_rows(db, course_id)
+            return [(int(cid), order) for cid, order, _title in rows]
+
+        steps = await walk_steps_async(root_id, load_children)
+        result = (post_order_courses(steps), steps)
+        cache[key] = result
+        return result
+
+    async def _walk_tree_legacy(
+        self, db: AsyncSession, root_id: int
+    ) -> Tuple[List[int], List[Tuple[int, str]]]:
         """Один обход дерева на корень за сессию: курсы (post-order) и шаги.
+
+        tsk-996: прежний обход — путь NODE_SEQUENCE_ENABLED=false; не менять до
+        удаления старого пути после пилота (ADR-0008).
 
         Инцидент 06.10 (tsk-1250): `_collect_steps_in_order` обходил дерево
         вторым проходом МИМО кеша tsk-662 — запрос на каждый узел при каждом

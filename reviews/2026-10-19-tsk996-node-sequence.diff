@@ -1,0 +1,2145 @@
+diff --git a/.env.example b/.env.example
+index c27765e..0557d49 100644
+--- a/.env.example
++++ b/.env.example
+@@ -58,6 +58,9 @@ HELP_REFLECTION_ENABLED=false
+ # ученику материал отдаётся без checkpoints (выглядит как раньше), ответ на
+ # точку — 409 checkpoints_disabled.
+ MATERIAL_CHECKPOINTS_ENABLED=false
++# tsk-996 (П7, ADR-0008): порядок элементов узла курса через общую node_sequence.
++# false — прежний обход без выката (откат: смена значения + рестарт).
++NODE_SEQUENCE_ENABLED=true
+ 
+ # Список service API-ключей через запятую (без пробелов).
+ # Используют: TG_LMS bots (poller, teacher dialog), ContentBackbone CLI,
+diff --git a/app/core/config.py b/app/core/config.py
+index f268a13..60fcfe9 100644
+--- a/app/core/config.py
++++ b/app/core/config.py
+@@ -310,6 +310,17 @@ class Settings:
+         # Читается в content_grace_service.read_from_overrides_enabled — один
+         # источник; здесь только для справки.
+ 
++        # tsk-996 (ADR-0008, фаза A): порядок элементов узла курса — общая
++        # `node_sequence` для движка, программы курса, правила «ушёл вперёд»,
++        # предпросмотра и карточки прогресса. false — прежний обход без
++        # выката (откат: смена окружения + рестарт). Места обхода читают
++        # окружение на каждый вызов через
++        # `app.services.node_sequence.node_sequence_enabled` (тот же разбор);
++        # здесь — для справки и диагностики.
++        self.node_sequence_enabled: bool = os.getenv(
++            "NODE_SEQUENCE_ENABLED", "true"
++        ).lower() in ("true", "1", "yes")
++
+         # tsk-302 этап 3: фоновая оценка кода ученика (чистота + признак
+         # ИИ-авторства). Синхронно её делать нельзя — это внешний вызов модели
+         # в пользовательском пути приёма ответа; ученик ждать не должен, а к
+diff --git a/app/services/content_grace_service.py b/app/services/content_grace_service.py
+index bd362f1..c9f1123 100644
+--- a/app/services/content_grace_service.py
++++ b/app/services/content_grace_service.py
+@@ -92,6 +92,14 @@ from sqlalchemy import text
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+ from app.services.learning_gaps_service import learning_path_results_filter
++from app.services.node_sequence import (
++    NodeEntry,
++    node_sequence,
++    node_sequence_enabled,
++    segment_entries,
++    walk_steps,
++)
++from app.services.transparent_subcourse import task_key
+ 
+ logger = logging.getLogger(__name__)
+ 
+@@ -649,6 +657,54 @@ def _order_key(order_position: Optional[int], item_id: int) -> Tuple[int, int, i
+ def _walk_sequence(nodes: Dict[int, _Node], root_id: int) -> List[_Item]:
+     """Все обязательные элементы дерева в порядке учебного обхода.
+ 
++    tsk-996: порядок узла и обход — общая `node_sequence`; при
++    NODE_SEQUENCE_ENABLED=false — прежний код (`_walk_sequence_legacy`).
++    """
++    if node_sequence_enabled():
++        return _walk_sequence_by_node_sequence(nodes, root_id)
++    return _walk_sequence_legacy(nodes, root_id)
++
++
++def _walk_sequence_by_node_sequence(nodes: Dict[int, _Node], root_id: int) -> List[_Item]:
++    """`_walk_sequence` по шагам `node_sequence` (tsk-996).
++
++    Дерево уже загружено целиком (три запроса на дерево), поэтому обход идёт
++    без запросов: подразделы узла — его `child_order`. Прозрачные подкурсы
++    правило по-прежнему обходит как обычные подразделы.
++    """
++    def children_of(course_id: int) -> List[Tuple[int, Optional[int]]]:
++        node = nodes.get(course_id)
++        if node is None:
++            return []
++        return [(child_id, order_number) for order_number, child_id in node.child_order]
++
++    sequence: List[_Item] = []
++    by_node: Dict[int, List[NodeEntry]] = {}
++    for course_id, segment in walk_steps(root_id, children_of):
++        node = nodes.get(course_id)
++        if node is None:
++            continue
++        if course_id not in by_node:
++            by_node[course_id] = node_sequence(
++                materials=[
++                    (i.item_id, i.order_position, i.course_id)
++                    for i in node.own if i.kind == "material"
++                ],
++                tasks=[
++                    (i.item_id, task_key(i.order_position, i.item_id))
++                    for i in node.own if i.kind == "task"
++                ],
++            )
++        items = {(i.kind, i.item_id): i for i in node.own}
++        sequence.extend(
++            items[(e.kind, e.item_id)] for e in segment_entries(by_node[course_id], segment)
++        )
++    return sequence
++
++
++def _walk_sequence_legacy(nodes: Dict[int, _Node], root_id: int) -> List[_Item]:
++    """Прежний `_walk_sequence` — путь NODE_SEQUENCE_ENABLED=false (tsk-996).
++
+     Порядок тот же, что у `LearningEngineService._walk_tree` (tsk-1250):
+     материалы узла, затем его подкурсы по `order_number`, затем задания узла.
+     Узел, висящий под несколькими родителями, учитывается по первому
+diff --git a/app/services/learning_engine_service.py b/app/services/learning_engine_service.py
+index 6861eb1..6a630da 100644
+--- a/app/services/learning_engine_service.py
++++ b/app/services/learning_engine_service.py
+@@ -39,6 +39,19 @@ from app.services.attempt_attachments import (
+ )
+ from app.services.task_sampling import sample_task_ids
+ from app.services.transparent_subcourse import TaskKey, task_key, transparent_links
++from app.services.node_sequence import (
++    HEAD,
++    NodeEntry,
++    Segment,
++    material_seq_key,
++    node_sequence,
++    node_sequence_enabled,
++    post_order_courses,
++    segment_entries,
++    segment_of,
++    task_seq_key,
++    walk_steps_async,
++)
+ # tsk-798: персональный объём программы. Порог выборки зависит от срока и темпа
+ # КОНКРЕТНОГО ученика, и знать это может только его план — общая настройка
+ # подкурса не различает ноябрьского новичка и того, кто идёт с сентября.
+@@ -1181,6 +1194,61 @@ class LearningEngineService:
+                 )
+         return None
+ 
++    async def _locate_item_position(
++        self,
++        db: AsyncSession,
++        *,
++        after_material_id: Optional[int],
++        after_task_id: Optional[int],
++    ) -> Optional[Tuple[int, str, int, tuple, Optional[Tuple[int, tuple]]]]:
++        """Позиция ученика с ключом последовательности узла (tsk-996).
++
++        То же, что `_locate_item_course` (те же запросы, те же правила про
++        `recommended`-элементы и прозрачные подкурсы), но ключ — из
++        `node_sequence`: по нему курсор находит и шаг позиции (голова/хвост
++        узла), и всё, что стоит после неё, без ветвления по типу элемента.
++
++        Returns:
++            (course_id, kind, item_id, ключ последовательности, host_alt) либо
++            None. `host_alt` — (хозяин, ключ задания в списке хозяина) или None.
++        """
++        if after_material_id is not None:
++            r = await db.execute(
++                select(Materials.course_id, Materials.order_position).where(
++                    Materials.id == after_material_id
++                )
++            )
++            row = r.fetchone()
++            if row is not None:
++                return (
++                    int(row[0]), "material", after_material_id,
++                    material_seq_key(row[1], after_material_id, int(row[0])), None,
++                )
++        if after_task_id is not None:
++            r = await db.execute(
++                select(Tasks.course_id, Tasks.order_position, Tasks.host_order_position)
++                .where(Tasks.id == after_task_id)
++            )
++            row = r.fetchone()
++            if row is not None:
++                host = (await transparent_links(db)).get(int(row[0]))
++                host_alt = None
++                if host is not None:
++                    host_alt = (
++                        host,
++                        task_seq_key(
++                            task_key(
++                                None, after_task_id,
++                                host_order_position=row[2], absorbed=True,
++                            )
++                        ),
++                    )
++                return (
++                    int(row[0]), "task", after_task_id,
++                    task_seq_key(task_key(row[1], after_task_id)), host_alt,
++                )
++        return None
++
+     async def resolve_next_item(
+         self,
+         db: AsyncSession,
+@@ -1273,8 +1341,13 @@ class LearningEngineService:
+             )
+             return NextItemResult(type="none", reason="Нет активных курсов в плане")
+ 
++        # tsk-996: при NODE_SEQUENCE_ENABLED порядок узла и курсор берутся из
++        # общей `node_sequence`; при false — прежний код ниже без изменений.
++        use_node_sequence = node_sequence_enabled()
++        locate = self._locate_item_position if use_node_sequence else self._locate_item_course
++
+         # tsk-261: позиция не зависит от корня — резолвим один раз до цикла.
+-        located = await self._locate_item_course(
++        located = await locate(
+             db, after_material_id=after_material_id, after_task_id=after_task_id
+         )
+ 
+@@ -1337,6 +1410,14 @@ class LearningEngineService:
+             # Обход дерева: root + дети по order_number
+             flat_courses = await self._collect_courses_in_order(db, current_root_id)
+ 
++            if use_node_sequence:
++                found = await self._next_in_root_by_sequence(
++                    db, student_id, current_root_id, flat_courses, located
++                )
++                if found is not None:
++                    return found
++                continue
++
+             # tsk-261: начать обход с курса текущей позиции, а не с начала дерева.
+             # Позиция резолвится одним запросом (material/task → course_id), поэтому
+             # курсы ДО неё не опрашиваются вовсе — ленивость обхода сохраняется.
+@@ -1436,6 +1517,141 @@ class LearningEngineService:
+ 
+         return NextItemResult(type="none", reason="Все элементы пройдены или заблокированы")
+ 
++    async def _next_in_root_by_sequence(
++        self,
++        db: AsyncSession,
++        student_id: int,
++        root_id: int,
++        flat_courses: List[int],
++        located: Optional[Tuple[int, str, int, tuple, Optional[Tuple[int, tuple]]]],
++    ) -> Optional[NextItemResult]:
++        """Следующий элемент в дереве одного корня по `node_sequence` (tsk-996).
++
++        Тот же обход, что и прежний цикл `resolve_next_item`, но шаг узла —
++        часть его последовательности (голова или хвост), а курсор режет шаг
++        позиции по ключу последовательности: «всё, что после позиции», без
++        особых случаев по типу элемента (прежнее `material_ids = []` для
++        задания). Позиция на `recommended`-элементе, которого нет в обходе,
++        работает так же: ключ считается по самому элементу.
++
++        Returns:
++            Результат next-item или None — в этом дереве впереди ничего нет.
++        """
++        # tsk-1198: прозрачный подкурс, чей хозяин в этом дереве, отдельным
++        # шагом не обходится — его задания идут в списке хозяина.
++        links = await transparent_links(db)
++        flat_set = set(flat_courses)
++        absorbed_here = {c for c, h in links.items() if c in flat_set and h in flat_set}
++
++        steps = await self._collect_node_steps(db, root_id)
++
++        start_index = 0
++        position = located
++        if position is not None and position[0] in absorbed_here and position[4]:
++            # Задание подборки — позиция в списке хозяина.
++            host, host_key = position[4]
++            position = (host, position[1], position[2], host_key, None)
++        if position is not None and position[0] in flat_set:
++            start_index = steps.index((position[0], segment_of(position[3])))
++        else:
++            # Позиция в другом дереве (или элемент удалён) — первый
++            # незавершённый с начала этого корня.
++            position = None
++
++        for offset, (cid, segment) in enumerate(steps[start_index:]):
++            if cid in absorbed_here:
++                continue
++            entries = await self._effective_segment(
++                db, cid, segment, student_id, root_course_id=root_id
++            )
++            if position is not None and offset == 0:
++                pos_key = position[3]
++                entries = [e for e in entries if e.key > pos_key]
++            found = await self._first_incomplete_entry(
++                db, student_id, cid, entries, root_course_id=root_id
++            )
++            if found is not None:
++                return found
++        return None
++
++    async def _effective_segment(
++        self,
++        db: AsyncSession,
++        course_id: int,
++        segment: Segment,
++        student_id: int,
++        root_course_id: Optional[int] = None,
++    ) -> List[NodeEntry]:
++        """Элементы одного шага узла, которые ученик реально видит (tsk-996).
++
++        Списки — те же `_effective_material_rows` / `_effective_task_rows`
++        (выборка tsk-314, правило tsk-692/1261, программа tsk-798), порядок —
++        `node_sequence`. В фазе A голова узла — только материалы, хвост — только
++        задания, поэтому шаг читает ровно тот список, что и прежний обход, и
++        число запросов не меняется. Фаза B (якоря) добавит в голову задания узла.
++        """
++        if segment == HEAD:
++            rows = await self._effective_material_rows(
++                db, course_id, student_id, root_course_id=root_course_id
++            )
++            seq = node_sequence(materials=[(i, op, course_id) for i, op in rows])
++        else:
++            seq = node_sequence(
++                tasks=await self._effective_task_rows(
++                    db, course_id, student_id, root_course_id=root_course_id
++                )
++            )
++        return segment_entries(seq, segment)
++
++    async def _first_incomplete_entry(
++        self,
++        db: AsyncSession,
++        student_id: int,
++        course_id: int,
++        entries: List[NodeEntry],
++        root_course_id: Optional[int] = None,
++    ) -> Optional[NextItemResult]:
++        """Первый незавершённый элемент шага по порядку последовательности.
++
++        Подряд идущие элементы одного вида проверяются одним пакетом — теми же
++        `_first_incomplete_material` / `_first_incomplete_task`, что и прежде
++        (у заданий — лимит попыток в границах корня, tsk-264). Пустой шаг
++        запросов не делает.
++        """
++        i = 0
++        while i < len(entries):
++            kind = entries[i].kind
++            j = i
++            while j < len(entries) and entries[j].kind == kind:
++                j += 1
++            ids = [e.item_id for e in entries[i:j]]
++            i = j
++            if kind == "material":
++                mat = await self._first_incomplete_material(
++                    db, student_id, course_id, material_ids=ids,
++                    root_course_id=root_course_id,
++                )
++                if mat is not None:
++                    logger.info("resolve_next_item: student_id=%s next=material course_id=%s material_id=%s", student_id, course_id, mat)
++                    return NextItemResult(type="material", course_id=course_id, root_course_id=root_course_id, material_id=mat, reason="Следующий материал")
++                continue
++            task_id, blocked = await self._first_incomplete_task(
++                db, student_id, course_id, task_ids=ids,
++                root_course_id=root_course_id,
++            )
++            if blocked is not None:
++                return NextItemResult(
++                    type="blocked_limit",
++                    course_id=course_id,
++                    root_course_id=root_course_id,
++                    task_id=blocked,
++                    reason="Исчерпан лимит попыток",
++                )
++            if task_id is not None:
++                logger.info("resolve_next_item: student_id=%s next=task course_id=%s task_id=%s", student_id, course_id, task_id)
++                return NextItemResult(type="task", course_id=course_id, root_course_id=root_course_id, task_id=task_id, reason="Следующее задание")
++        return None
++
+     async def _collect_courses_in_order(self, db: AsyncSession, root_id: int) -> List[int]:
+         """
+         Курсы для обхода: потомки (рекурсивно, по course_parents.order_number),
+@@ -1488,14 +1704,69 @@ class LearningEngineService:
+         теории в подразделах (решение оператора 06.10). Порядок курсов тот же,
+         что у `_collect_courses_in_order` (дедупликация по первому вхождению).
+         """
+-        _courses, steps = await self._walk_tree(db, root_id)
++        _courses, steps = await self._walk_tree_legacy(db, root_id)
++        return list(steps)
++
++    async def _collect_node_steps(
++        self, db: AsyncSession, root_id: int
++    ) -> List[Tuple[int, Segment]]:
++        """Шаги учебного обхода по `node_sequence`: (course_id, "head" | "tail").
++
++        tsk-996: голова узла — его материалы (фаза B — и задания с якорем),
++        затем подразделы, затем хвост — задания узла. В фазе A шаги один в один
++        соответствуют прежним `("materials", "tasks")` из `_collect_steps_in_order`
++        (тот остаётся для пути NODE_SEQUENCE_ENABLED=false).
++        """
++        _courses, steps = await self._walk_node_tree(db, root_id)
+         return list(steps)
+ 
+     async def _walk_tree(
+         self, db: AsyncSession, root_id: int
++    ) -> Tuple[List[int], List[Tuple[int, str]]]:
++        """Обход дерева: по `node_sequence` (tsk-996) или прежний — по рубильнику.
++
++        Список курсов у обоих одинаковый; шаги различаются только именами
++        частей узла. `_collect_steps_in_order` всегда берёт прежние шаги.
++        """
++        if node_sequence_enabled():
++            return await self._walk_node_tree(db, root_id)
++        return await self._walk_tree_legacy(db, root_id)
++
++    async def _walk_node_tree(
++        self, db: AsyncSession, root_id: int
++    ) -> Tuple[List[int], List[Tuple[int, str]]]:
++        """Один обход дерева на корень за сессию по правилу `node_sequence`.
++
++        Тот же порядок и те же запросы, что у `_walk_tree_legacy` (подразделы
++        узла — `get_child_rows`, запрос на узел в прежнем порядке), и тот же
++        кеш на сессию (tsk-662/1250). Ключ кеша свой (`"node_walk"`): шаги
++        названы по-другому, и смена рубильника посреди сессии не должна
++        отдать прежнему пути чужие шаги.
++        """
++        cache: dict[Any, Any] = course_tree_cache(db)
++        key = ("node_walk", root_id)
++        cached = cache.get(key)
++        if cached is not None:
++            return cached
++
++        async def load_children(course_id: int) -> List[Tuple[int, Optional[int]]]:
++            # tsk-662: только id и порядок, без подгрузки родителей узла.
++            rows = await self._courses_repo.get_child_rows(db, course_id)
++            return [(int(cid), order) for cid, order, _title in rows]
++
++        steps = await walk_steps_async(root_id, load_children)
++        result = (post_order_courses(steps), steps)
++        cache[key] = result
++        return result
++
++    async def _walk_tree_legacy(
++        self, db: AsyncSession, root_id: int
+     ) -> Tuple[List[int], List[Tuple[int, str]]]:
+         """Один обход дерева на корень за сессию: курсы (post-order) и шаги.
+ 
++        tsk-996: прежний обход — путь NODE_SEQUENCE_ENABLED=false; не менять до
++        удаления старого пути после пилота (ADR-0008).
++
+         Инцидент 06.10 (tsk-1250): `_collect_steps_in_order` обходил дерево
+         вторым проходом МИМО кеша tsk-662 — запрос на каждый узел при каждом
+         next-item и экране зачётов; на занятии пул соединений исчерпался.
+diff --git a/app/services/manual_progress_service.py b/app/services/manual_progress_service.py
+index 68f6459..a7a521e 100644
+--- a/app/services/manual_progress_service.py
++++ b/app/services/manual_progress_service.py
+@@ -55,7 +55,7 @@ from __future__ import annotations
+ 
+ import json
+ import logging
+-from typing import Any, Optional
++from typing import Any, Callable, Optional
+ 
+ from fastapi import HTTPException, status
+ from sqlalchemy import text
+@@ -70,6 +70,13 @@ from app.services import audit_service
+ from app.services.learning_gaps_service import learning_path_results_filter
+ from app.services.checking_service import CheckingService
+ from app.services.learning_engine_service import LearningEngineService
++from app.services.node_sequence import (
++    HEAD,
++    TAIL,
++    node_sequence,
++    node_sequence_enabled,
++    segment_entries,
++)
+ from app.services.transparent_subcourse import absorbed_in_tree, task_key
+ from app.services.teacher_queue_service import teacher_course_acl
+ from app.schemas.code_review import build_code_review_badge
+@@ -413,7 +420,8 @@ async def _tree_material_rows(db: AsyncSession, course_ids: list[int]) -> list[d
+     rows = (
+         await db.execute(
+             text(
+-                "SELECT id, course_id, title FROM materials "
++                # tsk-996: `order_position` — для ключа `node_sequence`.
++                "SELECT id, course_id, title, order_position FROM materials "
+                 "WHERE course_id = ANY(:course_ids) AND is_active = true "
+                 "  AND requirement_level = ANY(:levels) "
+                 "ORDER BY course_id, order_position ASC NULLS LAST, id"
+@@ -1138,6 +1146,8 @@ async def get_student_progress(
+     if absorbed:
+         for row in (*tasks, *materials):
+             src = int(row["course_id"])
++            # tsk-996: настоящий курс элемента — для ключа `node_sequence`.
++            row["_src_course_id"] = src
+             if src in absorbed:
+                 row["course_id"] = absorbed[src]
+                 row["_absorbed"] = True
+@@ -1456,6 +1466,29 @@ async def get_student_progress(
+             return True
+         return any(_rollup_attention(c, seen) for c in children_of.get(node, []))
+ 
++    if node_sequence_enabled():
++        return {
++            "student_id": student_id,
++            "course_id": course_id,
++            "items": await _progress_items_by_sequence(
++                db,
++                course_id=course_id,
++                tree_ids=tree_ids,
++                by_course_materials=by_course_materials,
++                by_course_tasks=by_course_tasks,
++                per_course_items=per_course_items,
++                per_course_tasks=per_course_tasks,
++                course_row=lambda cid: _course_item(
++                    cid,
++                    root_id=course_id,
++                    parent_of=parent_of,
++                    course_titles=course_titles,
++                    status=_course_status(cid),
++                    needs_attention=_rollup_attention(cid),
++                ),
++            ),
++        }
++
+     # tsk-1250: тот же порядок шагов, что у next-item — узел со своими
+     # материалами, затем подразделы, затем задания узла.
+     tree_set = set(tree_ids)
+@@ -1469,33 +1502,114 @@ async def get_student_progress(
+         if step_kind == "tasks":
+             items.extend(per_course_tasks[cid])
+             continue
+-        items.append({
+-            "item_type": "course",
+-            "item_id": cid,
+-            "course_id": cid,
+-            # У запрошенного корня родителя в этом дереве нет.
+-            "parent_course_id": None if cid == course_id else parent_of.get(cid),
+-            "title": course_titles.get(cid),
+-            "full_title": None,
+-            "status": _course_status(cid),
+-            "manual": None,
+-            # Массовый зачёт узла разрешён всегда: квизы внутри он пропускает сам.
+-            "manual_grantable": True,
+-            "granted_by": None,
+-            "granted_at": None,
+-            "attempts_used": None,
+-            "attempts_limit_effective": None,
+-            "open_help_request_id": None,
+-            "open_help_request_type": None,
+-            "pending_review": False,
+-            "returned_for_rework": False,
+-            "needs_attention": _rollup_attention(cid),
+-        })
++        items.append(_course_item(
++            cid,
++            root_id=course_id,
++            parent_of=parent_of,
++            course_titles=course_titles,
++            status=_course_status(cid),
++            needs_attention=_rollup_attention(cid),
++        ))
+         items.extend(per_course_items[cid])
+ 
+     return {"student_id": student_id, "course_id": course_id, "items": items}
+ 
+ 
++def _course_item(
++    cid: int,
++    *,
++    root_id: int,
++    parent_of: dict[int, Optional[int]],
++    course_titles: dict[int, Any],
++    status: str,
++    needs_attention: bool,
++) -> dict[str, Any]:
++    """Строка узла ``course`` в карточке прогресса (вынесено, tsk-996)."""
++    return {
++        "item_type": "course",
++        "item_id": cid,
++        "course_id": cid,
++        # У запрошенного корня родителя в этом дереве нет.
++        "parent_course_id": None if cid == root_id else parent_of.get(cid),
++        "title": course_titles.get(cid),
++        "full_title": None,
++        "status": status,
++        "manual": None,
++        # Массовый зачёт узла разрешён всегда: квизы внутри он пропускает сам.
++        "manual_grantable": True,
++        "granted_by": None,
++        "granted_at": None,
++        "attempts_used": None,
++        "attempts_limit_effective": None,
++        "open_help_request_id": None,
++        "open_help_request_type": None,
++        "pending_review": False,
++        "returned_for_rework": False,
++        "needs_attention": needs_attention,
++    }
++
++
++async def _progress_items_by_sequence(
++    db: AsyncSession,
++    *,
++    course_id: int,
++    tree_ids: list[int],
++    by_course_materials: dict[int, list[dict[str, Any]]],
++    by_course_tasks: dict[int, list[dict[str, Any]]],
++    per_course_items: dict[int, list[dict[str, Any]]],
++    per_course_tasks: dict[int, list[dict[str, Any]]],
++    course_row: Callable[[int], dict[str, Any]],
++) -> list[dict[str, Any]]:
++    """Плоский список карточки прогресса по шагам `node_sequence` (tsk-996).
++
++    Строка узла ``course`` — в начале головы узла, затем голова (материалы;
++    фаза B — и задания с якорем), подразделы, хвост (задания). Элементы
++    берутся уже собранными (`per_course_items` — материалы,
++    `per_course_tasks` — задания, в том же порядке, что их исходные строки).
++    """
++    tree_set = set(tree_ids)
++    steps = [
++        st for st in await _engine._collect_node_steps(db, course_id)  # noqa: SLF001
++        if st[0] in tree_set
++    ] or [(course_id, HEAD), (course_id, TAIL)]
++
++    items: list[dict[str, Any]] = []
++    seq_cache: dict[int, list[Any]] = {}
++    for cid, segment in steps:
++        if cid not in seq_cache:
++            mats = by_course_materials.get(cid, [])
++            tsks = by_course_tasks.get(cid, [])
++            seq_cache[cid] = node_sequence(
++                materials=[
++                    (int(m["id"]), m["order_position"], int(m.get("_src_course_id", cid)))
++                    for m in mats
++                ],
++                tasks=[
++                    (
++                        int(t["id"]),
++                        task_key(
++                            t["order_position"], int(t["id"]),
++                            host_order_position=t["host_order_position"],
++                            absorbed=bool(t.get("_absorbed")),
++                        ),
++                    )
++                    for t in tsks
++                ],
++            )
++        # Готовые строки элементов по (вид, id): материалы и задания узла
++        # собраны в том же порядке, что их исходные строки.
++        built = {
++            (row["item_type"], row["item_id"]): row
++            for row in (*per_course_items.get(cid, []), *per_course_tasks.get(cid, []))
++        }
++        if segment == HEAD:
++            items.append(course_row(cid))
++        items.extend(
++            built[(e.kind, e.item_id)] for e in segment_entries(seq_cache[cid], segment)
++        )
++    return items
++
++
+ __all__ = [
+     "MANUAL_SOURCE",
+     "REVOKE_REASON",
+diff --git a/app/services/me_service.py b/app/services/me_service.py
+index 355ca88..aecf685 100644
+--- a/app/services/me_service.py
++++ b/app/services/me_service.py
+@@ -19,6 +19,7 @@ from app.schemas.task_content import QUIZ_TASK_TYPES
+ # и «следующий шаг» считали долг одинаково.
+ from app.services.content_grace_service import compute_graced_items, done_among
+ from app.services.requirement_override_service import reason_payload, resolve_levels
++from app.services.node_sequence import node_sequence, node_sequence_enabled
+ from app.services.transparent_subcourse import absorbed_in_tree, task_key
+ # Y-3.2 (S3-A4): единая точка правды — учебный движок.
+ from app.services.learning_engine_service import PASS_THRESHOLD_RATIO, is_mentor_reviewed
+@@ -1186,6 +1187,71 @@ async def _collect_section_meta(
+     return result
+ 
+ 
++def _syllabus_material_item(m: dict, graced: Any, reasons: dict) -> dict:
++    """Элемент `items[]` программы курса для материала (вынесено, tsk-996)."""
++    return {
++        "kind": "material",
++        "material_id": int(m["material_id"]),
++        "course_id": int(m["course_id"]),
++        "status": (
++            "skipped"
++            if m["progress_status"] == "skipped"
++            else "completed" if m["completed_at"] is not None else "not_started"
++        ),
++        "requirement_level": (
++            "recommended"
++            if int(m["material_id"]) in graced.materials
++            else m["requirement_level"]
++        ),
++        "requirement_reason": (
++            reason_payload(reasons.get(("material", int(m["material_id"]))))
++            if int(m["material_id"]) in graced.materials
++            else None
++        ),
++        "is_active": bool(m["is_active"]),
++        "completed_at": m["completed_at"],
++        "title": m["title"],
++        "material_type": m["material_type"],
++    }
++
++
++def _syllabus_task_item(t: dict, graced: Any, reasons: dict) -> dict:
++    """Элемент `items[]` программы курса для задания (вынесено, tsk-996)."""
++    return {
++        "kind": "task",
++        "task_id": int(t["task_id"]),
++        "course_id": int(t["course_id"]),
++        "status": _compute_syllabus_task_status(t),
++        "requirement_level": (
++            "recommended"
++            if int(t["task_id"]) in graced.tasks
++            else t["requirement_level"]
++        ),
++        "requirement_reason": (
++            reason_payload(reasons.get(("task", int(t["task_id"]))))
++            if int(t["task_id"]) in graced.tasks
++            else None
++        ),
++        "is_active": bool(t["is_active"]),
++        "attempts_used": int(t["attempts_used"] or 0),
++        "attempts_limit_effective": int(t["attempts_limit_effective"] or 0),
++        "attempts_unlimited": is_mentor_reviewed(
++            t["task_type"], t["manual_review_required"]
++        ),
++        "last_score": int(t["last_score"]) if t["last_score"] is not None else None,
++        "last_max_score": (
++            int(t["last_max_score"]) if t["last_max_score"] is not None else None
++        ),
++        "last_submitted_at": t["last_submitted_at"],
++        "external_uid": t["external_uid"],
++        # Пустая строка и NULL для клиента — одно и то же «названия
++        # нет»; отдаём одну форму, чтобы он не проверял обе.
++        "title": (t["curated_title"] or "").strip() or None,
++        "task_type": t["task_type"],
++        "stem_preview": _syllabus_stem_preview(t["stem_head"]),
++    }
++
++
+ async def get_syllabus_states(
+     db: AsyncSession,
+     user_id: int,
+@@ -1302,6 +1368,8 @@ async def get_syllabus_states(
+     materials_by_course: dict[int, list[dict]] = {}
+     for r in material_rows:
+         m = dict(r)
++        # tsk-996: настоящий курс материала — для ключа `node_sequence`.
++        m["_src_course_id"] = int(m["course_id"])
+         m["course_id"] = absorbed.get(int(m["course_id"]), m["course_id"])
+         materials_by_course.setdefault(m["course_id"], []).append(m)
+     tasks_by_course: dict[int, list[dict]] = {}
+@@ -1324,70 +1392,39 @@ async def get_syllabus_states(
+         tree_ids = [c for c in tree_ids if c not in absorbed]
+ 
+     items: list[dict] = []
+-    for cid in tree_ids:
+-        for m in materials_by_course.get(cid, []):
+-            items.append(
+-                {
+-                    "kind": "material",
+-                    "material_id": int(m["material_id"]),
+-                    "course_id": int(m["course_id"]),
+-                    "status": (
+-                        "skipped"
+-                        if m["progress_status"] == "skipped"
+-                        else "completed" if m["completed_at"] is not None else "not_started"
+-                    ),
+-                    "requirement_level": (
+-                        "recommended"
+-                        if int(m["material_id"]) in graced.materials
+-                        else m["requirement_level"]
+-                    ),
+-                    "requirement_reason": (
+-                        reason_payload(reasons.get(("material", int(m["material_id"]))))
+-                        if int(m["material_id"]) in graced.materials
+-                        else None
+-                    ),
+-                    "is_active": bool(m["is_active"]),
+-                    "completed_at": m["completed_at"],
+-                    "title": m["title"],
+-                    "material_type": m["material_type"],
+-                }
+-            )
+-        for t in tasks_by_course.get(cid, []):
+-            items.append(
+-                {
+-                    "kind": "task",
+-                    "task_id": int(t["task_id"]),
+-                    "course_id": int(t["course_id"]),
+-                    "status": _compute_syllabus_task_status(t),
+-                    "requirement_level": (
+-                        "recommended"
+-                        if int(t["task_id"]) in graced.tasks
+-                        else t["requirement_level"]
+-                    ),
+-                    "requirement_reason": (
+-                        reason_payload(reasons.get(("task", int(t["task_id"]))))
+-                        if int(t["task_id"]) in graced.tasks
+-                        else None
+-                    ),
+-                    "is_active": bool(t["is_active"]),
+-                    "attempts_used": int(t["attempts_used"] or 0),
+-                    "attempts_limit_effective": int(t["attempts_limit_effective"] or 0),
+-                    "attempts_unlimited": is_mentor_reviewed(
+-                        t["task_type"], t["manual_review_required"]
+-                    ),
+-                    "last_score": int(t["last_score"]) if t["last_score"] is not None else None,
+-                    "last_max_score": (
+-                        int(t["last_max_score"]) if t["last_max_score"] is not None else None
+-                    ),
+-                    "last_submitted_at": t["last_submitted_at"],
+-                    "external_uid": t["external_uid"],
+-                    # Пустая строка и NULL для клиента — одно и то же «названия
+-                    # нет»; отдаём одну форму, чтобы он не проверял обе.
+-                    "title": (t["curated_title"] or "").strip() or None,
+-                    "task_type": t["task_type"],
+-                    "stem_preview": _syllabus_stem_preview(t["stem_head"]),
+-                }
++    if node_sequence_enabled():
++        # tsk-996: порядок элементов раздела — общая `node_sequence` (голова,
++        # затем хвост узла; подразделы идут своими секциями, как и прежде).
++        for cid in tree_ids:
++            mats = {int(m["material_id"]): m for m in materials_by_course.get(cid, [])}
++            tsks = {int(t["task_id"]): t for t in tasks_by_course.get(cid, [])}
++            seq = node_sequence(
++                materials=[
++                    (mid, m["order_position"], m["_src_course_id"]) for mid, m in mats.items()
++                ],
++                tasks=[
++                    (
++                        tid,
++                        task_key(
++                            t["order_position"], tid,
++                            host_order_position=t["host_order_position"],
++                            absorbed=bool(t.get("_absorbed")),
++                        ),
++                    )
++                    for tid, t in tsks.items()
++                ],
+             )
++            for entry in seq:
++                if entry.kind == "material":
++                    items.append(_syllabus_material_item(mats[entry.item_id], graced, reasons))
++                else:
++                    items.append(_syllabus_task_item(tsks[entry.item_id], graced, reasons))
++    else:
++        for cid in tree_ids:
++            for m in materials_by_course.get(cid, []):
++                items.append(_syllabus_material_item(m, graced, reasons))
++            for t in tasks_by_course.get(cid, []):
++                items.append(_syllabus_task_item(t, graced, reasons))
+ 
+     return {
+         "course_id": root_course_id,
+diff --git a/app/services/node_sequence.py b/app/services/node_sequence.py
+new file mode 100644
+index 0000000..84f135f
+--- /dev/null
++++ b/app/services/node_sequence.py
+@@ -0,0 +1,255 @@
++"""Порядок элементов узла курса — одно правило для всех мест обхода (tsk-996).
++
++ADR-0008 (`docs/ai/adr/0008-interleave-theory-practice-anchor.md`), фаза A
++постановки `docs/briefs/2026-10-19-p7-anchor-implementation.md`.
++
++До этого модуля порядок «материалы узла → подразделы → задания узла» был
++записан шесть раз: обход движка (`_walk_tree`, курсор next-item), программа
++курса (`me_service` syllabus-states), правило «ушёл вперёд»
++(`content_grace_service._walk_sequence`), предпросмотр (`preview_navigation`),
++карточка прогресса ученика у преподавателя (`manual_progress_service`). Любая
++правка порядка — а фаза B вставляет задания после их материала — требовала
++бы шести согласованных правок. Теперь порядок задаёт только этот модуль.
++
++Как устроено. Каждый элемент узла получает **ключ последовательности** —
++кортеж, сравнение которого и есть учебный порядок внутри узла. Первая
++составляющая ключа — часть узла:
++
++* ``SEG_HEAD`` — голова: материалы узла (в фазе B — и задания, привязанные
++  якорем к материалу, сразу после него);
++* ``SEG_CHILDREN`` — подразделы узла по ``order_number`` (tsk-1250);
++* ``SEG_TAIL`` — хвост: задания узла (в фазе B — задания без якоря).
++
++Голова и хвост разделены подразделами, поэтому обход дерева идёт шагами
++``(course_id, HEAD)`` и ``(course_id, TAIL)`` (`walk_steps`). Курсор
++продолжения (next-item с ``after_*``) сравнивает ключи, а не тип элемента:
++шаг позиции — часть, в которую попал её ключ, дальше по шагу — всё, у чего
++ключ больше. Поэтому смешанная последовательность фазы B не потребует ни
++нового курсора, ни ветвления по типу позиции.
++
++В фазе A якорей нет, и функция обязана давать ровно прежний порядок; это
++проверяет `tests/test_tsk996_node_sequence.py` (выдача при
++``NODE_SEQUENCE_ENABLED=true`` и ``false`` совпадает).
++
++Модуль чистый: ни запросов к БД, ни сессии. Данные узла загружает
++вызывающий — каждый своим (уже существующим) запросом, поэтому число
++запросов не меняется.
++"""
++
++from __future__ import annotations
++
++import os
++from dataclasses import dataclass
++from typing import (
++    Awaitable,
++    Callable,
++    Generator,
++    Iterable,
++    List,
++    Literal,
++    Optional,
++    Sequence,
++    Tuple,
++)
++
++from app.services.transparent_subcourse import TaskKey
++
++ItemKind = Literal["material", "task"]
++Segment = Literal["head", "tail"]
++
++HEAD: Segment = "head"
++TAIL: Segment = "tail"
++
++SEG_HEAD = 0
++SEG_CHILDREN = 1
++SEG_TAIL = 2
++
++# Ключ последовательности внутри узла: (часть, ...); сравнивается как кортеж.
++SeqKey = tuple
++# Шаг обхода дерева: (course_id, часть узла).
++Step = Tuple[int, Segment]
++# Подраздел узла: (child_id, order_number).
++ChildRow = Tuple[int, Optional[int]]
++
++
++def node_sequence_enabled() -> bool:
++    """Рубильник `NODE_SEQUENCE_ENABLED` (по умолчанию включён).
++
++    ``false`` возвращает все шесть мест к прежнему коду без выката (откат —
++    смена окружения и рестарт, ADR-0008 «Переключатель на время перехода»).
++    Читается из окружения на каждый вызов, как и другие рубильники обхода
++    (`content_grace_service.read_from_overrides_enabled`): `Settings()`
++    целиком здесь не нужен.
++    """
++    return os.getenv("NODE_SEQUENCE_ENABLED", "true").lower() in ("true", "1", "yes")
++
++
++def order_key(order_position: Optional[int], item_id: int) -> Tuple[int, int, int]:
++    """Паритет с SQL `order_position ASC NULLS LAST, id ASC`."""
++    return (0 if order_position is not None else 1, order_position or 0, item_id)
++
++
++def material_seq_key(
++    order_position: Optional[int], material_id: int, course_id: int
++) -> SeqKey:
++    """Ключ материала в последовательности узла.
++
++    ``course_id`` — курс, которому материал принадлежит на самом деле. У
++    своего материала узла он один и тот же и на порядок не влияет. Он нужен
++    материалам прозрачного подкурса (tsk-1198), которые программа курса и
++    карточка прогресса показывают в списке хозяина: там они всегда шли
++    группой по курсу (SQL `ORDER BY course_id, order_position, id`), и ключ
++    сохраняет этот порядок.
++    """
++    return (SEG_HEAD, course_id, order_key(order_position, material_id))
++
++
++def task_seq_key(key: TaskKey) -> SeqKey:
++    """Ключ задания: в фазе A якорей нет — задание в хвосте узла.
++
++    ``key`` — `transparent_subcourse.task_key` (у задания прозрачного
++    подкурса — место в хозяине).
++    """
++    return (SEG_TAIL, key)
++
++
++def child_seq_key(order_number: Optional[int], child_id: int) -> SeqKey:
++    """Ключ подраздела: по `order_number ASC NULLS LAST, id` (tsk-1250)."""
++    return (SEG_CHILDREN, order_key(order_number, child_id))
++
++
++def segment_of(key: SeqKey) -> Segment:
++    """Часть узла (шаг обхода), в которую попадает элемент с этим ключом."""
++    if key[0] == SEG_HEAD:
++        return HEAD
++    if key[0] == SEG_TAIL:
++        return TAIL
++    raise ValueError(f"ключ подраздела не принадлежит шагу элементов: {key!r}")
++
++
++@dataclass(frozen=True)
++class NodeEntry:
++    """Элемент последовательности узла."""
++
++    kind: ItemKind
++    item_id: int
++    key: SeqKey
++
++
++def node_sequence(
++    *,
++    materials: Iterable[Tuple[int, Optional[int], int]] = (),
++    tasks: Iterable[Tuple[int, TaskKey]] = (),
++) -> List[NodeEntry]:
++    """Элементы одного узла в учебном порядке: ``[(kind, id)]`` с ключами.
++
++    Args:
++        materials: ``(material_id, order_position, course_id)`` материалов узла.
++        tasks: ``(task_id, task_key)`` заданий узла (с влитыми заданиями
++            прозрачных подкурсов, если вызывающий их показывает).
++
++    Подразделы в список не входят: их место (между головой и хвостом) задаёт
++    обход дерева `walk_steps`. Чтобы отдать один шаг, вызывающий берёт
++    элементы с ``segment_of(entry.key) == шаг``.
++
++    Фаза B добавит сюда якорь задания: задание с якорем получит ключ своего
++    материала с хвостиком ``(1, task_key)`` и встанет сразу после него.
++    """
++    entries = [
++        NodeEntry("material", int(mid), material_seq_key(op, int(mid), int(cid)))
++        for mid, op, cid in materials
++    ]
++    entries.extend(NodeEntry("task", int(tid), task_seq_key(key)) for tid, key in tasks)
++    entries.sort(key=lambda e: e.key)
++    return entries
++
++
++def segment_entries(entries: Iterable[NodeEntry], segment: Segment) -> List[NodeEntry]:
++    """Элементы последовательности, относящиеся к одному шагу узла."""
++    return [e for e in entries if segment_of(e.key) == segment]
++
++
++def _walk_plan(root_id: int) -> Generator[int, Sequence[ChildRow], List[Step]]:
++    """Обход дерева шагами узлов; подразделы узла запрашиваются у вызывающего.
++
++    Генератор отдаёт ``course_id`` и ждёт в ответ его подразделы — так один и
++    тот же обход работает и с ленивой загрузкой из БД (движок: запрос на узел,
++    в том же порядке, что и прежде), и с деревом, загруженным целиком
++    (правило «ушёл вперёд»).
++
++    Порядок прежний (tsk-127/1250/261): голова узла, затем подразделы по
++    `child_seq_key` (каждый целиком), затем хвост узла. Узел, висящий под
++    несколькими родителями, обходится по первому вхождению.
++    """
++    steps: List[Step] = []
++    seen: set[int] = set()
++    # Стек «что сделать»: (course_id, None) — раскрыть узел, (course_id, TAIL) —
++    # выдать хвост узла после его подразделов.
++    stack: List[Tuple[int, Optional[Segment]]] = [(root_id, None)]
++    while stack:
++        course_id, action = stack.pop()
++        if action == TAIL:
++            steps.append((course_id, TAIL))
++            continue
++        if course_id in seen:
++            continue
++        seen.add(course_id)
++        steps.append((course_id, HEAD))
++        children = yield course_id
++        stack.append((course_id, TAIL))
++        ordered = sorted(children or (), key=lambda c: child_seq_key(c[1], int(c[0])))
++        for child_id, _order in reversed(ordered):
++            stack.append((int(child_id), None))
++    return steps
++
++
++def walk_steps(root_id: int, children_of: Callable[[int], Sequence[ChildRow]]) -> List[Step]:
++    """Шаги обхода дерева, загруженного целиком (``children_of`` без запросов)."""
++    plan = _walk_plan(root_id)
++    try:
++        course_id = next(plan)
++        while True:
++            course_id = plan.send(children_of(course_id))
++    except StopIteration as done:
++        return done.value
++
++
++async def walk_steps_async(
++    root_id: int, load_children: Callable[[int], Awaitable[Sequence[ChildRow]]]
++) -> List[Step]:
++    """Шаги обхода дерева с ленивой загрузкой подразделов (запрос на узел)."""
++    plan = _walk_plan(root_id)
++    try:
++        course_id = next(plan)
++        while True:
++            course_id = plan.send(await load_children(course_id))
++    except StopIteration as done:
++        return done.value
++
++
++def post_order_courses(steps: Iterable[Step]) -> List[int]:
++    """Курсы дерева в post-order (tsk-127): узел — после всех своих подразделов.
++
++    Хвост узла стоит ровно там, где прежний обход дописывал узел в список
++    курсов, поэтому список совпадает с `_collect_courses_in_order`.
++    """
++    return [cid for cid, segment in steps if segment == TAIL]
++
++
++__all__ = [
++    "HEAD",
++    "TAIL",
++    "NodeEntry",
++    "Step",
++    "child_seq_key",
++    "material_seq_key",
++    "node_sequence",
++    "node_sequence_enabled",
++    "order_key",
++    "post_order_courses",
++    "segment_entries",
++    "segment_of",
++    "task_seq_key",
++    "walk_steps",
++    "walk_steps_async",
++]
+diff --git a/app/services/preview_navigation.py b/app/services/preview_navigation.py
+index 55bdbae..ce5a419 100644
+--- a/app/services/preview_navigation.py
++++ b/app/services/preview_navigation.py
+@@ -25,6 +25,12 @@ from app.models.association_tables import t_course_parents
+ from app.models.materials import Materials
+ from app.models.tasks import Tasks
+ from app.services.learning_engine_service import LearningEngineService
++from app.services.node_sequence import (
++    HEAD,
++    node_sequence,
++    node_sequence_enabled,
++    segment_entries,
++)
+ from app.services.transparent_subcourse import task_key, transparent_links
+ 
+ logger = logging.getLogger(__name__)
+@@ -74,13 +80,80 @@ async def _top_root(db: AsyncSession, course_id: int) -> int:
+     return current
+ 
+ 
+-async def _ordered_items(
++def _ordered_items(
+     db: AsyncSession, engine: LearningEngineService, root_id: int
+ ) -> AsyncIterator[Tuple[ItemKind, int, bool]]:
+     """Активные элементы дерева по учебному порядку: (вид, id, в обходе ли).
+ 
+     Лениво, по шагу: узлы после найденного следующего элемента не читаются.
++    tsk-996: порядок узла — общая `node_sequence`; при
++    NODE_SEQUENCE_ENABLED=false — прежний код (`_ordered_items_legacy`).
+     """
++    if node_sequence_enabled():
++        return _ordered_items_by_sequence(db, engine, root_id)
++    return _ordered_items_legacy(db, engine, root_id)
++
++
++async def _ordered_items_by_sequence(
++    db: AsyncSession, engine: LearningEngineService, root_id: int
++) -> AsyncIterator[Tuple[ItemKind, int, bool]]:
++    """`_ordered_items` по шагам `node_sequence` (tsk-996).
++
++    Шаг узла — его голова (материалы) или хвост (задания со влитыми заданиями
++    прозрачных подкурсов, tsk-1198); каждый шаг читает только свою часть, как
++    и прежде. Фаза B (якоря) добавит в голову задания узла.
++    """
++    steps = await engine._collect_node_steps(db, root_id)  # noqa: SLF001
++    tree = {cid for cid, _ in steps}
++    links = await transparent_links(db)
++    absorbed_here = {c for c, h in links.items() if c in tree and h in tree}
++
++    for cid, segment in steps:
++        if cid in absorbed_here:
++            continue
++        eligible: dict[Tuple[str, int], bool] = {}
++        if segment == HEAD:
++            rows = (
++                await db.execute(
++                    select(Materials.id, Materials.order_position, Materials.requirement_level)
++                    .where(Materials.course_id == cid, Materials.is_active.is_(True))
++                )
++            ).all()
++            materials = []
++            for r in rows:
++                materials.append((int(r[0]), r[1], cid))
++                eligible[("material", int(r[0]))] = r[2] in _WALK_LEVELS
++            seq = node_sequence(materials=materials)
++        else:
++            absorbed = [c for c, h in links.items() if h == cid and c in tree]
++            rows = (
++                await db.execute(
++                    select(
++                        Tasks.id, Tasks.order_position, Tasks.host_order_position,
++                        Tasks.course_id, Tasks.requirement_level,
++                    ).where(Tasks.course_id.in_([cid, *absorbed]), Tasks.is_active.is_(True))
++                )
++            ).all()
++            tasks = []
++            for r in rows:
++                tasks.append((
++                    int(r[0]),
++                    task_key(
++                        r[1], int(r[0]),
++                        host_order_position=r[2],
++                        absorbed=int(r[3]) != cid,
++                    ),
++                ))
++                eligible[("task", int(r[0]))] = r[4] in _WALK_LEVELS
++            seq = node_sequence(tasks=tasks)
++        for entry in segment_entries(seq, segment):
++            yield entry.kind, entry.item_id, eligible[(entry.kind, entry.item_id)]
++
++
++async def _ordered_items_legacy(
++    db: AsyncSession, engine: LearningEngineService, root_id: int
++) -> AsyncIterator[Tuple[ItemKind, int, bool]]:
++    """Прежний `_ordered_items` — путь NODE_SEQUENCE_ENABLED=false (tsk-996)."""
+     steps = await engine._collect_steps_in_order(db, root_id)
+     tree = {cid for cid, _ in steps}
+     links = await transparent_links(db)
+diff --git a/scripts/tsk996_sequence_snapshot.py b/scripts/tsk996_sequence_snapshot.py
+new file mode 100644
+index 0000000..dce6a3e
+--- /dev/null
++++ b/scripts/tsk996_sequence_snapshot.py
+@@ -0,0 +1,274 @@
++# -*- coding: utf-8 -*-
++"""tsk-996 (фаза A): снимок порядка узлов по старому и новому пути. ТОЛЬКО ЧТЕНИЕ.
++
++Перед выкатом фазы A оператор сверяет на копии/проде, что общая
++`node_sequence` даёт ровно прежний порядок (ADR-0008, шаг 1 плана: «снимок
++выдачи по 30 реальным узлам до/после совпадает»). Для каждого `course_id` и
++ученика скрипт строит порядок элементов дважды — с NODE_SEQUENCE_ENABLED=false
++(прежний код) и true (новый) — и печатает JSON с разницей.
++
++Что сравнивается (всё — чистое чтение):
++
++* ``walk`` — учебный обход движка: шаги дерева и элементы каждого шага, которые
++  ученик реально видит (выборка tsk-314, правило tsk-692/1261, программа
++  tsk-798). Ровно по этому списку next-item ищет «первый незавершённый после
++  позиции»;
++* ``syllabus`` — порядок `items[]` программы курса (`syllabus-states`);
++* ``preview`` — порядок предпросмотра «глазами ученика» (tsk-1334);
++* ``progress`` — порядок строк карточки прогресса у преподавателя;
++* ``grace`` — что правила tsk-692/1261 прощают ученику (зависит от порядка).
++
++Почему не вызывается сам next-item. `resolve_next_item` при зависимостях
++курсов ПИШЕТ: `compute_course_state(update_state_table=True)` обновляет
++`student_course_state`, а на завершённом курсе может запустить эскалацию
++методисту (уведомление). Поэтому скрипт зовёт только читающие функции,
++из которых next-item собран (обход + списки шагов), — порядок у них тот же.
++
++Страховка от записи: соединение открывается с
++``default_transaction_read_only=on``, работа идёт в транзакции, открытой
++как ``SET TRANSACTION READ ONLY`` (PostgreSQL отклонит любую запись ошибкой),
++и в конце — ``ROLLBACK``.
++
++Запуск (DSN — `DATABASE_URL` из окружения или `.env`):
++
++    python scripts/tsk996_sequence_snapshot.py --student 4507 --courses 871,1165 \\
++        [--out snapshot.json]
++
++Код возврата: 0 — все снимки совпали, 1 — есть разница (подробности в JSON),
++2 — ошибка запуска.
++"""
++from __future__ import annotations
++
++import argparse
++import asyncio
++import json
++import logging
++import os
++import sys
++from datetime import datetime, timezone
++from pathlib import Path
++from typing import Any, Awaitable, Callable, Dict, List, Optional
++from urllib.parse import urlsplit
++
++PROJECT_ROOT = Path(__file__).resolve().parents[1]
++sys.path.insert(0, str(PROJECT_ROOT))
++
++logger = logging.getLogger("tsk996_sequence_snapshot")
++
++FLAG = "NODE_SEQUENCE_ENABLED"
++
++
++def _parse_ids(raw: str) -> List[int]:
++    """`871,1165 1200` → [871, 1165, 1200]."""
++    return [int(x) for x in raw.replace(",", " ").split() if x.strip()]
++
++
++async def _with_flag(value: bool, call: Callable[[], Awaitable[Any]]) -> Any:
++    """Выполнить `call` при заданном положении рубильника (он читается на каждый вызов)."""
++    os.environ[FLAG] = "true" if value else "false"
++    return await call()
++
++
++def _reset_caches(db: Any) -> None:
++    """Каждый путь считает всё сам — без кеша, заполненного другим путём."""
++    from app.repos.courses_repo import invalidate_course_tree_cache
++    from app.services.content_grace_service import invalidate_grace_cache
++
++    invalidate_course_tree_cache(db)
++    invalidate_grace_cache(db)
++
++
++async def _walk_old(db: Any, engine: Any, root: int, student: int) -> List[list]:
++    """Обход движка по прежнему коду: шаги (материалы|задания) и их элементы."""
++    out: List[list] = []
++    links = await _transparent_here(db, engine, root)
++    for cid, step in await engine._collect_steps_in_order(db, root):  # noqa: SLF001
++        if cid in links:
++            continue
++        if step == "materials":
++            rows = await engine._effective_material_rows(  # noqa: SLF001
++                db, cid, student, root_course_id=root
++            )
++            out.extend(["material", int(i), cid] for i, _ in rows)
++        else:
++            rows = await engine._effective_task_rows(  # noqa: SLF001
++                db, cid, student, root_course_id=root
++            )
++            out.extend(["task", int(i), cid] for i, _ in rows)
++    return out
++
++
++async def _walk_new(db: Any, engine: Any, root: int, student: int) -> List[list]:
++    """Обход движка по `node_sequence`: шаги (голова|хвост) и их элементы."""
++    out: List[list] = []
++    links = await _transparent_here(db, engine, root)
++    for cid, segment in await engine._collect_node_steps(db, root):  # noqa: SLF001
++        if cid in links:
++            continue
++        for entry in await engine._effective_segment(  # noqa: SLF001
++            db, cid, segment, student, root_course_id=root
++        ):
++            out.append([entry.kind, entry.item_id, cid])
++    return out
++
++
++async def _transparent_here(db: Any, engine: Any, root: int) -> set:
++    """Прозрачные подкурсы, чей хозяин в дереве: отдельным шагом не обходятся."""
++    from app.services.transparent_subcourse import absorbed_in_tree
++
++    tree = await engine._collect_courses_in_order(db, root)  # noqa: SLF001
++    return set(await absorbed_in_tree(db, tree))
++
++
++async def _snapshot_course(db: Any, root: int, student: int) -> Dict[str, Any]:
++    """Все порядки одного узла по обоим путям."""
++    from app.services import manual_progress_service, me_service
++    from app.services.content_grace_service import compute_grace_reasons
++    from app.services.learning_engine_service import LearningEngineService
++    from app.services.preview_navigation import _ordered_items
++
++    engine = LearningEngineService()
++
++    async def walk(new: bool) -> List[list]:
++        _reset_caches(db)
++        return await (_walk_new if new else _walk_old)(db, engine, root, student)
++
++    async def syllabus(_new: bool) -> List[list]:
++        _reset_caches(db)
++        res = await me_service.get_syllabus_states(db, user_id=student, root_course_id=root)
++        return [
++            [i["kind"], i.get("material_id") or i.get("task_id"), i["course_id"],
++             i["requirement_level"]]
++            for i in res["items"]
++        ]
++
++    async def preview(_new: bool) -> List[list]:
++        _reset_caches(db)
++        return [[k, i, bool(e)] async for k, i, e in _ordered_items(db, engine, root)]
++
++    async def progress(_new: bool) -> List[list]:
++        _reset_caches(db)
++        res = await manual_progress_service.get_student_progress(
++            db, student_id=student, course_id=root
++        )
++        return [[i["item_type"], i["item_id"], i["course_id"]] for i in res["items"]]
++
++    async def grace(_new: bool) -> List[list]:
++        _reset_caches(db)
++        reasons = await compute_grace_reasons(db, student, root)
++        return sorted([k, i, r] for (k, i), r in reasons.items())
++
++    result: Dict[str, Any] = {}
++    for name, fn in (
++        ("walk", walk), ("syllabus", syllabus), ("preview", preview),
++        ("progress", progress), ("grace", grace),
++    ):
++        old = await _with_flag(False, lambda fn=fn: fn(False))
++        new = await _with_flag(True, lambda fn=fn: fn(True))
++        first_diff: Optional[int] = None
++        if old != new:
++            first_diff = next(
++                (n for n, (a, b) in enumerate(zip(old, new)) if a != b),
++                min(len(old), len(new)),
++            )
++        result[name] = {
++            "equal": old == new,
++            "count_old": len(old),
++            "count_new": len(new),
++            "first_diff_index": first_diff,
++            "old": old,
++            "new": new if old != new else "= old",
++        }
++    return result
++
++
++async def run(dsn: str, student: int, courses: List[int]) -> Dict[str, Any]:
++    """Снимок по всем узлам в одной транзакции READ ONLY с откатом в конце."""
++    from sqlalchemy import text
++    from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
++
++    # Третья страховка: само соединение открывается только для чтения, так что
++    # и транзакция после случайного commit не смогла бы писать.
++    engine = create_async_engine(
++        dsn, connect_args={"server_settings": {"default_transaction_read_only": "on"}}
++    )
++    report: Dict[str, Any] = {
++        "task": "tsk-996",
++        "generated_at": datetime.now(timezone.utc).isoformat(),
++        "db_host": urlsplit(dsn.replace("+asyncpg", "")).hostname,
++        "student_id": student,
++        "courses": {},
++    }
++    try:
++        async with AsyncSession(engine, expire_on_commit=False) as db:
++            # Первая команда транзакции: дальше PostgreSQL отклоняет любую запись.
++            await db.execute(text("SET TRANSACTION READ ONLY"))
++            try:
++                for cid in courses:
++                    try:
++                        report["courses"][str(cid)] = await _snapshot_course(db, cid, student)
++                    except Exception as exc:  # noqa: BLE001 — узел в отчёт, не падаем целиком
++                        logger.exception("tsk996: узел %s не снят", cid)
++                        report["courses"][str(cid)] = {"error": repr(exc)}
++                        # Ошибка в транзакции делает её непригодной — начинаем новую,
++                        # снова только для чтения.
++                        await db.rollback()
++                        await db.execute(text("SET TRANSACTION READ ONLY"))
++            finally:
++                await db.rollback()
++    finally:
++        await engine.dispose()
++
++    mismatches = [
++        f"{cid}:{name}"
++        for cid, snap in report["courses"].items()
++        for name, part in snap.items()
++        if isinstance(part, dict) and not part.get("equal", True)
++    ]
++    errors = [cid for cid, snap in report["courses"].items() if "error" in snap]
++    report["summary"] = {
++        "courses": len(courses),
++        "all_equal": not mismatches and not errors,
++        "mismatches": mismatches,
++        "errors": errors,
++    }
++    return report
++
++
++def main(argv: Optional[List[str]] = None) -> int:
++    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
++    parser.add_argument("--student", type=int, required=True, help="ID ученика")
++    parser.add_argument(
++        "--courses", required=True, help="ID узлов через запятую или пробел"
++    )
++    parser.add_argument("--out", type=Path, help="Куда записать JSON (по умолчанию — stdout)")
++    args = parser.parse_args(argv)
++
++    logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(message)s")
++    from dotenv import load_dotenv
++
++    load_dotenv(PROJECT_ROOT / ".env", encoding="utf-8-sig")
++    dsn = os.environ.get("DATABASE_URL")
++    if not dsn:
++        print("DATABASE_URL не задан (окружение или .env)", file=sys.stderr)
++        return 2
++    courses = _parse_ids(args.courses)
++    if not courses:
++        print("Пустой список --courses", file=sys.stderr)
++        return 2
++
++    report = asyncio.run(run(dsn, args.student, courses))
++    payload = json.dumps(report, ensure_ascii=False, indent=2, default=str)
++    if args.out:
++        args.out.write_text(payload, encoding="utf-8")
++        print(
++            f"Снимок записан: {args.out} — всё совпало: {report['summary']['all_equal']}",
++            file=sys.stderr,
++        )
++    else:
++        print(payload)
++    return 0 if report["summary"]["all_equal"] else 1
++
++
++if __name__ == "__main__":
++    sys.exit(main())
+diff --git a/tests/test_tsk996_node_sequence.py b/tests/test_tsk996_node_sequence.py
+new file mode 100644
+index 0000000..79b0a1a
+--- /dev/null
++++ b/tests/test_tsk996_node_sequence.py
+@@ -0,0 +1,651 @@
++"""tsk-996 (фаза A): общая `node_sequence` даёт ровно прежний порядок.
++
++ADR-0008, постановка `docs/briefs/2026-10-19-p7-anchor-implementation.md`, шаг 4.
++
++Фаза A — рефакторинг без изменения поведения: шесть мест, собиравших порядок
++«материалы узла → подразделы → задания узла», переведены на одну функцию, а
++прежний код оставлен за рубильником `NODE_SEQUENCE_ENABLED=false`. Поэтому
++проверка здесь одна и та же для всех форм дерева: снимок выдачи при `true` и
++при `false` совпадает целиком. В снимок входит всё, что зависит от порядка:
++
++* программа курса `syllabus-states` (весь ответ);
++* полная цепочка next-item от начала дерева: каждый следующий шаг — с
++  `after_material_id`/`after_task_id` предыдущего (и та же цепочка без корня);
++* next-item от КАЖДОГО элемента дерева как позиции — включая неактивные и
++  `recommended`, которых в обходе нет (курсор режет по ключу, а не по списку);
++* предпросмотр «глазами ученика» от каждого элемента;
++* карточка прогресса ученика у преподавателя;
++* правило «ушёл вперёд» (tsk-1261) и итог прощённого (tsk-692/1361);
++* список курсов дерева (post-order, tsk-127).
++
++Порядок прогонов — `true`, `false`, `true`: next-item пишет состояние курсов
++зависимостей (`student_course_state`), и тройной прогон заодно показывает, что
++результат не зависит от того, какой путь шёл первым.
++
++Плюс замер числа SQL-запросов одного next-item: не больше прежнего (кеш обхода
++tsk-662/1250 сохранён).
++"""
++from __future__ import annotations
++
++from datetime import datetime, timedelta, timezone
++from typing import Any, Optional
++from uuid import uuid4
++
++import pytest
++from sqlalchemy import event, text
++
++from app.repos.courses_repo import invalidate_course_tree_cache
++from app.services import manual_progress_service, me_service
++from app.services.content_grace_service import (
++    compute_grace_reasons,
++    compute_graced_items,
++    invalidate_grace_cache,
++)
++from app.services.learning_engine_service import LearningEngineService
++from app.services.node_sequence import (
++    HEAD,
++    TAIL,
++    node_sequence,
++    walk_steps,
++)
++from app.services.preview_navigation import preview_next_item
++from app.services.requirement_override_service import set_human_override
++from app.services.transparent_subcourse import task_key
++
++LONG_AGO = datetime(2026, 1, 10, 12, 0, tzinfo=timezone.utc)
++INSERTED = datetime(2026, 6, 20, 12, 0, tzinfo=timezone.utc)
++CHAIN_LIMIT = 200
++
++
++# ─── Построение данных ──────────────────────────────────────────────────────
++
++
++async def _course(db, title: str, *, sampling: Optional[str] = None) -> int:
++    res = await db.execute(
++        text(
++            "INSERT INTO courses (title, access_level, course_uid, sampling_config) "
++            "VALUES (:t, 'self_guided', :uid, CAST(:cfg AS jsonb)) RETURNING id"
++        ),
++        {"t": f"tsk996 {title}", "uid": f"tsk996-{uuid4().hex[:12]}", "cfg": sampling},
++    )
++    return int(res.scalar_one())
++
++
++async def _link(
++    db, parent_id: int, child_id: int, order_number: Optional[int], *, transparent: bool = False
++) -> None:
++    await db.execute(
++        text(
++            "INSERT INTO course_parents (course_id, parent_course_id, order_number, is_transparent) "
++            "VALUES (:c, :p, :o, :tr)"
++        ),
++        {"c": child_id, "p": parent_id, "o": order_number, "tr": transparent},
++    )
++
++
++async def _material(
++    db,
++    course_id: int,
++    position: Optional[int],
++    *,
++    level: str = "required",
++    active: bool = True,
++    created_at: datetime = LONG_AGO,
++) -> int:
++    res = await db.execute(
++        text(
++            "INSERT INTO materials (title, type, content, course_id, order_position, "
++            " is_active, requirement_level, created_at, updated_at) "
++            "VALUES (:t, 'text', CAST('{}' AS jsonb), :c, :p, :a, :lvl, :ts, :ts) RETURNING id"
++        ),
++        {
++            "t": f"tsk996 м {uuid4().hex[:6]}", "c": course_id, "p": position,
++            "a": active, "lvl": level, "ts": created_at,
++        },
++    )
++    return int(res.scalar_one())
++
++
++async def _difficulty(db, code: str) -> int:
++    return int(
++        (await db.execute(text("SELECT id FROM difficulties WHERE code = :c"), {"c": code}))
++        .scalar_one()
++    )
++
++
++async def _task(
++    db,
++    course_id: int,
++    position: Optional[int],
++    *,
++    level: str = "required",
++    active: bool = True,
++    difficulty: str = "NORMAL",
++    created_at: datetime = LONG_AGO,
++    host_position: Optional[int] = None,
++) -> int:
++    res = await db.execute(
++        text(
++            "INSERT INTO tasks (task_content, course_id, difficulty_id, external_uid, "
++            " order_position, is_active, requirement_level, created_at, host_order_position) "
++            "VALUES (CAST(:tc AS jsonb), :c, :d, :uid, :p, :a, :lvl, :ts, :hp) RETURNING id"
++        ),
++        {
++            "tc": '{"type": "SA", "stem": "tsk996"}',
++            "c": course_id,
++            "d": await _difficulty(db, difficulty),
++            "uid": f"tsk996-{uuid4().hex[:12]}",
++            "p": position,
++            "a": active,
++            "lvl": level,
++            "ts": created_at,
++            "hp": host_position,
++        },
++    )
++    return int(res.scalar_one())
++
++
++async def _student(db, *roots: int) -> int:
++    uid = int(
++        (
++            await db.execute(
++                text("INSERT INTO users (full_name) VALUES (:n) RETURNING id"),
++                {"n": f"tsk996 ученик {uuid4().hex[:6]}"},
++            )
++        ).scalar_one()
++    )
++    for order, root in enumerate(roots, start=1):
++        await db.execute(
++            text(
++                "INSERT INTO user_courses (user_id, course_id, is_active, order_number) "
++                "VALUES (:u, :c, true, :o)"
++            ),
++            {"u": uid, "c": root, "o": order},
++        )
++    return uid
++
++
++async def _complete_material(db, student: int, material_id: int, at: datetime = LONG_AGO) -> None:
++    await db.execute(
++        text(
++            "INSERT INTO student_material_progress "
++            "(student_id, material_id, status, completed_at, source) "
++            "VALUES (:u, :m, 'completed', :ts, 'system')"
++        ),
++        {"u": student, "m": material_id, "ts": at},
++    )
++
++
++async def _result(
++    db, student: int, task_id: int, course_id: int, root_id: int,
++    *, correct: bool = True, at: datetime = LONG_AGO, times: int = 1,
++) -> None:
++    attempt_id = int(
++        (
++            await db.execute(
++                text(
++                    "INSERT INTO attempts (user_id, course_id, root_course_id, source_system) "
++                    "VALUES (:u, :c, :r, 'spw') RETURNING id"
++                ),
++                {"u": student, "c": course_id, "r": root_id},
++            )
++        ).scalar_one()
++    )
++    for _ in range(times):
++        await db.execute(
++            text(
++                "INSERT INTO task_results (score, user_id, task_id, attempt_id, submitted_at, "
++                " count_retry, received_at, max_score, source_system, is_correct) "
++                "VALUES (:s, :u, :t, :a, :ts, 0, :ts, 10, 'spw', :ok)"
++            ),
++            {
++                "s": 10 if correct else 0, "u": student, "t": task_id,
++                "a": attempt_id, "ts": at, "ok": correct,
++            },
++        )
++
++
++async def _skip_task(db, student: int, task_id: int) -> None:
++    await db.execute(
++        text(
++            "INSERT INTO student_task_progress (student_id, task_id, status) "
++            "VALUES (:u, :t, 'skipped')"
++        ),
++        {"u": student, "t": task_id},
++    )
++
++
++# ─── Формы дерева ───────────────────────────────────────────────────────────
++# Каждая форма возвращает (корни для снимка, ученик).
++
++
++async def shape_only_materials(db) -> tuple[list[int], int]:
++    """Узел только из материалов: свои позиции не по порядку id, неактивный, рекомендуемый."""
++    root = await _course(db, "только материалы")
++    m3 = await _material(db, root, 3)
++    m1 = await _material(db, root, 1)
++    await _material(db, root, 2, level="recommended")
++    await _material(db, root, 4, active=False)
++    await _material(db, root, 5, level="skippable")
++    no_pos = await _material(db, root, 6)
++    # Материал без позиции (NULLS LAST) — если триггер позволяет её снять.
++    await db.execute(
++        text("UPDATE materials SET order_position = NULL WHERE id = :m"), {"m": no_pos}
++    )
++    student = await _student(db, root)
++    await _complete_material(db, student, m1)
++    del m3
++    return [root], student
++
++
++async def shape_only_tasks(db) -> tuple[list[int], int]:
++    """Узел только из заданий: решённое, пропущенное, неактивное, рекомендуемое, лимит."""
++    root = await _course(db, "только задания")
++    # Позиции не по порядку id: порядок обязан идти по позиции.
++    t5 = await _task(db, root, 1)
++    await _task(db, root, 1, level="recommended")
++    t1 = await _task(db, root, 1)
++    await _task(db, root, 2, active=False)
++    t6 = await _task(db, root, 1, level="skippable")
++    t2 = await _task(db, root, 3)
++    await _task(db, root, 2)
++    student = await _student(db, root)
++    await _result(db, student, t1, root, root)
++    await _skip_task(db, student, t2)
++    # Исчерпанный лимит: три неверных ответа (по умолчанию лимит — 3).
++    await _result(db, student, t5, root, root, correct=False, times=3)
++    await _result(db, student, t6, root, root, correct=False)
++    return [root], student
++
++
++async def shape_nested(db) -> tuple[list[int], int]:
++    """Подразделы: свои материалы и задания у каждого уровня, переиспользованный узел.
++
++    root (м, м, з, з)
++      ├─ c2 (номер 1): g (м, з), свои задания
++      ├─ c1 (номер 2): м, з, и тот же g ещё раз (tsk-261 — обходится один раз)
++      └─ c3 (номер 3): пустой
++    """
++    root = await _course(db, "вложенные корень")
++    c1 = await _course(db, "вложенные c1")
++    c2 = await _course(db, "вложенные c2")
++    c3 = await _course(db, "вложенные c3 пустой")
++    g = await _course(db, "вложенные g")
++    await _link(db, root, c2, 1)
++    await _link(db, root, c1, 2)
++    await _link(db, root, c3, 3)
++    await _link(db, c2, g, 1)
++    await _link(db, c1, g, 2)
++
++    rm1 = await _material(db, root, 1)
++    await _material(db, root, 2)
++    await _task(db, root, 1)
++    rt2 = await _task(db, root, 2)
++    await _material(db, c1, 1)
++    c1t = await _task(db, c1, 1)
++    await _task(db, c1, 2, level="recommended")
++    await _task(db, c2, 1)
++    await _task(db, c2, 2)
++    gm = await _material(db, g, 1)
++    await _material(db, g, 2, active=False)
++    await _task(db, g, 1)
++    await _task(db, g, 2)
++    student = await _student(db, root)
++    await _complete_material(db, student, rm1)
++    await _complete_material(db, student, gm)
++    await _result(db, student, c1t, c1, root)
++    await _result(db, student, rt2, root, root)
++    return [root], student
++
++
++async def shape_transparent(db) -> tuple[list[int], int]:
++    """Прозрачный подкурс tsk-1198: задания подборки на своих местах у хозяина.
++
++    bank (м1, м2, T1..T3) ← sub прозрачен (X1 между T1 и T2, X2 после T3, свой
++    материал на позиции 1 — у хозяина он идёт группой своего курса, после м2);
++    prak — обычный корень, где sub — раздел.
++    """
++    bank = await _course(db, "банк")
++    sub = await _course(db, "подборка")
++    prak = await _course(db, "практикум")
++    await _link(db, bank, sub, 1, transparent=True)
++    await _link(db, prak, sub, 1)
++    await _material(db, bank, 1)
++    await _material(db, bank, 2)
++    t1 = await _task(db, bank, 1)
++    await _task(db, bank, 2)
++    await _task(db, bank, 3)
++    await _material(db, sub, 1)
++    x1 = await _task(db, sub, 1, host_position=200)
++    await _task(db, sub, 2, host_position=400)
++    await _task(db, sub, 3, host_position=None)
++    student = await _student(db, bank, prak)
++    await _result(db, student, t1, bank, bank)
++    await _result(db, student, x1, sub, prak)
++    return [bank, prak], student
++
++
++async def shape_sampling(db) -> tuple[list[int], int]:
++    """Выборка tsk-314: часть EASY/NORMAL заданий вырезана для ученика."""
++    root = await _course(db, "выборка корень")
++    topic = await _course(
++        db, "выборка тема",
++        sampling='{"enabled": true, "threshold": 3, "easy_ratio": 0.5}',
++    )
++    await _link(db, root, topic, 1)
++    await _material(db, topic, 1)
++    for pos in range(1, 5):
++        await _task(db, topic, pos, difficulty="EASY")
++    for pos in range(5, 9):
++        await _task(db, topic, pos, difficulty="NORMAL")
++    await _task(db, topic, 9, difficulty="HARD")
++    await _task(db, root, 1, difficulty="THEORY")
++    student = await _student(db, root)
++    return [root], student
++
++
++async def shape_grace(db) -> tuple[list[int], int]:
++    """Grace tsk-692/1261: вставленное позади ученика — не долг.
++
++    Тема: старые задания 1, 2 (не решены) и 3 (решено давно), материал. Потом
++    на позицию 2 вставлено задание, на позицию 2 материалов — материал. Правило
++    «ушёл вперёд» прощает вставку только потому, что ПОСЛЕ неё в порядке узла
++    стоит решённое задание; перед ней решённого нет — прощение зависит от
++    порядка внутри узла, а не только от множества элементов.
++    """
++    root = await _course(db, "grace корень")
++    topic = await _course(db, "grace тема")
++    after = await _course(db, "grace после")
++    await _link(db, root, topic, 1)
++    await _link(db, root, after, 2)
++    await _material(db, topic, 1, created_at=LONG_AGO)
++    await _task(db, topic, 1, created_at=LONG_AGO)
++    await _task(db, topic, 2, created_at=LONG_AGO)
++    tail_old = await _task(db, topic, 3, created_at=LONG_AGO)
++    later = await _task(db, after, 1, created_at=LONG_AGO)
++    student = await _student(db, root)
++    await _result(db, student, tail_old, topic, root, at=LONG_AGO + timedelta(days=3))
++    await _result(db, student, later, after, root, at=LONG_AGO + timedelta(days=4))
++    # Вставка в середину: позиция 2 сдвигает старые задания 2 и 3 вправо.
++    await _task(db, topic, 2, created_at=INSERTED)
++    await _material(db, topic, 2, created_at=INSERTED)
++    return [root], student
++
++
++async def shape_personal_requirement(db) -> tuple[list[int], int]:
++    """Персональная обязательность tsk-1361: решение учителя «рекомендуемое»."""
++    root = await _course(db, "личная корень")
++    topic = await _course(db, "личная тема")
++    await _link(db, root, topic, 1)
++    m1 = await _material(db, topic, 1)
++    await _material(db, topic, 2)
++    t1 = await _task(db, topic, 1)
++    await _task(db, topic, 2)
++    await _task(db, root, 1)
++    student = await _student(db, root)
++    teacher = await _student(db)
++    for kind, target in (("material", m1), ("task", t1)):
++        await set_human_override(
++            db, student_id=student, target_kind=kind, target_id=target,
++            level="recommended", by_user_id=teacher,
++        )
++    return [root], student
++
++
++async def shape_dependencies(db) -> tuple[list[int], int]:
++    """Зависимости курсов: корень ждёт другой корень, подраздел ждёт подраздел."""
++    first = await _course(db, "зависимость первый")
++    second = await _course(db, "зависимость второй")
++    s1 = await _course(db, "зависимость второй/1")
++    s2 = await _course(db, "зависимость второй/2")
++    await _link(db, second, s1, 1)
++    await _link(db, second, s2, 2)
++    await _task(db, first, 1)
++    await _material(db, s1, 1)
++    await _task(db, s1, 1)
++    await _material(db, s2, 1)
++    await _task(db, s2, 1)
++    await db.execute(
++        text(
++            "INSERT INTO course_dependencies (course_id, required_course_id) "
++            "VALUES (:a, :b), (:c, :d)"
++        ),
++        {"a": second, "b": first, "c": s2, "d": s1},
++    )
++    student = await _student(db, first, second)
++    return [first, second], student
++
++
++SHAPES = {
++    "only_materials": shape_only_materials,
++    "only_tasks": shape_only_tasks,
++    "nested": shape_nested,
++    "transparent": shape_transparent,
++    "sampling": shape_sampling,
++    "grace": shape_grace,
++    "personal_requirement": shape_personal_requirement,
++    "dependencies": shape_dependencies,
++}
++
++
++# ─── Снимок выдачи ──────────────────────────────────────────────────────────
++
++
++def _reset_caches(db) -> None:
++    """Сбросить кеши сессии: каждый путь обязан считать всё сам."""
++    invalidate_course_tree_cache(db)
++    invalidate_grace_cache(db)
++    db.info.pop("tsk1276_locks", None)
++
++
++def _next_view(res: Any) -> tuple:
++    return (res.type, res.course_id, res.root_course_id, res.material_id, res.task_id,
++            res.dependency_course_id)
++
++
++async def _tree_items(db, roots: list[int]) -> list[tuple[str, int]]:
++    """Все материалы и задания деревьев, включая неактивные и рекомендуемые."""
++    engine = LearningEngineService()
++    ids: set[int] = set()
++    for root in roots:
++        ids.update(await engine._collect_courses_in_order(db, root))  # noqa: SLF001
++    rows = (
++        await db.execute(
++            text(
++                "SELECT 'material', id FROM materials WHERE course_id = ANY(:ids) "
++                "UNION ALL SELECT 'task', id FROM tasks WHERE course_id = ANY(:ids) "
++                "ORDER BY 1, 2"
++            ),
++            {"ids": sorted(ids)},
++        )
++    ).fetchall()
++    return [(str(k), int(i)) for k, i in rows]
++
++
++async def _chain(db, student: int, root: Optional[int]) -> list[tuple]:
++    """Цепочка next-item от начала: каждый шаг — после предыдущего элемента."""
++    engine = LearningEngineService()
++    chain: list[tuple] = []
++    res = await engine.resolve_next_item(db, student, root_course_id=root)
++    seen: set[tuple] = set()
++    while len(chain) < CHAIN_LIMIT:
++        chain.append(_next_view(res))
++        if res.type not in ("material", "task", "blocked_limit"):
++            break
++        pos = ("material", res.material_id) if res.type == "material" else ("task", res.task_id)
++        if pos in seen:
++            chain.append(("ЦИКЛ", pos))
++            break
++        seen.add(pos)
++        res = await engine.resolve_next_item(
++            db, student, root_course_id=root,
++            after_material_id=pos[1] if pos[0] == "material" else None,
++            after_task_id=pos[1] if pos[0] == "task" else None,
++        )
++    return chain
++
++
++async def _snapshot(db, roots: list[int], student: int, items: list[tuple[str, int]]) -> dict:
++    """Всё, что зависит от порядка узла, — для одного положения рубильника."""
++    _reset_caches(db)
++    engine = LearningEngineService()
++    snap: dict[str, Any] = {}
++    for root in roots:
++        snap[("courses", root)] = await engine._collect_courses_in_order(db, root)  # noqa: SLF001
++        snap[("syllabus", root)] = await me_service.get_syllabus_states(
++            db, user_id=student, root_course_id=root
++        )
++        snap[("chain", root)] = await _chain(db, student, root)
++        for kind, item_id in items:
++            res = await engine.resolve_next_item(
++                db, student, root_course_id=root,
++                after_material_id=item_id if kind == "material" else None,
++                after_task_id=item_id if kind == "task" else None,
++            )
++            snap[("after", root, kind, item_id)] = _next_view(res)
++            snap[("preview", root, kind, item_id)] = await preview_next_item(
++                db, kind, item_id, root_course_id=root
++            )
++        snap[("progress", root)] = await manual_progress_service.get_student_progress(
++            db, student_id=student, course_id=root
++        )
++        snap[("grace_reasons", root)] = await compute_grace_reasons(db, student, root)
++        snap[("graced", root)] = await compute_graced_items(db, student, root)
++    snap[("chain", None)] = await _chain(db, student, None)
++    return snap
++
++
++def _diff(a: dict, b: dict) -> list[str]:
++    out = []
++    for key in sorted(set(a) | set(b), key=repr):
++        if a.get(key) != b.get(key):
++            out.append(f"{key!r}:\n  true:  {a.get(key)!r}\n  false: {b.get(key)!r}")
++    return out
++
++
++@pytest.mark.asyncio
++@pytest.mark.parametrize("shape", sorted(SHAPES))
++@pytest.mark.parametrize("read_overrides", [False, True], ids=["grace-calc", "grace-table"])
++async def test_output_identical_with_switch_on_and_off(db, monkeypatch, shape, read_overrides):
++    """Снимок выдачи совпадает при NODE_SEQUENCE_ENABLED=true и false.
++
++    `read_overrides` — второй режим персональной обязательности (tsk-1361 Б2):
++    прощённое берётся из таблицы переопределений, а не считается на лету.
++    """
++    monkeypatch.setenv(
++        "REQUIREMENT_OVERRIDE_READ_ENABLED", "true" if read_overrides else "false"
++    )
++    roots, student = await SHAPES[shape](db)
++    await db.commit()
++    if read_overrides:
++        from app.services.requirement_override_service import sync_rule_overrides
++
++        await sync_rule_overrides(db, student)
++        await db.commit()
++    items = await _tree_items(db, roots)
++    assert items, "форма без элементов ничего не проверяет"
++
++    snaps = []
++    for flag in ("true", "false", "true"):
++        monkeypatch.setenv("NODE_SEQUENCE_ENABLED", flag)
++        snaps.append(await _snapshot(db, roots, student, items))
++
++    on, off, on_again = snaps
++    assert not _diff(on, off), "выдача разошлась:\n" + "\n".join(_diff(on, off))
++    assert not _diff(on, on_again), "повторный прогон разошёлся:\n" + "\n".join(
++        _diff(on, on_again)
++    )
++    # Цепочка обязана что-то выдавать — иначе сравнивались бы пустые ответы.
++    assert any(
++        step[0] in ("material", "task", "blocked_limit", "blocked_dependency")
++        for root in roots for step in on[("chain", root)]
++    ), on
++
++
++# ─── Число запросов ─────────────────────────────────────────────────────────
++
++
++async def _count_statements(db, db_engine, call) -> int:
++    statements: list[str] = []
++
++    def _record(conn, cursor, statement, parameters, context, executemany):  # noqa: ANN001
++        statements.append(statement)
++
++    _reset_caches(db)
++    event.listen(db_engine.sync_engine, "before_cursor_execute", _record)
++    try:
++        await call()
++    finally:
++        event.remove(db_engine.sync_engine, "before_cursor_execute", _record)
++    return len(statements)
++
++
++@pytest.mark.asyncio
++@pytest.mark.parametrize("position", ["start", "material", "task"])
++async def test_next_item_query_count_not_higher(db, db_engine, monkeypatch, position):
++    """Один next-item по `node_sequence` стоит не больше запросов, чем прежде.
++
++    Кеш сессии сбрасывается перед каждым замером: сравнивается холодный вызов
++    (обход дерева + шаги), то есть худший случай.
++    """
++    roots, student = await shape_nested(db)
++    await db.commit()
++    root = roots[0]
++    engine = LearningEngineService()
++    material_id = int(
++        (
++            await db.execute(
++                text(
++                    "SELECT m.id FROM materials m JOIN course_parents cp ON cp.course_id = m.course_id "
++                    "WHERE cp.parent_course_id = :r AND m.is_active ORDER BY m.id LIMIT 1"
++                ),
++                {"r": root},
++            )
++        ).scalar_one()
++    )
++    task_id = int(
++        (
++            await db.execute(
++                text("SELECT id FROM tasks WHERE course_id = :r ORDER BY order_position LIMIT 1"),
++                {"r": root},
++            )
++        ).scalar_one()
++    )
++    kwargs = {
++        "start": {},
++        "material": {"after_material_id": material_id},
++        "task": {"after_task_id": task_id},
++    }[position]
++
++    counts = {}
++    for flag in ("false", "true"):
++        monkeypatch.setenv("NODE_SEQUENCE_ENABLED", flag)
++        counts[flag] = await _count_statements(
++            db, db_engine,
++            lambda: engine.resolve_next_item(db, student, root_course_id=root, **kwargs),
++        )
++    print(f"tsk996 запросов на next-item ({position}): прежний={counts['false']} новый={counts['true']}")
++    assert counts["true"] <= counts["false"], counts
++
++
++# ─── Сама функция ───────────────────────────────────────────────────────────
++
++
++def test_node_sequence_head_children_tail():
++    """Голова — материалы по позиции, хвост — задания по `task_key`."""
++    seq = node_sequence(
++        materials=[(11, 2, 1), (10, None, 1), (12, 1, 1)],
++        tasks=[(21, task_key(2, 21)), (20, task_key(None, 20)), (22, task_key(1, 22))],
++    )
++    assert [(e.kind, e.item_id) for e in seq] == [
++        ("material", 12), ("material", 11), ("material", 10),
++        ("task", 22), ("task", 21), ("task", 20),
++    ]
++
++
++def test_walk_steps_post_order_and_dedup():
++    """Обход: голова узла, подразделы по `order_number`, хвост; повтор узла — один раз."""
++    children = {1: [(3, 2), (2, 1)], 2: [(4, None)], 3: [(4, 1)], 4: []}
++    assert walk_steps(1, lambda c: children.get(c, [])) == [
++        (1, HEAD), (2, HEAD), (4, HEAD), (4, TAIL), (2, TAIL), (3, HEAD), (3, TAIL), (1, TAIL),
++    ]

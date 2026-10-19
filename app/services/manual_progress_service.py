@@ -55,7 +55,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from fastapi import HTTPException, status
 from sqlalchemy import text
@@ -70,6 +70,13 @@ from app.services import audit_service
 from app.services.learning_gaps_service import learning_path_results_filter
 from app.services.checking_service import CheckingService
 from app.services.learning_engine_service import LearningEngineService
+from app.services.node_sequence import (
+    HEAD,
+    TAIL,
+    node_sequence,
+    node_sequence_enabled,
+    segment_entries,
+)
 from app.services.transparent_subcourse import absorbed_in_tree, task_key
 from app.services.teacher_queue_service import teacher_course_acl
 from app.schemas.code_review import build_code_review_badge
@@ -413,7 +420,8 @@ async def _tree_material_rows(db: AsyncSession, course_ids: list[int]) -> list[d
     rows = (
         await db.execute(
             text(
-                "SELECT id, course_id, title FROM materials "
+                # tsk-996: `order_position` — для ключа `node_sequence`.
+                "SELECT id, course_id, title, order_position FROM materials "
                 "WHERE course_id = ANY(:course_ids) AND is_active = true "
                 "  AND requirement_level = ANY(:levels) "
                 "ORDER BY course_id, order_position ASC NULLS LAST, id"
@@ -1138,6 +1146,8 @@ async def get_student_progress(
     if absorbed:
         for row in (*tasks, *materials):
             src = int(row["course_id"])
+            # tsk-996: настоящий курс элемента — для ключа `node_sequence`.
+            row["_src_course_id"] = src
             if src in absorbed:
                 row["course_id"] = absorbed[src]
                 row["_absorbed"] = True
@@ -1456,6 +1466,29 @@ async def get_student_progress(
             return True
         return any(_rollup_attention(c, seen) for c in children_of.get(node, []))
 
+    if node_sequence_enabled():
+        return {
+            "student_id": student_id,
+            "course_id": course_id,
+            "items": await _progress_items_by_sequence(
+                db,
+                course_id=course_id,
+                tree_ids=tree_ids,
+                by_course_materials=by_course_materials,
+                by_course_tasks=by_course_tasks,
+                per_course_items=per_course_items,
+                per_course_tasks=per_course_tasks,
+                course_row=lambda cid: _course_item(
+                    cid,
+                    root_id=course_id,
+                    parent_of=parent_of,
+                    course_titles=course_titles,
+                    status=_course_status(cid),
+                    needs_attention=_rollup_attention(cid),
+                ),
+            ),
+        }
+
     # tsk-1250: тот же порядок шагов, что у next-item — узел со своими
     # материалами, затем подразделы, затем задания узла.
     tree_set = set(tree_ids)
@@ -1469,31 +1502,112 @@ async def get_student_progress(
         if step_kind == "tasks":
             items.extend(per_course_tasks[cid])
             continue
-        items.append({
-            "item_type": "course",
-            "item_id": cid,
-            "course_id": cid,
-            # У запрошенного корня родителя в этом дереве нет.
-            "parent_course_id": None if cid == course_id else parent_of.get(cid),
-            "title": course_titles.get(cid),
-            "full_title": None,
-            "status": _course_status(cid),
-            "manual": None,
-            # Массовый зачёт узла разрешён всегда: квизы внутри он пропускает сам.
-            "manual_grantable": True,
-            "granted_by": None,
-            "granted_at": None,
-            "attempts_used": None,
-            "attempts_limit_effective": None,
-            "open_help_request_id": None,
-            "open_help_request_type": None,
-            "pending_review": False,
-            "returned_for_rework": False,
-            "needs_attention": _rollup_attention(cid),
-        })
+        items.append(_course_item(
+            cid,
+            root_id=course_id,
+            parent_of=parent_of,
+            course_titles=course_titles,
+            status=_course_status(cid),
+            needs_attention=_rollup_attention(cid),
+        ))
         items.extend(per_course_items[cid])
 
     return {"student_id": student_id, "course_id": course_id, "items": items}
+
+
+def _course_item(
+    cid: int,
+    *,
+    root_id: int,
+    parent_of: dict[int, Optional[int]],
+    course_titles: dict[int, Any],
+    status: str,
+    needs_attention: bool,
+) -> dict[str, Any]:
+    """Строка узла ``course`` в карточке прогресса (вынесено, tsk-996)."""
+    return {
+        "item_type": "course",
+        "item_id": cid,
+        "course_id": cid,
+        # У запрошенного корня родителя в этом дереве нет.
+        "parent_course_id": None if cid == root_id else parent_of.get(cid),
+        "title": course_titles.get(cid),
+        "full_title": None,
+        "status": status,
+        "manual": None,
+        # Массовый зачёт узла разрешён всегда: квизы внутри он пропускает сам.
+        "manual_grantable": True,
+        "granted_by": None,
+        "granted_at": None,
+        "attempts_used": None,
+        "attempts_limit_effective": None,
+        "open_help_request_id": None,
+        "open_help_request_type": None,
+        "pending_review": False,
+        "returned_for_rework": False,
+        "needs_attention": needs_attention,
+    }
+
+
+async def _progress_items_by_sequence(
+    db: AsyncSession,
+    *,
+    course_id: int,
+    tree_ids: list[int],
+    by_course_materials: dict[int, list[dict[str, Any]]],
+    by_course_tasks: dict[int, list[dict[str, Any]]],
+    per_course_items: dict[int, list[dict[str, Any]]],
+    per_course_tasks: dict[int, list[dict[str, Any]]],
+    course_row: Callable[[int], dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Плоский список карточки прогресса по шагам `node_sequence` (tsk-996).
+
+    Строка узла ``course`` — в начале головы узла, затем голова (материалы;
+    фаза B — и задания с якорем), подразделы, хвост (задания). Элементы
+    берутся уже собранными (`per_course_items` — материалы,
+    `per_course_tasks` — задания, в том же порядке, что их исходные строки).
+    """
+    tree_set = set(tree_ids)
+    steps = [
+        st for st in await _engine._collect_node_steps(db, course_id)  # noqa: SLF001
+        if st[0] in tree_set
+    ] or [(course_id, HEAD), (course_id, TAIL)]
+
+    items: list[dict[str, Any]] = []
+    seq_cache: dict[int, list[Any]] = {}
+    for cid, segment in steps:
+        if cid not in seq_cache:
+            mats = by_course_materials.get(cid, [])
+            tsks = by_course_tasks.get(cid, [])
+            seq_cache[cid] = node_sequence(
+                materials=[
+                    (int(m["id"]), m["order_position"], int(m.get("_src_course_id", cid)))
+                    for m in mats
+                ],
+                tasks=[
+                    (
+                        int(t["id"]),
+                        task_key(
+                            t["order_position"], int(t["id"]),
+                            host_order_position=t["host_order_position"],
+                            absorbed=bool(t.get("_absorbed")),
+                        ),
+                    )
+                    for t in tsks
+                ],
+            )
+        # Готовые строки элементов по (вид, id): материалы и задания узла
+        # собраны в том же порядке, что их исходные строки.
+        built = {
+            (row["item_type"], row["item_id"]): row
+            for row in (*per_course_items.get(cid, []), *per_course_tasks.get(cid, []))
+        }
+        if segment == HEAD:
+            items.append(course_row(cid))
+        items.extend(
+            built[(e.kind, e.item_id)] for e in segment_entries(seq_cache[cid], segment)
+        )
+    return items
 
 
 __all__ = [

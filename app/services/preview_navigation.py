@@ -25,6 +25,12 @@ from app.models.association_tables import t_course_parents
 from app.models.materials import Materials
 from app.models.tasks import Tasks
 from app.services.learning_engine_service import LearningEngineService
+from app.services.node_sequence import (
+    HEAD,
+    node_sequence,
+    node_sequence_enabled,
+    segment_entries,
+)
 from app.services.transparent_subcourse import task_key, transparent_links
 
 logger = logging.getLogger(__name__)
@@ -74,13 +80,80 @@ async def _top_root(db: AsyncSession, course_id: int) -> int:
     return current
 
 
-async def _ordered_items(
+def _ordered_items(
     db: AsyncSession, engine: LearningEngineService, root_id: int
 ) -> AsyncIterator[Tuple[ItemKind, int, bool]]:
     """Активные элементы дерева по учебному порядку: (вид, id, в обходе ли).
 
     Лениво, по шагу: узлы после найденного следующего элемента не читаются.
+    tsk-996: порядок узла — общая `node_sequence`; при
+    NODE_SEQUENCE_ENABLED=false — прежний код (`_ordered_items_legacy`).
     """
+    if node_sequence_enabled():
+        return _ordered_items_by_sequence(db, engine, root_id)
+    return _ordered_items_legacy(db, engine, root_id)
+
+
+async def _ordered_items_by_sequence(
+    db: AsyncSession, engine: LearningEngineService, root_id: int
+) -> AsyncIterator[Tuple[ItemKind, int, bool]]:
+    """`_ordered_items` по шагам `node_sequence` (tsk-996).
+
+    Шаг узла — его голова (материалы) или хвост (задания со влитыми заданиями
+    прозрачных подкурсов, tsk-1198); каждый шаг читает только свою часть, как
+    и прежде. Фаза B (якоря) добавит в голову задания узла.
+    """
+    steps = await engine._collect_node_steps(db, root_id)  # noqa: SLF001
+    tree = {cid for cid, _ in steps}
+    links = await transparent_links(db)
+    absorbed_here = {c for c, h in links.items() if c in tree and h in tree}
+
+    for cid, segment in steps:
+        if cid in absorbed_here:
+            continue
+        eligible: dict[Tuple[str, int], bool] = {}
+        if segment == HEAD:
+            rows = (
+                await db.execute(
+                    select(Materials.id, Materials.order_position, Materials.requirement_level)
+                    .where(Materials.course_id == cid, Materials.is_active.is_(True))
+                )
+            ).all()
+            materials = []
+            for r in rows:
+                materials.append((int(r[0]), r[1], cid))
+                eligible[("material", int(r[0]))] = r[2] in _WALK_LEVELS
+            seq = node_sequence(materials=materials)
+        else:
+            absorbed = [c for c, h in links.items() if h == cid and c in tree]
+            rows = (
+                await db.execute(
+                    select(
+                        Tasks.id, Tasks.order_position, Tasks.host_order_position,
+                        Tasks.course_id, Tasks.requirement_level,
+                    ).where(Tasks.course_id.in_([cid, *absorbed]), Tasks.is_active.is_(True))
+                )
+            ).all()
+            tasks = []
+            for r in rows:
+                tasks.append((
+                    int(r[0]),
+                    task_key(
+                        r[1], int(r[0]),
+                        host_order_position=r[2],
+                        absorbed=int(r[3]) != cid,
+                    ),
+                ))
+                eligible[("task", int(r[0]))] = r[4] in _WALK_LEVELS
+            seq = node_sequence(tasks=tasks)
+        for entry in segment_entries(seq, segment):
+            yield entry.kind, entry.item_id, eligible[(entry.kind, entry.item_id)]
+
+
+async def _ordered_items_legacy(
+    db: AsyncSession, engine: LearningEngineService, root_id: int
+) -> AsyncIterator[Tuple[ItemKind, int, bool]]:
+    """Прежний `_ordered_items` — путь NODE_SEQUENCE_ENABLED=false (tsk-996)."""
     steps = await engine._collect_steps_in_order(db, root_id)
     tree = {cid for cid, _ in steps}
     links = await transparent_links(db)
