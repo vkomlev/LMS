@@ -509,6 +509,9 @@ from app.api.v1.integrations_leads import router as integrations_leads_router
 app.include_router(integrations_leads_router, prefix=API_PREFIX)
 from app.api.v1.integrations_quiz_funnel import router as integrations_quiz_funnel_router
 app.include_router(integrations_quiz_funnel_router, prefix=API_PREFIX)  # tsk-1139
+from app.api.v1.tg_deep_link import bot_router as tg_link_bot_router, me_router as tg_link_me_router
+app.include_router(tg_link_me_router, prefix=API_PREFIX)  # tsk-1253
+app.include_router(tg_link_bot_router, prefix=API_PREFIX)  # tsk-1253
 
 # tsk-301 Фаза 9: управление тарифами персоналом (marketer/admin, преподавателю нельзя)
 from app.api.v1.subscriptions import router as subscriptions_router

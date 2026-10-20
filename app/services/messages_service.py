@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.messages import Messages
 from app.models.users import Users
 from app.repos.messages_repo import MessagesRepository
+from app.services import notify_email_mirror_service
 from app.services.base import BaseService
 from app.utils.exceptions import DomainError
 
@@ -99,6 +100,11 @@ class MessagesService(BaseService[Messages]):
             await db.commit()
             await db.refresh(msg)
 
+        # tsk-1253: дубль на почту ученику (рубильник в кабинете, выключен
+        # по умолчанию; сбой письма сообщение не роняет).
+        notify_email_mirror_service.schedule_teacher_message_mirror(
+            sender_id=msg.sender_id, recipient_id=msg.recipient_id,
+        )
         return msg
 
     async def send_bulk(

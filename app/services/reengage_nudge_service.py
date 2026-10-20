@@ -6,7 +6,8 @@
 (разбор группы «в», `docs/proposals/2026-09-30-courses-group-v-proposals.md`).
 
 **Что делает.** Раз в сутки находит учеников с действующим расписанием, которые
-неделю не сдавали работ и не заходили в кабинет, и кладёт им одно напоминание со
+неделю не сдавали работ и не заходили в кабинет (tsk-1253: и учеников тарифа
+без занятий), и кладёт им одно напоминание со
 ссылкой «продолжить» (`/me/continue` — SPW сам ведёт на следующее задание). Одна
 строка `notifications` обслуживает оба канала: кабинет (`/me/notifications`) и
 student-бот TG_LMS (`GET /students/{id}/reengage-nudges/pending`).
@@ -42,7 +43,7 @@ from app.core import settings_store
 from app.core.config import Settings
 from app.core.cron_registry import register_interval_job
 from app.db.session import async_session_factory
-from app.services import inbox_service
+from app.services import inbox_service, notify_email_mirror_service
 from app.services.learning_gap_signals_service import real_student_plan_filter
 from app.services.learning_gaps_service import own_activity_results_filter
 
@@ -67,10 +68,27 @@ _BODY = (
     "подстроим занятия."
 )
 
+#: tsk-1253: текст для тарифа без занятий («смотрю уроки, решаю ДЗ») — без
+#: обещания «подстроим занятия», которых у ученика нет. Согласован 2026-10-20.
+_BODY_NO_SCHEDULE = (
+    "Вы неделю не заглядывали в курс. Следующее задание уже ждёт — начать "
+    "можно с него, это несколько минут. Если что-то мешает — напишите "
+    "преподавателю."
+)
+
+#: tsk-1253: после стольких напоминаний подряд без возврата больше не пишем —
+#: дальше дело преподавателя (сигнал `dropout_risk`). Решение оператора 20.10.
+MAX_NUDGES_IN_A_ROW = 2
+
 _scheduler: Optional[AsyncIOScheduler] = None
 
 _QUIET_SQL = """
-SELECT u.id
+SELECT u.id,
+       EXISTS (
+           SELECT 1 FROM lesson_slot_student lss
+           JOIN lesson_slot ls ON ls.id = lss.slot_id
+           WHERE lss.student_id = u.id AND lss.is_active AND ls.is_active
+       ) AS has_schedule
 FROM users u
 JOIN user_roles ur ON ur.user_id = u.id
 JOIN roles r ON r.id = ur.role_id AND r.name = 'student'
@@ -79,11 +97,21 @@ WHERE u.is_active
   AND u.merged_into_user_id IS NULL
   AND u.blocked_at IS NULL
   AND {real_student_plan}
-  -- Действующее расписание: напоминаем тем, кто учится со школой сейчас.
-  AND EXISTS (
-      SELECT 1 FROM lesson_slot_student lss
-      JOIN lesson_slot ls ON ls.id = lss.slot_id
-      WHERE lss.student_id = u.id AND lss.is_active AND ls.is_active
+  -- Учится со школой сейчас: действующее расписание ИЛИ тариф без занятий,
+  -- где учёба — сами уроки и задания (tsk-1253: `lessons = false`,
+  -- `course_work = true`, на основной школе это `self`).
+  AND (
+      EXISTS (
+          SELECT 1 FROM lesson_slot_student lss
+          JOIN lesson_slot ls ON ls.id = lss.slot_id
+          WHERE lss.student_id = u.id AND lss.is_active AND ls.is_active
+      )
+      OR EXISTS (
+          SELECT 1 FROM student_subscription ss
+          JOIN subscription_plan sp ON sp.id = ss.plan_id
+          WHERE ss.student_id = u.id AND ss.ends_on IS NULL
+            AND NOT sp.lessons AND sp.course_work
+      )
   )
   -- Перерыв задан датами школы (Москва), сервер живёт в UTC — то же правило,
   -- что в `break_service._LOCAL_DAY`.
@@ -108,19 +136,37 @@ WHERE u.is_active
       WHERE n.user_id = u.id AND n.kind = :kind
         AND n.modified_at > now() - make_interval(days => :days)
   )
+  -- tsk-1253: потолок — не больше :max_row напоминаний с последней активности
+  -- (вход или своя сдача). Вернулся и снова затих — счёт заново.
+  AND (
+      SELECT count(*) FROM notifications n
+      WHERE n.user_id = u.id AND n.kind = :kind
+        AND n.modified_at > COALESCE(GREATEST(
+            pr.last_interaction_at,
+            (SELECT MAX(tr.submitted_at) FROM task_results tr
+             WHERE tr.user_id = u.id AND {real_student})
+        ), '-infinity'::timestamptz)
+  ) < :max_row
 ORDER BY u.id
 """
 
 
-async def list_quiet(db: AsyncSession, *, days: int) -> list[int]:
-    """ID учеников, которым пора напомнить (см. условия в `_QUIET_SQL`)."""
+async def _quiet_rows(db: AsyncSession, *, days: int) -> list[tuple[int, bool]]:
+    """(ID ученика, есть ли расписание) для всех, кому пора напомнить."""
     sql = _QUIET_SQL.format(
         real_student_plan=real_student_plan_filter("u.id"),
         # tsk-992: кто повторяет пройденное, тот не затих.
         real_student=own_activity_results_filter("tr"),
     )
-    rows = (await db.execute(text(sql), {"days": days, "kind": NUDGE_KIND})).fetchall()
-    return [int(r[0]) for r in rows]
+    rows = (await db.execute(text(sql), {
+        "days": days, "kind": NUDGE_KIND, "max_row": MAX_NUDGES_IN_A_ROW,
+    })).fetchall()
+    return [(int(r[0]), bool(r[1])) for r in rows]
+
+
+async def list_quiet(db: AsyncSession, *, days: int) -> list[int]:
+    """ID учеников, которым пора напомнить (см. условия в `_QUIET_SQL`)."""
+    return [sid for sid, _ in await _quiet_rows(db, days=days)]
 
 
 async def enqueue_nudges(
@@ -138,29 +184,43 @@ async def enqueue_nudges(
         отменить.
     :returns: сводка прохода.
     """
-    quiet = await list_quiet(db, days=days)
-    targets = quiet if limit is None else quiet[:limit]
+    rows = await _quiet_rows(db, days=days)
+    quiet = [sid for sid, _ in rows]
+    picked = rows if limit is None else rows[:limit]
+    targets = [sid for sid, _ in picked]
+    emailed = 0
     if not dry_run:
         url = f"{Settings().public_base_url.rstrip('/')}/me/continue"
-        for student_id in targets:
+        for student_id, has_schedule in picked:
             # Через inbox_service: у `notifications.content` нет умолчания.
             await inbox_service.create_for_user(
                 db,
                 user_id=student_id,
                 kind=NUDGE_KIND,
                 title=_TITLE,
-                content=_BODY,
+                content=_BODY if has_schedule else _BODY_NO_SCHEDULE,
                 payload={"url": url, "quiet_days": days},
                 created_by=None,
             )
         await db.commit()
+        # tsk-1253: дубль на почту — отдельным рубильником, после записи в
+        # кабинет: сбой письма не должен отменить напоминание.
+        for student_id in targets:
+            if await notify_email_mirror_service.mirror_to_email(
+                db, user_id=student_id,
+                kind=notify_email_mirror_service.KIND_REENGAGE, url=url,
+            ):
+                emailed += 1
 
     # Итог в лог всегда: молчащий проход неотличим от отсутствующего.
     logger.info(
         "tsk-1177: мягкий возврат — затихших %s, положено %s%s",
         len(quiet), len(targets), " (пробный прогон)" if dry_run else "",
     )
-    return {"quiet_total": len(quiet), "queued": len(targets), "students": targets}
+    return {
+        "quiet_total": len(quiet), "queued": len(targets), "students": targets,
+        "emailed": emailed,
+    }
 
 
 async def nudge_tick() -> dict[str, Any]:

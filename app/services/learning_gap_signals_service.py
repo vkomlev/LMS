@@ -449,6 +449,123 @@ def dropout_window_days() -> int:
     return _setting_int("dropout_risk_window_days", DROPOUT_WINDOW_DAYS)
 
 
+# Признак «пропал» для ученика БЕЗ расписания (tsk-1253). Основной датчик выше
+# держится на совпадении «занятия идут — его нет»; у тарифа без занятий
+# («смотрю уроки, решаю ДЗ») первой половины нет вовсе, и без этой ветки такой
+# ученик не попадал в сигнал никогда. Здесь мерим только активность: раньше он
+# заходил в кабинет или сдавал сам, а последние N дней — ни того, ни другого.
+#
+# Ученик с действующим расписанием сюда не попадает: им занят основной датчик,
+# и две карточки об одном человеке — способ отучить читать список.
+_DROPOUT_ACTIVITY_SQL = """
+WITH win AS (
+    SELECT now() - make_interval(days => :days) AS since
+),
+enrolled AS (
+    SELECT DISTINCT ON (uc.user_id)
+           uc.user_id, uc.course_id
+    FROM user_courses uc
+    WHERE uc.is_active = true
+    ORDER BY uc.user_id, uc.added_at DESC, uc.course_id
+),
+own_work AS (
+    SELECT tr.user_id, MAX(tr.submitted_at) AS last_own_work
+    FROM task_results tr
+    WHERE {real_student}
+    GROUP BY tr.user_id
+),
+act AS (
+    -- Последняя активность: вход в кабинет или своя сдача. GREATEST в
+    -- PostgreSQL пропускает NULL, поэтому хватает любой из двух.
+    SELECT u.id AS student_id,
+           GREATEST(pr.last_interaction_at, w.last_own_work) AS last_active
+    FROM users u
+    LEFT JOIN student_presence pr ON pr.student_id = u.id
+    LEFT JOIN own_work w ON w.user_id = u.id
+),
+closed AS (
+    SELECT student_id, MAX(COALESCE(acknowledged_at, created_at)) AS closed_at
+    FROM learning_gap_signal
+    WHERE reason = 'dropout_risk'
+      AND status IN ('resolved', 'dismissed')
+      AND student_id IS NOT NULL
+    GROUP BY student_id
+)
+SELECT u.id AS student_id,
+       e.course_id,
+       c.title AS course_title,
+       a.last_active,
+       EXTRACT(DAY FROM now() - a.last_active)::int AS silence_days
+FROM users u
+JOIN user_roles ur ON ur.user_id = u.id
+JOIN roles r ON r.id = ur.role_id AND r.name = 'student'
+JOIN enrolled e ON e.user_id = u.id
+JOIN courses c ON c.id = e.course_id
+JOIN act a ON a.student_id = u.id
+LEFT JOIN closed ON closed.student_id = u.id
+CROSS JOIN win
+WHERE u.is_active
+  AND u.merged_into_user_id IS NULL
+  AND u.blocked_at IS NULL
+  AND NOT EXISTS (SELECT 1 FROM lesson_occurrence lo WHERE lo.teacher_id = u.id)
+  AND NOT EXISTS (SELECT 1 FROM lesson_occurrence_teacher lt WHERE lt.teacher_id = u.id)
+  AND NOT EXISTS (SELECT 1 FROM lesson_slot_teacher st WHERE st.teacher_id = u.id)
+  AND {real_student_plan}
+  -- Без действующего расписания: с расписанием — основной датчик.
+  AND NOT EXISTS (
+      SELECT 1 FROM lesson_slot_student lss
+      JOIN lesson_slot ls ON ls.id = lss.slot_id
+      WHERE lss.student_id = u.id AND lss.is_active AND ls.is_active
+  )
+  -- Раньше был активен (иначе это «не начинал», а не «пропал») и затих.
+  AND a.last_active IS NOT NULL
+  AND a.last_active < win.since
+  AND NOT EXISTS (
+      SELECT 1 FROM student_break b
+      WHERE b.student_id = u.id
+        AND b.ends_on >= (win.since AT TIME ZONE 'Europe/Moscow')::date
+        AND b.starts_on <= (now() AT TIME ZONE 'Europe/Moscow')::date
+  )
+  AND (closed.closed_at IS NULL OR a.last_active > closed.closed_at)
+  -- Открытый сигнал по ученику уже есть — второго не заводим, даже если с тех
+  -- пор он записан на другой курс (уникальный индекс держит только пару
+  -- «курс + ученик»).
+  AND NOT EXISTS (
+      SELECT 1 FROM learning_gap_signal o
+      WHERE o.student_id = u.id AND o.reason = 'dropout_risk'
+        AND o.status NOT IN ('resolved', 'dismissed')
+  )
+ORDER BY a.last_active
+LIMIT :limit
+"""
+
+#: Значение по умолчанию; фактическое — настройка `dropout_activity_days`.
+DROPOUT_ACTIVITY_DAYS = 14
+
+
+def dropout_activity_days() -> int:
+    """Порог «пропал» для ученика без расписания (кабинет администратора)."""
+    return _setting_int("dropout_activity_days", DROPOUT_ACTIVITY_DAYS)
+
+
+async def find_dropout_risk_by_activity(
+    db: AsyncSession,
+    *,
+    days: int | None = None,
+    limit: int = 100,
+) -> list[dict]:
+    """Ученики без расписания, которые перестали заходить и сдавать (tsk-1253)."""
+    sql = _DROPOUT_ACTIVITY_SQL.format(
+        real_student=real_student_results_filter("tr"),
+        real_student_plan=real_student_plan_filter("u.id"),
+    )
+    rows = (await db.execute(text(sql), {
+        "days": days if days is not None else dropout_activity_days(),
+        "limit": limit,
+    })).mappings().all()
+    return [dict(r) for r in rows]
+
+
 async def find_dropout_risk(
     db: AsyncSession,
     *,
@@ -518,6 +635,7 @@ async def scan_and_create_signals(db: AsyncSession, *, days: int = 30) -> dict:
     students = await find_student_gaps(db, days=days)
     authorship = await find_ai_authorship_gaps(db)
     dropout = await find_dropout_risk(db)
+    dropout_activity = await find_dropout_risk_by_activity(db)
 
     new_topics = 0
     for g in topics:
@@ -582,20 +700,40 @@ async def scan_and_create_signals(db: AsyncSession, *, days: int = 30) -> dict:
         ):
             new_dropout += 1
 
+    activity_window = dropout_activity_days()
+    for r in dropout_activity:
+        if await upsert_signal(
+            db, course_id=int(r["course_id"]), student_id=int(r["student_id"]),
+            # Занятий у ученика нет — первым числом карточки идут дни тишины.
+            submissions=int(r["silence_days"]), students=1,
+            wrong_rate=0.0,
+            reason=REASON_DROPOUT_RISK,
+            meta={
+                "reason": REASON_DROPOUT_RISK,
+                # По этому ключу SPW пишет карточку без «занятий мимо».
+                "mode": "activity",
+                "window_days": activity_window,
+                "silence_days": int(r["silence_days"]),
+                "last_active": r["last_active"].date().isoformat(),
+            },
+        ):
+            new_dropout += 1
+
     await db.commit()
     logger.info(
         "learning_gaps: проход завершён — тем найдено %s (новых сигналов %s), "
         "учеников %s (новых %s), признак авторства %s (новых %s), "
         "затихших %s (новых %s), период %s дн.",
         len(topics), new_topics, len(students), new_students,
-        len(authorship), new_authorship, len(dropout), new_dropout, days,
+        len(authorship), new_authorship, len(dropout) + len(dropout_activity),
+        new_dropout, days,
     )
     return {
         "topics_found": len(topics), "topic_signals_created": new_topics,
         "students_found": len(students), "student_signals_created": new_students,
         "authorship_found": len(authorship),
         "authorship_signals_created": new_authorship,
-        "dropout_found": len(dropout),
+        "dropout_found": len(dropout) + len(dropout_activity),
         "dropout_signals_created": new_dropout,
     }
 
