@@ -144,9 +144,15 @@ class _Item:
     done: bool  # ученик элемент закрыл
     done_at: Optional[datetime]  # когда закрыл; None при done=True — неизвестно
     # tsk-996 (фаза B): действующий якорь задания — (id, order_position)
-    # материала своего курса; None — задание в конце узла.
+    # материала своего курса; None — задание в конце узла. Фаза D:
+    # `anchor_course_id` — курс материала; у задания прозрачного подкурса это
+    # может быть хозяин, и тогда в обходе задание стоит в голове хозяина.
     anchor_material_id: Optional[int] = None
     anchor_order_position: Optional[int] = None
+    anchor_course_id: Optional[int] = None
+    # tsk-1198: место задания прозрачного подкурса в списке хозяина — ключ
+    # группы якоря в голове хозяина (фаза D), как у движка.
+    host_order_position: Optional[int] = None
 
 
 @dataclass
@@ -266,12 +272,24 @@ SELECT
             THEN lp.submitted_at
     END AS done_at,
     -- tsk-996 (фаза B): действующий якорь задания (материал того же курса,
-    -- любой — и неактивный); иначе NULL — задание в конце узла.
+    -- любой — и неактивный); иначе NULL — задание в конце узла. Фаза D:
+    -- или материал прозрачного хозяина курса задания (tsk-1198).
     am.id AS anchor_material_id,
-    am.order_position AS anchor_order_position
+    am.order_position AS anchor_order_position,
+    am.course_id AS anchor_course_id,
+    t.host_order_position
 FROM tasks t
 LEFT JOIN materials am
-    ON am.id = t.anchor_material_id AND am.course_id = t.course_id
+    ON am.id = t.anchor_material_id
+   AND (
+       am.course_id = t.course_id
+       OR EXISTS (
+           SELECT 1 FROM course_parents cp
+           WHERE cp.course_id = t.course_id
+             AND cp.parent_course_id = am.course_id
+             AND cp.is_transparent
+       )
+   )
 LEFT JOIN last_per_task lp ON lp.task_id = t.id
 LEFT JOIN student_task_progress stp
     ON stp.task_id = t.id AND stp.student_id = :student_id
@@ -290,6 +308,8 @@ SELECT
         WHEN smp.status IN ('completed', 'skipped')
             THEN COALESCE(smp.completed_at, smp.skipped_at)
     END,
+    NULL,
+    NULL,
     NULL,
     NULL
 FROM materials m
@@ -573,7 +593,8 @@ async def compute_grace_reasons(
 
     for (
         kind, item_id, course_id, order_position, created_at, done, done_at,
-        anchor_material_id, anchor_order_position,
+        anchor_material_id, anchor_order_position, anchor_course_id,
+        host_order_position,
     ) in item_rows:
         node = nodes.get(int(course_id))
         if node is None:
@@ -589,6 +610,8 @@ async def compute_grace_reasons(
                 done_at=done_at,
                 anchor_material_id=anchor_material_id,
                 anchor_order_position=anchor_order_position,
+                anchor_course_id=anchor_course_id,
+                host_order_position=host_order_position,
             )
         )
 
@@ -689,6 +712,11 @@ def _walk_sequence_by_node_sequence(nodes: Dict[int, _Node], root_id: int) -> Li
     Дерево уже загружено целиком (три запроса на дерево), поэтому обход идёт
     без запросов: подразделы узла — его `child_order`. Прозрачные подкурсы
     правило по-прежнему обходит как обычные подразделы.
+
+    Фаза D: задание прозрачного подкурса с якорем на материал хозяина стоит в
+    голове хозяина сразу после материала — там же, где его видит ученик
+    (движок). Узел задания (`course_id`, по нему правило ищет зачёты «в том
+    же узле») не меняется — меняется только место в обходе.
     """
     def children_of(course_id: int) -> List[Tuple[int, Optional[int]]]:
         node = nodes.get(course_id)
@@ -696,28 +724,54 @@ def _walk_sequence_by_node_sequence(nodes: Dict[int, _Node], root_id: int) -> Li
             return []
         return [(child_id, order_number) for order_number, child_id in node.child_order]
 
+    # Где элемент стоит в обходе: свой узел либо, для задания с якорем на
+    # материал прозрачного хозяина (SQL уже отобрал только такие), — хозяин.
+    placed: Dict[int, List[_Item]] = {cid: [] for cid in nodes}
+    for cid, node in nodes.items():
+        for item in node.own:
+            host = item.anchor_course_id
+            if (
+                item.kind == "task"
+                and item.anchor_material_id is not None
+                and host is not None
+                and int(host) != cid
+                and int(host) in nodes
+            ):
+                placed[int(host)].append(item)
+            else:
+                placed[cid].append(item)
+
     sequence: List[_Item] = []
     by_node: Dict[int, List[NodeEntry]] = {}
     for course_id, segment in walk_steps(root_id, children_of):
-        node = nodes.get(course_id)
-        if node is None:
+        if course_id not in nodes:
             continue
+        own = placed[course_id]
         if course_id not in by_node:
             by_node[course_id] = node_sequence(
                 materials=[
                     (i.item_id, i.order_position, i.course_id)
-                    for i in node.own if i.kind == "material"
+                    for i in own if i.kind == "material"
                 ],
                 tasks=[
                     (
                         i.item_id,
-                        task_key(i.order_position, i.item_id),
-                        anchor_of(i.anchor_material_id, i.anchor_order_position, i.course_id),
+                        task_key(
+                            i.order_position, i.item_id,
+                            host_order_position=i.host_order_position,
+                            absorbed=i.course_id != course_id,
+                        ),
+                        anchor_of(
+                            i.anchor_material_id, i.anchor_order_position, i.course_id,
+                            absorbed=i.course_id != course_id,
+                            anchor_course_id=i.anchor_course_id,
+                            host_course_id=course_id,
+                        ),
                     )
-                    for i in node.own if i.kind == "task"
+                    for i in own if i.kind == "task"
                 ],
             )
-        items = {(i.kind, i.item_id): i for i in node.own}
+        items = {(i.kind, i.item_id): i for i in own}
         sequence.extend(
             items[(e.kind, e.item_id)] for e in segment_entries(by_node[course_id], segment)
         )

@@ -18,7 +18,7 @@ import logging
 from dataclasses import dataclass
 from typing import AsyncIterator, List, Literal, Optional, Tuple
 
-from sqlalchemy import and_, exists, select
+from sqlalchemy import exists, or_, select
 from sqlalchemy.orm import aliased
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -123,15 +123,9 @@ async def _ordered_items_by_sequence(
                 select(
                     Tasks.id, Tasks.order_position, Tasks.host_order_position,
                     Tasks.course_id, Tasks.requirement_level,
-                    anchor_m.id, anchor_m.order_position,
+                    anchor_m.id, anchor_m.order_position, anchor_m.course_id,
                 )
-                .outerjoin(
-                    anchor_m,
-                    and_(
-                        anchor_m.id == Tasks.anchor_material_id,
-                        anchor_m.course_id == Tasks.course_id,
-                    ),
-                )
+                .outerjoin(anchor_m, anchor_m.id == Tasks.anchor_material_id)
                 .where(Tasks.course_id.in_([cid, *absorbed]), Tasks.is_active.is_(True))
             )
         ).all()
@@ -146,7 +140,10 @@ async def _ordered_items_by_sequence(
                     host_order_position=r[2],
                     absorbed=is_absorbed,
                 ),
-                anchor_of(r[5], r[6], int(r[3]), absorbed=is_absorbed),
+                anchor_of(
+                    r[5], r[6], int(r[3]), absorbed=is_absorbed,
+                    anchor_course_id=r[7], host_course_id=cid,
+                ),
             ))
             eligible[("task", int(r[0]))] = r[4] in _WALK_LEVELS
         task_cache[cid] = (tasks, eligible)
@@ -162,9 +159,18 @@ async def _ordered_items_by_sequence(
                     select(
                         Materials.id, Materials.order_position, Materials.requirement_level,
                         Materials.is_active,
+                        # Фаза D: якорь на материал узла ставят и задания
+                        # его прозрачных подкурсов.
                         exists().where(
                             Tasks.anchor_material_id == Materials.id,
-                            Tasks.course_id == Materials.course_id,
+                            or_(
+                                Tasks.course_id == Materials.course_id,
+                                exists().where(
+                                    t_course_parents.c.course_id == Tasks.course_id,
+                                    t_course_parents.c.parent_course_id == Materials.course_id,
+                                    t_course_parents.c.is_transparent.is_(True),
+                                ),
+                            ),
                         ),
                     ).where(Materials.course_id == cid)
                 )

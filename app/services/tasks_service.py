@@ -307,19 +307,63 @@ class TasksService(BaseService[Tasks]):
         
         return await super().update(db, db_obj, obj_in)
 
+    @staticmethod
+    async def transparent_hosts(
+        db: AsyncSession, course_ids: Sequence[int]
+    ) -> dict[int, list[int]]:
+        """Прозрачные хозяева курсов: ``{курс: [хозяин, ...]}`` (tsk-996, фаза D).
+
+        Хозяин — прямой родитель, для которого курс прозрачен
+        (``course_parents.is_transparent``, tsk-1198): задания курса ученик
+        видит в списке хозяина, поэтому якорь на материал хозяина допустим.
+        Порядок — как у `transparent_subcourse.transparent_links`
+        (``order_number``, затем id родителя). Тот же предикат — в триггере
+        ``trg_tasks_anchor_guard`` (миграция ``tsk996_bank_anchor``).
+        """
+        ids = sorted({int(c) for c in course_ids})
+        if not ids:
+            return {}
+        rows = (
+            await db.execute(
+                text(
+                    "SELECT course_id, parent_course_id FROM course_parents "
+                    "WHERE is_transparent AND course_id = ANY(:ids) "
+                    "ORDER BY order_number ASC NULLS LAST, parent_course_id"
+                ),
+                {"ids": ids},
+            )
+        ).fetchall()
+        hosts: dict[int, list[int]] = {}
+        for course_id, host in rows:
+            hosts.setdefault(int(course_id), []).append(int(host))
+        return hosts
+
+    async def anchor_course_ids(self, db: AsyncSession, course_id: int) -> list[int]:
+        """Курсы, материал которых может быть якорем задания курса (tsk-996).
+
+        Свой курс задания и (фаза D) его прозрачный хозяин. Хозяин — только
+        первый: так же его выбирает порядок узла
+        (`transparent_subcourse.transparent_links`), и якорь на материал
+        второго «хозяина» (ошибка разметки) ученик всё равно не увидел бы.
+        """
+        hosts = (await self.transparent_hosts(db, [course_id])).get(int(course_id), [])
+        return [int(course_id), *hosts[:1]]
+
     async def validate_anchor(
         self, db: AsyncSession, task: Tasks, anchor_material_id: Optional[int]
     ) -> None:
         """Проверить якорь задания к материалу (tsk-996, ADR-0008).
 
-        Якорь — материал того же курса, что и задание (любой, в том числе
-        неактивный: его задания стоят на его месте). ``None`` — снять якорь
-        («в конце раздела»), всегда допустимо. Тот же инвариант держит
+        Якорь — материал того же курса, что и задание, или (фаза D) курса, к
+        которому курс задания подвешен прозрачной связью (банк заданий ОГЭ в
+        уроке: ученик видит задания банка в уроке). Материал любой, в том
+        числе неактивный: его задания стоят на его месте. ``None`` — снять
+        якорь («в конце раздела»), всегда допустимо. Тот же инвариант держит
         триггер `trg_tasks_anchor_guard`; здесь он проверяется заранее, чтобы
         методист получил понятный 422, а не ошибку базы.
 
         Raises:
-            DomainError: материала нет или он из другого курса.
+            DomainError: материала нет или он из недопустимого курса.
         """
         if anchor_material_id is None:
             return
@@ -331,11 +375,43 @@ class TasksService(BaseService[Tasks]):
         ).scalar()
         if material_course is None:
             raise DomainError(f"Материал {anchor_material_id} не найден")
-        if int(material_course) != int(task.course_id):
+        if int(material_course) not in await self.anchor_course_ids(db, int(task.course_id)):
             raise DomainError(
                 f"Материал {anchor_material_id} из другого раздела: якорь задания "
-                "может указывать только на материал раздела самого задания"
+                "может указывать только на материал раздела самого задания или "
+                "раздела, внутри которого ученик видит задания этого курса "
+                "(прозрачный подкурс)"
             )
+
+    async def anchor_material_options(
+        self, db: AsyncSession, task: Tasks
+    ) -> list[dict[str, Any]]:
+        """Материалы, которые методист может выбрать якорем задания (tsk-996).
+
+        Ровно те, что примет `validate_anchor`: материалы курса задания, затем
+        (фаза D) материалы его прозрачных хозяев. Внутри курса — учебный
+        порядок (``order_position NULLS LAST, id``), выключенные тоже: якорь
+        на них допустим. ``origin`` — ``own`` / ``host``: клиенту для подписи.
+        """
+        course_ids = await self.anchor_course_ids(db, int(task.course_id))
+        rows = (
+            await db.execute(
+                text(
+                    "SELECT m.id, m.course_id, c.title AS course_title, m.title, "
+                    "       m.is_active, m.order_position "
+                    "FROM materials m JOIN courses c ON c.id = m.course_id "
+                    "WHERE m.course_id = ANY(:ids) "
+                    "ORDER BY array_position(CAST(:ids AS integer[]), m.course_id), "
+                    "         m.order_position ASC NULLS LAST, m.id"
+                ),
+                {"ids": course_ids},
+            )
+        ).mappings().fetchall()
+        own = int(task.course_id)
+        return [
+            {**dict(r), "origin": "own" if int(r["course_id"]) == own else "host"}
+            for r in rows
+        ]
 
     async def get_by_external_uid(
         self,
@@ -404,6 +480,20 @@ class TasksService(BaseService[Tasks]):
         hard_twins, twin_course_ids = await self._resolve_hard_routing(db, items)
         # tsk-996: материалы-якоря батча одним запросом, а не по запросу на задание.
         anchor_materials = await self._load_anchor_materials(db, items)
+        # tsk-996 (фаза D): якорь может указывать и на материал прозрачного
+        # хозяина курса задания — хозяева курсов батча тоже одним запросом.
+        anchor_hosts = (
+            await self.transparent_hosts(
+                db,
+                [
+                    d["course_id"] for d in items
+                    if isinstance(d.get("course_id"), int)
+                    and isinstance(d.get("anchor_external_uid"), str)
+                ],
+            )
+            if anchor_materials
+            else {}
+        )
 
         for data in items:
             external_uid = data["external_uid"]
@@ -451,7 +541,7 @@ class TasksService(BaseService[Tasks]):
             )
             # Якорь резолвится в КУРСЕ НАЗНАЧЕНИЯ (после маршрутизации HARD).
             anchor_fields = self._publish_anchor_fields(
-                data, existing, anchor_materials, warnings
+                data, existing, anchor_materials, warnings, anchor_hosts
             )
 
             if existing is None:
@@ -653,6 +743,7 @@ class TasksService(BaseService[Tasks]):
         existing: Optional[Tasks],
         anchor_materials: dict[str, dict[int, int]],
         warnings: List[str],
+        anchor_hosts: Optional[dict[int, list[int]]] = None,
     ) -> Dict[str, Any]:
         """Поля якоря задания из импорта (tsk-996, ADR-0008 «Владение якорем»).
 
@@ -662,7 +753,9 @@ class TasksService(BaseService[Tasks]):
           методиста переиздание не перезаписывает, в том числе его осознанное
           «в конце раздела» (``manual`` при пустом якоре);
         * материал найден среди материалов КУРСА ЗАДАНИЯ — якорь на него,
-          источник ``publish``;
+          источник ``publish``; нет в своём курсе, но есть у прозрачного
+          хозяина курса задания (``anchor_hosts``, фаза D: банк заданий в
+          уроке) — якорь на материал хозяина, тоже ``publish``;
         * не найден или только в чужом курсе — ``{}`` и предупреждение: якорь
           на чужой узел запрещён (триггер ``trg_tasks_anchor_guard`` уронил бы
           весь пакет), задание записывается как без поля — прежний якорь
@@ -683,6 +776,12 @@ class TasksService(BaseService[Tasks]):
         course_id = data.get("course_id")
         by_course = anchor_materials.get(anchor_uid, {})
         material_id = by_course.get(course_id) if isinstance(course_id, int) else None
+        if material_id is None and isinstance(course_id, int):
+            # Только первый хозяин — как в `anchor_course_ids` и порядке узла.
+            for host in (anchor_hosts or {}).get(course_id, [])[:1]:
+                material_id = by_course.get(host)
+                if material_id is not None:
+                    break
         if material_id is None:
             reason = (
                 "материал из другого раздела" if by_course else "материала нет в разделе"

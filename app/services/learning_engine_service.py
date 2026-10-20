@@ -11,7 +11,7 @@ import logging
 from datetime import datetime
 from typing import Any, List, Optional, Sequence, Tuple
 
-from sqlalchemy import and_, select, text, func
+from sqlalchemy import select, text, func
 from sqlalchemy.orm import aliased
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -1230,20 +1230,16 @@ class LearningEngineService:
         if after_task_id is not None:
             # tsk-996 (фаза B): якорь — тем же запросом. Задание с действующим
             # якорем стоит в голове узла сразу после своего материала, и курсор
-            # режет голову по его ключу.
+            # режет голову по его ключу. Какой якорь действует, решает
+            # `anchor_of` по курсу материала: в своём узле — материал курса
+            # задания, в списке прозрачного хозяина — материал хозяина (фаза D).
             anchor_m = aliased(Materials)
             r = await db.execute(
                 select(
                     Tasks.course_id, Tasks.order_position, Tasks.host_order_position,
-                    anchor_m.id, anchor_m.order_position,
+                    anchor_m.id, anchor_m.order_position, anchor_m.course_id,
                 )
-                .outerjoin(
-                    anchor_m,
-                    and_(
-                        anchor_m.id == Tasks.anchor_material_id,
-                        anchor_m.course_id == Tasks.course_id,
-                    ),
-                )
+                .outerjoin(anchor_m, anchor_m.id == Tasks.anchor_material_id)
                 .where(Tasks.id == after_task_id)
             )
             row = r.fetchone()
@@ -1251,21 +1247,24 @@ class LearningEngineService:
                 host = (await transparent_links(db)).get(int(row[0]))
                 host_alt = None
                 if host is not None:
-                    # В списке хозяина якорь не учитывается (tsk-1198).
                     host_alt = (
                         host,
                         task_seq_key(
                             task_key(
                                 None, after_task_id,
                                 host_order_position=row[2], absorbed=True,
-                            )
+                            ),
+                            anchor_of(
+                                row[3], row[4], int(row[0]), absorbed=True,
+                                anchor_course_id=row[5], host_course_id=host,
+                            ),
                         ),
                     )
                 return (
                     int(row[0]), "task", after_task_id,
                     task_seq_key(
                         task_key(row[1], after_task_id),
-                        anchor_of(row[3], row[4], int(row[0])),
+                        anchor_of(row[3], row[4], int(row[0]), anchor_course_id=row[5]),
                     ),
                     host_alt,
                 )
@@ -1962,11 +1961,12 @@ class LearningEngineService:
     ) -> List[Tuple[int, TaskKey, Optional[Anchor]]]:
         """То же, что `_ordered_task_rows`, плюс действующий якорь (tsk-996).
 
-        Якорь читается тем же запросом: `LEFT JOIN materials` по id якоря И
-        курсу задания — якорь на материал другого курса или удалённый даёт
-        NULL, то есть «без якоря». Материал берётся любой (и неактивный): его
-        задания стоят на его месте. У заданий прозрачного подкурса в списке
-        хозяина якорь не учитывается (`anchor_of(..., absorbed=True)`).
+        Якорь читается тем же запросом: `LEFT JOIN materials` по id якоря
+        (с курсом материала); действует ли он в этом узле, решает `anchor_of`:
+        у своего задания — материал этого курса, у задания прозрачного
+        подкурса в списке хозяина — материал хозяина (фаза D). Якорь на
+        материал другого курса или удалённый — «без якоря». Материал берётся
+        любой (и неактивный): его задания стоят на его месте.
         """
         links = await transparent_links(db)
         absorbed = [c for c, h in links.items() if h == course_id]
@@ -1974,15 +1974,9 @@ class LearningEngineService:
         tasks_stmt = (
             select(
                 Tasks.id, Tasks.order_position, Tasks.host_order_position, Tasks.course_id,
-                anchor_m.id, anchor_m.order_position,
+                anchor_m.id, anchor_m.order_position, anchor_m.course_id,
             )
-            .outerjoin(
-                anchor_m,
-                and_(
-                    anchor_m.id == Tasks.anchor_material_id,
-                    anchor_m.course_id == Tasks.course_id,
-                ),
-            )
+            .outerjoin(anchor_m, anchor_m.id == Tasks.anchor_material_id)
             .where(
                 Tasks.course_id.in_([course_id, *absorbed]),
                 Tasks.is_active.is_(True),
@@ -2000,7 +1994,10 @@ class LearningEngineService:
                     host_order_position=row[2],
                     absorbed=is_absorbed,
                 ),
-                anchor_of(row[4], row[5], int(row[3]), absorbed=is_absorbed),
+                anchor_of(
+                    row[4], row[5], int(row[3]), absorbed=is_absorbed,
+                    anchor_course_id=row[6], host_course_id=course_id,
+                ),
             ))
         rows.sort(key=lambda x: x[1])
         return rows
@@ -2016,6 +2013,9 @@ class LearningEngineService:
         обхода (неактивные, `recommended`), если на них стоит якорь, и признак
         по каждой строке — поэтому узел без якорей стоит один запрос, как и
         прежде, а задания голова читает только когда они ей нужны.
+
+        Фаза D: якорь на материал узла ставят и задания его прозрачных
+        подкурсов (банки ОГЭ в уроке) — признак учитывает и их.
         """
         r = await db.execute(
             text(
@@ -2024,7 +2024,11 @@ class LearningEngineService:
                 "         AS in_walk, "
                 "       EXISTS (SELECT 1 FROM tasks t "
                 "               WHERE t.anchor_material_id = m.id "
-                "                 AND t.course_id = m.course_id) AS anchored "
+                "                 AND (t.course_id = m.course_id "
+                "                      OR EXISTS (SELECT 1 FROM course_parents cp "
+                "                                 WHERE cp.course_id = t.course_id "
+                "                                   AND cp.parent_course_id = m.course_id "
+                "                                   AND cp.is_transparent))) AS anchored "
                 "FROM materials m "
                 "WHERE m.course_id = :cid "
                 "ORDER BY m.order_position ASC NULLS LAST, m.id ASC"

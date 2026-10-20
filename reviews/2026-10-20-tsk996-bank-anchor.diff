@@ -1,0 +1,1915 @@
+diff --git a/app/api/v1/tasks_extra.py b/app/api/v1/tasks_extra.py
+index 9b11e28..1b06c6f 100644
+--- a/app/api/v1/tasks_extra.py
++++ b/app/api/v1/tasks_extra.py
+@@ -3,6 +3,7 @@ from __future__ import annotations
+ from fastapi import APIRouter, Depends, Body, Query, HTTPException, status
+ from sqlalchemy.ext.asyncio import AsyncSession
+ from sqlalchemy import select, or_
++from sqlalchemy.exc import DBAPIError
+ from typing import Any, List, Literal, Optional, Dict
+ from pydantic import BaseModel, Field
+ import logging
+@@ -757,8 +758,9 @@ async def bulk_upsert_tasks_endpoint(
+     Правила:
+     - если external_uid не найден → создаём задачу (action = 'created');
+     - если найден → обновляем существующую задачу (action = 'updated');
+-    - `anchor_external_uid` (tsk-996) — якорь задания к материалу его узла;
+-      не найденный в узле — в `warnings`, задание записывается без якоря.
++    - `anchor_external_uid` (tsk-996) — якорь задания к материалу его узла
++      или (фаза D) прозрачного хозяина узла; не найденный — в `warnings`,
++      задание записывается без якоря.
+ 
+     Это позволяет существенно ускорить импорт из Google Sheets:
+     одно HTTP-обращение вместо сотен.
+@@ -1583,12 +1585,74 @@ class TaskManualPatch(BaseModel):
+             "tsk-996: материал раздела, сразу после которого задание стоит у "
+             "ученика. Явный `null` — «в конце раздела» (якорь снят); поле не "
+             "передано — якорь не меняется. Материал обязан быть из курса "
+-            "задания, иначе 422. Ручная правка ставит `anchor_source='manual'` "
+-            "— переиздание из ContentBackbone такой якорь не перезаписывает."
++            "задания или из курса, к которому курс задания подвешен "
++            "прозрачной связью (фаза D: банк заданий в уроке), иначе 422. "
++            "Варианты — `GET /tasks/{id}/anchor-materials`. Ручная правка "
++            "ставит `anchor_source='manual'` — переиздание из ContentBackbone "
++            "такой якорь не перезаписывает."
+         ),
+     )
+ 
+ 
++class TaskAnchorMaterialOption(BaseModel):
++    """Материал, который можно выбрать якорем задания (tsk-996)."""
++
++    id: int
++    course_id: int
++    course_title: Optional[str] = None
++    title: Optional[str] = None
++    is_active: bool
++    order_position: Optional[int] = None
++    origin: Literal["own", "host"] = Field(
++        description=(
++            "`own` — материал раздела самого задания; `host` — материал "
++            "раздела, внутри которого ученик видит задания этого курса "
++            "(прозрачный подкурс, tsk-1198)."
++        ),
++    )
++
++
++class TaskAnchorMaterialsResponse(BaseModel):
++    """Допустимые якоря задания — ровно то, что примет PATCH (tsk-996)."""
++
++    task_id: int
++    course_id: int
++    items: List[TaskAnchorMaterialOption]
++
++
++@router.get(
++    "/tasks/{task_id}/anchor-materials",
++    response_model=TaskAnchorMaterialsResponse,
++    summary="Материалы для якоря задания (tsk-996: cookie auth + роль)",
++    responses={
++        200: {"description": "Список допустимых материалов"},
++        401: {"description": "Не аутентифицирован"},
++        403: {"description": "Роль не позволяет править задания"},
++        404: {"description": "Задание не существует"},
++    },
++)
++async def list_task_anchor_materials(
++    task_id: int,
++    db: AsyncSession = Depends(get_async_db),
++    current_user: CurrentUser = Depends(require_role("methodist", "admin")),
++) -> Any:
++    """Материалы для поля «Показывать после материала» в редакторе задания.
++
++    Сначала материалы раздела задания, затем (фаза D) материалы раздела, к
++    которому курс задания подвешен прозрачной связью: задания банков ОГЭ
++    ученик видит внутри урока, и якорь на материал урока допустим. Выключенные
++    материалы тоже в списке — якорь на них сервер принимает. Тот же предикат,
++    что у проверки PATCH и триггера-стража.
++    """
++    from app.models.tasks import Tasks  # noqa: PLC0415 — circular avoid
++
++    task = (await db.execute(select(Tasks).where(Tasks.id == task_id))).scalar_one_or_none()
++    if task is None:
++        raise HTTPException(status.HTTP_404_NOT_FOUND, "Задание не найдено")
++    items = await TasksService().anchor_material_options(db, task)
++    return {"task_id": task.id, "course_id": task.course_id, "items": items}
++
++
+ @router.patch(
+     "/tasks/{task_id}",
+     response_model=TaskRead,
+@@ -1601,7 +1665,8 @@ class TaskManualPatch(BaseModel):
+         422: {
+             "description": (
+                 "Правило проверки не соответствует содержимому либо якорь "
+-                "указывает на материал не из раздела задания"
++                "указывает на материал не из раздела задания и не из его "
++                "прозрачного хозяина"
+             )
+         },
+     },
+@@ -1653,6 +1718,17 @@ async def patch_task_manual(
+         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e)) from e
+     except HTTPException:
+         raise
++    except DBAPIError as e:
++        # tsk-996: проверка выше прошла, но страж базы отказал — между ними
++        # параллельно сняли прозрачную связь или перенесли материал.
++        if "tsk-996:" not in str(e.orig):
++            raise
++        await db.rollback()
++        raise HTTPException(
++            status.HTTP_422_UNPROCESSABLE_ENTITY,
++            "Материал больше не подходит для якоря задания (раздел изменился) — "
++            "обновите список и выберите снова",
++        ) from e
+     except ValueError as e:
+         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e)) from e
+ 
+diff --git a/app/db/migrations/versions/2026_10_20_tsk996_bank_anchor.py b/app/db/migrations/versions/2026_10_20_tsk996_bank_anchor.py
+new file mode 100644
+index 0000000..a8447bc
+--- /dev/null
++++ b/app/db/migrations/versions/2026_10_20_tsk996_bank_anchor.py
+@@ -0,0 +1,267 @@
++"""tsk-996 (фаза D): якорь задания банка на материал прозрачного хозяина.
++
++Пилот 20.10 (курс ОГЭ): задания уроков ОГЭ живут не в узле урока, а в
++курсах-банках (задание 6308 — в 1948 «lms:tsk1161:bank:oge1»), подвешенных к
++узлу урока (1111 «wp:oge-z1») ПРОЗРАЧНОЙ связью `course_parents.is_transparent`
++(tsk-1198). Ученик видит их внутри урока, а якорь фазы B разрешал только
++материал курса самого задания — PATCH на материал 2358 урока давал 422.
++
++Правило якоря теперь: материал курса задания ИЛИ материал курса P, если есть
++`course_parents(course_id = курс задания, parent_course_id = P,
++is_transparent = true)` — прямой родитель, для которого курс задания прозрачен.
++Тот же предикат — в сервисе (`TasksService.anchor_course_ids`, 422 в PATCH и
++список вариантов методисту) и в порядке узла (`node_sequence.anchor_of`:
++в списке хозяина якорь на его материал действует, в самом банке как разделе
++практикума — нет).
++
++* `tasks_anchor_guard` — та же функция фазы B, проверка курса материала
++  расширена прозрачным родителем. Связь читается `FOR SHARE`: параллельное
++  снятие прозрачности дождётся этой транзакции, и его триггер увидит якорь.
++  Переезд задания по-прежнему обнуляет якорь (как в фазе B).
++* `course_parents_anchor_on_unlink` (AFTER UPDATE OF is_transparent, course_id,
++  parent_course_id OR DELETE на `course_parents`) — прозрачная связь снята,
++  удалена или перенесена на другого родителя (`set_parent_courses` переносит
++  родителя UPDATE-ом `parent_course_id`, tsk-174): якоря заданий подкурса на
++  материалы бывшего хозяина обнуляются вместе с источником. Триггер, а не
++  сервис: связь правят `courses_repo.set_parent_courses` (UPDATE и DELETE),
++  `individual_courses_service`, скрипт разметки tsk-1198 и ручной SQL, а
++  удаление курса снимает её каскадом — сервис покрыл бы только часть путей.
++  При каскадном удалении курса (строки курса уже нет) триггер ничего не делает:
++  задания удаляемого курса уходят каскадом, материалы удаляемого хозяина —
++  `ON DELETE SET NULL` на `tasks.anchor_material_id`.
++* `materials_anchor_on_move` — материал уехал в другой курс: якорь остаётся
++  только у заданий, для которых новый курс материала допустим (свой курс или
++  прозрачный хозяин), остальные обнуляются.
++
++Данных не меняет: новые якоря ставят методист и публикатор.
++
++Rollback: `alembic downgrade tsk1384_help_stuck_reason` — функции фазы B
++возвращаются, триггер на `course_parents` снимается; якоря на материалы
++хозяина (их прежний страж не допускает) обнуляются вместе с источником.
++
++Revision ID: tsk996_bank_anchor
++Revises: tsk1384_help_stuck_reason
++Create Date: 2026-10-20
++"""
++from typing import Sequence, Union
++
++from alembic import op
++
++revision: str = "tsk996_bank_anchor"
++down_revision: Union[str, None] = "tsk1384_help_stuck_reason"
++branch_labels: Union[str, Sequence[str], None] = None
++depends_on: Union[str, Sequence[str], None] = None
++
++
++_GUARD_FN = """
++CREATE OR REPLACE FUNCTION tasks_anchor_guard()
++RETURNS TRIGGER AS $$
++DECLARE
++    anchor_course INTEGER;
++BEGIN
++    IF TG_OP = 'UPDATE' THEN
++        -- Переезд задания: якорь, оставшийся от старого узла, снимается.
++        IF OLD.course_id IS DISTINCT FROM NEW.course_id
++           AND NEW.anchor_material_id IS NOT DISTINCT FROM OLD.anchor_material_id THEN
++            NEW.anchor_material_id := NULL;
++            NEW.anchor_source := NULL;
++        END IF;
++        IF NEW.anchor_material_id IS NOT DISTINCT FROM OLD.anchor_material_id
++           AND NEW.course_id IS NOT DISTINCT FROM OLD.course_id THEN
++            RETURN NEW;
++        END IF;
++        -- Материал удалён (FK SET NULL): якоря нет не по выбору методиста.
++        IF OLD.anchor_material_id IS NOT NULL
++           AND NEW.anchor_material_id IS NULL
++           AND NEW.anchor_source IS NOT DISTINCT FROM OLD.anchor_source
++           AND NOT EXISTS (SELECT 1 FROM materials WHERE id = OLD.anchor_material_id) THEN
++            NEW.anchor_source := NULL;
++        END IF;
++    END IF;
++
++    IF NEW.anchor_material_id IS NULL THEN
++        RETURN NEW;
++    END IF;
++
++    SELECT course_id INTO anchor_course
++    FROM materials
++    WHERE id = NEW.anchor_material_id
++    FOR SHARE;
++
++    IF anchor_course IS NOT DISTINCT FROM NEW.course_id THEN
++        RETURN NEW;
++    END IF;
++
++    -- tsk-996 (фаза D): материал прозрачного хозяина — курс задания подвешен
++    -- к курсу материала прозрачной связью (tsk-1198).
++    IF anchor_course IS NOT NULL THEN
++        PERFORM 1
++        FROM course_parents
++        WHERE course_id = NEW.course_id
++          AND parent_course_id = anchor_course
++          AND is_transparent
++        FOR SHARE;
++        IF FOUND THEN
++            RETURN NEW;
++        END IF;
++    END IF;
++
++    RAISE EXCEPTION
++        'tsk-996: якорь задания % на материал % не из курса задания % и не из его прозрачного хозяина (курс материала: %)',
++        NEW.id, NEW.anchor_material_id, NEW.course_id, anchor_course
++        USING ERRCODE = 'check_violation';
++END;
++$$ LANGUAGE plpgsql;
++"""
++
++_MOVE_FN = """
++CREATE OR REPLACE FUNCTION materials_anchor_on_move()
++RETURNS TRIGGER AS $$
++BEGIN
++    IF OLD.course_id IS DISTINCT FROM NEW.course_id THEN
++        UPDATE tasks t
++        SET anchor_material_id = NULL,
++            anchor_source = NULL
++        WHERE t.anchor_material_id = NEW.id
++          AND t.course_id IS DISTINCT FROM NEW.course_id
++          AND NOT EXISTS (
++              SELECT 1 FROM course_parents cp
++              WHERE cp.course_id = t.course_id
++                AND cp.parent_course_id = NEW.course_id
++                AND cp.is_transparent
++          );
++    END IF;
++    RETURN NULL;
++END;
++$$ LANGUAGE plpgsql;
++"""
++
++_UNLINK_FN = """
++CREATE OR REPLACE FUNCTION course_parents_anchor_on_unlink()
++RETURNS TRIGGER AS $$
++BEGIN
++    IF NOT OLD.is_transparent THEN
++        RETURN NULL;
++    END IF;
++    -- Каскадное удаление курса: задания и материалы уходят своими путями.
++    IF NOT EXISTS (SELECT 1 FROM courses WHERE id = OLD.course_id)
++       OR NOT EXISTS (SELECT 1 FROM courses WHERE id = OLD.parent_course_id) THEN
++        RETURN NULL;
++    END IF;
++    -- Связь (подкурс, хозяин) осталась прозрачной — якоря действуют.
++    IF EXISTS (
++        SELECT 1 FROM course_parents
++        WHERE course_id = OLD.course_id
++          AND parent_course_id = OLD.parent_course_id
++          AND is_transparent
++    ) THEN
++        RETURN NULL;
++    END IF;
++    UPDATE tasks t
++    SET anchor_material_id = NULL,
++        anchor_source = NULL
++    FROM materials m
++    WHERE m.id = t.anchor_material_id
++      AND m.course_id = OLD.parent_course_id
++      AND t.course_id = OLD.course_id;
++    RETURN NULL;
++END;
++$$ LANGUAGE plpgsql;
++"""
++
++# Функции фазы B (`2026_10_19_tsk996_task_anchor.py`) — для downgrade.
++_GUARD_FN_PHASE_B = """
++CREATE OR REPLACE FUNCTION tasks_anchor_guard()
++RETURNS TRIGGER AS $$
++DECLARE
++    anchor_course INTEGER;
++BEGIN
++    IF TG_OP = 'UPDATE' THEN
++        -- Переезд задания: якорь, оставшийся от старого узла, снимается.
++        IF OLD.course_id IS DISTINCT FROM NEW.course_id
++           AND NEW.anchor_material_id IS NOT DISTINCT FROM OLD.anchor_material_id THEN
++            NEW.anchor_material_id := NULL;
++            NEW.anchor_source := NULL;
++        END IF;
++        IF NEW.anchor_material_id IS NOT DISTINCT FROM OLD.anchor_material_id
++           AND NEW.course_id IS NOT DISTINCT FROM OLD.course_id THEN
++            RETURN NEW;
++        END IF;
++        -- Материал удалён (FK SET NULL): якоря нет не по выбору методиста.
++        IF OLD.anchor_material_id IS NOT NULL
++           AND NEW.anchor_material_id IS NULL
++           AND NEW.anchor_source IS NOT DISTINCT FROM OLD.anchor_source
++           AND NOT EXISTS (SELECT 1 FROM materials WHERE id = OLD.anchor_material_id) THEN
++            NEW.anchor_source := NULL;
++        END IF;
++    END IF;
++
++    IF NEW.anchor_material_id IS NULL THEN
++        RETURN NEW;
++    END IF;
++
++    SELECT course_id INTO anchor_course
++    FROM materials
++    WHERE id = NEW.anchor_material_id
++    FOR SHARE;
++
++    IF anchor_course IS DISTINCT FROM NEW.course_id THEN
++        RAISE EXCEPTION
++            'tsk-996: якорь задания % на материал % не из курса задания % (курс материала: %)',
++            NEW.id, NEW.anchor_material_id, NEW.course_id, anchor_course
++            USING ERRCODE = 'check_violation';
++    END IF;
++    RETURN NEW;
++END;
++$$ LANGUAGE plpgsql;
++"""
++
++_MOVE_FN_PHASE_B = """
++CREATE OR REPLACE FUNCTION materials_anchor_on_move()
++RETURNS TRIGGER AS $$
++BEGIN
++    IF OLD.course_id IS DISTINCT FROM NEW.course_id THEN
++        UPDATE tasks
++        SET anchor_material_id = NULL,
++            anchor_source = NULL
++        WHERE anchor_material_id = NEW.id
++          AND course_id IS DISTINCT FROM NEW.course_id;
++    END IF;
++    RETURN NULL;
++END;
++$$ LANGUAGE plpgsql;
++"""
++
++
++def upgrade() -> None:
++    op.execute(_GUARD_FN)
++    op.execute(_MOVE_FN)
++    op.execute(_UNLINK_FN)
++    op.execute(
++        """
++        CREATE TRIGGER trg_course_parents_anchor_on_unlink
++        AFTER UPDATE OF is_transparent, course_id, parent_course_id OR DELETE
++        ON course_parents
++        FOR EACH ROW EXECUTE FUNCTION course_parents_anchor_on_unlink();
++        """
++    )
++
++
++def downgrade() -> None:
++    op.execute(
++        "DROP TRIGGER IF EXISTS trg_course_parents_anchor_on_unlink ON course_parents"
++    )
++    op.execute("DROP FUNCTION IF EXISTS course_parents_anchor_on_unlink()")
++    # Якоря на материал хозяина прежний страж не допускает — снимаются.
++    op.execute(
++        """
++        UPDATE tasks t
++        SET anchor_material_id = NULL,
++            anchor_source = NULL
++        FROM materials m
++        WHERE m.id = t.anchor_material_id
++          AND m.course_id <> t.course_id
++        """
++    )
++    op.execute(_MOVE_FN_PHASE_B)
++    op.execute(_GUARD_FN_PHASE_B)
+diff --git a/app/models/tasks.py b/app/models/tasks.py
+index 16508a5..c77aa2f 100644
+--- a/app/models/tasks.py
++++ b/app/models/tasks.py
+@@ -116,7 +116,8 @@ class Tasks(Base):
+     )
+     # tsk-996 (ADR-0008): материал своего узла, сразу после которого задание
+     # стоит в учебном порядке (`app/services/node_sequence.py`). NULL — в конце
+-    # узла. Инвариант «тот же курс» держит триггер `trg_tasks_anchor_guard`.
++    # узла. Инвариант «тот же курс или его прозрачный хозяин» (фаза D, миграция
++    # `tsk996_bank_anchor`) держит триггер `trg_tasks_anchor_guard`.
+     anchor_material_id: Mapped[Optional[int]] = mapped_column(
+         Integer,
+         ForeignKey("materials.id", ondelete="SET NULL", name="tasks_anchor_material_id_fkey"),
+diff --git a/app/schemas/tasks.py b/app/schemas/tasks.py
+index 41be8b1..ec51412 100644
+--- a/app/schemas/tasks.py
++++ b/app/schemas/tasks.py
+@@ -115,7 +115,8 @@ class TaskRead(BaseModel):
+     anchor_material_id: Optional[int] = Field(
+         default=None,
+         description=(
+-            "tsk-996: материал того же раздела, сразу после которого задание "
++            "tsk-996: материал того же раздела (или, фаза D, раздела-хозяина "
++            "прозрачного подкурса задания), сразу после которого задание "
+             "стоит в учебном порядке. NULL — в конце раздела (после всех "
+             "материалов и подразделов). Порядок ученику отдаёт сервер."
+         ),
+@@ -253,8 +254,10 @@ class TaskUpsertItem(BaseModel):
+         description=(
+             "tsk-996 (ADR-0008): external_uid материала, сразу после которого "
+             "задание стоит в учебном порядке узла (публикатор ContentBackbone "
+-            "ставит материал H2-раздела задания, `{base}#m{N}`). Ищется только "
+-            "среди материалов курса самого задания; не найден — якорь не "
++            "ставит материал H2-раздела задания, `{base}#m{N}`). Ищется среди "
++            "материалов курса самого задания, затем (фаза D) среди материалов "
++            "курса, к которому курс задания подвешен прозрачной связью "
++            "(tsk-1198, банк заданий в уроке); не найден — якорь не "
+             "ставится, в ответе предупреждение. Ставит `anchor_source='publish'` "
+             "и не трогает ручной якорь методиста (`manual`). Поле не передано — "
+             "якорь не меняется; явный null снимает якорь публикатора."
+@@ -283,7 +286,8 @@ class TaskBulkUpsertResponse(BaseModel):
+     Ответ bulk-upsert'а задач.
+ 
+     `warnings` (tsk-996) — что принято, но применено не целиком: якорь
+-    `anchor_external_uid`, не найденный среди материалов узла задания.
++    `anchor_external_uid`, не найденный среди материалов узла задания и его
++    прозрачного хозяина.
+     """
+     results: List[TaskBulkUpsertResultItem]
+     warnings: List[str] = Field(default_factory=list)
+diff --git a/app/services/content_grace_service.py b/app/services/content_grace_service.py
+index 17dce3a..3a4ec41 100644
+--- a/app/services/content_grace_service.py
++++ b/app/services/content_grace_service.py
+@@ -144,9 +144,15 @@ class _Item:
+     done: bool  # ученик элемент закрыл
+     done_at: Optional[datetime]  # когда закрыл; None при done=True — неизвестно
+     # tsk-996 (фаза B): действующий якорь задания — (id, order_position)
+-    # материала своего курса; None — задание в конце узла.
++    # материала своего курса; None — задание в конце узла. Фаза D:
++    # `anchor_course_id` — курс материала; у задания прозрачного подкурса это
++    # может быть хозяин, и тогда в обходе задание стоит в голове хозяина.
+     anchor_material_id: Optional[int] = None
+     anchor_order_position: Optional[int] = None
++    anchor_course_id: Optional[int] = None
++    # tsk-1198: место задания прозрачного подкурса в списке хозяина — ключ
++    # группы якоря в голове хозяина (фаза D), как у движка.
++    host_order_position: Optional[int] = None
+ 
+ 
+ @dataclass
+@@ -266,12 +272,24 @@ SELECT
+             THEN lp.submitted_at
+     END AS done_at,
+     -- tsk-996 (фаза B): действующий якорь задания (материал того же курса,
+-    -- любой — и неактивный); иначе NULL — задание в конце узла.
++    -- любой — и неактивный); иначе NULL — задание в конце узла. Фаза D:
++    -- или материал прозрачного хозяина курса задания (tsk-1198).
+     am.id AS anchor_material_id,
+-    am.order_position AS anchor_order_position
++    am.order_position AS anchor_order_position,
++    am.course_id AS anchor_course_id,
++    t.host_order_position
+ FROM tasks t
+ LEFT JOIN materials am
+-    ON am.id = t.anchor_material_id AND am.course_id = t.course_id
++    ON am.id = t.anchor_material_id
++   AND (
++       am.course_id = t.course_id
++       OR EXISTS (
++           SELECT 1 FROM course_parents cp
++           WHERE cp.course_id = t.course_id
++             AND cp.parent_course_id = am.course_id
++             AND cp.is_transparent
++       )
++   )
+ LEFT JOIN last_per_task lp ON lp.task_id = t.id
+ LEFT JOIN student_task_progress stp
+     ON stp.task_id = t.id AND stp.student_id = :student_id
+@@ -291,6 +309,8 @@ SELECT
+             THEN COALESCE(smp.completed_at, smp.skipped_at)
+     END,
+     NULL,
++    NULL,
++    NULL,
+     NULL
+ FROM materials m
+ LEFT JOIN student_material_progress smp
+@@ -573,7 +593,8 @@ async def compute_grace_reasons(
+ 
+     for (
+         kind, item_id, course_id, order_position, created_at, done, done_at,
+-        anchor_material_id, anchor_order_position,
++        anchor_material_id, anchor_order_position, anchor_course_id,
++        host_order_position,
+     ) in item_rows:
+         node = nodes.get(int(course_id))
+         if node is None:
+@@ -589,6 +610,8 @@ async def compute_grace_reasons(
+                 done_at=done_at,
+                 anchor_material_id=anchor_material_id,
+                 anchor_order_position=anchor_order_position,
++                anchor_course_id=anchor_course_id,
++                host_order_position=host_order_position,
+             )
+         )
+ 
+@@ -689,6 +712,11 @@ def _walk_sequence_by_node_sequence(nodes: Dict[int, _Node], root_id: int) -> Li
+     Дерево уже загружено целиком (три запроса на дерево), поэтому обход идёт
+     без запросов: подразделы узла — его `child_order`. Прозрачные подкурсы
+     правило по-прежнему обходит как обычные подразделы.
++
++    Фаза D: задание прозрачного подкурса с якорем на материал хозяина стоит в
++    голове хозяина сразу после материала — там же, где его видит ученик
++    (движок). Узел задания (`course_id`, по нему правило ищет зачёты «в том
++    же узле») не меняется — меняется только место в обходе.
+     """
+     def children_of(course_id: int) -> List[Tuple[int, Optional[int]]]:
+         node = nodes.get(course_id)
+@@ -696,28 +724,54 @@ def _walk_sequence_by_node_sequence(nodes: Dict[int, _Node], root_id: int) -> Li
+             return []
+         return [(child_id, order_number) for order_number, child_id in node.child_order]
+ 
++    # Где элемент стоит в обходе: свой узел либо, для задания с якорем на
++    # материал прозрачного хозяина (SQL уже отобрал только такие), — хозяин.
++    placed: Dict[int, List[_Item]] = {cid: [] for cid in nodes}
++    for cid, node in nodes.items():
++        for item in node.own:
++            host = item.anchor_course_id
++            if (
++                item.kind == "task"
++                and item.anchor_material_id is not None
++                and host is not None
++                and int(host) != cid
++                and int(host) in nodes
++            ):
++                placed[int(host)].append(item)
++            else:
++                placed[cid].append(item)
++
+     sequence: List[_Item] = []
+     by_node: Dict[int, List[NodeEntry]] = {}
+     for course_id, segment in walk_steps(root_id, children_of):
+-        node = nodes.get(course_id)
+-        if node is None:
++        if course_id not in nodes:
+             continue
++        own = placed[course_id]
+         if course_id not in by_node:
+             by_node[course_id] = node_sequence(
+                 materials=[
+                     (i.item_id, i.order_position, i.course_id)
+-                    for i in node.own if i.kind == "material"
++                    for i in own if i.kind == "material"
+                 ],
+                 tasks=[
+                     (
+                         i.item_id,
+-                        task_key(i.order_position, i.item_id),
+-                        anchor_of(i.anchor_material_id, i.anchor_order_position, i.course_id),
++                        task_key(
++                            i.order_position, i.item_id,
++                            host_order_position=i.host_order_position,
++                            absorbed=i.course_id != course_id,
++                        ),
++                        anchor_of(
++                            i.anchor_material_id, i.anchor_order_position, i.course_id,
++                            absorbed=i.course_id != course_id,
++                            anchor_course_id=i.anchor_course_id,
++                            host_course_id=course_id,
++                        ),
+                     )
+-                    for i in node.own if i.kind == "task"
++                    for i in own if i.kind == "task"
+                 ],
+             )
+-        items = {(i.kind, i.item_id): i for i in node.own}
++        items = {(i.kind, i.item_id): i for i in own}
+         sequence.extend(
+             items[(e.kind, e.item_id)] for e in segment_entries(by_node[course_id], segment)
+         )
+diff --git a/app/services/learning_engine_service.py b/app/services/learning_engine_service.py
+index 9e305b8..f47f3b1 100644
+--- a/app/services/learning_engine_service.py
++++ b/app/services/learning_engine_service.py
+@@ -11,7 +11,7 @@ import logging
+ from datetime import datetime
+ from typing import Any, List, Optional, Sequence, Tuple
+ 
+-from sqlalchemy import and_, select, text, func
++from sqlalchemy import select, text, func
+ from sqlalchemy.orm import aliased
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+@@ -1230,20 +1230,16 @@ class LearningEngineService:
+         if after_task_id is not None:
+             # tsk-996 (фаза B): якорь — тем же запросом. Задание с действующим
+             # якорем стоит в голове узла сразу после своего материала, и курсор
+-            # режет голову по его ключу.
++            # режет голову по его ключу. Какой якорь действует, решает
++            # `anchor_of` по курсу материала: в своём узле — материал курса
++            # задания, в списке прозрачного хозяина — материал хозяина (фаза D).
+             anchor_m = aliased(Materials)
+             r = await db.execute(
+                 select(
+                     Tasks.course_id, Tasks.order_position, Tasks.host_order_position,
+-                    anchor_m.id, anchor_m.order_position,
+-                )
+-                .outerjoin(
+-                    anchor_m,
+-                    and_(
+-                        anchor_m.id == Tasks.anchor_material_id,
+-                        anchor_m.course_id == Tasks.course_id,
+-                    ),
++                    anchor_m.id, anchor_m.order_position, anchor_m.course_id,
+                 )
++                .outerjoin(anchor_m, anchor_m.id == Tasks.anchor_material_id)
+                 .where(Tasks.id == after_task_id)
+             )
+             row = r.fetchone()
+@@ -1251,21 +1247,24 @@ class LearningEngineService:
+                 host = (await transparent_links(db)).get(int(row[0]))
+                 host_alt = None
+                 if host is not None:
+-                    # В списке хозяина якорь не учитывается (tsk-1198).
+                     host_alt = (
+                         host,
+                         task_seq_key(
+                             task_key(
+                                 None, after_task_id,
+                                 host_order_position=row[2], absorbed=True,
+-                            )
++                            ),
++                            anchor_of(
++                                row[3], row[4], int(row[0]), absorbed=True,
++                                anchor_course_id=row[5], host_course_id=host,
++                            ),
+                         ),
+                     )
+                 return (
+                     int(row[0]), "task", after_task_id,
+                     task_seq_key(
+                         task_key(row[1], after_task_id),
+-                        anchor_of(row[3], row[4], int(row[0])),
++                        anchor_of(row[3], row[4], int(row[0]), anchor_course_id=row[5]),
+                     ),
+                     host_alt,
+                 )
+@@ -1962,11 +1961,12 @@ class LearningEngineService:
+     ) -> List[Tuple[int, TaskKey, Optional[Anchor]]]:
+         """То же, что `_ordered_task_rows`, плюс действующий якорь (tsk-996).
+ 
+-        Якорь читается тем же запросом: `LEFT JOIN materials` по id якоря И
+-        курсу задания — якорь на материал другого курса или удалённый даёт
+-        NULL, то есть «без якоря». Материал берётся любой (и неактивный): его
+-        задания стоят на его месте. У заданий прозрачного подкурса в списке
+-        хозяина якорь не учитывается (`anchor_of(..., absorbed=True)`).
++        Якорь читается тем же запросом: `LEFT JOIN materials` по id якоря
++        (с курсом материала); действует ли он в этом узле, решает `anchor_of`:
++        у своего задания — материал этого курса, у задания прозрачного
++        подкурса в списке хозяина — материал хозяина (фаза D). Якорь на
++        материал другого курса или удалённый — «без якоря». Материал берётся
++        любой (и неактивный): его задания стоят на его месте.
+         """
+         links = await transparent_links(db)
+         absorbed = [c for c, h in links.items() if h == course_id]
+@@ -1974,15 +1974,9 @@ class LearningEngineService:
+         tasks_stmt = (
+             select(
+                 Tasks.id, Tasks.order_position, Tasks.host_order_position, Tasks.course_id,
+-                anchor_m.id, anchor_m.order_position,
+-            )
+-            .outerjoin(
+-                anchor_m,
+-                and_(
+-                    anchor_m.id == Tasks.anchor_material_id,
+-                    anchor_m.course_id == Tasks.course_id,
+-                ),
++                anchor_m.id, anchor_m.order_position, anchor_m.course_id,
+             )
++            .outerjoin(anchor_m, anchor_m.id == Tasks.anchor_material_id)
+             .where(
+                 Tasks.course_id.in_([course_id, *absorbed]),
+                 Tasks.is_active.is_(True),
+@@ -2000,7 +1994,10 @@ class LearningEngineService:
+                     host_order_position=row[2],
+                     absorbed=is_absorbed,
+                 ),
+-                anchor_of(row[4], row[5], int(row[3]), absorbed=is_absorbed),
++                anchor_of(
++                    row[4], row[5], int(row[3]), absorbed=is_absorbed,
++                    anchor_course_id=row[6], host_course_id=course_id,
++                ),
+             ))
+         rows.sort(key=lambda x: x[1])
+         return rows
+@@ -2016,6 +2013,9 @@ class LearningEngineService:
+         обхода (неактивные, `recommended`), если на них стоит якорь, и признак
+         по каждой строке — поэтому узел без якорей стоит один запрос, как и
+         прежде, а задания голова читает только когда они ей нужны.
++
++        Фаза D: якорь на материал узла ставят и задания его прозрачных
++        подкурсов (банки ОГЭ в уроке) — признак учитывает и их.
+         """
+         r = await db.execute(
+             text(
+@@ -2024,7 +2024,11 @@ class LearningEngineService:
+                 "         AS in_walk, "
+                 "       EXISTS (SELECT 1 FROM tasks t "
+                 "               WHERE t.anchor_material_id = m.id "
+-                "                 AND t.course_id = m.course_id) AS anchored "
++                "                 AND (t.course_id = m.course_id "
++                "                      OR EXISTS (SELECT 1 FROM course_parents cp "
++                "                                 WHERE cp.course_id = t.course_id "
++                "                                   AND cp.parent_course_id = m.course_id "
++                "                                   AND cp.is_transparent))) AS anchored "
+                 "FROM materials m "
+                 "WHERE m.course_id = :cid "
+                 "ORDER BY m.order_position ASC NULLS LAST, m.id ASC"
+diff --git a/app/services/manual_progress_service.py b/app/services/manual_progress_service.py
+index a6d5a3a..ce9fec7 100644
+--- a/app/services/manual_progress_service.py
++++ b/app/services/manual_progress_service.py
+@@ -406,13 +406,14 @@ async def _tree_task_rows(db: AsyncSession, course_ids: list[int]) -> list[dict[
+                 "       t.task_content->>'title' AS tc_title, t.task_content->>'stem' AS tc_stem, "
+                 "       COALESCE((t.solution_rules->>'manual_review_required')::boolean, false) "
+                 "         AS manual_review_required, "
+-                # tsk-996 (фаза B): действующий якорь — материал того же курса
+-                # (любой, и неактивный); другой курс/удалённый — NULL.
++                # tsk-996 (фаза B): якорь — материал (любой, и неактивный) с его
++                # курсом; действует ли он в узле, решает `anchor_of` (свой курс
++                # или прозрачный хозяин, фаза D); удалённый — NULL.
+                 "       am.id AS anchor_material_id, "
+-                "       am.order_position AS anchor_order_position "
++                "       am.order_position AS anchor_order_position, "
++                "       am.course_id AS anchor_course_id "
+                 "FROM tasks t "
+-                "LEFT JOIN materials am "
+-                "  ON am.id = t.anchor_material_id AND am.course_id = t.course_id "
++                "LEFT JOIN materials am ON am.id = t.anchor_material_id "
+                 "WHERE t.course_id = ANY(:course_ids) AND t.is_active = true "
+                 "  AND t.requirement_level = ANY(:levels) "
+                 "ORDER BY t.course_id, t.order_position ASC NULLS LAST, t.id"
+@@ -1605,6 +1606,8 @@ async def _progress_items_by_sequence(
+                             t.get("anchor_material_id"), t.get("anchor_order_position"),
+                             int(t.get("_src_course_id", t["course_id"])),
+                             absorbed=bool(t.get("_absorbed")),
++                            anchor_course_id=t.get("anchor_course_id"),
++                            host_course_id=cid,
+                         ),
+                     )
+                     for t in tsks
+diff --git a/app/services/me_service.py b/app/services/me_service.py
+index c404166..b12cdaa 100644
+--- a/app/services/me_service.py
++++ b/app/services/me_service.py
+@@ -936,15 +936,16 @@ SELECT
+     EXISTS (
+         SELECT 1 FROM open_course_attempt oc WHERE oc.course_id = t.course_id
+     ) AS has_open_attempt,
+-    -- tsk-996 (фаза B): действующий якорь — материал того же курса (любой,
+-    -- и неактивный: его задания стоят на его месте). Другой курс или
+-    -- удалённый материал дают NULL — задание в конце узла.
++    -- tsk-996 (фаза B): якорь — материал (любой, и неактивный: его задания
++    -- стоят на его месте) с его курсом; действует ли он в узле, решает
++    -- `anchor_of`: свой курс задания или прозрачный хозяин (фаза D).
++    -- Удалённый материал даёт NULL — задание в конце узла.
+     am.id AS anchor_material_id,
+-    am.order_position AS anchor_order_position
++    am.order_position AS anchor_order_position,
++    am.course_id AS anchor_course_id
+ FROM tasks t
+ LEFT JOIN materials am
+     ON am.id = t.anchor_material_id
+-   AND am.course_id = t.course_id
+ LEFT JOIN last_per_task lp ON lp.task_id = t.id
+ LEFT JOIN attempts_per_task ap ON ap.task_id = t.id
+ LEFT JOIN override_per_task op ON op.task_id = t.id
+@@ -1384,6 +1385,8 @@ async def get_syllabus_states(
+     for r in task_rows:
+         t = dict(r)
+         src = int(t["course_id"])
++        # tsk-996: настоящий курс задания — для правила якоря `anchor_of`.
++        t["_src_course_id"] = src
+         t["_absorbed"] = src in absorbed
+         t["course_id"] = absorbed.get(src, src)
+         tasks_by_course.setdefault(t["course_id"], []).append(t)
+@@ -1421,7 +1424,8 @@ async def get_syllabus_states(
+                         ),
+                         anchor_of(
+                             t["anchor_material_id"], t["anchor_order_position"],
+-                            int(t["course_id"]), absorbed=bool(t.get("_absorbed")),
++                            int(t["_src_course_id"]), absorbed=bool(t.get("_absorbed")),
++                            anchor_course_id=t["anchor_course_id"], host_course_id=cid,
+                         ),
+                     )
+                     for tid, t in tsks.items()
+diff --git a/app/services/node_sequence.py b/app/services/node_sequence.py
+index d0528cc..c0366a0 100644
+--- a/app/services/node_sequence.py
++++ b/app/services/node_sequence.py
+@@ -34,13 +34,21 @@ ADR-0008 (`docs/ai/adr/0008-interleave-theory-practice-anchor.md`), фаза A
+ Фаза B (якорь, `tasks.anchor_material_id`): задание с действующим якорем
+ получает ключ своего материала с хвостиком ``task_key`` и встаёт сразу после
+ него — в голове узла, внутри группы по ``task_key``. Действующий якорь —
+-материал того же курса, что и задание (вызывающий отбирает его тем же
+-запросом заданий: ``JOIN materials ON id = anchor AND course_id = курс
+-задания``). Неактивный или «рекомендуемый» материал в выдачу не попадает, но
++материал того узла, в списке которого задание стоит (`anchor_of`; материал
++вызывающий читает тем же запросом заданий: ``LEFT JOIN materials ON id =
++anchor``). Неактивный или «рекомендуемый» материал в выдачу не попадает, но
+ его задания стоят на его месте: ключ считается по позиции материала, а не по
+ его присутствию в списке. Якорь на материал другого курса или удалённый —
+-задание в хвосте, как без якоря. Задания прозрачного подкурса в списке хозяина
+-(tsk-1198) якорь не учитывают — они в хвосте хозяина, как раньше. Прежний путь
++задание в хвосте, как без якоря.
++
++Фаза D (пилот ОГЭ 20.10): задание прозрачного подкурса (tsk-1198) в списке
++хозяина с якорем на материал хозяина встаёт в голову хозяина сразу после
++этого материала — в одной группе с заданиями самого хозяина с тем же якорем.
++Внутри группы порядок — по ``task_key``, тому же ключу, которым задания
++подкурса и хозяина сливаются в хвосте (место ``host_order_position`` против
++``order_position`` хозяина): относительный порядок заданий, привязанных к
++одному материалу, остаётся тем, к которому методист привык в хвосте. Без
++якоря такое задание — в хвосте хозяина, как раньше. Прежний путь
+ (``NODE_SEQUENCE_ENABLED=false``) якоря не читает вовсе: откат рубильником
+ возвращает и прежний порядок.
+ 
+@@ -142,17 +150,37 @@ def anchor_of(
+     task_course_id: int,
+     *,
+     absorbed: bool = False,
++    anchor_course_id: Optional[int] = None,
++    host_course_id: Optional[int] = None,
+ ) -> Optional[Anchor]:
+     """Действующий якорь задания из строки запроса либо None (tsk-996).
+ 
+-    ``anchor_material_id`` — id материала из ``LEFT JOIN materials ON id =
+-    tasks.anchor_material_id AND course_id = tasks.course_id``: NULL, если
+-    якоря нет, материал удалён или он из другого курса. Задание прозрачного
+-    подкурса в списке хозяина (``absorbed``) якорь не учитывает.
++    Правило одно: якорь действует, если материал — из того узла, в списке
++    которого задание стоит. Своё задание узла — материал его курса. Задание
++    прозрачного подкурса в списке хозяина (``absorbed``, tsk-1198) — материал
++    хозяина (``host_course_id``, фаза D: задания банков ОГЭ в уроке); якорь
++    такого задания на материал своего подкурса в списке хозяина не действует.
++    Тот же подкурс разделом практикума (второй родитель без прозрачности) —
++    своё задание узла, и якорь на материал хозяина там не действует: порядок
++    практикума не меняется.
++
++    ``anchor_course_id`` — курс материала якоря (``materials.course_id`` из
++    ``LEFT JOIN materials ON id = tasks.anchor_material_id``). ``None`` —
++    вызывающий уже отобрал JOIN-ом только материал курса задания (контракт
++    фазы B). NULL ``anchor_material_id`` — якоря нет или материал удалён.
+     """
+-    if anchor_material_id is None or absorbed:
++    if anchor_material_id is None:
+         return None
+-    return (int(anchor_material_id), anchor_order_position, int(task_course_id))
++    material_course = int(task_course_id if anchor_course_id is None else anchor_course_id)
++    if absorbed:
++        if host_course_id is None:
++            return None
++        node_course = int(host_course_id)
++    else:
++        node_course = int(task_course_id)
++    if material_course != node_course:
++        return None
++    return (int(anchor_material_id), anchor_order_position, node_course)
+ 
+ 
+ def child_seq_key(order_number: Optional[int], child_id: int) -> SeqKey:
+diff --git a/app/services/preview_navigation.py b/app/services/preview_navigation.py
+index 36ff1a5..67ad332 100644
+--- a/app/services/preview_navigation.py
++++ b/app/services/preview_navigation.py
+@@ -18,7 +18,7 @@ import logging
+ from dataclasses import dataclass
+ from typing import AsyncIterator, List, Literal, Optional, Tuple
+ 
+-from sqlalchemy import and_, exists, select
++from sqlalchemy import exists, or_, select
+ from sqlalchemy.orm import aliased
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+@@ -123,15 +123,9 @@ async def _ordered_items_by_sequence(
+                 select(
+                     Tasks.id, Tasks.order_position, Tasks.host_order_position,
+                     Tasks.course_id, Tasks.requirement_level,
+-                    anchor_m.id, anchor_m.order_position,
+-                )
+-                .outerjoin(
+-                    anchor_m,
+-                    and_(
+-                        anchor_m.id == Tasks.anchor_material_id,
+-                        anchor_m.course_id == Tasks.course_id,
+-                    ),
++                    anchor_m.id, anchor_m.order_position, anchor_m.course_id,
+                 )
++                .outerjoin(anchor_m, anchor_m.id == Tasks.anchor_material_id)
+                 .where(Tasks.course_id.in_([cid, *absorbed]), Tasks.is_active.is_(True))
+             )
+         ).all()
+@@ -146,7 +140,10 @@ async def _ordered_items_by_sequence(
+                     host_order_position=r[2],
+                     absorbed=is_absorbed,
+                 ),
+-                anchor_of(r[5], r[6], int(r[3]), absorbed=is_absorbed),
++                anchor_of(
++                    r[5], r[6], int(r[3]), absorbed=is_absorbed,
++                    anchor_course_id=r[7], host_course_id=cid,
++                ),
+             ))
+             eligible[("task", int(r[0]))] = r[4] in _WALK_LEVELS
+         task_cache[cid] = (tasks, eligible)
+@@ -162,9 +159,18 @@ async def _ordered_items_by_sequence(
+                     select(
+                         Materials.id, Materials.order_position, Materials.requirement_level,
+                         Materials.is_active,
++                        # Фаза D: якорь на материал узла ставят и задания
++                        # его прозрачных подкурсов.
+                         exists().where(
+                             Tasks.anchor_material_id == Materials.id,
+-                            Tasks.course_id == Materials.course_id,
++                            or_(
++                                Tasks.course_id == Materials.course_id,
++                                exists().where(
++                                    t_course_parents.c.course_id == Tasks.course_id,
++                                    t_course_parents.c.parent_course_id == Materials.course_id,
++                                    t_course_parents.c.is_transparent.is_(True),
++                                ),
++                            ),
+                         ),
+                     ).where(Materials.course_id == cid)
+                 )
+diff --git a/app/services/tasks_service.py b/app/services/tasks_service.py
+index f02af9b..4a95963 100644
+--- a/app/services/tasks_service.py
++++ b/app/services/tasks_service.py
+@@ -307,19 +307,63 @@ class TasksService(BaseService[Tasks]):
+         
+         return await super().update(db, db_obj, obj_in)
+ 
++    @staticmethod
++    async def transparent_hosts(
++        db: AsyncSession, course_ids: Sequence[int]
++    ) -> dict[int, list[int]]:
++        """Прозрачные хозяева курсов: ``{курс: [хозяин, ...]}`` (tsk-996, фаза D).
++
++        Хозяин — прямой родитель, для которого курс прозрачен
++        (``course_parents.is_transparent``, tsk-1198): задания курса ученик
++        видит в списке хозяина, поэтому якорь на материал хозяина допустим.
++        Порядок — как у `transparent_subcourse.transparent_links`
++        (``order_number``, затем id родителя). Тот же предикат — в триггере
++        ``trg_tasks_anchor_guard`` (миграция ``tsk996_bank_anchor``).
++        """
++        ids = sorted({int(c) for c in course_ids})
++        if not ids:
++            return {}
++        rows = (
++            await db.execute(
++                text(
++                    "SELECT course_id, parent_course_id FROM course_parents "
++                    "WHERE is_transparent AND course_id = ANY(:ids) "
++                    "ORDER BY order_number ASC NULLS LAST, parent_course_id"
++                ),
++                {"ids": ids},
++            )
++        ).fetchall()
++        hosts: dict[int, list[int]] = {}
++        for course_id, host in rows:
++            hosts.setdefault(int(course_id), []).append(int(host))
++        return hosts
++
++    async def anchor_course_ids(self, db: AsyncSession, course_id: int) -> list[int]:
++        """Курсы, материал которых может быть якорем задания курса (tsk-996).
++
++        Свой курс задания и (фаза D) его прозрачный хозяин. Хозяин — только
++        первый: так же его выбирает порядок узла
++        (`transparent_subcourse.transparent_links`), и якорь на материал
++        второго «хозяина» (ошибка разметки) ученик всё равно не увидел бы.
++        """
++        hosts = (await self.transparent_hosts(db, [course_id])).get(int(course_id), [])
++        return [int(course_id), *hosts[:1]]
++
+     async def validate_anchor(
+         self, db: AsyncSession, task: Tasks, anchor_material_id: Optional[int]
+     ) -> None:
+         """Проверить якорь задания к материалу (tsk-996, ADR-0008).
+ 
+-        Якорь — материал того же курса, что и задание (любой, в том числе
+-        неактивный: его задания стоят на его месте). ``None`` — снять якорь
+-        («в конце раздела»), всегда допустимо. Тот же инвариант держит
++        Якорь — материал того же курса, что и задание, или (фаза D) курса, к
++        которому курс задания подвешен прозрачной связью (банк заданий ОГЭ в
++        уроке: ученик видит задания банка в уроке). Материал любой, в том
++        числе неактивный: его задания стоят на его месте. ``None`` — снять
++        якорь («в конце раздела»), всегда допустимо. Тот же инвариант держит
+         триггер `trg_tasks_anchor_guard`; здесь он проверяется заранее, чтобы
+         методист получил понятный 422, а не ошибку базы.
+ 
+         Raises:
+-            DomainError: материала нет или он из другого курса.
++            DomainError: материала нет или он из недопустимого курса.
+         """
+         if anchor_material_id is None:
+             return
+@@ -331,12 +375,44 @@ class TasksService(BaseService[Tasks]):
+         ).scalar()
+         if material_course is None:
+             raise DomainError(f"Материал {anchor_material_id} не найден")
+-        if int(material_course) != int(task.course_id):
++        if int(material_course) not in await self.anchor_course_ids(db, int(task.course_id)):
+             raise DomainError(
+                 f"Материал {anchor_material_id} из другого раздела: якорь задания "
+-                "может указывать только на материал раздела самого задания"
++                "может указывать только на материал раздела самого задания или "
++                "раздела, внутри которого ученик видит задания этого курса "
++                "(прозрачный подкурс)"
+             )
+ 
++    async def anchor_material_options(
++        self, db: AsyncSession, task: Tasks
++    ) -> list[dict[str, Any]]:
++        """Материалы, которые методист может выбрать якорем задания (tsk-996).
++
++        Ровно те, что примет `validate_anchor`: материалы курса задания, затем
++        (фаза D) материалы его прозрачных хозяев. Внутри курса — учебный
++        порядок (``order_position NULLS LAST, id``), выключенные тоже: якорь
++        на них допустим. ``origin`` — ``own`` / ``host``: клиенту для подписи.
++        """
++        course_ids = await self.anchor_course_ids(db, int(task.course_id))
++        rows = (
++            await db.execute(
++                text(
++                    "SELECT m.id, m.course_id, c.title AS course_title, m.title, "
++                    "       m.is_active, m.order_position "
++                    "FROM materials m JOIN courses c ON c.id = m.course_id "
++                    "WHERE m.course_id = ANY(:ids) "
++                    "ORDER BY array_position(CAST(:ids AS integer[]), m.course_id), "
++                    "         m.order_position ASC NULLS LAST, m.id"
++                ),
++                {"ids": course_ids},
++            )
++        ).mappings().fetchall()
++        own = int(task.course_id)
++        return [
++            {**dict(r), "origin": "own" if int(r["course_id"]) == own else "host"}
++            for r in rows
++        ]
++
+     async def get_by_external_uid(
+         self,
+         db: AsyncSession,
+@@ -404,6 +480,20 @@ class TasksService(BaseService[Tasks]):
+         hard_twins, twin_course_ids = await self._resolve_hard_routing(db, items)
+         # tsk-996: материалы-якоря батча одним запросом, а не по запросу на задание.
+         anchor_materials = await self._load_anchor_materials(db, items)
++        # tsk-996 (фаза D): якорь может указывать и на материал прозрачного
++        # хозяина курса задания — хозяева курсов батча тоже одним запросом.
++        anchor_hosts = (
++            await self.transparent_hosts(
++                db,
++                [
++                    d["course_id"] for d in items
++                    if isinstance(d.get("course_id"), int)
++                    and isinstance(d.get("anchor_external_uid"), str)
++                ],
++            )
++            if anchor_materials
++            else {}
++        )
+ 
+         for data in items:
+             external_uid = data["external_uid"]
+@@ -451,7 +541,7 @@ class TasksService(BaseService[Tasks]):
+             )
+             # Якорь резолвится в КУРСЕ НАЗНАЧЕНИЯ (после маршрутизации HARD).
+             anchor_fields = self._publish_anchor_fields(
+-                data, existing, anchor_materials, warnings
++                data, existing, anchor_materials, warnings, anchor_hosts
+             )
+ 
+             if existing is None:
+@@ -653,6 +743,7 @@ class TasksService(BaseService[Tasks]):
+         existing: Optional[Tasks],
+         anchor_materials: dict[str, dict[int, int]],
+         warnings: List[str],
++        anchor_hosts: Optional[dict[int, list[int]]] = None,
+     ) -> Dict[str, Any]:
+         """Поля якоря задания из импорта (tsk-996, ADR-0008 «Владение якорем»).
+ 
+@@ -662,7 +753,9 @@ class TasksService(BaseService[Tasks]):
+           методиста переиздание не перезаписывает, в том числе его осознанное
+           «в конце раздела» (``manual`` при пустом якоре);
+         * материал найден среди материалов КУРСА ЗАДАНИЯ — якорь на него,
+-          источник ``publish``;
++          источник ``publish``; нет в своём курсе, но есть у прозрачного
++          хозяина курса задания (``anchor_hosts``, фаза D: банк заданий в
++          уроке) — якорь на материал хозяина, тоже ``publish``;
+         * не найден или только в чужом курсе — ``{}`` и предупреждение: якорь
+           на чужой узел запрещён (триггер ``trg_tasks_anchor_guard`` уронил бы
+           весь пакет), задание записывается как без поля — прежний якорь
+@@ -683,6 +776,12 @@ class TasksService(BaseService[Tasks]):
+         course_id = data.get("course_id")
+         by_course = anchor_materials.get(anchor_uid, {})
+         material_id = by_course.get(course_id) if isinstance(course_id, int) else None
++        if material_id is None and isinstance(course_id, int):
++            # Только первый хозяин — как в `anchor_course_ids` и порядке узла.
++            for host in (anchor_hosts or {}).get(course_id, [])[:1]:
++                material_id = by_course.get(host)
++                if material_id is not None:
++                    break
+         if material_id is None:
+             reason = (
+                 "материал из другого раздела" if by_course else "материала нет в разделе"
+diff --git a/docs/ai/adr/0008-interleave-theory-practice-anchor.md b/docs/ai/adr/0008-interleave-theory-practice-anchor.md
+index adf3ef6..da77e1c 100644
+--- a/docs/ai/adr/0008-interleave-theory-practice-anchor.md
++++ b/docs/ai/adr/0008-interleave-theory-practice-anchor.md
+@@ -157,6 +157,32 @@ index ix_tasks_anchor_material (anchor_material_id) WHERE anchor_material_id IS
+   — приняты (разделы выше и шаг 1 плана).
+ - Реального спора нет: Codex выбирал вслепую по коду; решение формы — за оператором.
+ 
++## Дополнение 2026-10-20: якорь задания банка на материал прозрачного хозяина (фаза D)
++
++Пилот 20.10 (курс ОГЭ): задания уроков ОГЭ живут в курсах-банках (6308 в 1948
++«lms:tsk1161:bank:oge1»), подвешенных к узлу урока (1111 «wp:oge-z1») прозрачной связью
++(tsk-1198) — ученик видит их внутри урока. Инвариант «материал того же курса» не давал
++поставить им якорь (422 на материал 2358).
++
++- **Правило якоря:** материал курса задания **или** курса P, если есть
++  `course_parents(course_id = курс задания, parent_course_id = P, is_transparent)`. Одно правило в
++  трёх местах: триггер `trg_tasks_anchor_guard` (миграция `tsk996_bank_anchor`),
++  `TasksService.anchor_course_ids` (PATCH, `GET /tasks/{id}/anchor-materials`, bulk-upsert),
++  `node_sequence.anchor_of` (порядок).
++- **Порядок:** в списке хозяина такое задание встаёт в голову сразу после материала, в одной группе
++  с заданиями хозяина с тем же якорем; внутри группы — `task_key` (тот же ключ, которым банк и
++  хозяин сливаются в хвосте, `host_order_position` против `order_position`). Без якоря — хвост, как
++  раньше. В банке как разделе практикума (второй родитель без прозрачности) якорь на материал
++  хозяина не действует — порядок практикума не меняется. Якорь задания банка на материал **самого
++  банка** в списке хозяина по-прежнему не действует (tsk-1198).
++- **Отвязка:** снятие прозрачности, удаление связи, перенос родителя (`set_parent_courses` делает
++  его UPDATE-ом) — триггер `trg_course_parents_anchor_on_unlink` обнуляет якоря заданий подкурса на
++  материалы бывшего хозяина (с источником). Триггер, а не сервис: связь правят несколько путей
++  (репозиторий, персональные курсы, скрипт tsk-1198, ручной SQL, каскад удаления курса).
++- **Правило «ушёл вперёд»** обходит прозрачные подкурсы разделами (как и прежде), но задание банка
++  с якорем на материал хозяина ставит в голову хозяина — туда, где его видит ученик.
++- Задания HARD, уходящие публикацией в подкурс сложных (tsk-347), якорь по-прежнему не получают.
++
+ ## Явно НЕ вводим
+ 
+ - Общую сквозную нумерацию материалов и заданий (Б1) и слияние сущностей (В).
+diff --git a/docs/briefs/2026-10-19-p7-anchor-implementation.md b/docs/briefs/2026-10-19-p7-anchor-implementation.md
+index edcd52f..3e0a294 100644
+--- a/docs/briefs/2026-10-19-p7-anchor-implementation.md
++++ b/docs/briefs/2026-10-19-p7-anchor-implementation.md
+@@ -108,6 +108,7 @@
+ - [ ] Перед выкатом A: снимок порядка на проде по 30 узлам (read-only) — сверка `true`/`false`
+ - [ ] Фаза B: миграция, страж, переезды, API, SPW-поле, тесты
+ - [x] Фаза C: CB-извлечение якорей, bulk-upsert с правилом владения, `--no-anchors`, тесты (ветки `claude/tsk-996-publish-anchors`, 19.10)
++- [x] Фаза D (пилот ОГЭ 20.10): якорь задания прозрачного подкурса-банка на материал хозяина — страж, отвязка, `node_sequence`, PATCH, `GET /tasks/{id}/anchor-materials`, bulk-upsert, SPW-поле (ветки `claude/tsk-996-bank-anchor`, 20.10; ADR-0008 «Дополнение 2026-10-20»)
+ - [ ] Ревью по каждой фазе ПРИНЯТО; коммиты на русском `(tsk-996)`; в облаке — ветки `claude/tsk-996-*`
+ - [ ] После C: пилотный курс — решение оператора; замер — tsk-1372
+ 
+diff --git a/reviews/2026-10-20-tsk996-bank-anchor-review.md b/reviews/2026-10-20-tsk996-bank-anchor-review.md
+new file mode 100644
+index 0000000..b459247
+--- /dev/null
++++ b/reviews/2026-10-20-tsk996-bank-anchor-review.md
+@@ -0,0 +1,35 @@
++# Ревью tsk-996, фаза D: якорь задания банка на материал прозрачного хозяина
++
++**Ревьюер:** независимый techlead (отдельный агент), 2026-10-20
++**Объём:** LMS — миграция `tsk996_bank_anchor`, `node_sequence`, 6 мест обхода, `tasks_service`, API `GET /tasks/{id}/anchor-materials`, тесты; SPW — `TaskAnchorSelect`, хук `useTaskAnchorMaterials`, unit-тест.
++
++## Вердикт: ПРИНЯТО
++
++BLOCKER — нет. MAJOR — нет.
++
++## Проверено ревьюером
++
++- `tests/test_tsk996_bank_anchor.py` — 22 passed; тесты фаз A–C и tsk-1198 — зелёные (кроме существующего флака `*-dependencies`, см. NIT-1).
++- SPW: `methodist-task-anchor-tsk996.test.tsx` 9 passed, `tsc --noEmit` чисто.
++- Одна голова alembic: `tsk996_task_anchor → tsk1384_help_stuck_reason → tsk996_bank_anchor`.
++- Соответствие пунктам 1–5 постановки; курсор next-item (`host_alt` с якорем, шаг HEAD хозяина, признак `has_anchors` шире правила `anchor_of` — задания не теряются, повторов нет); plpgsql (рекурсии нет, триггер пересчёта `order_number` не пересекается, каскад удаления курса — ранний выход); число запросов на узел не выросло.
++
++## Находки и что с ними сделано
++
++| # | Уровень | Находка | Решение |
++|---|---|---|---|
++| MINOR-1 | MINOR | Подкурс, прозрачный для двух родителей (ошибка разметки): сервис/список принимали любого хозяина, порядок узла — только первого | **Исправлено:** `anchor_course_ids` и bulk-upsert берут только первого хозяина (тот же порядок, что `transparent_links`); тест `test_two_transparent_parents_only_first_host`. Триггер-страж допускает любого прозрачного родителя (мягче сервиса, не опаснее); grace в таком дереве может поставить задание к второму хозяину — follow-up: частичный UNIQUE `course_parents(course_id) WHERE is_transparent` после проверки прода |
++| MINOR-2 | MINOR | Теоретическая взаимоблокировка PATCH якоря против снятия прозрачности той же пары (обратный порядок блокировок) | Не исправлено: редкий класс, тот же уже есть у переезда материала в фазе B; follow-up |
++| MINOR-3 | MINOR | Гонка «проверка сервиса прошла → страж отказал» давала 500 | **Исправлено:** PATCH ловит отказ стража (`tsk-996:` в ошибке базы) и отвечает 422 |
++| MINOR-4 | MINOR | Подпись группы «свой раздел» у задания банка не объясняла, что якорь на свой материал в уроке не действует | **Исправлено:** «Раздел этого задания — действует, когда раздел открыт сам по себе» |
++| NIT-1 | NIT | Флак `test_output_identical_with_switch_on_and_off[*-dependencies]`: `_BLOCKED_COURSES_SQL` без `ORDER BY` | Существующий дефект main (воспроизведён на чистом main); не в объёме задачи — follow-up |
++| NIT-2 | NIT | `key={g.label}` у `optgroup` | **Исправлено:** ключ по курсу |
++| NIT-3 | NIT | В ключе кеша списка вариантов нет курса задания | **Исправлено:** `courseId` в `queryKey` |
++| NIT-4 | NIT | Переезд задания обнуляет якорь даже если он допустим в новом курсе | Сознательно, как фаза B; отражено в ADR |
++| NIT-5 | NIT | Нет теста ролей у нового GET | Уже есть: 401/403/404 в `test_api_anchor_materials_lists_host` |
++
++## Follow-up
++
++1. Cross-project память (ContentBackbone `contracts/lms-api.md`, `contracts/lms-db-schema.md` — head `tsk996_bank_anchor`, `contracts/spw.md`, `CHANGELOG.md`) — в облаке репозитория CB нет, обновить на машине оператора.
++2. Перед выкатом на копии базы: `alembic downgrade tsk1384_help_stuck_reason` → `upgrade head`.
++3. На проде проверить, что нет подкурсов с двумя прозрачными родителями: `SELECT course_id FROM course_parents WHERE is_transparent GROUP BY 1 HAVING count(*) > 1`.
+diff --git a/reviews/2026-10-20-tsk996-bank-anchor.md b/reviews/2026-10-20-tsk996-bank-anchor.md
+new file mode 100644
+index 0000000..812594a
+--- /dev/null
++++ b/reviews/2026-10-20-tsk996-bank-anchor.md
+@@ -0,0 +1,11 @@
++# tsk-996 фаза D: якорь задания банка на материал прозрачного хозяина
++
++**Контекст:** пилот ОГЭ 20.10 — задания урока (6308) живут в курсе-банке 1948, подвешенном к уроку 1111 прозрачной связью (tsk-1198); якорь на материал урока 2358 давал 422 и не учитывался порядком. ADR-0008 «Дополнение 2026-10-20».
++
++**Что изменено:**
++- миграция `tsk996_bank_anchor` (revises `tsk1384_help_stuck_reason`): страж допускает материал прозрачного хозяина; триггер `trg_course_parents_anchor_on_unlink` обнуляет якоря при снятии/удалении/переносе прозрачной связи; `materials_anchor_on_move` по новому правилу;
++- `node_sequence.anchor_of`: в списке хозяина действует якорь на материал хозяина; движок (курсор, список, `has_anchors`), программа курса, grace, превью, ручной прогресс — через него;
++- `TasksService.anchor_course_ids` / `validate_anchor` / `anchor_material_options`, новый `GET /tasks/{id}/anchor-materials`, bulk-upsert резолвит `anchor_external_uid` у хозяина;
++- тесты `tests/test_tsk996_bank_anchor.py` (23).
++
++Ревью: `reviews/2026-10-20-tsk996-bank-anchor-review.md` — ПРИНЯТО. Полный дифф: `reviews/2026-10-20-tsk996-bank-anchor.diff`.
+diff --git a/tests/test_tsk996_bank_anchor.py b/tests/test_tsk996_bank_anchor.py
+new file mode 100644
+index 0000000..8a357eb
+--- /dev/null
++++ b/tests/test_tsk996_bank_anchor.py
+@@ -0,0 +1,663 @@
++"""tsk-996 (фаза D): якорь задания банка на материал прозрачного хозяина.
++
++Пилот 20.10 (курс ОГЭ): задания урока «Задание 1» живут в курсе-банке
++(6308 в 1948 «lms:tsk1161:bank:oge1»), подвешенном к узлу урока (1111
++«wp:oge-z1») прозрачной связью (tsk-1198). Якорь фазы B на материал урока
++(2358) давал 422, и `node_sequence` такой якорь не учитывал. Здесь — что
++теперь:
++
++* задание банка с якорем на материал хозяина встаёт в голову хозяина сразу
++  после материала, в одной группе с заданиями самого хозяина, внутри группы —
++  по `task_key` (тот же ключ, что сливает банк и хозяина в хвосте);
++* цепочка next-item по хозяину проходит каждый элемент ровно один раз, и
++  курсор от любого элемента даёт следующий;
++* программа курса, карточка прогресса, предпросмотр и «ушёл вперёд» — тот
++  же порядок; «N из M» не меняется;
++* в практикуме (второй родитель банка без прозрачности) якорь на чужой
++  материал игнорируется — порядок практикума прежний;
++* страж отклоняет материал непрозрачного родителя и чужого курса; снятие
++  прозрачности, удаление связи и перенос родителя обнуляют якоря на материалы
++  бывшего хозяина; удаление курсов каскадом не падает;
++* API: PATCH принимает материал хозяина, 422 на прочие; список вариантов для
++  редактора включает материалы хозяина; bulk-upsert резолвит
++  `anchor_external_uid` и среди материалов хозяина;
++* при `NODE_SEQUENCE_ENABLED=false` — прежний порядок.
++"""
++from __future__ import annotations
++
++from datetime import timedelta
++from typing import Any
++from uuid import uuid4
++
++import pytest
++from sqlalchemy import text
++from sqlalchemy.exc import DBAPIError
++
++from app.repos.courses_repo import CoursesRepository
++from app.services import me_service
++from app.services.content_grace_service import compute_graced_items
++from app.services.learning_engine_service import LearningEngineService
++from tests.test_tsk996_anchor import (
++    M,
++    T,
++    _anchor,
++    _anchor_row,
++    _assert_once,
++    _chain_items,
++    _next_after,
++    _preview_chain,
++    _progress_rows,
++    _syllabus_section,
++    _user_with_session,
++)
++from tests.test_tsk996_node_sequence import (
++    INSERTED,
++    LONG_AGO,
++    _complete_material,
++    _course,
++    _link,
++    _material,
++    _reset_caches,
++    _result,
++    _student,
++    _task,
++)
++from tests.test_tsk996_publish_anchor import _api_key, _publish_materials, _task_item
++
++
++# ─── Форма: урок + банк (прозрачный) + практикум ────────────────────────────
++
++
++async def shape_bank(db) -> dict[str, Any]:
++    """Урок L: m1 m2 m3, свои задания lt1(п1)→m1, lt2(п2).
++
++    Банк B — прозрачный подкурс L и обычный раздел практикума P: материал bm,
++    задания b1(п1, место 1)→m1, b2(п2, место 2), b3(п3, место 1 ранг 1)→m2.
++    У практикума свой материал pm (якорь на него банку недопустим).
++
++    Ожидаемый порядок урока: m1 b1 lt1 m2 b3 m3 | b2 lt2 — в группе m1 b1
++    перед lt1 по месту хозяина (как в хвосте), в хвосте b2 перед lt2.
++    """
++    lesson = await _course(db, "банк урок")
++    bank = await _course(db, "банк задания")
++    prak = await _course(db, "банк практикум")
++    await _link(db, lesson, bank, 1, transparent=True)
++    await _link(db, prak, bank, 1)
++    m1 = await _material(db, lesson, 1)
++    m2 = await _material(db, lesson, 2)
++    m3 = await _material(db, lesson, 3)
++    lt1 = await _task(db, lesson, 1)
++    lt2 = await _task(db, lesson, 2)
++    bm = await _material(db, bank, 1)
++    b1 = await _task(db, bank, 1, host_position=100)
++    b2 = await _task(db, bank, 2, host_position=200)
++    b3 = await _task(db, bank, 3, host_position=101)
++    pm = await _material(db, prak, 1)
++    await _anchor(db, lt1, m1)
++    await _anchor(db, b1, m1)
++    await _anchor(db, b3, m2, source="publish")
++    student = await _student(db, lesson, prak)
++    return dict(
++        lesson=lesson, bank=bank, prak=prak, m1=m1, m2=m2, m3=m3, lt1=lt1, lt2=lt2,
++        bm=bm, b1=b1, b2=b2, b3=b3, pm=pm, student=student,
++    )
++
++
++def _expected_lesson(s: dict[str, Any]) -> list[tuple[str, int]]:
++    return [
++        M(s["m1"]), T(s["b1"]), T(s["lt1"]), M(s["m2"]), T(s["b3"]), M(s["m3"]),
++        T(s["b2"]), T(s["lt2"]),
++    ]
++
++
++def _expected_prak(s: dict[str, Any]) -> list[tuple[str, int]]:
++    return [M(s["pm"]), M(s["bm"]), T(s["b1"]), T(s["b2"]), T(s["b3"])]
++
++
++async def _clear_bank_anchors(db, s: dict[str, Any]) -> None:
++    await db.execute(
++        text("UPDATE tasks SET anchor_material_id = NULL, anchor_source = NULL "
++             "WHERE course_id = :b"),
++        {"b": s["bank"]},
++    )
++    await db.commit()
++
++
++# ─── Порядок урока ──────────────────────────────────────────────────────────
++
++
++@pytest.mark.asyncio
++async def test_lesson_chain_each_item_once(db, monkeypatch):
++    """Цепочка next-item по уроку: задания банка за материалом хозяина, каждый раз ровно один."""
++    monkeypatch.setenv("NODE_SEQUENCE_ENABLED", "true")
++    s = await shape_bank(db)
++    await db.commit()
++    _assert_once(await _chain_items(db, s["student"], s["lesson"]), _expected_lesson(s))
++
++
++@pytest.mark.asyncio
++async def test_lesson_cursor_from_every_item(db, monkeypatch):
++    """next-item от каждого элемента урока (и от заданий банка) — следующий по порядку."""
++    monkeypatch.setenv("NODE_SEQUENCE_ENABLED", "true")
++    s = await shape_bank(db)
++    await db.commit()
++    expected = _expected_lesson(s)
++    for pos, nxt in zip(expected, [*expected[1:], None]):
++        assert await _next_after(db, s["student"], s["lesson"], pos) == nxt, pos
++
++
++@pytest.mark.asyncio
++async def test_lesson_all_places_follow_bank_anchor(db, monkeypatch):
++    """Программа курса, карточка прогресса, предпросмотр — тот же порядок урока."""
++    monkeypatch.setenv("NODE_SEQUENCE_ENABLED", "true")
++    s = await shape_bank(db)
++    await db.commit()
++    # Программа курса показывает и материал банка в списке хозяина (tsk-1198:
++    # группой по курсу после материалов хозяина) — якорные задания при своих.
++    assert await _syllabus_section(db, s["student"], s["lesson"], s["lesson"]) == [
++        M(s["m1"]), T(s["b1"]), T(s["lt1"]), M(s["m2"]), T(s["b3"]), M(s["m3"]),
++        M(s["bm"]), T(s["b2"]), T(s["lt2"]),
++    ]
++    rows = await _progress_rows(db, s["student"], s["lesson"])
++    assert rows == [
++        ("course", s["lesson"]),
++        ("material", s["m1"]), ("task", s["b1"]), ("task", s["lt1"]),
++        ("material", s["m2"]), ("task", s["b3"]), ("material", s["m3"]),
++        ("material", s["bm"]), ("task", s["b2"]), ("task", s["lt2"]),
++    ]
++    expected = _expected_lesson(s)
++    assert await _preview_chain(db, s["lesson"], expected[0]) == expected
++
++
++@pytest.mark.asyncio
++async def test_lesson_with_only_bank_anchors(db, monkeypatch):
++    """У урока якоря только у заданий банка (как на пилоте ОГЭ): голова всё равно их видит.
++
++    Признак «у узла есть якоря» (задания головы читаются только при нём)
++    обязан учитывать якоря заданий прозрачного подкурса, иначе задания банка
++    молча остались бы в хвосте.
++    """
++    monkeypatch.setenv("NODE_SEQUENCE_ENABLED", "true")
++    s = await shape_bank(db)
++    await _anchor(db, s["lt1"], None)
++    await db.commit()
++    expected = [
++        M(s["m1"]), T(s["b1"]), M(s["m2"]), T(s["b3"]), M(s["m3"]),
++        T(s["lt1"]), T(s["b2"]), T(s["lt2"]),
++    ]
++    _assert_once(await _chain_items(db, s["student"], s["lesson"]), expected)
++    for pos, nxt in zip(expected, [*expected[1:], None]):
++        assert await _next_after(db, s["student"], s["lesson"], pos) == nxt, pos
++    assert await _preview_chain(db, s["lesson"], expected[0]) == expected
++    assert await _syllabus_section(db, s["student"], s["lesson"], s["lesson"]) == [
++        M(s["m1"]), T(s["b1"]), M(s["m2"]), T(s["b3"]), M(s["m3"]),
++        M(s["bm"]), T(s["lt1"]), T(s["b2"]), T(s["lt2"]),
++    ]
++
++
++@pytest.mark.asyncio
++async def test_practicum_order_unchanged(db, monkeypatch):
++    """Практикум (второй родитель без прозрачности): якорь на материал урока игнорируется."""
++    monkeypatch.setenv("NODE_SEQUENCE_ENABLED", "true")
++    s = await shape_bank(db)
++    await db.commit()
++    expected = _expected_prak(s)
++    _assert_once(await _chain_items(db, s["student"], s["prak"]), expected)
++    for pos, nxt in zip(expected, [*expected[1:], None]):
++        assert await _next_after(db, s["student"], s["prak"], pos) == nxt, pos
++    syllabus = await _syllabus_section(db, s["student"], s["prak"], s["bank"])
++    assert syllabus == [M(s["bm"]), T(s["b1"]), T(s["b2"]), T(s["b3"])]
++    assert await _preview_chain(db, s["prak"], expected[0]) == expected
++    progress = await _progress_rows(db, s["student"], s["prak"])
++
++    # Без якорей у банка — то же самое: якорь на материал урока практикум не видит.
++    await _clear_bank_anchors(db, s)
++    _assert_once(await _chain_items(db, s["student"], s["prak"]), expected)
++    assert await _syllabus_section(db, s["student"], s["prak"], s["bank"]) == syllabus
++    assert await _progress_rows(db, s["student"], s["prak"]) == progress
++
++
++@pytest.mark.asyncio
++async def test_switch_off_restores_previous_order(db, monkeypatch):
++    """NODE_SEQUENCE_ENABLED=false — прежний порядок урока: банк в хвосте по местам."""
++    s = await shape_bank(db)
++    await db.commit()
++    monkeypatch.setenv("NODE_SEQUENCE_ENABLED", "false")
++    legacy = [
++        M(s["m1"]), M(s["m2"]), M(s["m3"]),
++        T(s["b1"]), T(s["b3"]), T(s["lt1"]), T(s["b2"]), T(s["lt2"]),
++    ]
++    _assert_once(await _chain_items(db, s["student"], s["lesson"]), legacy)
++    assert await _preview_chain(db, s["lesson"], legacy[0]) == legacy
++
++
++@pytest.mark.asyncio
++async def test_without_bank_anchors_lesson_is_tail_as_before(db, monkeypatch):
++    """Без якорей у банка задания банка — в хвосте урока на местах хозяина (как до фазы D)."""
++    monkeypatch.setenv("NODE_SEQUENCE_ENABLED", "true")
++    s = await shape_bank(db)
++    await db.commit()
++    await _clear_bank_anchors(db, s)
++    _assert_once(
++        await _chain_items(db, s["student"], s["lesson"]),
++        [
++            M(s["m1"]), T(s["lt1"]), M(s["m2"]), M(s["m3"]),
++            T(s["b1"]), T(s["b3"]), T(s["b2"]), T(s["lt2"]),
++        ],
++    )
++
++
++@pytest.mark.asyncio
++async def test_progress_counts_do_not_depend_on_bank_anchors(db, monkeypatch):
++    """«N из M», состояние курса и статусы программы — те же с якорями банка и без."""
++    monkeypatch.setenv("NODE_SEQUENCE_ENABLED", "true")
++    s = await shape_bank(db)
++    student = s["student"]
++    await _complete_material(db, student, s["m1"])
++    await _result(db, student, s["b1"], s["lesson"], s["lesson"])
++    await _result(db, student, s["lt2"], s["lesson"], s["lesson"])
++    await db.commit()
++    engine = LearningEngineService()
++
++    async def snapshot() -> tuple:
++        _reset_caches(db)
++        out = []
++        for root in (s["lesson"], s["prak"]):
++            state = await engine.compute_course_state(db, student, root)
++            syl = await me_service.get_syllabus_states(db, user_id=student, root_course_id=root)
++            statuses = sorted(
++                (i["kind"], i.get("material_id") or i.get("task_id"), i["status"])
++                for i in syl["items"]
++            )
++            out.append((state.state, statuses))
++        courses = sorted(
++            (c.get("course_id", c.get("id")), repr(sorted(c.items())))
++            for c in await me_service.get_courses_with_progress(db, student)
++        )
++        return tuple(out), courses
++
++    with_anchors = await snapshot()
++    await _clear_bank_anchors(db, s)
++    assert await snapshot() == with_anchors
++
++
++@pytest.mark.asyncio
++async def test_grace_places_bank_task_after_host_material(db, monkeypatch):
++    """«Ушёл вперёд» видит задание банка там же, где ученик: за материалом урока.
++
++    x — новое задание банка (создано позже), y — старое, давно решённое, z —
++    старое нерешённое (узел банка не закрыт целиком, правило узла молчит). Без
++    якоря x стоит после y в разделе банка, за ним только нерешённое z —
++    прощать нечего. С якорем на m1 x в голове урока, раньше раздела банка: y
++    решено до появления x — x позади ученика.
++    """
++    monkeypatch.setenv("NODE_SEQUENCE_ENABLED", "true")
++    lesson = await _course(db, "банк grace урок")
++    bank = await _course(db, "банк grace банк")
++    await _link(db, lesson, bank, 1, transparent=True)
++    m1 = await _material(db, lesson, 1)
++    m2 = await _material(db, lesson, 2)
++    y = await _task(db, bank, 1, host_position=100)
++    student = await _student(db, lesson)
++    await _result(db, student, y, lesson, lesson, at=LONG_AGO + timedelta(days=3))
++    x = await _task(db, bank, 2, host_position=200, created_at=INSERTED)
++    z = await _task(db, bank, 3, host_position=300)
++    await db.commit()
++
++    async def graced() -> set[int]:
++        _reset_caches(db)
++        return set((await compute_graced_items(db, student, lesson)).tasks)
++
++    assert x not in await graced()
++    await _anchor(db, x, m1)
++    await db.commit()
++    assert x in await graced()
++    # Прощённое — не долг: цепочка урока его пропускает.
++    _assert_once(await _chain_items(db, student, lesson), [M(m1), M(m2), T(z)])
++    monkeypatch.setenv("NODE_SEQUENCE_ENABLED", "false")
++    assert x not in await graced()
++
++
++# ─── Страж и обнуление ──────────────────────────────────────────────────────
++
++
++def _is_guard_error(exc: DBAPIError) -> bool:
++    return "check_violation" in repr(exc.orig) or "tsk-996" in str(exc)
++
++
++@pytest.mark.asyncio
++async def test_guard_accepts_transparent_host_only(db):
++    """Страж: материал прозрачного хозяина — да; непрозрачного родителя и чужого курса — нет."""
++    s = await shape_bank(db)
++    stranger = await _course(db, "банк чужой")
++    sm = await _material(db, stranger, 1)
++    await db.commit()
++    await db.execute(
++        text("UPDATE tasks SET anchor_material_id = :m WHERE id = :t"),
++        {"m": s["m3"], "t": s["b2"]},
++    )
++    for bad in (s["pm"], sm):
++        for stmt, params in (
++            ("UPDATE tasks SET anchor_material_id = :m WHERE id = :t",
++             {"m": bad, "t": s["b2"]}),
++            ("INSERT INTO tasks (task_content, course_id, difficulty_id, anchor_material_id) "
++             "VALUES (CAST('{\"type\": \"SA\", \"stem\": \"x\"}' AS jsonb), :c, 1, :m)",
++             {"c": s["bank"], "m": bad}),
++        ):
++            nested = await db.begin_nested()
++            with pytest.raises(DBAPIError) as exc:
++                await db.execute(text(stmt), params)
++            await nested.rollback()
++            assert _is_guard_error(exc.value), exc.value
++    # Обратное направление не разрешено: задание хозяина на материал банка.
++    nested = await db.begin_nested()
++    with pytest.raises(DBAPIError) as exc:
++        await db.execute(
++            text("UPDATE tasks SET anchor_material_id = :m WHERE id = :t"),
++            {"m": s["bm"], "t": s["lt2"]},
++        )
++    await nested.rollback()
++    assert _is_guard_error(exc.value), exc.value
++    assert await _anchor_row(db, s["b2"]) == (s["m3"], None)
++
++
++@pytest.mark.asyncio
++async def test_unset_transparency_clears_host_anchors(db, monkeypatch):
++    """Снятие прозрачности: якоря банка на материалы урока обнулены, свой якорь банка цел."""
++    monkeypatch.setenv("NODE_SEQUENCE_ENABLED", "true")
++    s = await shape_bank(db)
++    await _anchor(db, s["b2"], s["bm"])
++    await db.commit()
++    await db.execute(
++        text("UPDATE course_parents SET is_transparent = false "
++             "WHERE course_id = :b AND parent_course_id = :l"),
++        {"b": s["bank"], "l": s["lesson"]},
++    )
++    await db.commit()
++    assert await _anchor_row(db, s["b1"]) == (None, None)
++    assert await _anchor_row(db, s["b3"]) == (None, None)
++    assert await _anchor_row(db, s["b2"]) == (s["bm"], "manual")
++    assert await _anchor_row(db, s["lt1"]) == (s["m1"], "manual")
++    # Теперь банк в уроке — обычный раздел: m1 lt1 m2 m3 | bm b2 b1 b3 | lt2.
++    _assert_once(
++        await _chain_items(db, s["student"], s["lesson"]),
++        [
++            M(s["m1"]), T(s["lt1"]), M(s["m2"]), M(s["m3"]),
++            M(s["bm"]), T(s["b2"]), T(s["b1"]), T(s["b3"]),
++            T(s["lt2"]),
++        ],
++    )
++
++
++@pytest.mark.asyncio
++async def test_other_link_updates_keep_anchors(db):
++    """Правка порядка связи и прозрачность «true → true» якоря не трогают."""
++    s = await shape_bank(db)
++    await db.commit()
++    await db.execute(
++        text("UPDATE course_parents SET order_number = 5, is_transparent = true "
++             "WHERE course_id = :b AND parent_course_id = :l"),
++        {"b": s["bank"], "l": s["lesson"]},
++    )
++    await db.execute(
++        text("UPDATE course_parents SET is_transparent = false "
++             "WHERE course_id = :b AND parent_course_id = :p"),
++        {"b": s["bank"], "p": s["prak"]},
++    )
++    await db.commit()
++    assert await _anchor_row(db, s["b1"]) == (s["m1"], "manual")
++    assert await _anchor_row(db, s["b3"]) == (s["m2"], "publish")
++
++
++@pytest.mark.asyncio
++async def test_delete_link_clears_host_anchors(db):
++    """Удаление прозрачной связи (отвязка банка от урока) обнуляет якоря на материалы урока."""
++    s = await shape_bank(db)
++    await db.commit()
++    await db.execute(
++        text("DELETE FROM course_parents WHERE course_id = :b AND parent_course_id = :l"),
++        {"b": s["bank"], "l": s["lesson"]},
++    )
++    await db.commit()
++    assert await _anchor_row(db, s["b1"]) == (None, None)
++    assert await _anchor_row(db, s["b3"]) == (None, None)
++    assert await _anchor_row(db, s["lt1"]) == (s["m1"], "manual")
++
++
++@pytest.mark.asyncio
++async def test_parent_swap_clears_host_anchors(db):
++    """Смена родителя (`set_parent_courses` переносит связь UPDATE-ом) — якоря на бывшего хозяина обнулены."""
++    s = await shape_bank(db)
++    other = await _course(db, "банк другой урок")
++    await db.commit()
++    await CoursesRepository().set_parent_courses(
++        db, s["bank"], parent_course_ids=[other, s["prak"]], replace=True
++    )
++    links = (
++        await db.execute(
++            text("SELECT parent_course_id FROM course_parents WHERE course_id = :b"),
++            {"b": s["bank"]},
++        )
++    ).scalars().all()
++    assert sorted(links) == sorted([other, s["prak"]])
++    assert await _anchor_row(db, s["b1"]) == (None, None)
++    assert await _anchor_row(db, s["b3"]) == (None, None)
++
++
++@pytest.mark.asyncio
++async def test_material_move_clears_bank_anchors(db):
++    """Материал урока уехал в другой курс — якорь банка на него обнулён."""
++    s = await shape_bank(db)
++    other = await _course(db, "банк куда уехал материал")
++    await db.commit()
++    await db.execute(
++        text("UPDATE materials SET course_id = :c WHERE id = :m"), {"c": other, "m": s["m1"]}
++    )
++    await db.commit()
++    assert await _anchor_row(db, s["b1"]) == (None, None)
++    assert await _anchor_row(db, s["lt1"]) == (None, None)
++    assert await _anchor_row(db, s["b3"]) == (s["m2"], "publish")
++
++
++@pytest.mark.asyncio
++async def test_material_move_into_host_keeps_bank_anchor(db, monkeypatch):
++    """Материал банка переехал в урок-хозяин — якорь задания банка на него остаётся (допустим)."""
++    monkeypatch.setenv("NODE_SEQUENCE_ENABLED", "true")
++    s = await shape_bank(db)
++    await _anchor(db, s["b2"], s["bm"])
++    await db.commit()
++    await db.execute(
++        text("UPDATE materials SET course_id = :c, order_position = 4 WHERE id = :m"),
++        {"c": s["lesson"], "m": s["bm"]},
++    )
++    await db.commit()
++    assert await _anchor_row(db, s["b2"]) == (s["bm"], "manual")
++    _assert_once(
++        await _chain_items(db, s["student"], s["lesson"]),
++        [
++            M(s["m1"]), T(s["b1"]), T(s["lt1"]), M(s["m2"]), T(s["b3"]), M(s["m3"]),
++            M(s["bm"]), T(s["b2"]), T(s["lt2"]),
++        ],
++    )
++
++
++@pytest.mark.asyncio
++async def test_task_move_clears_host_anchor(db):
++    """Переезд задания банка в другой курс — якорь обнулён, как в фазе B."""
++    s = await shape_bank(db)
++    other = await _course(db, "банк куда уехало задание")
++    await db.commit()
++    await db.execute(
++        text("UPDATE tasks SET course_id = :c WHERE id = :t"), {"c": other, "t": s["b1"]}
++    )
++    await db.commit()
++    assert await _anchor_row(db, s["b1"]) == (None, None)
++
++
++@pytest.mark.asyncio
++@pytest.mark.parametrize("which", ["lesson", "bank"])
++async def test_course_delete_with_bank_anchors(db, which):
++    """Удаление урока или банка каскадом не падает на триггере связи."""
++    s = await shape_bank(db)
++    await db.commit()
++    await db.execute(text("DELETE FROM courses WHERE id = :c"), {"c": s[which]})
++    await db.commit()
++    if which == "lesson":
++        assert await _anchor_row(db, s["b1"]) == (None, None)
++        assert await _anchor_row(db, s["b2"]) == (None, None)
++
++
++# ─── API ────────────────────────────────────────────────────────────────────
++
++
++@pytest.mark.asyncio
++async def test_api_patch_accepts_host_material(db, client):
++    """PATCH: материал прозрачного хозяина — 200 (manual); практикума и чужой — 422."""
++    s = await shape_bank(db)
++    stranger = await _course(db, "банк чужой API")
++    sm = await _material(db, stranger, 1)
++    token = await _user_with_session(db, "methodist")
++    auth = {"Authorization": f"Bearer {token}"}
++    url = f"/api/v1/tasks/{s['b2']}"
++
++    r = await client.patch(url, json={"anchor_material_id": s["m3"]}, headers=auth)
++    assert r.status_code == 200, r.text
++    assert r.json()["anchor_material_id"] == s["m3"]
++    assert await _anchor_row(db, s["b2"]) == (s["m3"], "manual")
++
++    for bad in (s["pm"], sm):
++        r = await client.patch(url, json={"anchor_material_id": bad}, headers=auth)
++        assert r.status_code == 422, r.text
++        assert "другого раздела" in r.text
++    assert await _anchor_row(db, s["b2"]) == (s["m3"], "manual")
++
++    # Свой материал банка по-прежнему допустим.
++    r = await client.patch(url, json={"anchor_material_id": s["bm"]}, headers=auth)
++    assert r.status_code == 200, r.text
++    # Задание хозяина на материал банка — нет (прозрачность в одну сторону).
++    r = await client.patch(
++        f"/api/v1/tasks/{s['lt2']}", json={"anchor_material_id": s["bm"]}, headers=auth
++    )
++    assert r.status_code == 422, r.text
++
++
++@pytest.mark.asyncio
++async def test_api_anchor_materials_lists_host(db, client):
++    """Варианты якоря: материалы раздела задания, затем прозрачного хозяина, с подписью."""
++    s = await shape_bank(db)
++    await db.execute(
++        text("UPDATE materials SET is_active = false WHERE id = :m"), {"m": s["m2"]}
++    )
++    token = await _user_with_session(db, "methodist")
++    auth = {"Authorization": f"Bearer {token}"}
++
++    r = await client.get(f"/api/v1/tasks/{s['b1']}/anchor-materials", headers=auth)
++    assert r.status_code == 200, r.text
++    body = r.json()
++    assert body["task_id"] == s["b1"] and body["course_id"] == s["bank"]
++    got = [(i["id"], i["course_id"], i["origin"], i["is_active"]) for i in body["items"]]
++    assert got == [
++        (s["bm"], s["bank"], "own", True),
++        (s["m1"], s["lesson"], "host", True),
++        (s["m2"], s["lesson"], "host", False),
++        (s["m3"], s["lesson"], "host", True),
++    ]
++    assert body["items"][1]["course_title"].endswith("банк урок")
++    assert s["pm"] not in {i["id"] for i in body["items"]}
++
++    # Задание урока — только свои материалы (у урока прозрачного хозяина нет).
++    r = await client.get(f"/api/v1/tasks/{s['lt1']}/anchor-materials", headers=auth)
++    assert [i["id"] for i in r.json()["items"]] == [s["m1"], s["m2"], s["m3"]]
++    assert {i["origin"] for i in r.json()["items"]} == {"own"}
++
++    assert (await client.get("/api/v1/tasks/2000000000/anchor-materials", headers=auth)
++            ).status_code == 404
++    assert (await client.get(f"/api/v1/tasks/{s['b1']}/anchor-materials")).status_code == 401
++    student_token = await _user_with_session(db, "student")
++    r = await client.get(
++        f"/api/v1/tasks/{s['b1']}/anchor-materials",
++        headers={"Authorization": f"Bearer {student_token}"},
++    )
++    assert r.status_code == 403, r.text
++
++
++@pytest.mark.asyncio
++async def test_bulk_upsert_resolves_host_material(db, client):
++    """bulk-upsert: `anchor_external_uid` материала урока ставит якорь заданию банка (publish).
++
++    Свой курс — первым: материал с тем же uid в банке выигрывает у урока.
++    Материал только у практикума (непрозрачный родитель) — предупреждение.
++    Ручной якорь переиздание не трогает.
++    """
++    lesson = await _course(db, "банк публикация урок")
++    bank = await _course(db, "банк публикация банк")
++    prak = await _course(db, "банк публикация практикум")
++    await _link(db, lesson, bank, 1, transparent=True)
++    await _link(db, prak, bank, 1)
++    await db.commit()
++    base = f"wp:tsk996d:{uuid4().hex[:8]}"
++    lesson_uids = await _publish_materials(client, lesson, base, 2)
++    prak_uids = await _publish_materials(client, prak, f"{base}:prak", 1)
++    both_uid = (await _publish_materials(client, bank, base, 1))[0]  # тот же uid, что m1 урока
++    mat = {
++        (int(c), uid): int(i)
++        for i, c, uid in (
++            await db.execute(
++                text("SELECT id, course_id, external_uid FROM materials "
++                     "WHERE course_id = ANY(:c)"),
++                {"c": [lesson, bank, prak]},
++            )
++        ).fetchall()
++    }
++    uid_host, uid_own, uid_prak, uid_manual = (f"{base}:t{i}" for i in range(4))
++    items = [
++        _task_item(uid_host, bank, anchor_external_uid=lesson_uids[1]),
++        _task_item(uid_own, bank, anchor_external_uid=both_uid),
++        _task_item(uid_prak, bank, anchor_external_uid=prak_uids[0]),
++        _task_item(uid_manual, bank),
++    ]
++    r = await client.post("/api/v1/tasks/bulk-upsert", params=_api_key(), json={"items": items})
++    assert r.status_code == 200, r.text
++    warnings = r.json()["warnings"]
++    assert len(warnings) == 1 and uid_prak in warnings[0], warnings
++    ids = {
++        uid: int(i)
++        for uid, i in (
++            await db.execute(
++                text("SELECT external_uid, id FROM tasks WHERE external_uid = ANY(:u)"),
++                {"u": [uid_host, uid_own, uid_prak, uid_manual]},
++            )
++        ).fetchall()
++    }
++    assert await _anchor_row(db, ids[uid_host]) == (mat[(lesson, lesson_uids[1])], "publish")
++    assert await _anchor_row(db, ids[uid_own]) == (mat[(bank, both_uid)], "publish")
++    assert await _anchor_row(db, ids[uid_prak]) == (None, None)
++
++    # Ручной якорь на материал урока переиздание с другим якорем не трогает.
++    await _anchor(db, ids[uid_manual], mat[(lesson, lesson_uids[0])], source="manual")
++    await db.commit()
++    items[3] = _task_item(uid_manual, bank, anchor_external_uid=lesson_uids[1])
++    r = await client.post("/api/v1/tasks/bulk-upsert", params=_api_key(), json={"items": items})
++    assert r.status_code == 200, r.text
++    assert await _anchor_row(db, ids[uid_manual]) == (mat[(lesson, lesson_uids[0])], "manual")
++
++
++@pytest.mark.asyncio
++async def test_two_transparent_parents_only_first_host(db, client):
++    """Ошибка разметки — банк прозрачен для двух уроков: якорь допустим только у первого.
++
++    Порядок узла берёт первого хозяина (`transparent_links`); якорь на материал
++    второго ученик не увидел бы — PATCH и список вариантов его не предлагают.
++    """
++    s = await shape_bank(db)
++    second = await _course(db, "банк второй хозяин")
++    await _link(db, second, s["bank"], 2, transparent=True)
++    sm = await _material(db, second, 1)
++    token = await _user_with_session(db, "methodist")
++    auth = {"Authorization": f"Bearer {token}"}
++    r = await client.get(f"/api/v1/tasks/{s['b2']}/anchor-materials", headers=auth)
++    assert {i["course_id"] for i in r.json()["items"]} == {s["bank"], s["lesson"]}
++    r = await client.patch(
++        f"/api/v1/tasks/{s['b2']}", json={"anchor_material_id": sm}, headers=auth
++    )
++    assert r.status_code == 422, r.text

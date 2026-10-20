@@ -9891,7 +9891,7 @@
             "description": "Задание не существует"
           },
           "422": {
-            "description": "Правило проверки не соответствует содержимому либо якорь указывает на материал не из раздела задания"
+            "description": "Правило проверки не соответствует содержимому либо якорь указывает на материал не из раздела задания и не из его прозрачного хозяина"
           }
         }
       }
@@ -9997,7 +9997,7 @@
           "tasks"
         ],
         "summary": "Массовый upsert задач по external_uid",
-        "description": "Массовый upsert задач.\n\nПравила:\n- если external_uid не найден → создаём задачу (action = 'created');\n- если найден → обновляем существующую задачу (action = 'updated');\n- `anchor_external_uid` (tsk-996) — якорь задания к материалу его узла;\n  не найденный в узле — в `warnings`, задание записывается без якоря.\n\nЭто позволяет существенно ускорить импорт из Google Sheets:\nодно HTTP-обращение вместо сотен.",
+        "description": "Массовый upsert задач.\n\nПравила:\n- если external_uid не найден → создаём задачу (action = 'created');\n- если найден → обновляем существующую задачу (action = 'updated');\n- `anchor_external_uid` (tsk-996) — якорь задания к материалу его узла\n  или (фаза D) прозрачного хозяина узла; не найденный — в `warnings`,\n  задание записывается без якоря.\n\nЭто позволяет существенно ускорить импорт из Google Sheets:\nодно HTTP-обращение вместо сотен.",
         "operationId": "bulk_upsert_tasks_endpoint_api_v1_tasks_bulk_upsert_post",
         "requestBody": {
           "content": {
@@ -10596,6 +10596,114 @@
             "APIKeyHeader": []
           }
         ]
+      }
+    },
+    "/api/v1/tasks/{task_id}/anchor-materials": {
+      "get": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Материалы для якоря задания (tsk-996: cookie auth + роль)",
+        "description": "Материалы для поля «Показывать после материала» в редакторе задания.\n\nСначала материалы раздела задания, затем (фаза D) материалы раздела, к\nкоторому курс задания подвешен прозрачной связью: задания банков ОГЭ\nученик видит внутри урока, и якорь на материал урока допустим. Выключенные\nматериалы тоже в списке — якорь на них сервер принимает. Тот же предикат,\nчто у проверки PATCH и триггера-стража.",
+        "operationId": "list_task_anchor_materials_api_v1_tasks__task_id__anchor_materials_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Task Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Список допустимых материалов",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskAnchorMaterialsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Не аутентифицирован"
+          },
+          "403": {
+            "description": "Роль не позволяет править задания"
+          },
+          "404": {
+            "description": "Задание не существует"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/tasks/{task_id}/manual-edit": {
@@ -80676,6 +80784,100 @@
         "title": "TariffUpdateRequest",
         "description": "Правка варианта тарифа, включая ось (tsk-517).\n\nОсь (`match_kind`/`match_value`) правится по решению оператора 2026-08-02,\nотменившему прежний запрет. Она меняет СМЫСЛ варианта: смена «2 занятия» на\n«1 занятие» переносит учеников между ценами. Поэтому экран перед сохранением\nназывает число затронутых учеников, а сервер после правки пересчитывает\nоткрытые месяцы группы. Закрытые месяцы, как всегда, не переписываются.\n\nОсь задаётся парой: прислать одно поле без второго нельзя — иначе вариант\nостался бы наполовину частотным, наполовину ничьим."
       },
+      "TaskAnchorMaterialOption": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "course_id": {
+            "type": "integer",
+            "title": "Course Id"
+          },
+          "course_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Course Title"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active"
+          },
+          "order_position": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Order Position"
+          },
+          "origin": {
+            "type": "string",
+            "enum": [
+              "own",
+              "host"
+            ],
+            "title": "Origin",
+            "description": "`own` — материал раздела самого задания; `host` — материал раздела, внутри которого ученик видит задания этого курса (прозрачный подкурс, tsk-1198)."
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "course_id",
+          "is_active",
+          "origin"
+        ],
+        "title": "TaskAnchorMaterialOption",
+        "description": "Материал, который можно выбрать якорем задания (tsk-996)."
+      },
+      "TaskAnchorMaterialsResponse": {
+        "properties": {
+          "task_id": {
+            "type": "integer",
+            "title": "Task Id"
+          },
+          "course_id": {
+            "type": "integer",
+            "title": "Course Id"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TaskAnchorMaterialOption"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "task_id",
+          "course_id",
+          "items"
+        ],
+        "title": "TaskAnchorMaterialsResponse",
+        "description": "Допустимые якоря задания — ровно то, что примет PATCH (tsk-996)."
+      },
       "TaskBulkUpsertRequest": {
         "properties": {
           "items": {
@@ -80715,7 +80917,7 @@
           "results"
         ],
         "title": "TaskBulkUpsertResponse",
-        "description": "Ответ bulk-upsert'а задач.\n\n`warnings` (tsk-996) — что принято, но применено не целиком: якорь\n`anchor_external_uid`, не найденный среди материалов узла задания."
+        "description": "Ответ bulk-upsert'а задач.\n\n`warnings` (tsk-996) — что принято, но применено не целиком: якорь\n`anchor_external_uid`, не найденный среди материалов узла задания и его\nпрозрачного хозяина."
       },
       "TaskBulkUpsertResultItem": {
         "properties": {
@@ -82021,7 +82223,7 @@
               }
             ],
             "title": "Anchor Material Id",
-            "description": "tsk-996: материал раздела, сразу после которого задание стоит у ученика. Явный `null` — «в конце раздела» (якорь снят); поле не передано — якорь не меняется. Материал обязан быть из курса задания, иначе 422. Ручная правка ставит `anchor_source='manual'` — переиздание из ContentBackbone такой якорь не перезаписывает."
+            "description": "tsk-996: материал раздела, сразу после которого задание стоит у ученика. Явный `null` — «в конце раздела» (якорь снят); поле не передано — якорь не меняется. Материал обязан быть из курса задания или из курса, к которому курс задания подвешен прозрачной связью (фаза D: банк заданий в уроке), иначе 422. Варианты — `GET /tasks/{id}/anchor-materials`. Ручная правка ставит `anchor_source='manual'` — переиздание из ContentBackbone такой якорь не перезаписывает."
           }
         },
         "type": "object",
@@ -82317,7 +82519,7 @@
               }
             ],
             "title": "Anchor Material Id",
-            "description": "tsk-996: материал того же раздела, сразу после которого задание стоит в учебном порядке. NULL — в конце раздела (после всех материалов и подразделов). Порядок ученику отдаёт сервер."
+            "description": "tsk-996: материал того же раздела (или, фаза D, раздела-хозяина прозрачного подкурса задания), сразу после которого задание стоит в учебном порядке. NULL — в конце раздела (после всех материалов и подразделов). Порядок ученику отдаёт сервер."
           },
           "anchor_source": {
             "anyOf": [
@@ -83668,7 +83870,7 @@
               }
             ],
             "title": "Anchor External Uid",
-            "description": "tsk-996 (ADR-0008): external_uid материала, сразу после которого задание стоит в учебном порядке узла (публикатор ContentBackbone ставит материал H2-раздела задания, `{base}#m{N}`). Ищется только среди материалов курса самого задания; не найден — якорь не ставится, в ответе предупреждение. Ставит `anchor_source='publish'` и не трогает ручной якорь методиста (`manual`). Поле не передано — якорь не меняется; явный null снимает якорь публикатора."
+            "description": "tsk-996 (ADR-0008): external_uid материала, сразу после которого задание стоит в учебном порядке узла (публикатор ContentBackbone ставит материал H2-раздела задания, `{base}#m{N}`). Ищется среди материалов курса самого задания, затем (фаза D) среди материалов курса, к которому курс задания подвешен прозрачной связью (tsk-1198, банк заданий в уроке); не найден — якорь не ставится, в ответе предупреждение. Ставит `anchor_source='publish'` и не трогает ручной якорь методиста (`manual`). Поле не передано — якорь не меняется; явный null снимает якорь публикатора."
           }
         },
         "type": "object",

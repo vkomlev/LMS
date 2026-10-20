@@ -936,15 +936,16 @@ SELECT
     EXISTS (
         SELECT 1 FROM open_course_attempt oc WHERE oc.course_id = t.course_id
     ) AS has_open_attempt,
-    -- tsk-996 (фаза B): действующий якорь — материал того же курса (любой,
-    -- и неактивный: его задания стоят на его месте). Другой курс или
-    -- удалённый материал дают NULL — задание в конце узла.
+    -- tsk-996 (фаза B): якорь — материал (любой, и неактивный: его задания
+    -- стоят на его месте) с его курсом; действует ли он в узле, решает
+    -- `anchor_of`: свой курс задания или прозрачный хозяин (фаза D).
+    -- Удалённый материал даёт NULL — задание в конце узла.
     am.id AS anchor_material_id,
-    am.order_position AS anchor_order_position
+    am.order_position AS anchor_order_position,
+    am.course_id AS anchor_course_id
 FROM tasks t
 LEFT JOIN materials am
     ON am.id = t.anchor_material_id
-   AND am.course_id = t.course_id
 LEFT JOIN last_per_task lp ON lp.task_id = t.id
 LEFT JOIN attempts_per_task ap ON ap.task_id = t.id
 LEFT JOIN override_per_task op ON op.task_id = t.id
@@ -1384,6 +1385,8 @@ async def get_syllabus_states(
     for r in task_rows:
         t = dict(r)
         src = int(t["course_id"])
+        # tsk-996: настоящий курс задания — для правила якоря `anchor_of`.
+        t["_src_course_id"] = src
         t["_absorbed"] = src in absorbed
         t["course_id"] = absorbed.get(src, src)
         tasks_by_course.setdefault(t["course_id"], []).append(t)
@@ -1421,7 +1424,8 @@ async def get_syllabus_states(
                         ),
                         anchor_of(
                             t["anchor_material_id"], t["anchor_order_position"],
-                            int(t["course_id"]), absorbed=bool(t.get("_absorbed")),
+                            int(t["_src_course_id"]), absorbed=bool(t.get("_absorbed")),
+                            anchor_course_id=t["anchor_course_id"], host_course_id=cid,
                         ),
                     )
                     for tid, t in tsks.items()

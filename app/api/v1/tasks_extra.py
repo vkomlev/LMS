@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Body, Query, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, or_
+from sqlalchemy.exc import DBAPIError
 from typing import Any, List, Literal, Optional, Dict
 from pydantic import BaseModel, Field
 import logging
@@ -757,8 +758,9 @@ async def bulk_upsert_tasks_endpoint(
     Правила:
     - если external_uid не найден → создаём задачу (action = 'created');
     - если найден → обновляем существующую задачу (action = 'updated');
-    - `anchor_external_uid` (tsk-996) — якорь задания к материалу его узла;
-      не найденный в узле — в `warnings`, задание записывается без якоря.
+    - `anchor_external_uid` (tsk-996) — якорь задания к материалу его узла
+      или (фаза D) прозрачного хозяина узла; не найденный — в `warnings`,
+      задание записывается без якоря.
 
     Это позволяет существенно ускорить импорт из Google Sheets:
     одно HTTP-обращение вместо сотен.
@@ -1583,10 +1585,72 @@ class TaskManualPatch(BaseModel):
             "tsk-996: материал раздела, сразу после которого задание стоит у "
             "ученика. Явный `null` — «в конце раздела» (якорь снят); поле не "
             "передано — якорь не меняется. Материал обязан быть из курса "
-            "задания, иначе 422. Ручная правка ставит `anchor_source='manual'` "
-            "— переиздание из ContentBackbone такой якорь не перезаписывает."
+            "задания или из курса, к которому курс задания подвешен "
+            "прозрачной связью (фаза D: банк заданий в уроке), иначе 422. "
+            "Варианты — `GET /tasks/{id}/anchor-materials`. Ручная правка "
+            "ставит `anchor_source='manual'` — переиздание из ContentBackbone "
+            "такой якорь не перезаписывает."
         ),
     )
+
+
+class TaskAnchorMaterialOption(BaseModel):
+    """Материал, который можно выбрать якорем задания (tsk-996)."""
+
+    id: int
+    course_id: int
+    course_title: Optional[str] = None
+    title: Optional[str] = None
+    is_active: bool
+    order_position: Optional[int] = None
+    origin: Literal["own", "host"] = Field(
+        description=(
+            "`own` — материал раздела самого задания; `host` — материал "
+            "раздела, внутри которого ученик видит задания этого курса "
+            "(прозрачный подкурс, tsk-1198)."
+        ),
+    )
+
+
+class TaskAnchorMaterialsResponse(BaseModel):
+    """Допустимые якоря задания — ровно то, что примет PATCH (tsk-996)."""
+
+    task_id: int
+    course_id: int
+    items: List[TaskAnchorMaterialOption]
+
+
+@router.get(
+    "/tasks/{task_id}/anchor-materials",
+    response_model=TaskAnchorMaterialsResponse,
+    summary="Материалы для якоря задания (tsk-996: cookie auth + роль)",
+    responses={
+        200: {"description": "Список допустимых материалов"},
+        401: {"description": "Не аутентифицирован"},
+        403: {"description": "Роль не позволяет править задания"},
+        404: {"description": "Задание не существует"},
+    },
+)
+async def list_task_anchor_materials(
+    task_id: int,
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(require_role("methodist", "admin")),
+) -> Any:
+    """Материалы для поля «Показывать после материала» в редакторе задания.
+
+    Сначала материалы раздела задания, затем (фаза D) материалы раздела, к
+    которому курс задания подвешен прозрачной связью: задания банков ОГЭ
+    ученик видит внутри урока, и якорь на материал урока допустим. Выключенные
+    материалы тоже в списке — якорь на них сервер принимает. Тот же предикат,
+    что у проверки PATCH и триггера-стража.
+    """
+    from app.models.tasks import Tasks  # noqa: PLC0415 — circular avoid
+
+    task = (await db.execute(select(Tasks).where(Tasks.id == task_id))).scalar_one_or_none()
+    if task is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Задание не найдено")
+    items = await TasksService().anchor_material_options(db, task)
+    return {"task_id": task.id, "course_id": task.course_id, "items": items}
 
 
 @router.patch(
@@ -1601,7 +1665,8 @@ class TaskManualPatch(BaseModel):
         422: {
             "description": (
                 "Правило проверки не соответствует содержимому либо якорь "
-                "указывает на материал не из раздела задания"
+                "указывает на материал не из раздела задания и не из его "
+                "прозрачного хозяина"
             )
         },
     },
@@ -1653,6 +1718,17 @@ async def patch_task_manual(
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e)) from e
     except HTTPException:
         raise
+    except DBAPIError as e:
+        # tsk-996: проверка выше прошла, но страж базы отказал — между ними
+        # параллельно сняли прозрачную связь или перенесли материал.
+        if "tsk-996:" not in str(e.orig):
+            raise
+        await db.rollback()
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "Материал больше не подходит для якоря задания (раздел изменился) — "
+            "обновите список и выберите снова",
+        ) from e
     except ValueError as e:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e)) from e
 

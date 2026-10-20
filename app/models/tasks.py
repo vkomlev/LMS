@@ -116,7 +116,8 @@ class Tasks(Base):
     )
     # tsk-996 (ADR-0008): материал своего узла, сразу после которого задание
     # стоит в учебном порядке (`app/services/node_sequence.py`). NULL — в конце
-    # узла. Инвариант «тот же курс» держит триггер `trg_tasks_anchor_guard`.
+    # узла. Инвариант «тот же курс или его прозрачный хозяин» (фаза D, миграция
+    # `tsk996_bank_anchor`) держит триггер `trg_tasks_anchor_guard`.
     anchor_material_id: Mapped[Optional[int]] = mapped_column(
         Integer,
         ForeignKey("materials.id", ondelete="SET NULL", name="tasks_anchor_material_id_fkey"),

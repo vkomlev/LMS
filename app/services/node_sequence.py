@@ -34,13 +34,21 @@ ADR-0008 (`docs/ai/adr/0008-interleave-theory-practice-anchor.md`), фаза A
 Фаза B (якорь, `tasks.anchor_material_id`): задание с действующим якорем
 получает ключ своего материала с хвостиком ``task_key`` и встаёт сразу после
 него — в голове узла, внутри группы по ``task_key``. Действующий якорь —
-материал того же курса, что и задание (вызывающий отбирает его тем же
-запросом заданий: ``JOIN materials ON id = anchor AND course_id = курс
-задания``). Неактивный или «рекомендуемый» материал в выдачу не попадает, но
+материал того узла, в списке которого задание стоит (`anchor_of`; материал
+вызывающий читает тем же запросом заданий: ``LEFT JOIN materials ON id =
+anchor``). Неактивный или «рекомендуемый» материал в выдачу не попадает, но
 его задания стоят на его месте: ключ считается по позиции материала, а не по
 его присутствию в списке. Якорь на материал другого курса или удалённый —
-задание в хвосте, как без якоря. Задания прозрачного подкурса в списке хозяина
-(tsk-1198) якорь не учитывают — они в хвосте хозяина, как раньше. Прежний путь
+задание в хвосте, как без якоря.
+
+Фаза D (пилот ОГЭ 20.10): задание прозрачного подкурса (tsk-1198) в списке
+хозяина с якорем на материал хозяина встаёт в голову хозяина сразу после
+этого материала — в одной группе с заданиями самого хозяина с тем же якорем.
+Внутри группы порядок — по ``task_key``, тому же ключу, которым задания
+подкурса и хозяина сливаются в хвосте (место ``host_order_position`` против
+``order_position`` хозяина): относительный порядок заданий, привязанных к
+одному материалу, остаётся тем, к которому методист привык в хвосте. Без
+якоря такое задание — в хвосте хозяина, как раньше. Прежний путь
 (``NODE_SEQUENCE_ENABLED=false``) якоря не читает вовсе: откат рубильником
 возвращает и прежний порядок.
 
@@ -142,17 +150,37 @@ def anchor_of(
     task_course_id: int,
     *,
     absorbed: bool = False,
+    anchor_course_id: Optional[int] = None,
+    host_course_id: Optional[int] = None,
 ) -> Optional[Anchor]:
     """Действующий якорь задания из строки запроса либо None (tsk-996).
 
-    ``anchor_material_id`` — id материала из ``LEFT JOIN materials ON id =
-    tasks.anchor_material_id AND course_id = tasks.course_id``: NULL, если
-    якоря нет, материал удалён или он из другого курса. Задание прозрачного
-    подкурса в списке хозяина (``absorbed``) якорь не учитывает.
+    Правило одно: якорь действует, если материал — из того узла, в списке
+    которого задание стоит. Своё задание узла — материал его курса. Задание
+    прозрачного подкурса в списке хозяина (``absorbed``, tsk-1198) — материал
+    хозяина (``host_course_id``, фаза D: задания банков ОГЭ в уроке); якорь
+    такого задания на материал своего подкурса в списке хозяина не действует.
+    Тот же подкурс разделом практикума (второй родитель без прозрачности) —
+    своё задание узла, и якорь на материал хозяина там не действует: порядок
+    практикума не меняется.
+
+    ``anchor_course_id`` — курс материала якоря (``materials.course_id`` из
+    ``LEFT JOIN materials ON id = tasks.anchor_material_id``). ``None`` —
+    вызывающий уже отобрал JOIN-ом только материал курса задания (контракт
+    фазы B). NULL ``anchor_material_id`` — якоря нет или материал удалён.
     """
-    if anchor_material_id is None or absorbed:
+    if anchor_material_id is None:
         return None
-    return (int(anchor_material_id), anchor_order_position, int(task_course_id))
+    material_course = int(task_course_id if anchor_course_id is None else anchor_course_id)
+    if absorbed:
+        if host_course_id is None:
+            return None
+        node_course = int(host_course_id)
+    else:
+        node_course = int(task_course_id)
+    if material_course != node_course:
+        return None
+    return (int(anchor_material_id), anchor_order_position, node_course)
 
 
 def child_seq_key(order_number: Optional[int], child_id: int) -> SeqKey:
