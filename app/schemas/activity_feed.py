@@ -65,3 +65,19 @@ class ActivityFeedResponse(BaseModel):
             "(фаза start/during плана занятия; без переносов, пропусков и перерывов)"
         ),
     )
+
+
+class FeedStudent(BaseModel):
+    """Ученик в списке фильтра ленты (tsk-1362)."""
+
+    id: int
+    name: str
+    on_lesson: bool = Field(
+        default=False, description="Сейчас идёт занятие этого преподавателя с учеником"
+    )
+
+
+class FeedStudentsResponse(BaseModel):
+    """Все ученики в зоне ленты: сначала те, кто на занятии, затем по имени."""
+
+    students: List[FeedStudent] = Field(default_factory=list)

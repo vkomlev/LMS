@@ -27577,6 +27577,25 @@
             "description": "Курсор пагинации — только события строго раньше этого момента"
           },
           {
+            "name": "student_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "tsk-1362: только события этого ученика (в пределах ACL)",
+              "title": "Student Id"
+            },
+            "description": "tsk-1362: только события этого ученика (в пределах ACL)"
+          },
+          {
             "name": "token",
             "in": "query",
             "required": false,
@@ -27632,6 +27651,96 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ActivityFeedResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/teacher/activity-feed/students": {
+      "get": {
+        "tags": [
+          "teacher_activity_feed"
+        ],
+        "summary": "Ученики для фильтра ленты: все в зоне преподавателя, «на занятии» сверху",
+        "description": "tsk-1362: список учеников без привязки к загруженным событиям.\n\nДва лёгких запроса: кто на занятии (как в самой ленте) и один запрос ростера.",
+        "operationId": "get_teacher_activity_feed_students_api_v1_teacher_activity_feed_students_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeedStudentsResponse"
                 }
               }
             }
@@ -59746,6 +59855,45 @@
         ],
         "title": "ExternalLeadStatusList",
         "description": "Ответ служебного чтения: обращения источника за окно."
+      },
+      "FeedStudent": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "on_lesson": {
+            "type": "boolean",
+            "title": "On Lesson",
+            "description": "Сейчас идёт занятие этого преподавателя с учеником",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "FeedStudent",
+        "description": "Ученик в списке фильтра ленты (tsk-1362)."
+      },
+      "FeedStudentsResponse": {
+        "properties": {
+          "students": {
+            "items": {
+              "$ref": "#/components/schemas/FeedStudent"
+            },
+            "type": "array",
+            "title": "Students"
+          }
+        },
+        "type": "object",
+        "title": "FeedStudentsResponse",
+        "description": "Все ученики в зоне ленты: сначала те, кто на занятии, затем по имени."
       },
       "FeedbackDraft": {
         "properties": {

@@ -74,6 +74,20 @@ async def _is_elevated(db: AsyncSession, current_user: CurrentUser) -> bool:
     return bool(roles & _ELEVATED_ROLES)
 
 
+def _add_student_filter(
+    conds: List[str], params: Dict[str, Any], student_col: str, student_id: Optional[int]
+) -> None:
+    """tsk-1362: сузить источник до одного ученика (лента «по ученику»).
+
+    Фильтр добавляется К ACL, а не вместо него: чужой ученик даёт пустую ленту.
+    ``student_col`` — литерал из закрытого набора call-sites модуля.
+    """
+    if student_id is None:
+        return
+    conds.append(f"{student_col} = :student_id")
+    params["student_id"] = student_id
+
+
 def _outcome_of(is_correct: Optional[bool]) -> str:
     if is_correct is None:
         return "pending_review"
@@ -81,7 +95,8 @@ def _outcome_of(is_correct: Optional[bool]) -> str:
 
 
 async def _fetch_task_solved(
-    db: AsyncSession, *, teacher_id: int, elevated: bool, limit: int, before: Optional[datetime]
+    db: AsyncSession, *, teacher_id: int, elevated: bool, limit: int, before: Optional[datetime],
+    student_id: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
     """Реальные результаты заданий (без синтетических зачётов tsk-297)."""
     conds = ["tr.source_system IS DISTINCT FROM :manual_source"]
@@ -91,6 +106,7 @@ async def _fetch_task_solved(
     if before is not None:
         conds.append("tr.submitted_at < :before")
         params["before"] = before
+    _add_student_filter(conds, params, "tr.user_id", student_id)
     if not elevated:
         conds.append(_scope_predicate("tr.user_id", "t.course_id"))
     where_sql = " AND ".join(conds)
@@ -152,7 +168,8 @@ async def _fetch_task_solved(
 
 
 async def _fetch_help_requested(
-    db: AsyncSession, *, teacher_id: int, elevated: bool, limit: int, before: Optional[datetime]
+    db: AsyncSession, *, teacher_id: int, elevated: bool, limit: int, before: Optional[datetime],
+    student_id: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
     """Заявки помощи (момент создания — ``created_at``)."""
     conds = ["1 = 1"]
@@ -160,6 +177,7 @@ async def _fetch_help_requested(
     if before is not None:
         conds.append("hr.created_at < :before")
         params["before"] = before
+    _add_student_filter(conds, params, "hr.student_id", student_id)
     if not elevated:
         conds.append(_scope_predicate("hr.student_id", "COALESCE(hr.course_id, t.course_id)"))
     where_sql = " AND ".join(conds)
@@ -233,7 +251,8 @@ async def _fetch_help_requested(
 
 
 async def _fetch_material_studied(
-    db: AsyncSession, *, teacher_id: int, elevated: bool, limit: int, before: Optional[datetime]
+    db: AsyncSession, *, teacher_id: int, elevated: bool, limit: int, before: Optional[datetime],
+    student_id: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
     """Завершённые материалы (без синтетических зачётов tsk-297)."""
     conds = [
@@ -247,6 +266,7 @@ async def _fetch_material_studied(
     if before is not None:
         conds.append("smp.completed_at < :before")
         params["before"] = before
+    _add_student_filter(conds, params, "smp.student_id", student_id)
     if not elevated:
         conds.append(_scope_predicate("smp.student_id", "m.course_id"))
     where_sql = " AND ".join(conds)
@@ -285,7 +305,8 @@ async def _fetch_material_studied(
 
 
 async def _fetch_student_idle(
-    db: AsyncSession, *, teacher_id: int, elevated: bool, limit: int, before: Optional[datetime]
+    db: AsyncSession, *, teacher_id: int, elevated: bool, limit: int, before: Optional[datetime],
+    student_id: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
     """Простои учеников на занятиях (tsk-591) — эпизоды «затих → вернулся».
 
@@ -300,6 +321,7 @@ async def _fetch_student_idle(
     if before is not None:
         conds.append("e.detected_at < :before")
         params["before"] = before
+    _add_student_filter(conds, params, "e.student_id", student_id)
     if not elevated:
         conds.append(
             f"""(
@@ -383,6 +405,7 @@ async def get_activity_feed(
     *,
     limit: int = 100,
     before: Optional[datetime] = None,
+    student_id: Optional[int] = None,
 ) -> Tuple[List[Dict[str, Any]], bool, Optional[datetime]]:
     """Собрать топ-``limit`` событий по всем ученикам преподавателя, по убыванию времени.
 
@@ -398,12 +421,17 @@ async def get_activity_feed(
         одному, но обрежутся при слиянии — без проверки (1) страница молча
         потеряла бы 80 реальных событий.
         ``next_before`` — время последнего (самого старого) события в ответе.
+    :param student_id: tsk-1362 — только события этого ученика (в пределах ACL);
+        пагинация та же, курсор ``before`` работает внутри отбора.
     """
     elevated = await _is_elevated(db, current_user)
     teacher_id = current_user.id
 
     task_events, help_events, material_events, idle_events = [
-        await fn(db, teacher_id=teacher_id, elevated=elevated, limit=limit, before=before)
+        await fn(
+            db, teacher_id=teacher_id, elevated=elevated, limit=limit, before=before,
+            student_id=student_id,
+        )
         for fn in (
             _fetch_task_solved,
             _fetch_help_requested,
@@ -422,3 +450,73 @@ async def get_activity_feed(
     page = merged[:limit]
     next_before = page[-1]["timestamp"] if page else None
     return page, has_more, next_before
+
+
+async def list_feed_students(
+    db: AsyncSession, current_user: CurrentUser, *, on_lesson_ids: List[int],
+) -> List[Dict[str, Any]]:
+    """Все ученики, чьи события может видеть пользователь ленты (tsk-1362).
+
+    Раньше список для фильтра собирался на клиенте из уже загруженных событий:
+    ученика без недавней активности нельзя было найти вовсе. Здесь — та же зона,
+    что у самой ленты, но без событий:
+
+    * преподаватель — ученики из ``student_teacher_links``, записанные
+      (``user_courses``) на курсы под его ``teacher_courses`` (с потомками по
+      ``course_parents``), и те, кто сейчас у него на занятии;
+    * методист/админ — все ученики школы (роль ``student``).
+
+    Нагрузка (урок tsk-1250): ОДИН запрос на весь список. Дерево курсов
+    раскрывается один раз от курсов преподавателя вниз, а не рекурсией на
+    каждую строку, как в предикате ``teacher_course_acl``.
+
+    :returns: ``[{id, name, on_lesson}]``: сначала те, кто на занятии, затем по имени.
+    """
+    live = sorted({int(i) for i in on_lesson_ids})
+    if await _is_elevated(db, current_user):
+        sql = """
+            SELECT u.id, u.full_name
+            FROM users u
+            WHERE u.merged_into_user_id IS NULL
+              AND (
+                EXISTS (
+                    SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id
+                    WHERE ur.user_id = u.id AND r.name = 'student'
+                )
+                OR u.id = ANY(CAST(:live AS integer[]))
+              )
+        """
+    else:
+        sql = """
+            WITH RECURSIVE acl AS (
+                SELECT tc.course_id FROM teacher_courses tc WHERE tc.teacher_id = :teacher_id
+                UNION
+                SELECT cp.course_id FROM course_parents cp
+                JOIN acl ON acl.course_id = cp.parent_course_id
+            ), ids AS (
+                SELECT stl.student_id AS id FROM student_teacher_links stl
+                WHERE stl.teacher_id = :teacher_id
+                UNION
+                SELECT uc.user_id FROM user_courses uc
+                WHERE uc.is_active AND uc.course_id IN (SELECT course_id FROM acl)
+                UNION
+                SELECT unnest(CAST(:live AS integer[]))
+            )
+            SELECT u.id, u.full_name
+            FROM users u JOIN ids ON ids.id = u.id
+            WHERE u.id <> :teacher_id AND u.merged_into_user_id IS NULL
+        """
+    rows = (
+        await db.execute(text(sql), {"teacher_id": current_user.id, "live": live})
+    ).mappings().fetchall()
+    live_set = set(live)
+    students = [
+        {
+            "id": int(r["id"]),
+            "name": r["full_name"] or f"Ученик #{r['id']}",
+            "on_lesson": int(r["id"]) in live_set,
+        }
+        for r in rows
+    ]
+    students.sort(key=lambda s: (not s["on_lesson"], s["name"].casefold(), s["id"]))
+    return students
