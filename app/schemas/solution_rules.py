@@ -16,6 +16,7 @@ NormalizationStep = Literal[
     "lower",
     "strip_punctuation",
     "strip_brackets_commas",
+    "decimal_comma",
     "collapse_spaces",
     "code_ast",
 ]
@@ -68,9 +69,15 @@ class ShortAnswerRules(BaseModel):
         default_factory=lambda: ["trim", "lower"],
         description=(
             "Список шагов нормализации строки перед сравнением. "
-            "Текстовые шаги: trim, lower, strip_brackets_commas, strip_punctuation, "
-            "collapse_spaces — применяются в фиксированном порядке: "
-            "trim → lower → strip_brackets_commas → strip_punctuation → collapse_spaces. "
+            "Текстовые шаги: trim, lower, decimal_comma, strip_brackets_commas, "
+            "strip_punctuation, collapse_spaces — применяются в фиксированном порядке: "
+            "trim → lower → decimal_comma → strip_brackets_commas → strip_punctuation → "
+            "collapse_spaces. "
+            "Шаг decimal_comma (tsk-1391) пишет одиночное число с десятичной запятой "
+            "через точку ('0,5' → '0.5'); строку, которая не является одним числом "
+            "('1,2,3', текст), не трогает. Подключать заданиям с одиночным числовым "
+            "ответом, вместо того чтобы снимать запятую через strip_punctuation "
+            "(тот склеивает '0,5' в '05'). "
             "Шаг strip_punctuation ставит на место знака ПРОБЕЛ (tsk-694), поэтому "
             "'a=b(c,d)' и 'a = b(c, d)' сравниваются одинаково. Исключения, где знак "
             "не разделитель, а часть значения: внутри чисто числового куска "

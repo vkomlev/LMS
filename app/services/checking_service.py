@@ -1856,6 +1856,33 @@ class CheckingService:
         return " ".join(" ".join(pieces).split())
 
     _BRACKETS_COMMA_RE = re.compile(r"[\[\],]")
+    _DECIMAL_COMMA_RE = re.compile(r"^([-+]?\d+),(\d+)$")
+
+    @staticmethod
+    def _decimal_comma(value: str) -> str:
+        """
+        Шаг `decimal_comma`: «0,5» → «0.5» (tsk-1391).
+
+        Русский десятичный разделитель — запятая, эталоны пишутся через точку.
+        Без шага запятую побочно снимал `strip_punctuation`, но он удаляет знак,
+        а не заменяет: «05» засчитывался за «0.5».
+
+        Замена срабатывает, только если ВСЯ строка (без краевых пробелов) —
+        одно число с одной запятой. Списки «1,2,3», «1, 2» и текст не трогаются,
+        поэтому случайное включение шага не ломает списковые ответы. Подключать
+        заданиям с одиночным числовым ответом.
+
+        Args:
+            value: Текст после trim/lower.
+
+        Returns:
+            Текст с точкой вместо десятичной запятой либо исходный текст.
+        """
+        stripped = value.strip()
+        match = CheckingService._DECIMAL_COMMA_RE.match(stripped)
+        if match is None:
+            return value
+        return f"{match.group(1)}.{match.group(2)}"
 
     @staticmethod
     def _strip_brackets_commas(value: str) -> str:
@@ -1902,6 +1929,9 @@ class CheckingService:
         от порядка в steps):
         - 'trim'                  → обрезка пробелов по краям;
         - 'lower'                 → приведение к нижнему регистру;
+        - 'decimal_comma'         → одиночное число с десятичной запятой
+                                    («0,5») пишется через точку (tsk-1391,
+                                    см. `_decimal_comma`);
         - 'strip_brackets_commas' → `[`, `]`, `,` становятся ПРОБЕЛОМ, минус и
                                     прочая пунктуация не трогаются (tsk-977,
                                     см. `_strip_brackets_commas`);
@@ -1910,8 +1940,9 @@ class CheckingService:
                                     `_strip_punctuation`);
         - 'collapse_spaces'       → схлопывание подряд идущих пробелов в один.
 
-        Порядок: trim → lower → strip_brackets_commas → strip_punctuation →
-        collapse_spaces. strip_brackets_commas — ДО strip_punctuation, чтобы к
+        Порядок: trim → lower → decimal_comma → strip_brackets_commas →
+        strip_punctuation → collapse_spaces. decimal_comma — первым из
+        знаковых шагов: иначе strip_punctuation склеил бы «0,5» в «05». strip_brackets_commas — ДО strip_punctuation, чтобы к
         моменту его работы скобок/запятых уже не было и не пересекался с
         логикой «между цифрами» в `_strip_punctuation` (та бережёт `2,5` как
         одно число ценой того, что одиночный минус перед числом без соседних
@@ -1934,6 +1965,8 @@ class CheckingService:
             result = result.strip()
         if "lower" in steps:
             result = result.lower()
+        if "decimal_comma" in steps:
+            result = CheckingService._decimal_comma(result)
         if "strip_brackets_commas" in steps:
             result = CheckingService._strip_brackets_commas(result)
         if "strip_punctuation" in steps:
