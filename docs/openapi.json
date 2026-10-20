@@ -27397,6 +27397,100 @@
         }
       }
     },
+    "/api/v1/staff/price-schedule-mismatches": {
+      "get": {
+        "tags": [
+          "price_schedule_mismatches"
+        ],
+        "summary": "Ученики, у которых ручная цена не совпадает с расписанием",
+        "description": "Действующие расхождения (их единицы — фильтр по ученику на клиенте).\n\nМаркетолог, методист и админ видят всю школу. Преподаватель — только своих\nучеников (тот же ACL, что у правки прогресса): цена чужого ученика ему не\nнужна, и раздавать её всем преподавателям незачем.",
+        "operationId": "list_price_schedule_mismatches_api_v1_staff_price_schedule_mismatches_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PriceScheduleMismatchRead"
+                  },
+                  "title": "Response List Price Schedule Mismatches Api V1 Staff Price Schedule Mismatches Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/teacher/students/{student_id}/tasks/search": {
       "get": {
         "tags": [
@@ -72178,6 +72272,87 @@
           "price_minor"
         ],
         "title": "PriceOverrideRequest"
+      },
+      "PriceScheduleMismatchRead": {
+        "properties": {
+          "student_id": {
+            "type": "integer",
+            "title": "Student Id"
+          },
+          "full_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Full Name"
+          },
+          "price_kind": {
+            "type": "string",
+            "const": "manual",
+            "title": "Price Kind"
+          },
+          "manual_price_minor": {
+            "type": "integer",
+            "title": "Manual Price Minor"
+          },
+          "price_weekly_lessons": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Price Weekly Lessons",
+            "description": "Ступень тарифа по ручной цене, раз в неделю"
+          },
+          "schedule_weekly_lessons": {
+            "type": "integer",
+            "title": "Schedule Weekly Lessons",
+            "description": "Занятий в неделю по расписанию"
+          },
+          "schedule_tariff_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Schedule Tariff Name",
+            "description": "Ступень, которую даёт расписание"
+          },
+          "schedule_tariff_price_minor": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Schedule Tariff Price Minor"
+          }
+        },
+        "type": "object",
+        "required": [
+          "student_id",
+          "full_name",
+          "price_kind",
+          "manual_price_minor",
+          "price_weekly_lessons",
+          "schedule_weekly_lessons",
+          "schedule_tariff_name",
+          "schedule_tariff_price_minor"
+        ],
+        "title": "PriceScheduleMismatchRead",
+        "description": "Ученик, у которого ручная цена соответствует другой ступени, чем расписание."
       },
       "PricingGroupCreateRequest": {
         "properties": {

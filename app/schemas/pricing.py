@@ -225,3 +225,20 @@ class PublicCourseOffer(BaseModel):
     sale_status: PublicSaleStatus
     group_name: Optional[str]
     tariffs: list[PublicTariff] = []
+
+
+# ------------------------------------------- расхождение цены и расписания (tsk-1024)
+
+
+class PriceScheduleMismatchRead(BaseModel):
+    """Ученик, у которого ручная цена соответствует другой ступени, чем расписание."""
+
+    student_id: int
+    full_name: Optional[str]
+    #: Пока всегда ``manual``: расчётная цена берётся из расписания и с ним не спорит.
+    price_kind: Literal["manual"]
+    manual_price_minor: int
+    price_weekly_lessons: Optional[int] = Field(description="Ступень тарифа по ручной цене, раз в неделю")
+    schedule_weekly_lessons: int = Field(description="Занятий в неделю по расписанию")
+    schedule_tariff_name: Optional[str] = Field(description="Ступень, которую даёт расписание")
+    schedule_tariff_price_minor: Optional[int]

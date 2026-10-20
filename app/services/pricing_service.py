@@ -904,3 +904,67 @@ async def _exists(db: AsyncSession, table: str, row_id: int) -> bool:
         await db.execute(text(f"SELECT 1 FROM {table} WHERE id = :id"), {"id": row_id})
     ).first()
     return row is not None
+
+
+# ------------------------------------------- расхождение цены и расписания (tsk-1024)
+
+
+async def list_price_schedule_mismatches(db: AsyncSession) -> list[dict]:
+    """Ученики, у которых ручная цена не совпадает со ступенью по расписанию.
+
+    Тот же вывод, что у дашборда (`resolve_attendance_frequency`): сигнал
+    ``discrepancy`` раньше считался, но ни один экран его не показывал, и
+    переплату (tsk-1021, Ундасынова 5500 вместо 2750) нашёл родитель, а не
+    школа. Расхождение возможно только у ученика с действующей РУЧНОЙ ценой:
+    расчётная цена по построению берётся из расписания и с ним не спорит,
+    поэтому обходим лишь учеников из ``student_price_override``.
+
+    :returns: строки со ступенью по цене, числом занятий по расписанию, самой
+        ручной ценой и тарифом, который дало бы расписание (если он есть в сетке).
+    """
+    overrides = (
+        await db.execute(
+            text(
+                "SELECT o.student_id, o.group_id, o.price_minor, u.full_name "
+                "FROM student_price_override o JOIN users u ON u.id = o.student_id "
+                "WHERE o.ends_on IS NULL OR o.ends_on >= date_trunc('month', CURRENT_DATE)::date "
+                "ORDER BY u.full_name, o.student_id, o.group_id"
+            )
+        )
+    ).all()
+    if not overrides:
+        return []
+
+    tariffs_by_group = await _load_tariffs(db, only_active=True)
+    result: list[dict] = []
+    for student_id in dict.fromkeys(o.student_id for o in overrides):
+        resolution = await resolve_attendance_frequency(db, student_id=student_id)
+        if not resolution.discrepancy:
+            continue
+        own = [o for o in overrides if o.student_id == student_id]
+        schedule_tariff = next(
+            (
+                t
+                for o in own
+                for t in tariffs_by_group.get(o.group_id, [])
+                if t.match_kind == "attendance_frequency"
+                and _as_int(t.match_value) == resolution.schedule_weekly_lessons
+            ),
+            None,
+        )
+        result.append(
+            {
+                "student_id": student_id,
+                "full_name": own[0].full_name,
+                "price_kind": "manual",
+                "manual_price_minor": own[0].price_minor,
+                "price_weekly_lessons": resolution.price_weekly_lessons,
+                "schedule_weekly_lessons": resolution.schedule_weekly_lessons,
+                "schedule_tariff_name": schedule_tariff.name if schedule_tariff else None,
+                "schedule_tariff_price_minor": (
+                    schedule_tariff.price_minor if schedule_tariff else None
+                ),
+            }
+        )
+    logger.info("Расхождений цены и расписания: %d", len(result))
+    return result

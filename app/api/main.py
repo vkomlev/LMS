@@ -392,6 +392,10 @@ app.include_router(teacher_task_history_router, prefix=API_PREFIX)
 from app.api.v1.dependency_locks import router as dependency_locks_router
 app.include_router(dependency_locks_router, prefix=API_PREFIX)
 
+# tsk-1024: расхождение ручной цены и расписания — сигнал персоналу
+from app.api.v1.price_schedule_mismatches import router as price_schedule_mismatches_router
+app.include_router(price_schedule_mismatches_router, prefix=API_PREFIX)
+
 # Поиск задания в кабинете преподавателя по номеру/тексту (tsk-353)
 from app.api.v1.teacher_task_search import router as teacher_task_search_router
 app.include_router(teacher_task_search_router, prefix=API_PREFIX)
