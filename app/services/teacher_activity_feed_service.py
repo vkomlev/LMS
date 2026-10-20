@@ -42,9 +42,12 @@ logger = logging.getLogger(__name__)
 #: Провенанс синтетических (не реальных) записей — не студенческая активность.
 _MANUAL_SOURCE = "manual_teacher"
 _ELEVATED_ROLES = frozenset({"admin", "methodist"})
+# tsk-1396: запас окна занятия для ведущего (в т.ч. на подмене), минуты.
+_LESSON_WINDOW_BEFORE_MIN = 15
+_LESSON_WINDOW_AFTER_MIN = 30
 
 
-def _scope_predicate(student_col: str, course_col: str) -> str:
+def _scope_predicate(student_col: str, course_col: str, time_col: Optional[str] = None) -> str:
     """SQL-фрагмент «ученик/курс в зоне ответственности :teacher_id».
 
     Тот же принцип, что у ``can_edit_progress``: ученик закреплён напрямую
@@ -52,7 +55,30 @@ def _scope_predicate(student_col: str, course_col: str) -> str:
     (``teacher_course_acl``). Вызывается только когда bypass (admin/methodist)
     уже исключён на уровне Python — сюда user-input не попадает, только
     литералы столбцов из закрытого набора call-sites этого модуля.
+
+    tsk-1396: с ``time_col`` добавляется окно занятия — событие ученика видно
+    тому, кто ВЕДЁТ его занятие (в т.ч. на подмене), но только если оно
+    случилось во время этого занятия (с запасом ``_LESSON_WINDOW_*``). Ни
+    прошлого ученика до подмены, ни работы после неё подменяющий не видит.
+    Владение занятием — как у ``students_on_lesson_now``: строка со-ведения
+    сильнее колонки ``teacher_id``.
     """
+    lesson_window = ""
+    if time_col is not None:
+        lesson_window = f"""
+            OR EXISTS (
+                SELECT 1 FROM lesson_occurrence_participant p
+                JOIN lesson_occurrence lo ON lo.id = p.occurrence_id
+                LEFT JOIN lesson_occurrence_teacher lot
+                  ON lot.occurrence_id = lo.id AND lot.teacher_id = :teacher_id
+                WHERE p.student_id = {student_col}
+                  AND p.status NOT IN ('declined', 'rescheduled', 'no_show')
+                  AND (lot.is_active IS TRUE OR (lot.id IS NULL AND lo.teacher_id = :teacher_id))
+                  AND {time_col} >= lo.scheduled_at - make_interval(mins => {_LESSON_WINDOW_BEFORE_MIN})
+                  AND {time_col} <= lo.scheduled_at
+                      + make_interval(mins => lo.duration_minutes + {_LESSON_WINDOW_AFTER_MIN})
+            )
+        """
     return f"""
         (
             EXISTS (
@@ -60,8 +86,9 @@ def _scope_predicate(student_col: str, course_col: str) -> str:
                 WHERE stl.student_id = {student_col} AND stl.teacher_id = :teacher_id
             )
             OR ({course_col} IS NOT NULL AND {teacher_course_acl(course_col)})
+            {lesson_window}
         )
-    """  # nosec B608 — student_col/course_col из закрытого набора литералов модуля
+    """  # nosec B608 — столбцы и числа из закрытого набора литералов модуля
 
 
 async def _is_elevated(db: AsyncSession, current_user: CurrentUser) -> bool:
@@ -108,7 +135,7 @@ async def _fetch_task_solved(
         params["before"] = before
     _add_student_filter(conds, params, "tr.user_id", student_id)
     if not elevated:
-        conds.append(_scope_predicate("tr.user_id", "t.course_id"))
+        conds.append(_scope_predicate("tr.user_id", "t.course_id", "tr.submitted_at"))
     where_sql = " AND ".join(conds)
 
     rows = (
@@ -179,7 +206,9 @@ async def _fetch_help_requested(
         params["before"] = before
     _add_student_filter(conds, params, "hr.student_id", student_id)
     if not elevated:
-        conds.append(_scope_predicate("hr.student_id", "COALESCE(hr.course_id, t.course_id)"))
+        conds.append(
+            _scope_predicate("hr.student_id", "COALESCE(hr.course_id, t.course_id)", "hr.created_at")
+        )
     where_sql = " AND ".join(conds)
 
     rows = (
@@ -268,7 +297,7 @@ async def _fetch_material_studied(
         params["before"] = before
     _add_student_filter(conds, params, "smp.student_id", student_id)
     if not elevated:
-        conds.append(_scope_predicate("smp.student_id", "m.course_id"))
+        conds.append(_scope_predicate("smp.student_id", "m.course_id", "smp.completed_at"))
     where_sql = " AND ".join(conds)
 
     rows = (

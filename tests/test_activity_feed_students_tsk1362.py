@@ -133,6 +133,84 @@ async def test_students_list_skips_staff_on_course(agraph, client):
         await db.commit()
 
 
+async def _substitute_lesson(
+    db, teacher_id: int, owner_id: int, student_id: int, *, active: bool = True,
+) -> int:
+    """Занятие, идущее сейчас (начато 30 мин назад, 90 мин): основной преподаватель —
+    ``owner_id``, а ``teacher_id`` ведёт его строкой со-ведения — как при подмене."""
+    occ = (
+        await db.execute(
+            text(
+                "INSERT INTO lesson_occurrence (slot_id, teacher_id, scheduled_at, duration_minutes) "
+                "VALUES (NULL, :owner, now() - interval '30 minutes', 90) RETURNING id"
+            ),
+            {"owner": owner_id},
+        )
+    ).scalar()
+    await db.execute(
+        text(
+            "INSERT INTO lesson_occurrence_teacher (occurrence_id, teacher_id, is_active) "
+            "VALUES (:o, :t, :a)"
+        ),
+        {"o": occ, "t": teacher_id, "a": active},
+    )
+    await db.execute(
+        text(
+            "INSERT INTO lesson_occurrence_participant (occurrence_id, student_id, status) "
+            "VALUES (:o, :s, 'confirmed')"
+        ),
+        {"o": occ, "s": student_id},
+    )
+    await db.commit()
+    return int(occ)
+
+
+async def _drop_lesson(db, occ: int) -> None:
+    await db.rollback()
+    for sql in (
+        "DELETE FROM lesson_occurrence_participant WHERE occurrence_id = :o",
+        "DELETE FROM lesson_occurrence_teacher WHERE occurrence_id = :o",
+        "DELETE FROM lesson_occurrence WHERE id = :o",
+    ):
+        await db.execute(text(sql), {"o": occ})
+    await db.commit()
+
+
+async def test_substitute_sees_history_within_lesson_window(agraph, client):
+    """tsk-1396: ведущий на подмене видит события ученика за время занятия."""
+    ids, db = agraph["ids"], agraph["db"]
+    sid = ids["student_other"]
+    headers = _auth(agraph, "teacher")
+    occ = await _substitute_lesson(db, ids["teacher"], ids["methodist"], sid)
+    try:
+        events = (await client.get(f"{_FEED}?student_id={sid}", headers=headers)).json()["events"]
+        assert any(e["type"] == "task_solved" for e in events), events
+
+        # Событие за сутки до занятия — вне окна, остаётся скрытым.
+        await db.execute(
+            text("UPDATE task_results SET submitted_at = now() - interval '1 day' WHERE user_id = :s"),
+            {"s": sid},
+        )
+        await db.commit()
+        events = (await client.get(f"{_FEED}?student_id={sid}", headers=headers)).json()["events"]
+        assert not any(e["type"] == "task_solved" for e in events), events
+    finally:
+        await _drop_lesson(db, occ)
+
+
+async def test_inactive_co_lead_does_not_open_history(agraph, client):
+    """tsk-1396: снятая строка со-ведения (подмена закончилась) доступа не даёт."""
+    ids, db = agraph["ids"], agraph["db"]
+    sid = ids["student_other"]
+    occ = await _substitute_lesson(db, ids["teacher"], ids["methodist"], sid, active=False)
+    try:
+        resp = await client.get(f"{_FEED}?student_id={sid}", headers=_auth(agraph, "teacher"))
+        assert resp.status_code == 200, resp.text
+        assert not any(e["type"] == "task_solved" for e in resp.json()["events"])
+    finally:
+        await _drop_lesson(db, occ)
+
+
 async def test_students_list_on_lesson_first(agraph, client, monkeypatch):
     """На занятии — сверху и с признаком, даже если вне обычных связей (подмена)."""
     ids = agraph["ids"]
