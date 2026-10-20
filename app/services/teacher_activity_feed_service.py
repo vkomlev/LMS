@@ -463,7 +463,8 @@ async def list_feed_students(
 
     * преподаватель — ученики из ``student_teacher_links``, записанные
       (``user_courses``) на курсы под его ``teacher_courses`` (с потомками по
-      ``course_parents``), и те, кто сейчас у него на занятии;
+      ``course_parents``), и те, кто сейчас у него на занятии; записанные
+      на курс сотрудники без роли ``student`` в список не попадают (tsk-1396);
     * методист/админ — все ученики школы (роль ``student``).
 
     Нагрузка (урок tsk-1250): ОДИН запрос на весь список. Дерево курсов
@@ -505,6 +506,13 @@ async def list_feed_students(
             SELECT u.id, u.full_name
             FROM users u JOIN ids ON ids.id = u.id
             WHERE u.id <> :teacher_id AND u.merged_into_user_id IS NULL
+              AND (
+                EXISTS (
+                    SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id
+                    WHERE ur.user_id = u.id AND r.name = 'student'
+                )
+                OR u.id = ANY(CAST(:live AS integer[]))
+              )
         """
     rows = (
         await db.execute(text(sql), {"teacher_id": current_user.id, "live": live})

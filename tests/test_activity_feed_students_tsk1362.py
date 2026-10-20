@@ -104,6 +104,35 @@ async def test_students_list_includes_student_without_events(agraph, client):
         await db.commit()
 
 
+async def test_students_list_skips_staff_on_course(agraph, client):
+    """tsk-1396: сотрудник, записанный на курс преподавателя, — не ученик."""
+    ids, db = agraph["ids"], agraph["db"]
+    staff_id, _ = await _new_user(db, "methodist", "staffcourse")
+    try:
+        await db.execute(
+            text("INSERT INTO user_courses (user_id, course_id, is_active) VALUES (:u, :c, true)"),
+            {"u": staff_id, "c": ids["root_course"]},
+        )
+        await db.commit()
+
+        resp = await client.get(_STUDENTS, headers=_auth(agraph, "teacher"))
+        assert resp.status_code == 200, resp.text
+        got = {s["id"] for s in resp.json()["students"]}
+        assert staff_id not in got
+        assert ids["student_course"] in got
+    finally:
+        await db.rollback()
+        for sql in (
+            "DELETE FROM user_courses WHERE user_id = :u",
+            "DELETE FROM user_session WHERE user_id = :u",
+            "DELETE FROM identity_link WHERE user_id = :u",
+            "DELETE FROM user_roles WHERE user_id = :u",
+            "DELETE FROM users WHERE id = :u",
+        ):
+            await db.execute(text(sql), {"u": staff_id})
+        await db.commit()
+
+
 async def test_students_list_on_lesson_first(agraph, client, monkeypatch):
     """На занятии — сверху и с признаком, даже если вне обычных связей (подмена)."""
     ids = agraph["ids"]
