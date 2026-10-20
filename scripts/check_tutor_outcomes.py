@@ -234,6 +234,30 @@ ORDER BY n DESC
 """
 
 
+# tsk-1376 (разбор 20.10): маршрутизатор иногда подмешивает модели свою инструкцию
+# (gpt-5.5 с инструкцией Codex — вход ~12 000 токенов против ~2 600). Подлинность по
+# id это не ловит, а вход выдаёт: успешный вызов наставника с входом в 3+ раза больше
+# медианы всех успешных вызовов окна. Только счёт в отчёте, без отбраковки.
+INFLATED_INPUT_RATIO = 3
+SQL_INFLATED_INPUT = f"""
+WITH real_students AS ({SQL_REAL_STUDENTS}),
+ok AS (
+    SELECT e.model, e.tokens_in
+    FROM llm_usage_event e
+    JOIN real_students rs ON rs.id = e.student_id
+    WHERE e.purpose = 'tutor' AND e.outcome = 'ok' AND e.created_at >= :since
+      AND e.tokens_in IS NOT NULL
+),
+base AS (SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY tokens_in) AS med FROM ok)
+SELECT ok.model, count(*) AS total,
+       count(*) FILTER (WHERE ok.tokens_in >= {INFLATED_INPUT_RATIO} * base.med) AS inflated,
+       max(ok.tokens_in) AS max_in, round(base.med) AS med
+FROM ok CROSS JOIN base
+GROUP BY ok.model, base.med
+ORDER BY inflated DESC, total DESC
+"""
+
+
 def _normalize(text_value: str) -> str:
     """Схлопнуть пробелы и регистр — сравнивать ответы иначе бессмысленно."""
     return re.sub(r"\s+", " ", (text_value or "").strip().lower())
@@ -318,6 +342,7 @@ async def main(quiet: bool = False, days: int = 7) -> int:
     reasons_stmt = text(SQL_REASONS).bindparams(bindparam("service_ids", expanding=False))
     sessions_stmt = text(SQL_SESSIONS).bindparams(bindparam("service_ids", expanding=False))
     calls_stmt = text(SQL_MODEL_CALLS).bindparams(bindparam("service_ids", expanding=False))
+    inflated_stmt = text(SQL_INFLATED_INPUT).bindparams(bindparam("service_ids", expanding=False))
 
     engine = create_async_engine(dsn, echo=False)
     try:
@@ -330,6 +355,7 @@ async def main(quiet: bool = False, days: int = 7) -> int:
             reasons = (await conn.execute(reasons_stmt, params)).mappings().all()
             sessions = (await conn.execute(sessions_stmt, params)).mappings().all()
             calls = (await conn.execute(calls_stmt, params)).mappings().all()
+            inflated = (await conn.execute(inflated_stmt, params)).mappings().all()
 
             # Исход разговора: сдал ли ученик верно ПОСЛЕ последней реплики
             # наставника. Отсчёт именно от неё, а не от начала сессии: зачёт,
@@ -469,6 +495,20 @@ async def main(quiet: bool = False, days: int = 7) -> int:
         for c in calls:
             if c["outcome"] != "ok":
                 print(f"    {c['outcome']}: {c['n']}")
+
+    inflated_total = sum(int(r["inflated"]) for r in inflated)
+    if inflated_total or (inflated and not quiet):
+        med = inflated[0]["med"] if inflated else None
+        print(
+            f"\nПОДМЕШАННАЯ ИНСТРУКЦИЯ (вход ≥ {INFLATED_INPUT_RATIO}× медианы {med} токенов, "
+            f"только счёт, tsk-1376): {inflated_total} успешных ответов"
+        )
+        for r in inflated:
+            if int(r["inflated"]):
+                print(
+                    f"    {r['model']}: {r['inflated']} из {r['total']}, "
+                    f"наибольший вход {r['max_in']}"
+                )
 
     if empty:
         print(
