@@ -4,7 +4,10 @@
 подраздел C (материал mC, задание tC). Порядок tsk-1250: материалы узла,
 подразделы, задания узла → mR, mC, tC, tR. Рекомендуемый материал в обходе
 не выдаётся, но с него идти можно. Прогресс не учитывается, ничего не пишется.
-Работает с dev-БД, подчищает за собой.
+
+Дерево живёт в общей откатываемой транзакции фикстуры `db` (tsk-333): ручка
+только читает и ходит через `get_async_db`, параллельные соединения ей не нужны,
+поэтому свой движок с реальными коммитами и ручной уборкой здесь лишний.
 """
 from __future__ import annotations
 
@@ -16,115 +19,93 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.pool import NullPool
 
 project_root = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(project_root))
 
-from app.core.config import Settings
 from app.api.main import app
 from app.api.deps import get_current_user
 from app.auth.current_user import CurrentUser
 
 pytestmark = pytest.mark.asyncio
 
-_settings = Settings()
-
 
 @pytest_asyncio.fixture(scope="function")
-async def tree():
+async def tree(db):
     """Дерево R → C с материалами и заданиями, преподаватель и ученик."""
-    engine = create_async_engine(_settings.database_url, poolclass=NullPool)
     ids: dict[str, int] = {}
-    async with AsyncSession(engine, expire_on_commit=False) as s:
-        async def course(title: str) -> int:
-            return (
-                await s.execute(
-                    text(
-                        "INSERT INTO courses (title, access_level) "
-                        "VALUES (:t, 'self_guided') RETURNING id"
-                    ),
-                    {"t": f"tsk1334 {title}"},
-                )
-            ).scalar()
 
-        async def material(course_id: int, level: str, pos: int) -> int:
-            return (
-                await s.execute(
-                    text(
-                        "INSERT INTO materials (course_id, title, type, content, order_position, "
-                        "requirement_level, is_active) VALUES (:c, 'tsk1334', 'text', "
-                        "CAST(:body AS jsonb), :p, :lvl, true) RETURNING id"
-                    ),
-                    {"c": course_id, "body": json.dumps({"body": "x"}), "p": pos, "lvl": level},
-                )
-            ).scalar()
-
-        async def task(course_id: int) -> int:
-            return (
-                await s.execute(
-                    text(
-                        "INSERT INTO tasks (task_content, solution_rules, course_id, "
-                        "difficulty_id, external_uid, max_attempts, is_active) VALUES "
-                        "(CAST(:tc AS jsonb), CAST(:sr AS jsonb), :cid, "
-                        "(SELECT id FROM difficulties ORDER BY id LIMIT 1), :uid, 3, true) "
-                        "RETURNING id"
-                    ),
-                    {
-                        "tc": '{"type":"SC","stem":"?","options":[{"id":"a","text":"1"}]}',
-                        "sr": '{"max_score":1,"correct_options":["a"]}',
-                        "cid": course_id,
-                        "uid": f"tsk1334-{uuid.uuid4().hex[:12]}",
-                    },
-                )
-            ).scalar()
-
-        try:
-            ids["R"] = await course("корень")
-            ids["C"] = await course("раздел")
-            await s.execute(
+    async def course(title: str) -> int:
+        return (
+            await db.execute(
                 text(
-                    "INSERT INTO course_parents (course_id, parent_course_id, order_number) "
-                    "VALUES (:c, :p, 1)"
+                    "INSERT INTO courses (title, access_level) "
+                    "VALUES (:t, 'self_guided') RETURNING id"
                 ),
-                {"c": ids["C"], "p": ids["R"]},
+                {"t": f"tsk1334 {title}"},
             )
-            ids["mR"] = await material(ids["R"], "required", 1)
-            ids["mRec"] = await material(ids["R"], "recommended", 2)
-            ids["mC"] = await material(ids["C"], "required", 1)
-            ids["tC"] = await task(ids["C"])
-            ids["tR"] = await task(ids["R"])
-            for key, role in (("teacher", "teacher"), ("student", "student")):
-                ids[key] = (
-                    await s.execute(
-                        text("INSERT INTO users (full_name) VALUES (:n) RETURNING id"),
-                        {"n": f"tsk1334 {key}"},
-                    )
-                ).scalar()
-                await s.execute(
-                    text(
-                        "INSERT INTO user_roles (user_id, role_id) "
-                        "SELECT :u, id FROM roles WHERE name = :r"
-                    ),
-                    {"u": ids[key], "r": role},
-                )
-            await s.commit()
-            yield ids
-        finally:
-            await s.rollback()
-            users = [ids[k] for k in ("teacher", "student") if k in ids]
-            courses = [ids[k] for k in ("R", "C") if k in ids]
-            await s.execute(text("DELETE FROM user_roles WHERE user_id = ANY(:u)"), {"u": users})
-            await s.execute(text("DELETE FROM users WHERE id = ANY(:u)"), {"u": users})
-            await s.execute(text("DELETE FROM tasks WHERE course_id = ANY(:c)"), {"c": courses})
-            await s.execute(text("DELETE FROM materials WHERE course_id = ANY(:c)"), {"c": courses})
-            await s.execute(
-                text("DELETE FROM course_parents WHERE course_id = ANY(:c)"), {"c": courses}
+        ).scalar()
+
+    async def material(course_id: int, level: str, pos: int) -> int:
+        return (
+            await db.execute(
+                text(
+                    "INSERT INTO materials (course_id, title, type, content, order_position, "
+                    "requirement_level, is_active) VALUES (:c, 'tsk1334', 'text', "
+                    "CAST(:body AS jsonb), :p, :lvl, true) RETURNING id"
+                ),
+                {"c": course_id, "body": json.dumps({"body": "x"}), "p": pos, "lvl": level},
             )
-            await s.execute(text("DELETE FROM courses WHERE id = ANY(:c)"), {"c": courses})
-            await s.commit()
-            await engine.dispose()
+        ).scalar()
+
+    async def task(course_id: int) -> int:
+        return (
+            await db.execute(
+                text(
+                    "INSERT INTO tasks (task_content, solution_rules, course_id, "
+                    "difficulty_id, external_uid, max_attempts, is_active) VALUES "
+                    "(CAST(:tc AS jsonb), CAST(:sr AS jsonb), :cid, "
+                    "(SELECT id FROM difficulties ORDER BY id LIMIT 1), :uid, 3, true) "
+                    "RETURNING id"
+                ),
+                {
+                    "tc": '{"type":"SC","stem":"?","options":[{"id":"a","text":"1"}]}',
+                    "sr": '{"max_score":1,"correct_options":["a"]}',
+                    "cid": course_id,
+                    "uid": f"tsk1334-{uuid.uuid4().hex[:12]}",
+                },
+            )
+        ).scalar()
+
+    ids["R"] = await course("корень")
+    ids["C"] = await course("раздел")
+    await db.execute(
+        text(
+            "INSERT INTO course_parents (course_id, parent_course_id, order_number) "
+            "VALUES (:c, :p, 1)"
+        ),
+        {"c": ids["C"], "p": ids["R"]},
+    )
+    ids["mR"] = await material(ids["R"], "required", 1)
+    ids["mRec"] = await material(ids["R"], "recommended", 2)
+    ids["mC"] = await material(ids["C"], "required", 1)
+    ids["tC"] = await task(ids["C"])
+    ids["tR"] = await task(ids["R"])
+    for key, role in (("teacher", "teacher"), ("student", "student")):
+        ids[key] = (
+            await db.execute(
+                text("INSERT INTO users (full_name) VALUES (:n) RETURNING id"),
+                {"n": f"tsk1334 {key}"},
+            )
+        ).scalar()
+        await db.execute(
+            text(
+                "INSERT INTO user_roles (user_id, role_id) "
+                "SELECT :u, id FROM roles WHERE name = :r"
+            ),
+            {"u": ids[key], "r": role},
+        )
+    yield ids
 
 
 async def _next(client, user_id: int, kind: str, item_id: int, root: int | None = None):
