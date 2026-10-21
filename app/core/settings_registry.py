@@ -539,6 +539,19 @@ SETTINGS: Tuple[SettingDef, ...] = (
         warning="Включено — подключившие MAX ученики получают сообщения бота.",
     ),
     SettingDef(
+        key="notify_tg_enabled",
+        group=GROUP_SIGNALS,
+        title="Слать напоминания и уведомления ученику в Telegram",
+        description=(
+            "Короткое сообщение от ученического бота со ссылкой в кабинет — тем, "
+            "кто подключил Telegram. Нужен ключ бота на сервере (tsk-1398)."
+        ),
+        kind="bool",
+        default=False,
+        env_var=None,
+        warning="Включено — ученики с подключённым Telegram получают сообщения бота.",
+    ),
+    SettingDef(
         key="gap_student_min_submissions",
         group=GROUP_SIGNALS,
         title="Сколько сдач нужно, чтобы судить о трудностях ученика",

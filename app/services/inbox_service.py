@@ -49,6 +49,10 @@ async def create_for_user(
     db.add(item)
     await db.flush()
     await db.refresh(item)
+    # tsk-1398: дубль во внешние каналы (ВК, MAX, Telegram) — после коммита.
+    from app.services import messenger_channel_service
+
+    messenger_channel_service.queue_for_inbox(db, user_id=user_id, inbox_kind=kind)
     return item
 
 

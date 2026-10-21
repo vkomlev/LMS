@@ -68,9 +68,17 @@ STOP_WORDS = {"стоп", "stop", "/stop", "отписаться", "отключ
 
 KIND_REENGAGE = "reengage"
 KIND_MESSAGE = "message"
+# tsk-1398: остальные уведомления ученику (решение оператора 21.10). В тексте —
+# только повод и ссылка: сумм, оценок и комментариев в мессенджер не шлём.
+KIND_PAYMENT = "payment"
+KIND_HELP = "help"
+KIND_REVIEW = "review"
 _TEXTS = {
     KIND_REENGAGE: "Вы давно не заглядывали в курс. Следующее задание уже ждёт: {url}",
     KIND_MESSAGE: "Преподаватель написал вам сообщение. Прочитать: {url}",
+    KIND_PAYMENT: "Напоминаем об оплате обучения. Подробности в кабинете: {url}",
+    KIND_HELP: "Преподаватель ответил на вашу просьбу о помощи. Посмотреть: {url}",
+    KIND_REVIEW: "Преподаватель проверил вашу работу. Результат в кабинете: {url}",
 }
 _FOOTER = "\n\nОтключить уведомления — напишите «стоп»."
 LINKED_TEXT = (
@@ -110,6 +118,11 @@ def configured(channel: Channel, settings: Optional[Settings] = None) -> bool:
     if channel == "vk":
         return bool(s.vk_group_id and s.vk_group_token and s.vk_callback_secret)
     return bool(s.max_bot_token and s.max_bot_username and s.max_webhook_secret)
+
+
+def any_sending_enabled() -> bool:
+    """Включён ли хоть один внешний канал (ВК, MAX, Telegram)."""
+    return any(sending_enabled(c) for c in CHANNELS) or settings_store.get_bool(TG_SETTING_KEY)
 
 
 def sending_enabled(channel: Channel) -> bool:
@@ -265,8 +278,9 @@ async def notify_user(db: AsyncSession, *, user_id: int, kind: str, url: str) ->
     """
     s = Settings()
     active = [c for c in CHANNELS if configured(c, s) and sending_enabled(c)]
+    sent = await _notify_tg(db, user_id=user_id, message=_TEXTS[kind].format(url=url), settings=s)
     if not active:
-        return 0
+        return sent
     try:
         rows = (await db.execute(text(
             "SELECT channel, external_id FROM messenger_link "
@@ -275,8 +289,7 @@ async def notify_user(db: AsyncSession, *, user_id: int, kind: str, url: str) ->
     except Exception:
         logger.exception("tsk-1253: не прочитаны каналы ученика %s", user_id)
         await db.rollback()
-        return 0
-    sent = 0
+        return sent
     for channel, external_id in rows:
         try:
             await send_text(channel, external_id, _TEXTS[kind].format(url=url) + _FOOTER, s)
@@ -286,6 +299,50 @@ async def notify_user(db: AsyncSession, *, user_id: int, kind: str, url: str) ->
         except Exception as e:
             logger.error("tsk-1253: %s для ученика %s не отправлено: %s", channel, user_id, type(e).__name__)
     return sent
+
+
+TG_API = "https://api.telegram.org"
+TG_SETTING_KEY = "notify_tg_enabled"
+
+
+def tg_configured(settings: Optional[Settings] = None) -> bool:
+    """Есть ли у LMS токен ученического бота Telegram."""
+    return bool((settings or Settings()).student_bot_token)
+
+
+async def _notify_tg(db: AsyncSession, *, user_id: int, message: str, settings: Settings) -> int:
+    """Telegram: получатель — `users.tg_id` (привязка этапа А tsk-1253).
+
+    Своя ветка: привязка TG живёт в identity, а не в `messenger_link`.
+    Рубильник `notify_tg_enabled` выключен по умолчанию.
+    """
+    if not (tg_configured(settings) and settings_store.get_bool(TG_SETTING_KEY)):
+        return 0
+    try:
+        tg_id = (await db.execute(text(
+            "SELECT tg_id FROM users WHERE id = :u AND is_active AND blocked_at IS NULL"
+        ), {"u": user_id})).scalar()
+    except Exception:
+        logger.exception("tsk-1398: не прочитан Telegram ученика %s", user_id)
+        await db.rollback()
+        return 0
+    if not tg_id:
+        return 0
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.post(
+                f"{TG_API}/bot{settings.student_bot_token}/sendMessage",
+                json={"chat_id": tg_id, "text": message + _FOOTER},
+            )
+        if r.status_code == 403:
+            logger.info("tsk-1398: ученик %s остановил бота Telegram", user_id)
+            return 0
+        r.raise_for_status()
+        return 1
+    except Exception as e:
+        # Имя класса, не текст: в тексте ошибки httpx адрес с токеном бота.
+        logger.error("tsk-1398: Telegram ученику %s не отправлено: %s", user_id, type(e).__name__)
+        return 0
 
 
 _STAFF_SENDER_SQL = """
@@ -306,7 +363,7 @@ def schedule_teacher_message(*, sender_id: Optional[int], recipient_id: int, url
     """
     if sender_id is None or sender_id == recipient_id:
         return
-    if not any(sending_enabled(c) for c in CHANNELS):
+    if not any_sending_enabled():
         return
 
     async def _run() -> None:
@@ -324,3 +381,70 @@ def schedule_teacher_message(*, sender_id: Optional[int], recipient_id: int, url
     task = asyncio.create_task(_run())
     _background.add(task)
     task.add_done_callback(_background.discard)
+
+
+#: Какие уведомления кабинета дублировать во внешние каналы и куда вести
+#: ссылку (решение оператора 21.10, tsk-1398).
+INBOX_KIND_MAP: dict[str, tuple[str, str]] = {
+    "payment_overdue": (KIND_PAYMENT, "/me/payments"),
+    "help_request_replied": (KIND_HELP, "/me/notifications"),
+    "help_request_closed": (KIND_HELP, "/me/notifications"),
+    "sa_com_graded": (KIND_REVIEW, "/me/notifications"),
+    "task_returned_for_rework": (KIND_REVIEW, "/me/notifications"),
+    "sa_com_regraded": (KIND_REVIEW, "/me/notifications"),
+}
+
+_PENDING_KEY = "tsk1398_external_notify"
+
+
+def queue_for_inbox(db: AsyncSession, *, user_id: int, inbox_kind: str) -> None:
+    """Запомнить уведомление кабинета для отправки во внешние каналы.
+
+    Отправка — только после фиксации транзакции: уведомление, откатившееся
+    вместе с оценкой или оплатой, наружу уйти не должно.
+    """
+    mapped = INBOX_KIND_MAP.get(inbox_kind)
+    if mapped is None or not any_sending_enabled():
+        return
+    db.sync_session.info.setdefault(_PENDING_KEY, []).append((user_id, *mapped))
+
+
+def _dispatch(user_id: int, kind: str, path: str) -> None:
+    """Отправить фоном, своей сессией."""
+    base = Settings().public_base_url.rstrip("/")
+
+    async def _run() -> None:
+        from app.db.session import async_session_factory
+
+        async with async_session_factory() as db:
+            await notify_user(db, user_id=user_id, kind=kind, url=f"{base}{path}")
+
+    task = asyncio.create_task(_run())
+    _background.add(task)
+    task.add_done_callback(_background.discard)
+
+
+def _after_commit(session) -> None:  # noqa: ANN001 - sync Session из события
+    for user_id, kind, path in session.info.pop(_PENDING_KEY, []):
+        try:
+            _dispatch(user_id, kind, path)
+        except RuntimeError:
+            # Нет работающего цикла событий (синхронный скрипт) — наружу не шлём.
+            logger.warning("tsk-1398: нет цикла событий, уведомление %s не отправлено", kind)
+
+
+def _after_rollback(session) -> None:  # noqa: ANN001
+    session.info.pop(_PENDING_KEY, None)
+
+
+def _install_session_hooks() -> None:
+    """Подписать отправку на фиксацию и откат любой сессии (один раз)."""
+    from sqlalchemy import event
+    from sqlalchemy.orm import Session
+
+    if not event.contains(Session, "after_commit", _after_commit):
+        event.listen(Session, "after_commit", _after_commit)
+        event.listen(Session, "after_rollback", _after_rollback)
+
+
+_install_session_hooks()

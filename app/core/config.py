@@ -565,6 +565,10 @@ class Settings:
         self.max_bot_token: str = os.getenv("MAX_BOT_TOKEN", "")
         self.max_bot_username: str = os.getenv("MAX_BOT_USERNAME", "")
         self.max_webhook_secret: str = os.getenv("MAX_WEBHOOK_SECRET", "")
+        # Telegram (tsk-1398): токен УЧЕНИЧЕСКОГО бота (QUIZ_FUNNEL_BOT_USERNAME).
+        # Не TG_BOT_TOKEN_FOR_INITDATA — тот на проде от другого бота. Пусто —
+        # в Telegram LMS не шлёт.
+        self.student_bot_token: str = os.getenv("STUDENT_BOT_TOKEN", "")
         # Где лежат PDF-бонусы веток (имя файла — из спецификации квиза).
         self.quiz_funnel_pdf_base: str = os.getenv("QUIZ_FUNNEL_PDF_BASE", "/media/funnel")
         # Напоминания гостю в боте (+1/+3/+7 дней). Отдельный рубильник: PDF можно
