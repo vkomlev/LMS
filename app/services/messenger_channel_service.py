@@ -31,10 +31,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import secrets
+import ssl
+from functools import lru_cache
+from pathlib import Path
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal, Optional
 
+import certifi
 import httpx
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -76,6 +80,20 @@ LINKED_TEXT = (
 STOPPED_TEXT = "Уведомления отключены. Снова подключить можно в кабинете ученика."
 EXPIRED_TEXT = "Ссылка устарела. Нажмите «Подключить» в кабинете ученика ещё раз."
 CONFLICT_TEXT = "Этот аккаунт уже подключён к другому ученику школы."
+
+
+#: Корневой сертификат Минцифры: им подписан platform-api2.max.ru, а в
+#: стандартном наборе certifi его нет (документация MAX: «добавить в доверенные»).
+#: Доверие расширяем только для запросов к MAX, остальной сервер не трогаем.
+MINCIFRY_ROOT = Path(__file__).resolve().parent.parent / "core" / "certs" / "russian_trusted_root_ca.pem"
+
+
+@lru_cache(maxsize=1)
+def max_ssl_context() -> ssl.SSLContext:
+    """Набор certifi + корень Минцифры — для запросов к API MAX."""
+    ctx = ssl.create_default_context(cafile=certifi.where())
+    ctx.load_verify_locations(cafile=str(MINCIFRY_ROOT))
+    return ctx
 
 
 class ChannelNotConfiguredError(RuntimeError):
@@ -208,7 +226,8 @@ async def send_text(channel: Channel, external_id: str, message: str, settings: 
     :raises httpx.HTTPError | RuntimeError: прочие сбои транспорта.
     """
     s = settings or Settings()
-    async with httpx.AsyncClient(timeout=10) as client:
+    verify: ssl.SSLContext | bool = max_ssl_context() if channel == "max" else True
+    async with httpx.AsyncClient(timeout=10, verify=verify) as client:
         if channel == "vk":
             r = await client.post(VK_API, data={
                 "user_id": external_id, "random_id": secrets.randbelow(2**31),

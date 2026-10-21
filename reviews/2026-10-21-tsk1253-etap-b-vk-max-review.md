@@ -38,3 +38,10 @@ CB: `docs/cross-project/` — контракт API, схема, CHANGELOG.
 ## Operator handoff
 - Б: ключ сообщества ВК с правом сообщений + Callback API (нет доступа к интерфейсу ВК).
 - В: перенос ключей в боевой `.env` — только после «ОК» оператора в этой сессии.
+
+## Дополнение: корень Минцифры для MAX — ПРИНЯТО
+На проде запрос к `platform-api2.max.ru` упал `CERTIFICATE_VERIFY_FAILED`: API MAX подписан
+Russian Trusted Root CA, его нет в certifi. Корень скачан с gu-st.ru (Госуслуги), отпечаток
+SHA-256 `D2:6D:2D:02:…:CF:31` сверен. Доверие расширено только для клиента MAX
+(`max_ssl_context`: certifi + корень), системное хранилище сервера не тронуто — решение оператора.
+Тест `test_max_ssl_context_trusts_mincifry_root`; локально: только с certifi — ConnectError, с корнем — TLS проходит.

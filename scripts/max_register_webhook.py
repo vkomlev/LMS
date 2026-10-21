@@ -17,6 +17,9 @@ import sys
 
 import httpx
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from app.services.messenger_channel_service import max_ssl_context  # noqa: E402
+
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger("max_register_webhook")
 
@@ -36,7 +39,7 @@ def main() -> int:
         logger.error("MAX_BOT_TOKEN не задан")
         return 2
     headers = {"Authorization": token}
-    with httpx.Client(timeout=20) as client:
+    with httpx.Client(timeout=20, verify=max_ssl_context()) as client:
         if args.list or not args.url:
             r = client.get(f"{API}/subscriptions", headers=headers)
             logger.info("%s %s", r.status_code, r.text.replace(token, "<T>"))

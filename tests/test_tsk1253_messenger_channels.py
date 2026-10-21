@@ -232,3 +232,11 @@ def test_stop_words():
     assert svc.is_stop_word(" Стоп! ")
     assert svc.is_stop_word("/stop")
     assert not svc.is_stop_word("стоп-кран это что")
+
+
+def test_max_ssl_context_trusts_mincifry_root():
+    """API MAX подписан корнем Минцифры, которого нет в certifi (проверено на проде 21.10)."""
+    svc.max_ssl_context.cache_clear()
+    ctx = svc.max_ssl_context()
+    names = {dict(x[0] for x in c["subject"]).get("commonName") for c in ctx.get_ca_certs()}
+    assert "Russian Trusted Root CA" in names
