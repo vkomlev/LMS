@@ -129,6 +129,35 @@ async def test_llm_draft_ok(monkeypatch: pytest.MonkeyPatch) -> None:
     }
 
 
+async def test_relay_down_falls_back_to_rubric(monkeypatch: pytest.MonkeyPatch) -> None:
+    """ПК оператора выключен (пересыльщик не отвечает) — в карточке слой рубрики."""
+    from app.services.llm import LLMUnavailable
+
+    async def _down(messages, **kwargs):
+        raise LLMUnavailable("сетевая ошибка: connection refused")
+
+    monkeypatch.setattr(fds, "complete", _down)
+    rubric = _rubric(_item("c1", "Названы 2 команды", "yes"), _item("c2", "Есть пример", "no"))
+    out = await fds.write_llm_draft(answer_text="ответ", rubric=rubric, task_stem=None,
+                                    solution_rules={}, student_id=None)
+    assert out["feedback_draft"]["error"] == "LLMUnavailable"
+    card = fds.draft_for_review({"rubric_review": rubric, **out})
+    assert card["source"] == fds.SOURCE_RUBRIC
+    assert "Есть пример" in card["improve"]
+
+
+def test_feedback_chain_own_or_judge(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.services.llm import providers
+
+    monkeypatch.setenv("LLM_JUDGE_MODELS", "google/x")
+    monkeypatch.delenv("LLM_FEEDBACK_MODELS", raising=False)
+    assert providers.feedback_models() == ["google/x"]
+    monkeypatch.setenv("ANTHROPIC_DIRECT_ENABLED", "1")
+    monkeypatch.setenv("LLM_FEEDBACK_MODELS", "anthropic-direct/claude-haiku-5-5")
+    assert providers.feedback_models() == ["anthropic-direct/claude-haiku-5-5"]
+    assert providers.judge_models() == ["google/x"]
+
+
 @pytest.mark.asyncio
 async def test_grade_stores_feedback_structure(db, client):
     task_id, course_id = await _pick_or_create_task(db)

@@ -22,9 +22,11 @@
 2. Модель (`source="llm"`) — пишется заранее, в фоновом тике сразу после
    разбора, и только при включённом рубильнике `feedback_draft_llm_enabled`
    (по умолчанию выключен: постоянный расход, включение — решение оператора).
-   Цепочка — судейская (`LLM_JUDGE_MODELS`, сейчас без `anthropic/*`): модели
-   Anthropic через CloseRouter теряют роль (tsk-1259). Выход проходит страж
-   `_leaks_solution`: код или кусок эталона — черновик выбрасывается, и
+   Цепочка — `LLM_FEEDBACK_MODELS` (не задана — судейская). Модели Anthropic
+   только как `anthropic-direct/*`: через CloseRouter они теряют роль
+   (tsk-1259). Прямое звено идёт через пересыльщик на ПК оператора (tsk-1376):
+   ПК выключен — сбой, `error` в черновике, и карточка показывает слой рубрики.
+   Выход проходит страж `_leaks_solution`: код или кусок эталона — черновик выбрасывается, и
    преподаватель получает слой без модели.
 
 Решение остаётся за человеком: черновик — подсказка в поле ввода, ученику
@@ -37,7 +39,7 @@ import logging
 import re
 from typing import Any, Dict, Iterable, List, Optional
 
-from app.services.llm import Budget, LLMError, LLMMessage, complete
+from app.services.llm import Budget, LLMError, LLMMessage, complete, providers
 
 logger = logging.getLogger(__name__)
 
@@ -53,8 +55,6 @@ SOURCE_LLM = "llm"
 _LEAK_WINDOW = 40
 
 _CODE_MARKERS = re.compile(r"```|^\s*(def |class |for .+:|while .+:|import |print\()", re.M)
-
-_MAX_PART = 600
 
 
 def _usable_items(rubric: Any) -> List[Dict[str, Any]]:
@@ -189,6 +189,9 @@ _SYSTEM_PROMPT = """\
 
 Пиши на «ты», тепло и конкретно, простыми словами. Три части:
 1. strengths — что получилось: 1–3 конкретных пункта со ссылкой на ответ.
+   ТОЛЬКО по критериям с отметкой [yes]. То, что разбор отметил [no] или
+   [unclear], не хвали ни прямо, ни частично. Если [yes] нет — поблагодари за
+   попытку и назови, что ученик уже сделал, не называя это верным.
 2. improve — что улучшить, в БУДУЩЕМ времени («В следующий раз добавь…»):
    по невыполненным и спорным пунктам. Пусто, если улучшать нечего.
 3. next_step — один следующий шаг и короткое ободрение.
@@ -245,6 +248,7 @@ async def write_llm_draft(
             student_id=student_id,
             budget=Budget.BATCH,
             response_format={"type": "json_object"},
+            chain=providers.feedback_models(),
         )
     except LLMError as exc:
         logger.info("tsk-990 feedback_draft: модель недоступна (%s): %s", type(exc).__name__, exc)
@@ -258,7 +262,7 @@ async def write_llm_draft(
         logger.warning("tsk-990 feedback_draft: не разобрали ответ модели (%s)", exc)
         return {"feedback_draft": {"error": "unparsable"}}
 
-    draft = {k: str(data.get(k) or "").strip()[:_MAX_PART] for k in ("strengths", "improve", "next_step")}
+    draft = {k: str(data.get(k) or "").strip() for k in ("strengths", "improve", "next_step")}
     titles = {_norm(str(i["title"])) for i in items}
     references = [r for r in _reference_texts(solution_rules) if _norm(r) not in titles]
     if _leaks_solution("\n".join(draft.values()), references):

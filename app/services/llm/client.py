@@ -325,12 +325,15 @@ async def complete(
     budget: Budget = Budget.BATCH,
     seed: Optional[int] = None,
     response_format: Optional[dict] = None,
+    chain: Optional[Sequence[str]] = None,
 ) -> LLMResult:
     """Один батч-вызов. Текст отдаётся как есть — предметный разбор у потребителя.
 
-    `model=None` — идти по цепочке `LLM_JUDGE_MODELS` до первой рабочей.
+    `model=None` — идти по цепочке `chain` (по умолчанию `LLM_JUDGE_MODELS`) до
+    первой рабочей.
     """
-    ready = _ready_chain(_rotate_by_cooldown(_models_for(model, providers.judge_models())))
+    base_chain = providers.judge_models() if chain is None else chain
+    ready = _ready_chain(_rotate_by_cooldown(_models_for(model, base_chain)))
     chain = [candidate for candidate, _ in ready]
     last_error: Optional[LLMError] = None
     # Потолок на ВЕСЬ вызов, а не на каждую модель по отдельности (tsk-678) —

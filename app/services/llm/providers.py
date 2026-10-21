@@ -326,6 +326,15 @@ def judge_models() -> list[str]:
     return _chain("LLM_JUDGE_MODELS", _DEFAULT_JUDGE_MODELS)
 
 
+def feedback_models() -> list[str]:
+    """Цепочка черновика отзыва преподавателю (tsk-990).
+
+    Своя, чтобы выбор модели черновика не менял судью. Не задана —
+    судейская цепочка (прежнее поведение).
+    """
+    return _chain("LLM_FEEDBACK_MODELS", _env_first("LLM_JUDGE_MODELS") or _DEFAULT_JUDGE_MODELS)
+
+
 def model_cooldown_seconds() -> float:
     """Сколько модель считается «только что отказавшей» и уходит в конец очереди.
 
