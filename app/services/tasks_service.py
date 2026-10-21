@@ -362,6 +362,18 @@ class TasksService(BaseService[Tasks]):
         триггер `trg_tasks_anchor_guard`; здесь он проверяется заранее, чтобы
         методист получил понятный 422, а не ошибку базы.
 
+        Порядок блокировок. Страж — BEFORE-триггер: к его запуску строка
+        задания уже захвачена, и он берёт `FOR SHARE` материал и прозрачную
+        связь. Снятие прозрачности идёт в обратном порядке (связь, затем
+        задания подкурса в триггере `course_parents_anchor_on_unlink`), и
+        встреча на задании с уже стоящим якорем на хозяина давала
+        взаимоблокировку. Поэтому здесь, ДО записи задания, прозрачная связь
+        берётся `FOR SHARE`: параллельное снятие либо ждёт нашей записи (и
+        затем обнуляет новый якорь), либо успевает раньше — тогда связи уже
+        нет и методист получает 422. Цикла нет. Материал блокируется заодно,
+        в порядке стража: курс материала, по которому ищется связь, до конца
+        транзакции не уедет.
+
         Raises:
             DomainError: материала нет или он из недопустимого курса.
         """
@@ -369,12 +381,21 @@ class TasksService(BaseService[Tasks]):
             return
         material_course = (
             await db.execute(
-                text("SELECT course_id FROM materials WHERE id = :mid"),
+                text("SELECT course_id FROM materials WHERE id = :mid FOR SHARE"),
                 {"mid": anchor_material_id},
             )
         ).scalar()
         if material_course is None:
             raise DomainError(f"Материал {anchor_material_id} не найден")
+        if int(material_course) != int(task.course_id):
+            await db.execute(
+                text(
+                    "SELECT 1 FROM course_parents "
+                    "WHERE course_id = :c AND parent_course_id = :p AND is_transparent "
+                    "FOR SHARE"
+                ),
+                {"c": int(task.course_id), "p": int(material_course)},
+            )
         if int(material_course) not in await self.anchor_course_ids(db, int(task.course_id)):
             raise DomainError(
                 f"Материал {anchor_material_id} из другого раздела: якорь задания "

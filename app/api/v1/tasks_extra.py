@@ -1653,6 +1653,37 @@ async def list_task_anchor_materials(
     return {"task_id": task.id, "course_id": task.course_id, "items": items}
 
 
+#: SQLSTATE `check_violation`: им триггер-страж якоря (`tasks_anchor_guard`,
+#: миграции tsk996_task_anchor / tsk996_bank_anchor) отклоняет запись.
+_CHECK_VIOLATION_SQLSTATE = "23514"
+
+
+def _is_anchor_guard_rejection(exc: DBAPIError) -> bool:
+    """Это отказ триггера-стража якоря задания (tsk-996)?
+
+    Два признака сразу: SQLSTATE 23514 и то, что ошибку поднял именно страж —
+    в сообщении метка «tsk-996:» или контекст ошибки называет функцию
+    `tasks_anchor_guard`. Один SQLSTATE не годится: тем же кодом отказывают
+    обычные CHECK-ограничения таблицы; один текст — тоже: подстрока могла
+    попасть в сообщение любой другой ошибки.
+
+    SQLSTATE берётся у обёртки драйвера (`exc.orig.sqlstate` — SQLAlchemy
+    переносит его с исключения asyncpg) либо у первопричины
+    (`exc.orig.__cause__`, `asyncpg.exceptions.CheckViolationError`); текст и
+    контекст — у первопричины, без неё — из строки ошибки.
+    """
+    orig = exc.orig
+    cause = getattr(orig, "__cause__", None)
+    sqlstate = getattr(orig, "sqlstate", None) or getattr(cause, "sqlstate", None)
+    if sqlstate != _CHECK_VIOLATION_SQLSTATE:
+        return False
+    message = getattr(cause, "message", None)
+    if not isinstance(message, str):
+        message = str(orig)
+    context = getattr(cause, "context", None) or ""
+    return "tsk-996:" in message or "tasks_anchor_guard" in context
+
+
 @router.patch(
     "/tasks/{task_id}",
     response_model=TaskRead,
@@ -1721,7 +1752,7 @@ async def patch_task_manual(
     except DBAPIError as e:
         # tsk-996: проверка выше прошла, но страж базы отказал — между ними
         # параллельно сняли прозрачную связь или перенесли материал.
-        if "tsk-996:" not in str(e.orig):
+        if not _is_anchor_guard_rejection(e):
             raise
         await db.rollback()
         raise HTTPException(

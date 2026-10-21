@@ -273,7 +273,10 @@ SELECT
     END AS done_at,
     -- tsk-996 (фаза B): действующий якорь задания (материал того же курса,
     -- любой — и неактивный); иначе NULL — задание в конце узла. Фаза D:
-    -- или материал прозрачного хозяина курса задания (tsk-1198).
+    -- или материал прозрачного хозяина курса задания (tsk-1198) — только
+    -- ПЕРВОГО, в порядке `transparent_links` и `TasksService.anchor_course_ids`:
+    -- подкурс, по ошибке разметки прозрачный для двух уроков, ученик видит
+    -- в первом, и якорь на материал второго не действует.
     am.id AS anchor_material_id,
     am.order_position AS anchor_order_position,
     am.course_id AS anchor_course_id,
@@ -283,11 +286,12 @@ LEFT JOIN materials am
     ON am.id = t.anchor_material_id
    AND (
        am.course_id = t.course_id
-       OR EXISTS (
-           SELECT 1 FROM course_parents cp
+       OR am.course_id = (
+           SELECT cp.parent_course_id FROM course_parents cp
            WHERE cp.course_id = t.course_id
-             AND cp.parent_course_id = am.course_id
              AND cp.is_transparent
+           ORDER BY cp.order_number ASC NULLS LAST, cp.parent_course_id
+           LIMIT 1
        )
    )
 LEFT JOIN last_per_task lp ON lp.task_id = t.id

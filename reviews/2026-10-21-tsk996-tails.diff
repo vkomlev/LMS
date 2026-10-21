@@ -1,0 +1,626 @@
+diff --git a/app/api/v1/tasks_extra.py b/app/api/v1/tasks_extra.py
+index 1b06c6f..e6e1525 100644
+--- a/app/api/v1/tasks_extra.py
++++ b/app/api/v1/tasks_extra.py
+@@ -1653,6 +1653,37 @@ async def list_task_anchor_materials(
+     return {"task_id": task.id, "course_id": task.course_id, "items": items}
+ 
+ 
++#: SQLSTATE `check_violation`: им триггер-страж якоря (`tasks_anchor_guard`,
++#: миграции tsk996_task_anchor / tsk996_bank_anchor) отклоняет запись.
++_CHECK_VIOLATION_SQLSTATE = "23514"
++
++
++def _is_anchor_guard_rejection(exc: DBAPIError) -> bool:
++    """Это отказ триггера-стража якоря задания (tsk-996)?
++
++    Два признака сразу: SQLSTATE 23514 и то, что ошибку поднял именно страж —
++    в сообщении метка «tsk-996:» или контекст ошибки называет функцию
++    `tasks_anchor_guard`. Один SQLSTATE не годится: тем же кодом отказывают
++    обычные CHECK-ограничения таблицы; один текст — тоже: подстрока могла
++    попасть в сообщение любой другой ошибки.
++
++    SQLSTATE берётся у обёртки драйвера (`exc.orig.sqlstate` — SQLAlchemy
++    переносит его с исключения asyncpg) либо у первопричины
++    (`exc.orig.__cause__`, `asyncpg.exceptions.CheckViolationError`); текст и
++    контекст — у первопричины, без неё — из строки ошибки.
++    """
++    orig = exc.orig
++    cause = getattr(orig, "__cause__", None)
++    sqlstate = getattr(orig, "sqlstate", None) or getattr(cause, "sqlstate", None)
++    if sqlstate != _CHECK_VIOLATION_SQLSTATE:
++        return False
++    message = getattr(cause, "message", None)
++    if not isinstance(message, str):
++        message = str(orig)
++    context = getattr(cause, "context", None) or ""
++    return "tsk-996:" in message or "tasks_anchor_guard" in context
++
++
+ @router.patch(
+     "/tasks/{task_id}",
+     response_model=TaskRead,
+@@ -1721,7 +1752,7 @@ async def patch_task_manual(
+     except DBAPIError as e:
+         # tsk-996: проверка выше прошла, но страж базы отказал — между ними
+         # параллельно сняли прозрачную связь или перенесли материал.
+-        if "tsk-996:" not in str(e.orig):
++        if not _is_anchor_guard_rejection(e):
+             raise
+         await db.rollback()
+         raise HTTPException(
+diff --git a/app/services/content_grace_service.py b/app/services/content_grace_service.py
+index 3a4ec41..06553dd 100644
+--- a/app/services/content_grace_service.py
++++ b/app/services/content_grace_service.py
+@@ -273,7 +273,10 @@ SELECT
+     END AS done_at,
+     -- tsk-996 (фаза B): действующий якорь задания (материал того же курса,
+     -- любой — и неактивный); иначе NULL — задание в конце узла. Фаза D:
+-    -- или материал прозрачного хозяина курса задания (tsk-1198).
++    -- или материал прозрачного хозяина курса задания (tsk-1198) — только
++    -- ПЕРВОГО, в порядке `transparent_links` и `TasksService.anchor_course_ids`:
++    -- подкурс, по ошибке разметки прозрачный для двух уроков, ученик видит
++    -- в первом, и якорь на материал второго не действует.
+     am.id AS anchor_material_id,
+     am.order_position AS anchor_order_position,
+     am.course_id AS anchor_course_id,
+@@ -283,11 +286,12 @@ LEFT JOIN materials am
+     ON am.id = t.anchor_material_id
+    AND (
+        am.course_id = t.course_id
+-       OR EXISTS (
+-           SELECT 1 FROM course_parents cp
++       OR am.course_id = (
++           SELECT cp.parent_course_id FROM course_parents cp
+            WHERE cp.course_id = t.course_id
+-             AND cp.parent_course_id = am.course_id
+              AND cp.is_transparent
++           ORDER BY cp.order_number ASC NULLS LAST, cp.parent_course_id
++           LIMIT 1
+        )
+    )
+ LEFT JOIN last_per_task lp ON lp.task_id = t.id
+diff --git a/app/services/tasks_service.py b/app/services/tasks_service.py
+index 4a95963..38d18ff 100644
+--- a/app/services/tasks_service.py
++++ b/app/services/tasks_service.py
+@@ -362,6 +362,18 @@ class TasksService(BaseService[Tasks]):
+         триггер `trg_tasks_anchor_guard`; здесь он проверяется заранее, чтобы
+         методист получил понятный 422, а не ошибку базы.
+ 
++        Порядок блокировок. Страж — BEFORE-триггер: к его запуску строка
++        задания уже захвачена, и он берёт `FOR SHARE` материал и прозрачную
++        связь. Снятие прозрачности идёт в обратном порядке (связь, затем
++        задания подкурса в триггере `course_parents_anchor_on_unlink`), и
++        встреча на задании с уже стоящим якорем на хозяина давала
++        взаимоблокировку. Поэтому здесь, ДО записи задания, прозрачная связь
++        берётся `FOR SHARE`: параллельное снятие либо ждёт нашей записи (и
++        затем обнуляет новый якорь), либо успевает раньше — тогда связи уже
++        нет и методист получает 422. Цикла нет. Материал блокируется заодно,
++        в порядке стража: курс материала, по которому ищется связь, до конца
++        транзакции не уедет.
++
+         Raises:
+             DomainError: материала нет или он из недопустимого курса.
+         """
+@@ -369,12 +381,21 @@ class TasksService(BaseService[Tasks]):
+             return
+         material_course = (
+             await db.execute(
+-                text("SELECT course_id FROM materials WHERE id = :mid"),
++                text("SELECT course_id FROM materials WHERE id = :mid FOR SHARE"),
+                 {"mid": anchor_material_id},
+             )
+         ).scalar()
+         if material_course is None:
+             raise DomainError(f"Материал {anchor_material_id} не найден")
++        if int(material_course) != int(task.course_id):
++            await db.execute(
++                text(
++                    "SELECT 1 FROM course_parents "
++                    "WHERE course_id = :c AND parent_course_id = :p AND is_transparent "
++                    "FOR SHARE"
++                ),
++                {"c": int(task.course_id), "p": int(material_course)},
++            )
+         if int(material_course) not in await self.anchor_course_ids(db, int(task.course_id)):
+             raise DomainError(
+                 f"Материал {anchor_material_id} из другого раздела: якорь задания "
+diff --git a/docs/ai/adr/0008-interleave-theory-practice-anchor.md b/docs/ai/adr/0008-interleave-theory-practice-anchor.md
+index da77e1c..a4c8bd2 100644
+--- a/docs/ai/adr/0008-interleave-theory-practice-anchor.md
++++ b/docs/ai/adr/0008-interleave-theory-practice-anchor.md
+@@ -183,6 +183,25 @@ index ix_tasks_anchor_material (anchor_material_id) WHERE anchor_material_id IS
+   с якорем на материал хозяина ставит в голову хозяина — туда, где его видит ученик.
+ - Задания HARD, уходящие публикацией в подкурс сложных (tsk-347), якорь по-прежнему не получают.
+ 
++## Дополнение 2026-10-21: хвосты ревью фазы D
++
++- **Отказ стража в PATCH → 422** распознаётся по SQLSTATE `23514` (`check_violation`; у обёртки
++  драйвера `e.orig.sqlstate`, у первопричины asyncpg `e.orig.__cause__.sqlstate`) **и** по признаку
++  стража — метка `tsk-996:` в сообщении или функция `tasks_anchor_guard` в контексте ошибки. Прочие
++  ошибки базы (другие CHECK, иной код с той же меткой) — как раньше, 500.
++- **Порядок блокировок.** Страж — BEFORE-триггер: строка задания уже захвачена, затем `FOR SHARE`
++  материал и связь. Снятие прозрачности — связь, затем (триггер) задания; перенос материала —
++  материал, затем задания. Встреча на задании, у которого уже стоял якорь на хозяина, давала
++  взаимоблокировку (воспроизведена тестом, 40P01). `TasksService.validate_anchor` теперь до записи
++  задания берёт `FOR SHARE` материал и прозрачную связь (порядок стража): снятие связи либо ждёт
++  записи якоря и затем обнуляет его, либо успевает первым — тогда методист получает 422. Прямые
++  записи мимо сервиса (bulk-upsert публикатора, ручной SQL) остаются в прежнем порядке: при
++  взаимоблокировке PostgreSQL снимает одну транзакцию целиком, повтор проходит, данные согласованы
++  (тест `test_tsk996_anchor_locks.py`).
++- **Подкурс, прозрачный для двух уроков** (ошибка разметки): «ушёл вперёд» учитывает якорь только
++  на материал **первого** хозяина (`order_number ASC NULLS LAST, parent_course_id`) — как порядок узла
++  и валидация. Страж по-прежнему допускает любого прозрачного родителя (мягче, не опаснее).
++
+ ## Явно НЕ вводим
+ 
+ - Общую сквозную нумерацию материалов и заданий (Б1) и слияние сущностей (В).
+diff --git a/tests/conftest.py b/tests/conftest.py
+index 5a9cbd1..b5e2696 100644
+--- a/tests/conftest.py
++++ b/tests/conftest.py
+@@ -328,6 +328,9 @@ SELF_MANAGED_CONNECTION_MODULES: frozenset[str] = frozenset(
+         # воспроизвести на одном соединении — нужны две настоящие параллельные
+         # транзакции, захватывающие строки в обратном порядке.
+         "test_tsk626_course_state_deadlock.py",
++        # tsk-996: взаимоблокировка «якорь задания банка против снятия
++        # прозрачности» — тоже только на двух параллельных транзакциях.
++        "test_tsk996_anchor_locks.py",
+         # tsk-301: гонку списания лимита нельзя проверить на одном соединении —
+         # нужны настоящие параллельные транзакции и коммиты. Остальные тесты
+         # задачи живут под обычной изоляцией.
+diff --git a/tests/test_tsk996_anchor_locks.py b/tests/test_tsk996_anchor_locks.py
+new file mode 100644
+index 0000000..f421c3d
+--- /dev/null
++++ b/tests/test_tsk996_anchor_locks.py
+@@ -0,0 +1,261 @@
++"""tsk-996 (хвост ревью фазы D): якорь задания банка против снятия прозрачности.
++
++Две записи одной пары «банк — урок» захватывают строки в обратном порядке:
++
++* установка якоря (PATCH): строка задания захватывается UPDATE-ом, затем
++  BEFORE-триггер-страж `tasks_anchor_guard` берёт `FOR SHARE` материал и
++  прозрачную связь `course_parents`;
++* снятие прозрачности: UPDATE строки `course_parents`, затем AFTER-триггер
++  `course_parents_anchor_on_unlink` обнуляет якоря заданий банка на
++  материалы урока — захватывает строки заданий.
++
++Если у задания уже стоит якорь на материал урока (методист переставляет его
++на другой материал того же урока), обе транзакции тянутся к строке друг друга
++— взаимоблокировка. Сцены:
++
++- `test_guard_order_deadlocks_...` — контрольная: порядок стража (задание,
++  затем связь) против снятия связи даёт 40P01. PostgreSQL снимает одну
++  транзакцию целиком; повтор снятой проходит, данные согласованы. Без этой
++  сцены зелёные тесты правки ничего не доказывали бы.
++- `test_validate_anchor_prelock_...` — рабочий путь: `validate_anchor` до
++  записи задания берёт `FOR SHARE` материал и связь (порядок стража). Снятие
++  связи ждёт записи якоря и затем обнуляет его; либо, успев первым, оставляет
++  методисту 422 (`DomainError`). Взаимоблокировки нет.
++
++Модуль работает вне общей откатываемой транзакции: нужны настоящие
++параллельные транзакции. Уборка своя.
++"""
++from __future__ import annotations
++
++import asyncio
++from typing import Any
++
++import pytest
++import pytest_asyncio
++from sqlalchemy import text
++from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
++from sqlalchemy.pool import NullPool
++
++from app.api.error_handlers import is_deadlock_error
++from app.core.config import Settings
++from app.models.tasks import Tasks
++from app.services.tasks_service import TasksService
++from app.utils.exceptions import DomainError
++from tests.test_tsk996_anchor import _anchor
++from tests.test_tsk996_node_sequence import _course, _link, _material, _task
++
++pytestmark = [pytest.mark.no_tx_isolation]
++
++_settings = Settings()
++
++#: Пауза, за которую вторая транзакция успевает захватить свою первую строку.
++_HANDSHAKE_PAUSE_S = 0.4
++#: PostgreSQL объявляет взаимоблокировку не раньше `deadlock_timeout` (1 с).
++_DEADLOCK_WAIT_S = 15.0
++
++_UNLINK_SQL = (
++    "UPDATE course_parents SET is_transparent = false "
++    "WHERE course_id = :bank AND parent_course_id = :lesson"
++)
++_SET_ANCHOR_SQL = "UPDATE tasks SET anchor_material_id = :m, anchor_source = 'manual' WHERE id = :t"
++
++
++@pytest_asyncio.fixture(scope="function")
++async def engine():
++    eng = create_async_engine(_settings.database_url, poolclass=NullPool)
++    try:
++        yield eng
++    finally:
++        await eng.dispose()
++
++
++@pytest_asyncio.fixture(scope="function")
++async def scene(engine):
++    """Урок (m1, m2), банк прозрачен для урока; задание банка с якорем на m1."""
++    async with AsyncSession(engine, expire_on_commit=False) as s:
++        lesson = await _course(s, "якорь-блокировки урок")
++        bank = await _course(s, "якорь-блокировки банк")
++        await _link(s, lesson, bank, 1, transparent=True)
++        m1 = await _material(s, lesson, 1)
++        m2 = await _material(s, lesson, 2)
++        task = await _task(s, bank, 1, host_position=100)
++        await _anchor(s, task, m1)
++        await s.commit()
++    try:
++        yield dict(lesson=lesson, bank=bank, m1=m1, m2=m2, task=task)
++    finally:
++        async with AsyncSession(engine) as s:
++            # Задания и материалы уходят каскадом вместе с курсами.
++            await s.execute(
++                text("DELETE FROM courses WHERE id = ANY(:ids)"), {"ids": [bank, lesson]}
++            )
++            await s.commit()
++
++
++async def _state(engine, sc: dict[str, Any]) -> tuple[Any, Any, bool]:
++    async with AsyncSession(engine) as s:
++        anchor, source = (
++            await s.execute(
++                text("SELECT anchor_material_id, anchor_source FROM tasks WHERE id = :t"),
++                {"t": sc["task"]},
++            )
++        ).one()
++        transparent = (
++            await s.execute(
++                text(
++                    "SELECT is_transparent FROM course_parents "
++                    "WHERE course_id = :bank AND parent_course_id = :lesson"
++                ),
++                {"bank": sc["bank"], "lesson": sc["lesson"]},
++            )
++        ).scalar_one()
++    return anchor, source, bool(transparent)
++
++
++async def _unlink(engine, sc: dict[str, Any]) -> None:
++    async with AsyncSession(engine) as s:
++        await s.execute(text(_UNLINK_SQL), sc)
++        await s.commit()
++
++
++async def _wait_until_blocked(engine, pid: int) -> None:
++    """Дождаться, пока сеанс `pid` встанет в ожидание блокировки строки.
++
++    Надёжнее паузы: на загруженной машине второе соединение могло не успеть
++    захватить свою строку за фиксированное время, и сцена молча менялась бы.
++    """
++    async with AsyncSession(engine) as s:
++        for _ in range(int(_DEADLOCK_WAIT_S / 0.05)):
++            waiting = (
++                await s.execute(
++                    text(
++                        "SELECT wait_event_type = 'Lock' FROM pg_stat_activity "
++                        "WHERE pid = :pid"
++                    ),
++                    {"pid": pid},
++                )
++            ).scalar()
++            if waiting:
++                return
++            await s.rollback()  # свежий снимок pg_stat_activity
++            await asyncio.sleep(0.05)
++    raise AssertionError(f"сеанс {pid} так и не встал в ожидание блокировки")
++
++
++async def _set_anchor_via_service(engine, sc: dict[str, Any], material: int) -> None:
++    async with AsyncSession(engine) as s:
++        task = await s.get(Tasks, sc["task"])
++        await TasksService().validate_anchor(s, task, material)
++        await s.execute(text(_SET_ANCHOR_SQL), {"m": material, "t": sc["task"]})
++        await s.commit()
++
++
++async def test_guard_order_deadlocks_against_unlink_and_retry_heals(engine, scene) -> None:
++    """Контроль: порядок стража (задание → связь) против снятия связи — 40P01; повтор лечит."""
++    sc = scene
++    task_locked = asyncio.Event()
++    unlink_pid: list[int] = []
++
++    async def set_anchor_guard_order() -> None:
++        async with AsyncSession(engine) as s:
++            # Строка задания захвачена до стража — как у UPDATE с BEFORE-триггером.
++            await s.execute(
++                text("SELECT 1 FROM tasks WHERE id = :t FOR UPDATE"), {"t": sc["task"]}
++            )
++            task_locked.set()
++            # Снятие связи захватило связь и ждёт строку задания.
++            while not unlink_pid:
++                await asyncio.sleep(0.01)
++            await _wait_until_blocked(engine, unlink_pid[0])
++            await s.execute(text(_SET_ANCHOR_SQL), {"m": sc["m2"], "t": sc["task"]})
++            await s.commit()
++
++    async def unlink() -> None:
++        await task_locked.wait()
++        async with AsyncSession(engine) as s:
++            unlink_pid.append(int((await s.execute(text("SELECT pg_backend_pid()"))).scalar_one()))
++            await s.execute(text(_UNLINK_SQL), sc)
++            await s.commit()
++
++    results = await asyncio.wait_for(
++        asyncio.gather(set_anchor_guard_order(), unlink(), return_exceptions=True),
++        timeout=_DEADLOCK_WAIT_S,
++    )
++    deadlocks = [r for r in results if isinstance(r, BaseException) and is_deadlock_error(r)]
++    assert len(deadlocks) == 1, f"сцена не воспроизвела взаимоблокировку: {results!r}"
++    assert [r for r in results if r is not None and r not in deadlocks] == []
++
++    # Снятая транзакция откачена целиком; данные согласованы уже сейчас.
++    anchor, source, transparent = await _state(engine, sc)
++    if results[0] is None:
++        # Выжил якорь: связь осталась прозрачной, якорь — новый.
++        assert (anchor, source, transparent) == (sc["m2"], "manual", True)
++        await _unlink(engine, sc)  # повтор снятия
++    else:
++        # Выжило снятие: связь непрозрачна, якорь на урок обнулён.
++        assert (anchor, source, transparent) == (None, None, False)
++        with pytest.raises(DomainError):  # повтор PATCH — честный 422
++            await _set_anchor_via_service(engine, sc, sc["m2"])
++    assert await _state(engine, sc) == (None, None, False)
++
++
++async def test_validate_anchor_prelock_then_unlink_waits(engine, scene) -> None:
++    """Рабочий путь, якорь первым: снятие связи ждёт и затем обнуляет новый якорь.
++
++    Без предварительной блокировки в `validate_anchor` снятие успевает раньше
++    записи, и запись якоря падает на страже (DBAPIError) — тест это отличает.
++    """
++    sc = scene
++    prelocked = asyncio.Event()
++    unlink_pid: list[int] = []
++
++    async def set_anchor() -> None:
++        async with AsyncSession(engine) as s:
++            task = await s.get(Tasks, sc["task"])
++            await TasksService().validate_anchor(s, task, sc["m2"])
++            prelocked.set()
++            while not unlink_pid:
++                await asyncio.sleep(0.01)
++            # Снятие связи действительно ждёт нашей блокировки связи.
++            await _wait_until_blocked(engine, unlink_pid[0])
++            await s.execute(text(_SET_ANCHOR_SQL), {"m": sc["m2"], "t": sc["task"]})
++            await s.commit()
++
++    async def unlink() -> None:
++        await prelocked.wait()
++        async with AsyncSession(engine) as s:
++            unlink_pid.append(int((await s.execute(text("SELECT pg_backend_pid()"))).scalar_one()))
++            await s.execute(text(_UNLINK_SQL), sc)
++            await s.commit()
++
++    results = await asyncio.wait_for(
++        asyncio.gather(set_anchor(), unlink(), return_exceptions=True),
++        timeout=_DEADLOCK_WAIT_S,
++    )
++    assert results == [None, None], results
++    assert await _state(engine, sc) == (None, None, False)
++
++
++async def test_validate_anchor_after_pending_unlink_is_domain_error(engine, scene) -> None:
++    """Рабочий путь, снятие первым: проверка ждёт его коммита и отказывает (422)."""
++    sc = scene
++    unlinked = asyncio.Event()
++
++    async def unlink() -> None:
++        async with AsyncSession(engine) as s:
++            await s.execute(text(_UNLINK_SQL), sc)
++            unlinked.set()
++            await asyncio.sleep(_HANDSHAKE_PAUSE_S)
++            await s.commit()
++
++    async def set_anchor() -> None:
++        await unlinked.wait()
++        await _set_anchor_via_service(engine, sc, sc["m2"])
++
++    results = await asyncio.wait_for(
++        asyncio.gather(unlink(), set_anchor(), return_exceptions=True),
++        timeout=_DEADLOCK_WAIT_S,
++    )
++    assert results[0] is None, results
++    assert isinstance(results[1], DomainError), results
++    assert await _state(engine, sc) == (None, None, False)
+diff --git a/tests/test_tsk996_tails.py b/tests/test_tsk996_tails.py
+new file mode 100644
+index 0000000..9524008
+--- /dev/null
++++ b/tests/test_tsk996_tails.py
+@@ -0,0 +1,180 @@
++"""tsk-996: хвосты ревью фазы D.
++
++* PATCH /tasks/{id} распознаёт отказ триггера-стража якоря по SQLSTATE 23514
++  и по признаку стража (метка «tsk-996:» в сообщении или функция
++  `tasks_anchor_guard` в контексте), а не по одной подстроке: гонка «проверка
++  сервиса прошла → связь сняли → страж отказал» — 422, прочие ошибки базы —
++  как раньше.
++* «Ушёл вперёд» (content_grace_service) при подкурсе, прозрачном сразу для
++  двух уроков (ошибка разметки), учитывает якорь только на материал ПЕРВОГО
++  хозяина — как валидация якоря (`TasksService.anchor_course_ids`) и порядок
++  узла (`transparent_links`).
++
++Взаимоблокировка «якорь против снятия прозрачности» — в
++`tests/test_tsk996_anchor_locks.py` (нужны настоящие параллельные транзакции).
++"""
++from __future__ import annotations
++
++from datetime import timedelta
++
++import pytest
++from sqlalchemy import text
++from sqlalchemy.exc import DBAPIError
++
++from app.api.v1.tasks_extra import _is_anchor_guard_rejection
++from app.services.content_grace_service import compute_graced_items
++from app.services.tasks_service import TasksService
++from tests.test_tsk996_anchor import _anchor, _anchor_row, _user_with_session
++from tests.test_tsk996_bank_anchor import shape_bank
++from tests.test_tsk996_node_sequence import (
++    INSERTED,
++    LONG_AGO,
++    _course,
++    _link,
++    _material,
++    _reset_caches,
++    _result,
++    _student,
++    _task,
++)
++
++
++# ─── Распознавание отказа стража ────────────────────────────────────────────
++
++
++async def _db_error(db, sql: str, params: dict | None = None) -> DBAPIError:
++    nested = await db.begin_nested()
++    with pytest.raises(DBAPIError) as exc:
++        await db.execute(text(sql), params or {})
++    await nested.rollback()
++    return exc.value
++
++
++@pytest.mark.asyncio
++async def test_guard_rejection_recognized_by_sqlstate_and_guard(db):
++    """Настоящий отказ стража — да; 23514 без признака стража и метка с другим кодом — нет."""
++    s = await shape_bank(db)
++    guard = await _db_error(
++        db,
++        "UPDATE tasks SET anchor_material_id = :m WHERE id = :t",
++        {"m": s["pm"], "t": s["b2"]},
++    )
++    # Как реально устроена ошибка: SQLSTATE у обёртки и у первопричины asyncpg.
++    assert guard.orig.sqlstate == "23514"
++    assert guard.orig.__cause__.sqlstate == "23514"
++    assert "tasks_anchor_guard" in (guard.orig.__cause__.context or "")
++    assert _is_anchor_guard_rejection(guard)
++
++    other_check = await _db_error(
++        db,
++        "DO $$ BEGIN RAISE EXCEPTION 'нарушено другое ограничение' "
++        "USING ERRCODE = 'check_violation'; END $$",
++    )
++    assert other_check.orig.sqlstate == "23514"
++    assert not _is_anchor_guard_rejection(other_check)
++
++    marked_other_code = await _db_error(
++        db, "DO $$ BEGIN RAISE EXCEPTION 'tsk-996: не страж'; END $$"
++    )
++    assert marked_other_code.orig.sqlstate == "P0001"
++    assert not _is_anchor_guard_rejection(marked_other_code)
++
++
++@pytest.mark.asyncio
++async def test_api_patch_race_unlink_between_check_and_write_is_422(db, client, monkeypatch):
++    """Связь банка с уроком сняли между проверкой сервиса и записью — 422, не 500."""
++    s = await shape_bank(db)
++    token = await _user_with_session(db, "methodist")
++    auth = {"Authorization": f"Bearer {token}"}
++    await _anchor(db, s["b2"], s["bm"])
++    await db.commit()
++
++    original = TasksService.validate_anchor
++
++    async def validate_then_unlink(self, session, task, anchor_material_id):
++        await original(self, session, task, anchor_material_id)
++        # «Параллельная» правка иерархии: проверка уже прошла.
++        await session.execute(
++            text(
++                "UPDATE course_parents SET is_transparent = false "
++                "WHERE course_id = :b AND parent_course_id = :l"
++            ),
++            {"b": s["bank"], "l": s["lesson"]},
++        )
++
++    monkeypatch.setattr(TasksService, "validate_anchor", validate_then_unlink)
++    r = await client.patch(
++        f"/api/v1/tasks/{s['b2']}", json={"anchor_material_id": s["m3"]}, headers=auth
++    )
++    assert r.status_code == 422, r.text
++    assert "больше не подходит" in r.text
++    # Запись откачена целиком: якорь прежний.
++    assert await _anchor_row(db, s["b2"]) == (s["bm"], "manual")
++
++
++@pytest.mark.asyncio
++async def test_api_patch_other_db_error_is_not_422(db, client, monkeypatch):
++    """Ошибка базы, не связанная со стражем, по-прежнему не маскируется под 422."""
++    s = await shape_bank(db)
++    token = await _user_with_session(db, "methodist")
++    auth = {"Authorization": f"Bearer {token}"}
++
++    async def broken_update(self, session, db_obj, obj_in):
++        await session.execute(
++            text(
++                "DO $$ BEGIN RAISE EXCEPTION 'другое ограничение' "
++                "USING ERRCODE = 'check_violation'; END $$"
++            )
++        )
++
++    monkeypatch.setattr(TasksService, "update", broken_update)
++    with pytest.raises(DBAPIError):
++        await client.patch(
++            f"/api/v1/tasks/{s['b2']}", json={"anchor_material_id": s["m3"]}, headers=auth
++        )
++
++
++# ─── «Ушёл вперёд»: подкурс, прозрачный для двух уроков ─────────────────────
++
++
++@pytest.mark.asyncio
++async def test_grace_two_transparent_hosts_uses_first_host_only(db, monkeypatch):
++    """Якорь на материал ВТОРОГО хозяина правило не ставит в голову второго урока.
++
++    Банк прозрачен для урока 1 (первый по `order_number`) и урока 2. Движок и
++    валидация берут только первого хозяина: в уроке 2 банк — обычный раздел,
++    и задание x стоит в нём после решённого y, за ним только нерешённое z —
++    прощать нечего. Якорь x на материал урока 2 (страж такой пропускает)
++    раньше переносил x в голову урока 2, и правило прощало его.
++    Контроль: якорь на материал ПЕРВОГО хозяина, корень — урок 1, работает.
++    """
++    monkeypatch.setenv("NODE_SEQUENCE_ENABLED", "true")
++    first = await _course(db, "два хозяина урок 1")
++    second = await _course(db, "два хозяина урок 2")
++    bank = await _course(db, "два хозяина банк")
++    await _link(db, first, bank, 1, transparent=True)
++    await _link(db, second, bank, 2, transparent=True)
++    f1 = await _material(db, first, 1)
++    await _material(db, first, 2)
++    s1 = await _material(db, second, 1)
++    await _material(db, second, 2)
++    y = await _task(db, bank, 1, host_position=100)
++    student = await _student(db, first, second)
++    await _result(db, student, y, second, second, at=LONG_AGO + timedelta(days=3))
++    x = await _task(db, bank, 2, host_position=200, created_at=INSERTED)
++    await _task(db, bank, 3, host_position=300)
++    await db.commit()
++
++    async def graced(root: int) -> set[int]:
++        _reset_caches(db)
++        return set((await compute_graced_items(db, student, root)).tasks)
++
++    assert x not in await graced(second)
++    await _anchor(db, x, s1)
++    await db.commit()
++    assert x not in await graced(second)
++
++    await _result(db, student, y, first, first, at=LONG_AGO + timedelta(days=3))
++    await _anchor(db, x, f1)
++    await db.commit()
++    assert x in await graced(first)
