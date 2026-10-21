@@ -24,6 +24,12 @@
 действительно есть в конфиге, в `.env.example` и читается в самом файле.
 Рубильник намеренно НЕ разрешён точке с возможностью ученика: иначе он стал бы
 дешёвым способом обойти дверь прав.
+
+Системная точка может и не держать рубильник сама, если она — общее ядро,
+которое зовёт другая системная точка (tsk-1312: гейт роли наставника зовёт
+еженедельная проверка цепочек). Тогда запись ссылается на вызывающего, и страж
+проверяет, что тот правда системный, правда с рубильником и правда импортирует
+это ядро — иначе «выше выключают» осталось бы словами.
 """
 from __future__ import annotations
 
@@ -66,6 +72,7 @@ class SpendPoint:
     #: Гейт стоит в этом же файле.
     gated_here: bool = False
     #: Гейт стоит выше по потоку — путь до места, где он реально вызывается.
+    #: У системной точки — путь до системной точки с рубильником, которая её зовёт.
     gated_upstream: Optional[str] = None
     #: Гейт — рубильник оператора: имя переменной окружения, которой расход
     #: включается и выключается. Только для системного расхода (tsk-678).
@@ -88,10 +95,10 @@ class SpendPoint:
                 "рубильник не заменяет дверь прав: у точки с возможностью "
                 f"{self.capability!r} гейт обязан стоять здесь или выше по потоку"
             )
-        if not self.capability and not self.gated_by_toggle:
+        if not self.capability and not self.gated_by_toggle and not self.gated_upstream:
             raise AssertionError(
                 "точка без возможности ученика обязана быть системной и назвать "
-                "свой рубильник"
+                "свой рубильник или системного вызывающего с рубильником"
             )
 
 
@@ -148,6 +155,26 @@ AI_SPEND_POINTS: dict[str, SpendPoint] = {
     # в неделю на процесс, порядка полуцента, без зависимости от числа учеников.
     "app/services/llm_chain_check_cron_service.py": SpendPoint(
         gated_by_toggle="LLM_CHAIN_CHECK_ENABLED", wired=True
+    ),
+    # tsk-990: черновик развивающего отзыва преподавателю. Зовётся только из
+    # фонового тика оценки (`code_review_cron_service`) сразу после разбора по
+    # рубрике — то есть по работе, которая попала в очередь через прогейченный
+    # вход `attempts.py`. Новой возможности не заводится по доводу tsk-646.
+    # Сверх двери — рубильник школы `feedback_draft_llm_enabled` (кабинет,
+    # по умолчанию выключен): это ТРЕТИЙ вызов модели на текстовую работу с
+    # критериями. Учёт — общий транспорт: `llm_usage_event` с
+    # purpose=feedback_draft и student_id ученика. Квоты у `code_review` нет
+    # (возможность тарифа — да/нет), списывать нечего, как и у соседей.
+    "app/services/feedback_draft_service.py": SpendPoint(
+        capability="code_review", gated_upstream="app/api/v1/attempts.py", wired=True
+    ),
+    # tsk-1312: общее ядро гейта роли наставника. В приложении его зовёт только
+    # еженедельная проверка цепочек — за `LLM_CHAIN_CHECK_ENABLED` и собственным
+    # `LLM_CHAIN_CHECK_ROLE_ENABLED`; второй вызывающий — ручной стенд
+    # `scripts/tutor_role_gate.py`, вне `app/`. Учёт — общий транспорт:
+    # `llm_usage_event` с purpose вызывающего (chain_check / tutor_role_gate).
+    "app/services/ai_tutor/role_gate.py": SpendPoint(
+        gated_upstream="app/services/llm_chain_check_cron_service.py", wired=True
     ),
 }
 
@@ -207,13 +234,35 @@ def test_registry_has_no_phantom_points() -> None:
     sorted(p for p, point in AI_SPEND_POINTS.items() if point.gated_upstream),
 )
 def test_upstream_gate_target_exists(rel_path: str) -> None:
-    """Ссылка «гейт выше по потоку» ведёт в реальный зарегистрированный файл."""
-    upstream = AI_SPEND_POINTS[rel_path].gated_upstream
+    """Ссылка «гейт выше по потоку» ведёт в реальный зарегистрированный файл.
+
+    Ученическая точка обязана упираться в дверь прав. Системная — в системную
+    точку с рубильником, которая её действительно импортирует (tsk-1312).
+    """
+    point = AI_SPEND_POINTS[rel_path]
+    upstream = point.gated_upstream
     assert upstream in AI_SPEND_POINTS, (
         f"{rel_path}: ссылка на вышестоящий гейт {upstream!r} не найдена в реестре"
     )
-    assert AI_SPEND_POINTS[upstream].gated_here, (
-        f"{rel_path}: {upstream} сам не гейтит — цепочка «выше по потоку» разорвана"
+    target = AI_SPEND_POINTS[upstream]
+    if point.capability:
+        assert target.gated_here, (
+            f"{rel_path}: {upstream} сам не гейтит — цепочка «выше по потоку» разорвана"
+        )
+        return
+    assert target.gated_by_toggle and not target.capability, (
+        f"{rel_path}: системная точка обязана упираться в системный рубильник, "
+        f"а {upstream} его не держит"
+    )
+    module = rel_path.removesuffix(".py").replace("/", ".")
+    package, _, name = module.rpartition(".")
+    upstream_source = (APP_ROOT.parent / upstream).read_text(encoding="utf-8")
+    imported = (
+        f"from {package} import {name}" in upstream_source
+        or f"import {module}" in upstream_source
+    )
+    assert imported, (
+        f"{rel_path}: {upstream} это ядро не импортирует — его рубильник ничего не выключает"
     )
 
 
