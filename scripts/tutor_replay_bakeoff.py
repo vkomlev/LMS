@@ -63,7 +63,9 @@ from app.services.ai_tutor.prompt import (  # noqa: E402
     build_opening_user_message,
     build_system_prompt,
 )
-from app.services.llm import TUTOR_MAX_TOKENS, Budget, LLMError, LLMMessage, complete, stream  # noqa: E402
+from app.services.llm import (  # noqa: E402
+    JUDGE_MAX_TOKENS, TUTOR_MAX_TOKENS, Budget, LLMError, LLMMessage, complete, stream,
+)
 from app.services.llm import providers  # noqa: E402
 
 FIRST_TOKEN_LIMIT = Budget.INTERACTIVE.first_token_timeout or 12.0
@@ -241,20 +243,76 @@ def _non_russian(text: str) -> bool:
     return len(_CYRILLIC.findall(plain)) / len(letters) < 0.6
 
 
+#: Ключи вердикта: по ним JSON судьи отличается от фигурных скобок в его
+#: рассуждении и от образца из промпта, если модель его повторила.
+_JUDGE_KEYS = ("gives_answer", "wrong_confirm", "responds", "leads", "blames")
+
+#: Напоминание для единственного повтора, если судья ответил без JSON.
+JUDGE_JSON_ONLY = (
+    "\n\nВажно: ответь только JSON-объектом с полями выше — без рассуждений, "
+    "пояснений и разметки до или после него."
+)
+
+
+def parse_judge_reply(text: str) -> Optional[dict]:
+    """Вердикт судьи из его ответа либо None, если JSON вердикта в тексте нет.
+
+    Судья нередко рассуждает ДО JSON (Opus 5.5 — так на прогоне 20.10, tsk-1395)
+    или оборачивает его в ```json. Жадное `\\{.*\\}` в таком тексте захватывало
+    от первой скобки рассуждения до последней скобки вердикта и не разбиралось.
+    Здесь каждый объект, начиная с каждой «{», пробуется разобрать как JSON;
+    берётся ПОСЛЕДНИЙ объект со ВСЕМИ полями вердикта — итог идёт после
+    рассуждения. Образец из промпта (`"note": "..."`), повторённый в
+    рассуждении, вердиктом не считается: иначе оборванный настоящий JSON
+    подменился бы образцом и молча попал в доли.
+    """
+    decoder = json.JSONDecoder()
+    found: Optional[dict] = None
+    for m in re.finditer(r"\{", text or ""):
+        try:
+            obj, _ = decoder.raw_decode(text, m.start())
+        except json.JSONDecodeError:
+            continue
+        if (
+            isinstance(obj, dict)
+            and all(k in obj for k in _JUDGE_KEYS)
+            and obj.get("note") != "..."
+        ):
+            found = obj
+    return found
+
+
 async def _judge(o: Outcome, unit: Unit, judge_model: str) -> None:
+    """Оценка ответа кандидата судьёй; при ответе без JSON — один повтор.
+
+    Потолок — `JUDGE_MAX_TOKENS` (2500), как у боевых судей, а не прежние 200.
+    Сам вердикт — JSON на ~60–120 токенов (пять флагов и фраза по-русски), но
+    в `max_tokens` входит и размышление модели (у Opus 5.5 через
+    `anthropic-direct` — `effort: low`, оно всё равно есть) и текст рассуждения
+    перед JSON. С 200 у Opus 40–43 хода из 107 кончались пустым текстом или
+    рассуждением, оборванным до JSON (tsk-1395). Платятся только выданные
+    токены, поэтому запас стоит денег лишь там, где без него вердикта не было бы.
+
+    Повтор — ровно один, с напоминанием «только JSON» в конце промпта: если и
+    он без JSON, ход идёт в отчёт строкой «без вердикта судьи», а не в доли.
+    """
     prompt = JUDGE_PROMPT.format(
         stem=unit.stem[:1500], answers=", ".join(unit.answers) or "—",
         student=unit.student_text or "(вступление, ученик ещё ничего не писал)",
         tutor=o.text[:2500],
     )
     try:
-        res = await complete(
-            [LLMMessage(role="user", content=prompt)], model=judge_model,
-            purpose="tutor_replay_judge", max_tokens=200, temperature=0.0,
-        )
-        m = re.search(r"\{.*\}", res.text, re.S)
-        o.judge = json.loads(m.group(0)) if m else {"error": "нет JSON"}
-    except (LLMError, json.JSONDecodeError) as exc:
+        for content in (prompt, prompt + JUDGE_JSON_ONLY):
+            res = await complete(
+                [LLMMessage(role="user", content=content)], model=judge_model,
+                purpose="tutor_replay_judge", max_tokens=JUDGE_MAX_TOKENS, temperature=0.0,
+            )
+            verdict_ = parse_judge_reply(res.text)
+            if verdict_ is not None:
+                o.judge = verdict_
+                return
+        o.judge = {"error": "нет JSON"}
+    except LLMError as exc:
         o.judge = {"error": f"{type(exc).__name__}: {exc}"[:120]}
 
 
@@ -342,6 +400,12 @@ def summarize(model: str, outs: list[Outcome]) -> dict:
         "non_ru": share(lambda o: o.non_russian),
         "chars_med": statistics.median(len(o.text) for o in alive) if alive else None,
         "judged": len(judged),
+        # Ходы, которые судья оценивал, но вердикта не дал (нет JSON и после
+        # повтора, ошибка провайдера). None — судьи в прогоне не было.
+        "no_verdict": (
+            sum(1 for o in alive if o.judge is None or "error" in o.judge)
+            if any(o.judge is not None for o in outs) else None
+        ),
         "j_gives_answer": jshare("gives_answer", True),
         "j_wrong_confirm": jshare("wrong_confirm", True),
         "j_responds": jshare("responds", True),
@@ -420,6 +484,12 @@ def write_report(path: pathlib.Path, summaries: list[dict], results: dict[str, l
             f"{_pct(s['j_gives_answer'])} | {_pct(s['j_wrong_confirm'])} | {_pct(s['j_responds'])} | {_pct(s['j_leads'])} | "
             f"{_pct(s['j_blames'])} |"
         )
+    if any(s.get("no_verdict") is not None for s in summaries):
+        lines += ["", "Доли «Судья: …» — от ходов с вердиктом; ходы без него в доли не входят.", ""]
+        for s in summaries:
+            if s.get("no_verdict") is not None:
+                lines.append(f"- `{s['model']}`: без вердикта судьи: {s['no_verdict']} "
+                             f"из {s['alive']}")
     lines += ["", "## Ошибки провайдера", ""]
     for s in summaries:
         if s["errors"]:
@@ -541,6 +611,8 @@ def main() -> int:
                   f"страж {_pct(s['guard'])}, слив {_pct(s['leak'])}, "
                   f"судья-выдал {_pct(s['j_gives_answer'])} ({time.monotonic() - t0:.0f} c)",
                   flush=True)
+            if s["no_verdict"]:
+                print(f"    без вердикта судьи: {s['no_verdict']}", flush=True)
             if s["errors"]:
                 print("    ошибки: " + "; ".join(s["errors"][:3]), flush=True)
             if args.dump:
