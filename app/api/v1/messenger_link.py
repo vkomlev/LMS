@@ -20,10 +20,10 @@ from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import PlainTextResponse, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_async_db, require_authenticated
+from app.api.deps import get_async_db, require_authenticated, require_role
 from app.auth.current_user import CurrentUser
 from app.core.config import Settings
 from app.services import messenger_channel_service as svc
@@ -127,10 +127,14 @@ async def vk_callback(request: Request, db: AsyncSession = Depends(get_async_db)
             from_id = str(msg.get("from_id", ""))
             if from_id and not from_id.startswith("-"):
                 ref = (msg.get("ref") or "").strip()
+                body_text = msg.get("text") or ""
                 if ref:
                     await _bind_and_reply(db, "vk", ref, from_id)
-                elif svc.is_stop_word(msg.get("text") or ""):
+                elif svc.is_stop_word(body_text):
                     await _stop_and_reply(db, "vk", from_id)
+                else:
+                    # tsk-1398: ответ на вопрос о занятии или сообщение преподавателю.
+                    await svc.route_inbound(db, channel="vk", external_id=from_id, body=body_text)
         elif kind == "message_allow":
             key = (obj.get("key") or "").strip()
             if key and obj.get("user_id"):
@@ -168,11 +172,83 @@ async def max_webhook(request: Request, db: AsyncSession = Depends(get_async_db)
                 await svc.disable_by_external(db, "max", user_id, "bot_stopped")
         elif kind == "message_created":
             msg = body.get("message") or {}
-            user_id = str((msg.get("sender") or {}).get("user_id", ""))
+            sender = msg.get("sender") or {}
+            user_id = str(sender.get("user_id", ""))
             text_ = ((msg.get("body") or {}).get("text") or "")
-            if user_id and svc.is_stop_word(text_):
+            if not user_id or sender.get("is_bot"):
+                pass
+            elif svc.is_stop_word(text_):
                 await _stop_and_reply(db, "max", user_id)
+            else:
+                # tsk-1398: ответ на вопрос о занятии или сообщение преподавателю.
+                await svc.route_inbound(db, channel="max", external_id=user_id, body=text_)
     except Exception:
         logger.exception("tsk-1253: событие MAX %s не обработано", kind)
         await db.rollback()
     return {"ok": True}
+
+
+# ─── tsk-1398, этап 5: экстренная связь с учеником ─────────────────────────
+
+staff_router = APIRouter(prefix="/teacher/students", tags=["teacher"])
+
+
+class UrgentMessageRequest(BaseModel):
+    """Текст срочного сообщения ученику."""
+
+    text: str = Field(min_length=1, max_length=3000)
+
+
+class UrgentMessageResponse(BaseModel):
+    """Итог: сообщение в переписке и каналы, куда оно ушло."""
+
+    message_id: int
+    delivered: list[str]
+    available: list[str]
+
+
+@staff_router.get("/{student_id}/urgent-channels", response_model=list[str])
+async def urgent_channels(
+    student_id: int,
+    _: CurrentUser = Depends(require_role("teacher", "methodist", "admin")),
+    db: AsyncSession = Depends(get_async_db),
+) -> list[str]:
+    """Куда дойдёт срочное сообщение (пусто — у ученика нет каналов)."""
+    return [c for c, _ in await svc.student_channels(db, student_id)]
+
+
+@staff_router.post("/{student_id}/urgent-message", response_model=UrgentMessageResponse)
+async def send_urgent_message(
+    student_id: int,
+    body: UrgentMessageRequest,
+    current_user: CurrentUser = Depends(require_role("teacher", "methodist", "admin")),
+    db: AsyncSession = Depends(get_async_db),
+) -> UrgentMessageResponse:
+    """Написать ученику во все его мессенджеры сразу, минуя кабинет.
+
+    Сообщение сохраняется в переписке (история), ответ ученика из мессенджера
+    ляжет в ту же ветку.
+    """
+    from sqlalchemy import text as sql
+
+    from app.services import notification_names
+    from app.services.messages_service import MessagesService
+
+    is_student = (await db.execute(sql(
+        "SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id "
+        "WHERE ur.user_id = :u AND r.name = 'student'"
+    ), {"u": student_id})).first()
+    if is_student is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Ученик не найден")
+    available = [c for c, _ in await svc.student_channels(db, student_id)]
+    if not available:
+        raise HTTPException(status.HTTP_409_CONFLICT, "У ученика не подключён ни один мессенджер")
+    msg = await MessagesService().send_message(
+        db, message_type="text", content={"text": body.text},
+        recipient_id=student_id, sender_id=current_user.id, source_system="urgent",
+    )
+    await db.commit()
+    name = await notification_names.user_display_name(db, current_user.id)
+    delivered = await svc.send_urgent(db, student_id=student_id, sender_name=name, body=body.text)
+    logger.info("tsk-1398: срочное сообщение %s ученику %s, каналы %s", msg.id, student_id, delivered)
+    return UrgentMessageResponse(message_id=msg.id, delivered=delivered, available=available)

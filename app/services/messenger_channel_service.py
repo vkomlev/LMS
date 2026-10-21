@@ -29,6 +29,7 @@ LMS гасит токен и пишет строку `messenger_link`. Нажа�
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import secrets
 import ssl
@@ -232,8 +233,26 @@ class SendRefusedError(RuntimeError):
     """Сервис отказал: писать этому человеку больше нельзя."""
 
 
-async def send_text(channel: Channel, external_id: str, message: str, settings: Optional[Settings] = None) -> None:
-    """Отправить текст в канал.
+def _vk_keyboard(buttons: list[str]) -> str:
+    """Встроенная клавиатура ВК: нажатие присылает текст кнопки как сообщение."""
+    rows = [[{"action": {"type": "text", "label": label[:40]}}] for label in buttons]
+    return json.dumps({"inline": True, "buttons": rows}, ensure_ascii=False)
+
+
+def _max_keyboard(buttons: list[str]) -> list[dict]:
+    """Клавиатура MAX: кнопка типа message отправляет свой текст от пользователя."""
+    rows = [[{"type": "message", "text": label}] for label in buttons]
+    return [{"type": "inline_keyboard", "payload": {"buttons": rows}}]
+
+
+async def send_text(
+    channel: Channel,
+    external_id: str,
+    message: str,
+    settings: Optional[Settings] = None,
+    buttons: Optional[list[str]] = None,
+) -> None:
+    """Отправить текст в канал (с кнопками-ответами, если заданы).
 
     :raises SendRefusedError: получатель запретил сообщения.
     :raises httpx.HTTPError | RuntimeError: прочие сбои транспорта.
@@ -246,6 +265,7 @@ async def send_text(channel: Channel, external_id: str, message: str, settings: 
                 "user_id": external_id, "random_id": secrets.randbelow(2**31),
                 "message": message, "access_token": s.vk_group_token, "v": VK_API_VERSION,
                 "dont_parse_links": 0,
+                **({"keyboard": _vk_keyboard(buttons)} if buttons else {}),
             })
             body = r.json()
             err = body.get("error")
@@ -256,7 +276,8 @@ async def send_text(channel: Channel, external_id: str, message: str, settings: 
             return
         r = await client.post(
             f"{MAX_API}/messages", params={"user_id": external_id},
-            json={"text": message}, headers={"Authorization": s.max_bot_token},
+            json={"text": message, **({"attachments": _max_keyboard(buttons)} if buttons else {})},
+            headers={"Authorization": s.max_bot_token},
         )
         if r.status_code == 403:
             raise SendRefusedError("max 403")
@@ -448,3 +469,153 @@ def _install_session_hooks() -> None:
 
 
 _install_session_hooks()
+
+
+# ─── Этап 3: ответы ученика из мессенджера — в историю переписки ──────────
+
+_LINKED_STUDENT_SQL = """
+SELECT user_id FROM messenger_link
+WHERE channel = :c AND external_id = :e AND disabled_at IS NULL
+"""
+
+#: Последнее сообщение сотрудника ученику: ответ из мессенджера продолжает его
+#: ветку (срочное сообщение, ответ на заявку, обычная переписка).
+_LAST_STAFF_MESSAGE_SQL = """
+SELECT m.id, m.sender_id FROM messages m
+WHERE m.recipient_id = :u AND m.sender_id IS NOT NULL AND m.sender_id <> :u
+  AND EXISTS (
+      SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id
+      WHERE ur.user_id = m.sender_id AND r.name <> 'student'
+  )
+ORDER BY m.sent_at DESC, m.id DESC
+LIMIT 1
+"""
+
+_CURATOR_SQL = """
+SELECT curator_id FROM student_curator
+WHERE student_id = :u AND ended_at IS NULL
+ORDER BY assigned_at DESC LIMIT 1
+"""
+
+NO_ADDRESSEE_TEXT = (
+    "Сообщение не доставлено: не нашли, кому из преподавателей его передать. "
+    "Напишите, пожалуйста, в кабинете ученика."
+)
+
+
+async def linked_student(db: AsyncSession, channel: Channel, external_id: str) -> Optional[int]:
+    """Ученик, подключивший этот внешний аккаунт (активная привязка)."""
+    return (await db.execute(text(_LINKED_STUDENT_SQL), {"c": channel, "e": external_id})).scalar()
+
+
+async def store_inbound(db: AsyncSession, *, student_id: int, channel: Channel, body: str) -> Optional[int]:
+    """Сохранить сообщение ученика из мессенджера в переписку кабинета.
+
+    Адресат — сотрудник, писавший ученику последним (ответ ложится в его
+    ветку), иначе текущий куратор. Никого нет — не сохраняем, ученику ответ.
+
+    :returns: id сообщения или None.
+    """
+    from app.services.messages_service import MessagesService
+
+    last = (await db.execute(text(_LAST_STAFF_MESSAGE_SQL), {"u": student_id})).first()
+    reply_to_id, recipient_id = (last[0], last[1]) if last else (None, None)
+    if recipient_id is None:
+        recipient_id = (await db.execute(text(_CURATOR_SQL), {"u": student_id})).scalar()
+    if recipient_id is None:
+        return None
+    msg = await MessagesService().send_message(
+        db, message_type="text", content={"text": body[:4000]},
+        recipient_id=int(recipient_id), sender_id=student_id,
+        source_system=channel, reply_to_id=reply_to_id,
+    )
+    await db.commit()
+    logger.info("tsk-1398: ответ ученика %s из %s сохранён (сообщение %s)", student_id, channel, msg.id)
+    return msg.id
+
+
+# ─── Этап 5: экстренная связь — полный текст во все каналы ученика ────────
+
+URGENT_PREFIX = "Срочное сообщение от преподавателя"
+
+
+async def student_channels(db: AsyncSession, user_id: int) -> list[tuple[str, str]]:
+    """Активные внешние каналы ученика: [(канал, внешний id)], Telegram — по tg_id."""
+    s = Settings()
+    rows = (await db.execute(text(
+        "SELECT channel, external_id FROM messenger_link WHERE user_id = :u AND disabled_at IS NULL"
+    ), {"u": user_id})).all()
+    out = [(c, e) for c, e in rows if configured(c, s)]
+    if tg_configured(s):
+        tg_id = (await db.execute(text("SELECT tg_id FROM users WHERE id = :u"), {"u": user_id})).scalar()
+        if tg_id:
+            out.append(("tg", str(tg_id)))
+    return out
+
+
+async def send_urgent(db: AsyncSession, *, student_id: int, sender_name: str, body: str) -> list[str]:
+    """Отправить текст преподавателя целиком во все каналы ученика.
+
+    Рубильники рассылки здесь не спрашиваются: это не рассылка, а адресное
+    сообщение живого человека, отправленное его нажатием. Отписку уважаем —
+    отключённые каналы в список не попадают.
+
+    :returns: каналы, принявшие сообщение.
+    """
+    s = Settings()
+    message = f"{URGENT_PREFIX} ({sender_name}):\n\n{body}\n\nОтветить можно прямо здесь."
+    delivered: list[str] = []
+    for channel, external_id in await student_channels(db, student_id):
+        try:
+            if channel == "tg":
+                async with httpx.AsyncClient(timeout=10) as client:
+                    r = await client.post(
+                        f"{TG_API}/bot{s.student_bot_token}/sendMessage",
+                        json={"chat_id": int(external_id), "text": message},
+                    )
+                r.raise_for_status()
+            else:
+                await send_text(channel, external_id, message, s)
+            delivered.append(channel)
+        except SendRefusedError:
+            await disable_by_external(db, channel, external_id, "refused")
+        except Exception as e:
+            logger.error("tsk-1398: срочное в %s ученику %s не ушло: %s", channel, student_id, type(e).__name__)
+    return delivered
+
+
+async def send_tg_with_buttons(chat_id: int, message: str, buttons: list[str]) -> int:
+    """Telegram: обычная клавиатура (кнопка присылает свой текст боту).
+
+    Ответ приходит в ученического бота (TG_LMS), не в LMS: приём ответов из
+    Telegram — доработка бота. Без токена — 0.
+    """
+    s = Settings()
+    if not tg_configured(s):
+        return 0
+    keyboard = {"keyboard": [[{"text": b}] for b in buttons], "one_time_keyboard": True, "resize_keyboard": True}
+    async with httpx.AsyncClient(timeout=10) as client:
+        r = await client.post(
+            f"{TG_API}/bot{s.student_bot_token}/sendMessage",
+            json={"chat_id": chat_id, "text": message, "reply_markup": keyboard},
+        )
+    if r.status_code == 403:
+        return 0
+    r.raise_for_status()
+    return 1
+
+
+async def route_inbound(db: AsyncSession, *, channel: Channel, external_id: str, body: str) -> None:
+    """Входящее сообщение подключённого ученика: ответ на вопрос о занятии
+    или обычное сообщение — в переписку. Неподключённым — ничего."""
+    from app.services import absence_poll_service
+
+    student_id = await linked_student(db, channel, external_id)
+    if student_id is None or not body.strip():
+        return
+    reply = await absence_poll_service.handle_answer(db, student_id=student_id, channel=channel, body=body)
+    if reply is None:
+        if await store_inbound(db, student_id=student_id, channel=channel, body=body) is None:
+            reply = NO_ADDRESSEE_TEXT
+    if reply:
+        await reply_safe(channel, external_id, reply)

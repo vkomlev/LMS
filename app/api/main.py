@@ -515,6 +515,8 @@ app.include_router(tg_link_bot_router, prefix=API_PREFIX)  # tsk-1253
 from app.api.v1.messenger_link import hook_router as messenger_hook_router, me_router as messenger_me_router
 app.include_router(messenger_me_router, prefix=API_PREFIX)  # tsk-1253, этап Б
 app.include_router(messenger_hook_router, prefix=API_PREFIX)  # tsk-1253, этап Б
+from app.api.v1.messenger_link import staff_router as messenger_staff_router
+app.include_router(messenger_staff_router, prefix=API_PREFIX)  # tsk-1398, срочная связь
 
 # tsk-301 Фаза 9: управление тарифами персоналом (marketer/admin, преподавателю нельзя)
 from app.api.v1.subscriptions import router as subscriptions_router

@@ -43327,6 +43327,218 @@
         }
       }
     },
+    "/api/v1/teacher/students/{student_id}/urgent-channels": {
+      "get": {
+        "tags": [
+          "teacher"
+        ],
+        "summary": "Urgent Channels",
+        "description": "Куда дойдёт срочное сообщение (пусто — у ученика нет каналов).",
+        "operationId": "urgent_channels_api_v1_teacher_students__student_id__urgent_channels_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "student_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Student Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "title": "Response Urgent Channels Api V1 Teacher Students  Student Id  Urgent Channels Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/teacher/students/{student_id}/urgent-message": {
+      "post": {
+        "tags": [
+          "teacher"
+        ],
+        "summary": "Send Urgent Message",
+        "description": "Написать ученику во все его мессенджеры сразу, минуя кабинет.\n\nСообщение сохраняется в переписке (история), ответ ученика из мессенджера\nляжет в ту же ветку.",
+        "operationId": "send_urgent_message_api_v1_teacher_students__student_id__urgent_message_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "student_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Student Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UrgentMessageRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UrgentMessageResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/subscriptions/plans": {
       "get": {
         "tags": [
@@ -87406,6 +87618,52 @@
         "type": "object",
         "title": "UnseenConstructs",
         "description": "Итог сверки кода с пройденными материалами (tsk-864).\n\nСекции нет вовсе, когда сверять не с чем: язык не Python, либо у ученика нет\nни одной отметки о пройденном материале. Пустой `items` при этом значит\nобратное — сверили, и всё найденное в коде ученику уже объясняли. Разница\nважна: тишина «проверено» и тишина «не проверялось» — разные вещи, и\nпоказывать их одинаково значит вводить преподавателя в заблуждение."
+      },
+      "UrgentMessageRequest": {
+        "properties": {
+          "text": {
+            "type": "string",
+            "maxLength": 3000,
+            "minLength": 1,
+            "title": "Text"
+          }
+        },
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "title": "UrgentMessageRequest",
+        "description": "Текст срочного сообщения ученику."
+      },
+      "UrgentMessageResponse": {
+        "properties": {
+          "message_id": {
+            "type": "integer",
+            "title": "Message Id"
+          },
+          "delivered": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Delivered"
+          },
+          "available": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Available"
+          }
+        },
+        "type": "object",
+        "required": [
+          "message_id",
+          "delivered",
+          "available"
+        ],
+        "title": "UrgentMessageResponse",
+        "description": "Итог: сообщение в переписке и каналы, куда оно ушло."
       },
       "UserAchievementCreate": {
         "properties": {

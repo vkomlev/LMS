@@ -1,0 +1,709 @@
+diff --git a/app/api/main.py b/app/api/main.py
+index 6f0765d..d8851bb 100644
+--- a/app/api/main.py
++++ b/app/api/main.py
+@@ -515,6 +515,8 @@ app.include_router(tg_link_bot_router, prefix=API_PREFIX)  # tsk-1253
+ from app.api.v1.messenger_link import hook_router as messenger_hook_router, me_router as messenger_me_router
+ app.include_router(messenger_me_router, prefix=API_PREFIX)  # tsk-1253, этап Б
+ app.include_router(messenger_hook_router, prefix=API_PREFIX)  # tsk-1253, этап Б
++from app.api.v1.messenger_link import staff_router as messenger_staff_router
++app.include_router(messenger_staff_router, prefix=API_PREFIX)  # tsk-1398, срочная связь
+ 
+ # tsk-301 Фаза 9: управление тарифами персоналом (marketer/admin, преподавателю нельзя)
+ from app.api.v1.subscriptions import router as subscriptions_router
+diff --git a/app/api/v1/messenger_link.py b/app/api/v1/messenger_link.py
+index 7e7bd40..ce2469b 100644
+--- a/app/api/v1/messenger_link.py
++++ b/app/api/v1/messenger_link.py
+@@ -20,10 +20,10 @@ from typing import Any, Literal
+ 
+ from fastapi import APIRouter, Depends, HTTPException, Request, status
+ from fastapi.responses import PlainTextResponse, Response
+-from pydantic import BaseModel
++from pydantic import BaseModel, Field
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+-from app.api.deps import get_async_db, require_authenticated
++from app.api.deps import get_async_db, require_authenticated, require_role
+ from app.auth.current_user import CurrentUser
+ from app.core.config import Settings
+ from app.services import messenger_channel_service as svc
+@@ -127,10 +127,14 @@ async def vk_callback(request: Request, db: AsyncSession = Depends(get_async_db)
+             from_id = str(msg.get("from_id", ""))
+             if from_id and not from_id.startswith("-"):
+                 ref = (msg.get("ref") or "").strip()
++                body_text = msg.get("text") or ""
+                 if ref:
+                     await _bind_and_reply(db, "vk", ref, from_id)
+-                elif svc.is_stop_word(msg.get("text") or ""):
++                elif svc.is_stop_word(body_text):
+                     await _stop_and_reply(db, "vk", from_id)
++                else:
++                    # tsk-1398: ответ на вопрос о занятии или сообщение преподавателю.
++                    await svc.route_inbound(db, channel="vk", external_id=from_id, body=body_text)
+         elif kind == "message_allow":
+             key = (obj.get("key") or "").strip()
+             if key and obj.get("user_id"):
+@@ -168,11 +172,83 @@ async def max_webhook(request: Request, db: AsyncSession = Depends(get_async_db)
+                 await svc.disable_by_external(db, "max", user_id, "bot_stopped")
+         elif kind == "message_created":
+             msg = body.get("message") or {}
+-            user_id = str((msg.get("sender") or {}).get("user_id", ""))
++            sender = msg.get("sender") or {}
++            user_id = str(sender.get("user_id", ""))
+             text_ = ((msg.get("body") or {}).get("text") or "")
+-            if user_id and svc.is_stop_word(text_):
++            if not user_id or sender.get("is_bot"):
++                pass
++            elif svc.is_stop_word(text_):
+                 await _stop_and_reply(db, "max", user_id)
++            else:
++                # tsk-1398: ответ на вопрос о занятии или сообщение преподавателю.
++                await svc.route_inbound(db, channel="max", external_id=user_id, body=text_)
+     except Exception:
+         logger.exception("tsk-1253: событие MAX %s не обработано", kind)
+         await db.rollback()
+     return {"ok": True}
++
++
++# ─── tsk-1398, этап 5: экстренная связь с учеником ─────────────────────────
++
++staff_router = APIRouter(prefix="/teacher/students", tags=["teacher"])
++
++
++class UrgentMessageRequest(BaseModel):
++    """Текст срочного сообщения ученику."""
++
++    text: str = Field(min_length=1, max_length=3000)
++
++
++class UrgentMessageResponse(BaseModel):
++    """Итог: сообщение в переписке и каналы, куда оно ушло."""
++
++    message_id: int
++    delivered: list[str]
++    available: list[str]
++
++
++@staff_router.get("/{student_id}/urgent-channels", response_model=list[str])
++async def urgent_channels(
++    student_id: int,
++    _: CurrentUser = Depends(require_role("teacher", "methodist", "admin")),
++    db: AsyncSession = Depends(get_async_db),
++) -> list[str]:
++    """Куда дойдёт срочное сообщение (пусто — у ученика нет каналов)."""
++    return [c for c, _ in await svc.student_channels(db, student_id)]
++
++
++@staff_router.post("/{student_id}/urgent-message", response_model=UrgentMessageResponse)
++async def send_urgent_message(
++    student_id: int,
++    body: UrgentMessageRequest,
++    current_user: CurrentUser = Depends(require_role("teacher", "methodist", "admin")),
++    db: AsyncSession = Depends(get_async_db),
++) -> UrgentMessageResponse:
++    """Написать ученику во все его мессенджеры сразу, минуя кабинет.
++
++    Сообщение сохраняется в переписке (история), ответ ученика из мессенджера
++    ляжет в ту же ветку.
++    """
++    from sqlalchemy import text as sql
++
++    from app.services import notification_names
++    from app.services.messages_service import MessagesService
++
++    is_student = (await db.execute(sql(
++        "SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id "
++        "WHERE ur.user_id = :u AND r.name = 'student'"
++    ), {"u": student_id})).first()
++    if is_student is None:
++        raise HTTPException(status.HTTP_404_NOT_FOUND, "Ученик не найден")
++    available = [c for c, _ in await svc.student_channels(db, student_id)]
++    if not available:
++        raise HTTPException(status.HTTP_409_CONFLICT, "У ученика не подключён ни один мессенджер")
++    msg = await MessagesService().send_message(
++        db, message_type="text", content={"text": body.text},
++        recipient_id=student_id, sender_id=current_user.id, source_system="urgent",
++    )
++    await db.commit()
++    name = await notification_names.user_display_name(db, current_user.id)
++    delivered = await svc.send_urgent(db, student_id=student_id, sender_name=name, body=body.text)
++    logger.info("tsk-1398: срочное сообщение %s ученику %s, каналы %s", msg.id, student_id, delivered)
++    return UrgentMessageResponse(message_id=msg.id, delivered=delivered, available=available)
+diff --git a/app/core/settings_registry.py b/app/core/settings_registry.py
+index 101bb34..6f11c03 100644
+--- a/app/core/settings_registry.py
++++ b/app/core/settings_registry.py
+@@ -551,6 +551,33 @@ SETTINGS: Tuple[SettingDef, ...] = (
+         env_var=None,
+         warning="Включено — ученики с подключённым Telegram получают сообщения бота.",
+     ),
++    SettingDef(
++        key="absence_poll_enabled",
++        group=GROUP_SIGNALS,
++        title="Спрашивать не пришедшего ученика «Вы будете?» в мессенджере",
++        description=(
++            "Через несколько минут после начала занятия ученику без входа уходит "
++            "вопрос с кнопками: «Опаздываю» или причина пропуска. Причина ставится "
++            "в отметку о пропуске сама; нет ответа до конца занятия — «не ответил» "
++            "(tsk-1398). Только ученикам с подключённым мессенджером."
++        ),
++        kind="bool",
++        default=False,
++        env_var=None,
++        warning="Включено — не пришедшим ученикам уходит вопрос в мессенджер.",
++    ),
++    SettingDef(
++        key="absence_poll_delay_minutes",
++        group=GROUP_SIGNALS,
++        title="Через сколько минут после начала спрашивать «Вы будете?»",
++        description="Раньше автоотметки неявки, иначе ответ «опаздываю» её не отложит.",
++        kind="int",
++        default=5,
++        env_var=None,
++        unit="минуты",
++        min_value=1,
++        max_value=60,
++    ),
+     SettingDef(
+         key="gap_student_min_submissions",
+         group=GROUP_SIGNALS,
+diff --git a/app/services/lesson_attendance_cron_service.py b/app/services/lesson_attendance_cron_service.py
+index 0dd552b..b6d597a 100644
+--- a/app/services/lesson_attendance_cron_service.py
++++ b/app/services/lesson_attendance_cron_service.py
+@@ -39,7 +39,7 @@ from app.core import settings_store
+ from app.core.config import Settings
+ from app.core.cron_registry import register_interval_job
+ from app.db.session import async_session_factory
+-from app.services import homework_service, inbox_service, notification_names
++from app.services import absence_poll_service, homework_service, inbox_service, notification_names
+ 
+ logger = logging.getLogger("app.lesson_calendar")
+ 
+@@ -156,7 +156,8 @@ async def _mark_no_show(db: AsyncSession, *, threshold_minutes: int) -> int:
+             JOIN lesson_occurrence lo ON lo.id = lop.occurrence_id
+             WHERE lop.status = 'scheduled'
+               AND lo.scheduled_at + (:threshold || ' minutes')::interval < :now
+-            """
++              AND {late}
++            """.replace("{late}", absence_poll_service.late_participant_ids_sql())
+         ),
+         {"threshold": str(threshold_minutes), "now": now_utc},
+     )
+@@ -317,9 +318,13 @@ async def lesson_attendance_cron_tick(
+         summary["locked"] = True
+ 
+         summary["reminders_sent"] = await _send_reminders(db, lead_minutes=lead_minutes)
++        # tsk-1398: вопрос «Вы будете?» — до автоотметки неявки; ответ
++        # «опаздываю» откладывает её до конца занятия.
++        summary["absence_polls_asked"] = await absence_poll_service.ask_due(db)
+         summary["no_show_marked"] = await _mark_no_show(
+             db, threshold_minutes=threshold_minutes
+         )
++        summary["absence_reasons_applied"] = await absence_poll_service.apply_due(db)
+         # После явки и пропусков: выдаём ДЗ тем, кто был на закончившемся
+         # занятии, независимо от того, кто отметил явку.
+         summary["homework_issued"] = await _issue_homework_after_lessons(db)
+diff --git a/app/services/messenger_channel_service.py b/app/services/messenger_channel_service.py
+index 2860abe..d3b270e 100644
+--- a/app/services/messenger_channel_service.py
++++ b/app/services/messenger_channel_service.py
+@@ -29,6 +29,7 @@ LMS гасит токен и пишет строку `messenger_link`. Нажа
+ from __future__ import annotations
+ 
+ import asyncio
++import json
+ import logging
+ import secrets
+ import ssl
+@@ -232,8 +233,26 @@ class SendRefusedError(RuntimeError):
+     """Сервис отказал: писать этому человеку больше нельзя."""
+ 
+ 
+-async def send_text(channel: Channel, external_id: str, message: str, settings: Optional[Settings] = None) -> None:
+-    """Отправить текст в канал.
++def _vk_keyboard(buttons: list[str]) -> str:
++    """Встроенная клавиатура ВК: нажатие присылает текст кнопки как сообщение."""
++    rows = [[{"action": {"type": "text", "label": label[:40]}}] for label in buttons]
++    return json.dumps({"inline": True, "buttons": rows}, ensure_ascii=False)
++
++
++def _max_keyboard(buttons: list[str]) -> list[dict]:
++    """Клавиатура MAX: кнопка типа message отправляет свой текст от пользователя."""
++    rows = [[{"type": "message", "text": label}] for label in buttons]
++    return [{"type": "inline_keyboard", "payload": {"buttons": rows}}]
++
++
++async def send_text(
++    channel: Channel,
++    external_id: str,
++    message: str,
++    settings: Optional[Settings] = None,
++    buttons: Optional[list[str]] = None,
++) -> None:
++    """Отправить текст в канал (с кнопками-ответами, если заданы).
+ 
+     :raises SendRefusedError: получатель запретил сообщения.
+     :raises httpx.HTTPError | RuntimeError: прочие сбои транспорта.
+@@ -246,6 +265,7 @@ async def send_text(channel: Channel, external_id: str, message: str, settings:
+                 "user_id": external_id, "random_id": secrets.randbelow(2**31),
+                 "message": message, "access_token": s.vk_group_token, "v": VK_API_VERSION,
+                 "dont_parse_links": 0,
++                **({"keyboard": _vk_keyboard(buttons)} if buttons else {}),
+             })
+             body = r.json()
+             err = body.get("error")
+@@ -256,7 +276,8 @@ async def send_text(channel: Channel, external_id: str, message: str, settings:
+             return
+         r = await client.post(
+             f"{MAX_API}/messages", params={"user_id": external_id},
+-            json={"text": message}, headers={"Authorization": s.max_bot_token},
++            json={"text": message, **({"attachments": _max_keyboard(buttons)} if buttons else {})},
++            headers={"Authorization": s.max_bot_token},
+         )
+         if r.status_code == 403:
+             raise SendRefusedError("max 403")
+@@ -448,3 +469,153 @@ def _install_session_hooks() -> None:
+ 
+ 
+ _install_session_hooks()
++
++
++# ─── Этап 3: ответы ученика из мессенджера — в историю переписки ──────────
++
++_LINKED_STUDENT_SQL = """
++SELECT user_id FROM messenger_link
++WHERE channel = :c AND external_id = :e AND disabled_at IS NULL
++"""
++
++#: Последнее сообщение сотрудника ученику: ответ из мессенджера продолжает его
++#: ветку (срочное сообщение, ответ на заявку, обычная переписка).
++_LAST_STAFF_MESSAGE_SQL = """
++SELECT m.id, m.sender_id FROM messages m
++WHERE m.recipient_id = :u AND m.sender_id IS NOT NULL AND m.sender_id <> :u
++  AND EXISTS (
++      SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id
++      WHERE ur.user_id = m.sender_id AND r.name <> 'student'
++  )
++ORDER BY m.sent_at DESC, m.id DESC
++LIMIT 1
++"""
++
++_CURATOR_SQL = """
++SELECT curator_id FROM student_curator
++WHERE student_id = :u AND ended_at IS NULL
++ORDER BY assigned_at DESC LIMIT 1
++"""
++
++NO_ADDRESSEE_TEXT = (
++    "Сообщение не доставлено: не нашли, кому из преподавателей его передать. "
++    "Напишите, пожалуйста, в кабинете ученика."
++)
++
++
++async def linked_student(db: AsyncSession, channel: Channel, external_id: str) -> Optional[int]:
++    """Ученик, подключивший этот внешний аккаунт (активная привязка)."""
++    return (await db.execute(text(_LINKED_STUDENT_SQL), {"c": channel, "e": external_id})).scalar()
++
++
++async def store_inbound(db: AsyncSession, *, student_id: int, channel: Channel, body: str) -> Optional[int]:
++    """Сохранить сообщение ученика из мессенджера в переписку кабинета.
++
++    Адресат — сотрудник, писавший ученику последним (ответ ложится в его
++    ветку), иначе текущий куратор. Никого нет — не сохраняем, ученику ответ.
++
++    :returns: id сообщения или None.
++    """
++    from app.services.messages_service import MessagesService
++
++    last = (await db.execute(text(_LAST_STAFF_MESSAGE_SQL), {"u": student_id})).first()
++    reply_to_id, recipient_id = (last[0], last[1]) if last else (None, None)
++    if recipient_id is None:
++        recipient_id = (await db.execute(text(_CURATOR_SQL), {"u": student_id})).scalar()
++    if recipient_id is None:
++        return None
++    msg = await MessagesService().send_message(
++        db, message_type="text", content={"text": body[:4000]},
++        recipient_id=int(recipient_id), sender_id=student_id,
++        source_system=channel, reply_to_id=reply_to_id,
++    )
++    await db.commit()
++    logger.info("tsk-1398: ответ ученика %s из %s сохранён (сообщение %s)", student_id, channel, msg.id)
++    return msg.id
++
++
++# ─── Этап 5: экстренная связь — полный текст во все каналы ученика ────────
++
++URGENT_PREFIX = "Срочное сообщение от преподавателя"
++
++
++async def student_channels(db: AsyncSession, user_id: int) -> list[tuple[str, str]]:
++    """Активные внешние каналы ученика: [(канал, внешний id)], Telegram — по tg_id."""
++    s = Settings()
++    rows = (await db.execute(text(
++        "SELECT channel, external_id FROM messenger_link WHERE user_id = :u AND disabled_at IS NULL"
++    ), {"u": user_id})).all()
++    out = [(c, e) for c, e in rows if configured(c, s)]
++    if tg_configured(s):
++        tg_id = (await db.execute(text("SELECT tg_id FROM users WHERE id = :u"), {"u": user_id})).scalar()
++        if tg_id:
++            out.append(("tg", str(tg_id)))
++    return out
++
++
++async def send_urgent(db: AsyncSession, *, student_id: int, sender_name: str, body: str) -> list[str]:
++    """Отправить текст преподавателя целиком во все каналы ученика.
++
++    Рубильники рассылки здесь не спрашиваются: это не рассылка, а адресное
++    сообщение живого человека, отправленное его нажатием. Отписку уважаем —
++    отключённые каналы в список не попадают.
++
++    :returns: каналы, принявшие сообщение.
++    """
++    s = Settings()
++    message = f"{URGENT_PREFIX} ({sender_name}):\n\n{body}\n\nОтветить можно прямо здесь."
++    delivered: list[str] = []
++    for channel, external_id in await student_channels(db, student_id):
++        try:
++            if channel == "tg":
++                async with httpx.AsyncClient(timeout=10) as client:
++                    r = await client.post(
++                        f"{TG_API}/bot{s.student_bot_token}/sendMessage",
++                        json={"chat_id": int(external_id), "text": message},
++                    )
++                r.raise_for_status()
++            else:
++                await send_text(channel, external_id, message, s)
++            delivered.append(channel)
++        except SendRefusedError:
++            await disable_by_external(db, channel, external_id, "refused")
++        except Exception as e:
++            logger.error("tsk-1398: срочное в %s ученику %s не ушло: %s", channel, student_id, type(e).__name__)
++    return delivered
++
++
++async def send_tg_with_buttons(chat_id: int, message: str, buttons: list[str]) -> int:
++    """Telegram: обычная клавиатура (кнопка присылает свой текст боту).
++
++    Ответ приходит в ученического бота (TG_LMS), не в LMS: приём ответов из
++    Telegram — доработка бота. Без токена — 0.
++    """
++    s = Settings()
++    if not tg_configured(s):
++        return 0
++    keyboard = {"keyboard": [[{"text": b}] for b in buttons], "one_time_keyboard": True, "resize_keyboard": True}
++    async with httpx.AsyncClient(timeout=10) as client:
++        r = await client.post(
++            f"{TG_API}/bot{s.student_bot_token}/sendMessage",
++            json={"chat_id": chat_id, "text": message, "reply_markup": keyboard},
++        )
++    if r.status_code == 403:
++        return 0
++    r.raise_for_status()
++    return 1
++
++
++async def route_inbound(db: AsyncSession, *, channel: Channel, external_id: str, body: str) -> None:
++    """Входящее сообщение подключённого ученика: ответ на вопрос о занятии
++    или обычное сообщение — в переписку. Неподключённым — ничего."""
++    from app.services import absence_poll_service
++
++    student_id = await linked_student(db, channel, external_id)
++    if student_id is None or not body.strip():
++        return
++    reply = await absence_poll_service.handle_answer(db, student_id=student_id, channel=channel, body=body)
++    if reply is None:
++        if await store_inbound(db, student_id=student_id, channel=channel, body=body) is None:
++            reply = NO_ADDRESSEE_TEXT
++    if reply:
++        await reply_safe(channel, external_id, reply)
+diff --git a/app/services/absence_poll_service.py b/app/services/absence_poll_service.py
+new file mode 100644
+index 0000000..4db20cd
+--- /dev/null
++++ b/app/services/absence_poll_service.py
+@@ -0,0 +1,219 @@
++"""Опрос «Вы будете на занятии?» во внешних каналах (tsk-1398, этап 4).
++
++**Зачем.** Оператор вручную писал каждому не пришедшему: «Вы опаздываете?»
++(решение 21.10). Теперь это делает проход посещаемости.
++
++**Как.**
++1. `ask_due` — через `absence_poll_delay_minutes` (5) после начала занятия
++   участник всё ещё `scheduled` (не вошёл) → вопрос с кнопками во все его
++   внешние каналы (ВК, MAX, Telegram) и строка `absence_poll`.
++2. `handle_answer` — ответ кнопкой (или тем же текстом): «Опаздываю» откладывает
++   автоотметку неявки до конца занятия; причина пропуска запоминается.
++3. `apply_due` — участник стал `no_show` (автоматически или вручную): причина
++   из ответа ложится в `lesson_absence_followup` без преподавателя; занятие
++   кончилось, а ответа нет — `no_answer`. Отметку преподавателя не трогаем
++   (`ON CONFLICT DO NOTHING`): человек главнее автомата.
++
++Каналов у ученика нет — не спрашиваем: спросит преподаватель, как раньше.
++Рубильник `absence_poll_enabled` выключен по умолчанию.
++"""
++from __future__ import annotations
++
++import logging
++from datetime import datetime, timedelta, timezone
++from typing import Optional
++
++from sqlalchemy import text
++from sqlalchemy.ext.asyncio import AsyncSession
++
++from app.core import settings_store
++from app.services import inbox_service
++from app.services import messenger_channel_service as channels
++
++logger = logging.getLogger(__name__)
++
++SETTING_ENABLED = "absence_poll_enabled"
++SETTING_DELAY = "absence_poll_delay_minutes"
++
++#: Ответ → подпись кнопки. Коды причин совпадают с `lesson_absence_followup.reason`.
++ANSWERS: dict[str, str] = {
++    "late": "Опаздываю, скоро буду",
++    "illness": "Не приду: болею",
++    "busy": "Не приду: занят(а)",
++    "forgot": "Не приду: забыл(а)",
++    "other": "Не приду: другая причина",
++}
++_BY_LABEL = {label.lower(): code for code, label in ANSWERS.items()}
++#: Сколько ждать ответа на вопрос, если занятие затянулось или ответ запоздал.
++ANSWER_WINDOW = timedelta(hours=3)
++
++QUESTION = "Занятие уже началось, а вас пока нет. Вы будете?"
++REPLIES = {
++    "late": "Спасибо, предупредим преподавателя. Подключайтесь, как сможете.",
++    "reason": "Спасибо, причину передали преподавателю. Задания можно сделать в кабинете.",
++}
++
++_DUE_SQL = """
++SELECT lop.id, lo.id, lop.student_id, lo.scheduled_at
++FROM lesson_occurrence_participant lop
++JOIN lesson_occurrence lo ON lo.id = lop.occurrence_id
++WHERE lop.status = 'scheduled'
++  AND lo.scheduled_at + make_interval(mins => :delay) < :now
++  AND lo.scheduled_at + make_interval(mins => lo.duration_minutes) > :now
++  AND NOT EXISTS (SELECT 1 FROM absence_poll ap WHERE ap.participant_id = lop.id)
++"""
++
++
++def enabled() -> bool:
++    """Включён ли опрос в кабинете администратора."""
++    return settings_store.get_bool(SETTING_ENABLED)
++
++
++async def ask_due(db: AsyncSession, *, now: Optional[datetime] = None) -> int:
++    """Спросить не пришедших. Не коммитит: проход посещаемости коммитит сам.
++
++    :returns: скольким ученикам вопрос ушёл хотя бы в один канал.
++    """
++    if not enabled():
++        return 0
++    now = now or datetime.now(timezone.utc)
++    rows = (await db.execute(text(_DUE_SQL), {
++        "delay": settings_store.get_int(SETTING_DELAY), "now": now,
++    })).all()
++    asked = 0
++    for participant_id, occurrence_id, student_id, _ in rows:
++        targets = await channels.student_channels(db, int(student_id))
++        if not targets:
++            continue
++        await db.execute(text(
++            "INSERT INTO absence_poll (participant_id, occurrence_id, student_id) "
++            "VALUES (:p, :o, :s) ON CONFLICT DO NOTHING"
++        ), {"p": participant_id, "o": occurrence_id, "s": student_id})
++        delivered = 0
++        for channel, external_id in targets:
++            try:
++                if channel == "tg":
++                    delivered += await channels.send_tg_with_buttons(
++                        int(external_id), QUESTION, list(ANSWERS.values()),
++                    )
++                else:
++                    await channels.send_text(channel, external_id, QUESTION, buttons=list(ANSWERS.values()))
++                    delivered += 1
++            except channels.SendRefusedError:
++                await channels.disable_by_external(db, channel, external_id, "refused")
++            except Exception as e:
++                logger.error("tsk-1398: вопрос о занятии в %s не ушёл: %s", channel, type(e).__name__)
++        if delivered:
++            asked += 1
++    return asked
++
++
++def parse_answer(body: str) -> Optional[str]:
++    """Код ответа по тексту кнопки (или его началу, если клиент обрезал)."""
++    t = body.strip().lower()
++    if t in _BY_LABEL:
++        return _BY_LABEL[t]
++    for label, code in _BY_LABEL.items():
++        if len(t) >= 8 and label.startswith(t):
++            return code
++    return None
++
++
++async def handle_answer(db: AsyncSession, *, student_id: int, channel: str, body: str) -> Optional[str]:
++    """Принять ответ ученика на открытый вопрос.
++
++    :returns: текст ответа ученику, если сообщение — ответ на вопрос; иначе None
++      (тогда это обычное сообщение, его сохраняет переписка).
++    """
++    code = parse_answer(body)
++    if code is None:
++        return None
++    poll = (await db.execute(text(
++        "SELECT ap.id, ap.occurrence_id FROM absence_poll ap "
++        "WHERE ap.student_id = :s AND ap.applied_at IS NULL AND ap.asked_at > :since "
++        "ORDER BY ap.asked_at DESC LIMIT 1"
++    ), {"s": student_id, "since": datetime.now(timezone.utc) - ANSWER_WINDOW})).first()
++    if poll is None:
++        return None
++    await db.execute(text(
++        "UPDATE absence_poll SET answer = :a, answer_channel = :c, answered_at = now() WHERE id = :id"
++    ), {"a": code, "c": channel, "id": poll[0]})
++    if code == "late":
++        await _tell_teachers_late(db, occurrence_id=int(poll[1]), student_id=student_id)
++    await db.commit()
++    logger.info("tsk-1398: ученик %s ответил на вопрос о занятии: %s (%s)", student_id, code, channel)
++    return REPLIES["late"] if code == "late" else REPLIES["reason"]
++
++
++async def _tell_teachers_late(db: AsyncSession, *, occurrence_id: int, student_id: int) -> None:
++    """Преподавателям занятия — в кабинет: ученик опаздывает."""
++    from app.services import notification_names
++
++    name = await notification_names.user_display_name(db, student_id)
++    teacher_ids = {r[0] for r in (await db.execute(text(
++        "SELECT teacher_id FROM lesson_occurrence_teacher WHERE occurrence_id = :o AND is_active"
++    ), {"o": occurrence_id})).all()}
++    if not teacher_ids:
++        teacher_ids = {r[0] for r in (await db.execute(text(
++            "SELECT teacher_id FROM lesson_occurrence WHERE id = :o"
++        ), {"o": occurrence_id})).all()}
++    for teacher_id in teacher_ids:
++        await inbox_service.create_for_user(
++            db, user_id=int(teacher_id), kind="student_running_late",
++            title="Ученик опаздывает", content=f"{name} предупредил(а), что опаздывает.",
++            payload={"occurrence_id": occurrence_id, "student_id": student_id},
++            created_by=None,
++        )
++
++
++def late_participant_ids_sql() -> str:
++    """Условие для автоотметки неявки: «опаздываю» откладывает её до конца занятия."""
++    return (
++        "NOT EXISTS (SELECT 1 FROM absence_poll ap WHERE ap.participant_id = lop.id "
++        "AND ap.answer = 'late' AND lo.scheduled_at + make_interval(mins => lo.duration_minutes) > :now)"
++    )
++
++
++_APPLY_SQL = """
++SELECT ap.id, ap.student_id, ap.occurrence_id, ap.answer, ap.answer_channel,
++       lop.status, lo.scheduled_at + make_interval(mins => lo.duration_minutes) <= :now AS ended
++FROM absence_poll ap
++JOIN lesson_occurrence_participant lop ON lop.id = ap.participant_id
++JOIN lesson_occurrence lo ON lo.id = ap.occurrence_id
++WHERE ap.applied_at IS NULL
++"""
++
++_CHANNEL_NAMES = {"vk": "ВКонтакте", "max": "MAX", "tg": "Telegram"}
++
++
++async def apply_due(db: AsyncSession, *, now: Optional[datetime] = None) -> int:
++    """Перенести ответы в отметки о пропуске. Не коммитит.
++
++    :returns: сколько отметок создано.
++    """
++    now = now or datetime.now(timezone.utc)
++    applied = 0
++    for poll_id, student_id, occurrence_id, answer, channel, status, ended in (
++        await db.execute(text(_APPLY_SQL), {"now": now})
++    ).all():
++        if status != "no_show":
++            # Пришёл (или занятие перенесли) — спрашивать о причине нечего.
++            if status != "scheduled" or ended:
++                await db.execute(text("UPDATE absence_poll SET applied_at = now() WHERE id = :id"), {"id": poll_id})
++            continue
++        if answer in (None, "late"):
++            if not ended:
++                continue
++            reason, note = "no_answer", "Не ответил(а) на вопрос о занятии в мессенджере"
++            if answer == "late":
++                reason, note = "other", "Написал(а), что опаздывает, но не пришёл(а)"
++        else:
++            reason = answer
++            note = f"Ответ ученика в {_CHANNEL_NAMES.get(channel or '', 'мессенджере')}"
++        res = await db.execute(text(
++            "INSERT INTO lesson_absence_followup (student_id, occurrence_id, asked_by, reason, note) "
++            "VALUES (:s, :o, NULL, :r, :n) ON CONFLICT DO NOTHING"
++        ), {"s": student_id, "o": occurrence_id, "r": reason, "n": note})
++        applied += res.rowcount or 0
++        await db.execute(text("UPDATE absence_poll SET applied_at = now() WHERE id = :id"), {"id": poll_id})
++    return applied
+diff --git a/app/db/migrations/versions/2026_10_21_tsk1398_absence_poll.py b/app/db/migrations/versions/2026_10_21_tsk1398_absence_poll.py
+new file mode 100644
+index 0000000..1a2cbb5
+--- /dev/null
++++ b/app/db/migrations/versions/2026_10_21_tsk1398_absence_poll.py
+@@ -0,0 +1,58 @@
++"""tsk-1398: опрос «Вы будете на занятии?» во внешних каналах.
++
++Раньше оператор вручную писал каждому не пришедшему ученику. Теперь проход
++посещаемости через N минут после начала спрашивает сам (ВК, MAX, Telegram),
++ученик отвечает кнопкой: «Опаздываю» или причина пропуска. Причина ложится в
++`lesson_absence_followup` без преподавателя; не ответил до конца занятия —
++`no_answer`.
++
++`absence_poll` — одна строка на участие в занятии (`participant_id` уникален):
++когда спросили, что ответил, когда ответ перенесён в отметку о пропуске
++(`applied_at`). Данных не меняет.
++
++Rollback: `alembic downgrade tsk1253_messenger_link` — таблица удаляется;
++перенесённые причины остаются в `lesson_absence_followup`.
++"""
++from typing import Sequence, Union
++
++import sqlalchemy as sa
++from alembic import op
++
++revision: str = "tsk1398_absence_poll"
++down_revision: Union[str, None] = "tsk1253_messenger_link"
++branch_labels: Union[str, Sequence[str], None] = None
++depends_on: Union[str, Sequence[str], None] = None
++
++
++def upgrade() -> None:
++    """Создать таблицу опросов о пропуске."""
++    op.create_table(
++        "absence_poll",
++        sa.Column("id", sa.BigInteger, primary_key=True),
++        sa.Column(
++            "participant_id", sa.Integer,
++            sa.ForeignKey("lesson_occurrence_participant.id", ondelete="CASCADE"), nullable=False,
++        ),
++        sa.Column(
++            "occurrence_id", sa.Integer,
++            sa.ForeignKey("lesson_occurrence.id", ondelete="CASCADE"), nullable=False,
++        ),
++        sa.Column("student_id", sa.Integer, sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
++        sa.Column("asked_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
++        sa.Column("answer", sa.Text, nullable=True),
++        sa.Column("answer_channel", sa.Text, nullable=True),
++        sa.Column("answered_at", sa.DateTime(timezone=True), nullable=True),
++        sa.Column("applied_at", sa.DateTime(timezone=True), nullable=True),
++        sa.CheckConstraint(
++            "answer IS NULL OR answer IN ('late', 'illness', 'busy', 'forgot', 'other')",
++            name="ck_absence_poll_answer",
++        ),
++        sa.UniqueConstraint("participant_id", name="uq_absence_poll_participant"),
++    )
++    op.create_index("ix_absence_poll_student_open", "absence_poll", ["student_id", "asked_at"])
++
++
++def downgrade() -> None:
++    """Удалить таблицу опросов."""
++    op.drop_index("ix_absence_poll_student_open", table_name="absence_poll")
++    op.drop_table("absence_poll")

@@ -39,7 +39,7 @@ from app.core import settings_store
 from app.core.config import Settings
 from app.core.cron_registry import register_interval_job
 from app.db.session import async_session_factory
-from app.services import homework_service, inbox_service, notification_names
+from app.services import absence_poll_service, homework_service, inbox_service, notification_names
 
 logger = logging.getLogger("app.lesson_calendar")
 
@@ -156,7 +156,8 @@ async def _mark_no_show(db: AsyncSession, *, threshold_minutes: int) -> int:
             JOIN lesson_occurrence lo ON lo.id = lop.occurrence_id
             WHERE lop.status = 'scheduled'
               AND lo.scheduled_at + (:threshold || ' minutes')::interval < :now
-            """
+              AND {late}
+            """.replace("{late}", absence_poll_service.late_participant_ids_sql())
         ),
         {"threshold": str(threshold_minutes), "now": now_utc},
     )
@@ -317,9 +318,13 @@ async def lesson_attendance_cron_tick(
         summary["locked"] = True
 
         summary["reminders_sent"] = await _send_reminders(db, lead_minutes=lead_minutes)
+        # tsk-1398: вопрос «Вы будете?» — до автоотметки неявки; ответ
+        # «опаздываю» откладывает её до конца занятия.
+        summary["absence_polls_asked"] = await absence_poll_service.ask_due(db)
         summary["no_show_marked"] = await _mark_no_show(
             db, threshold_minutes=threshold_minutes
         )
+        summary["absence_reasons_applied"] = await absence_poll_service.apply_due(db)
         # После явки и пропусков: выдаём ДЗ тем, кто был на закончившемся
         # занятии, независимо от того, кто отметил явку.
         summary["homework_issued"] = await _issue_homework_after_lessons(db)

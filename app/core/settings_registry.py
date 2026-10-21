@@ -552,6 +552,33 @@ SETTINGS: Tuple[SettingDef, ...] = (
         warning="Включено — ученики с подключённым Telegram получают сообщения бота.",
     ),
     SettingDef(
+        key="absence_poll_enabled",
+        group=GROUP_SIGNALS,
+        title="Спрашивать не пришедшего ученика «Вы будете?» в мессенджере",
+        description=(
+            "Через несколько минут после начала занятия ученику без входа уходит "
+            "вопрос с кнопками: «Опаздываю» или причина пропуска. Причина ставится "
+            "в отметку о пропуске сама; нет ответа до конца занятия — «не ответил» "
+            "(tsk-1398). Только ученикам с подключённым мессенджером."
+        ),
+        kind="bool",
+        default=False,
+        env_var=None,
+        warning="Включено — не пришедшим ученикам уходит вопрос в мессенджер.",
+    ),
+    SettingDef(
+        key="absence_poll_delay_minutes",
+        group=GROUP_SIGNALS,
+        title="Через сколько минут после начала спрашивать «Вы будете?»",
+        description="Раньше автоотметки неявки, иначе ответ «опаздываю» её не отложит.",
+        kind="int",
+        default=5,
+        env_var=None,
+        unit="минуты",
+        min_value=1,
+        max_value=60,
+    ),
+    SettingDef(
         key="gap_student_min_submissions",
         group=GROUP_SIGNALS,
         title="Сколько сдач нужно, чтобы судить о трудностях ученика",
