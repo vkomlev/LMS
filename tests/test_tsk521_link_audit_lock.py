@@ -14,6 +14,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import uuid
 
 import pytest
 from sqlalchemy import text
@@ -26,11 +28,19 @@ from app.services import link_audit_service
 
 @pytest.mark.asyncio
 async def test_second_worker_backs_off(monkeypatch):
-    """Пока один worker держит блокировку, второй отступает и работу не дублирует."""
+    """Пока один worker держит блокировку, второй отступает и работу не дублирует.
+
+    Блокировка живёт, пока идёт проход, поэтому держатель ждёт, пока второй тик
+    не вернётся: исход не зависит ни от объёма базы, ни от скорости соединений.
+    """
     # Своё в порядке, чужие домены вне охвата — тик не должен ходить в сеть.
     monkeypatch.setenv("LINK_AUDIT_OWN_HOSTS", "")
+    other_done = asyncio.Event()
 
     async def _exists(_name: str) -> bool:
+        # Держатель блокировки стоит здесь, пока второй тик не отступит. Если
+        # блокировку возьмут оба по очереди, ожидание кончится таймаутом.
+        await asyncio.wait_for(other_done.wait(), timeout=10)
         return True
 
     monkeypatch.setattr(
@@ -40,11 +50,44 @@ async def test_second_worker_backs_off(monkeypatch):
 
     engine = create_async_engine(Settings().database_url, poolclass=NullPool)
     factory = async_sessionmaker(engine, expire_on_commit=False)
+    ids: dict[str, int] = {}
+
+    async def _tick() -> dict:
+        summary = await link_audit_service.link_audit_tick(factory)
+        other_done.set()
+        return summary
+
     try:
-        first, second = await asyncio.gather(
-            link_audit_service.link_audit_tick(factory),
-            link_audit_service.link_audit_tick(factory),
-        )
+        # Хотя бы одна цель, чтобы держатель блокировки дошёл до проверки.
+        async with factory() as db:
+            ids["course"] = (
+                await db.execute(
+                    text(
+                        "INSERT INTO courses (title, access_level) "
+                        "VALUES (:t, 'self_guided') RETURNING id"
+                    ),
+                    {"t": f"tsk521-lock-{uuid.uuid4().hex[:12]}"},
+                )
+            ).scalar_one()
+            ids["material"] = (
+                await db.execute(
+                    text(
+                        "INSERT INTO materials (title, type, content, course_id, is_active) "
+                        "VALUES ('tsk521-lock', 'image', CAST(:c AS jsonb), :cid, true) "
+                        "RETURNING id"
+                    ),
+                    {
+                        "c": json.dumps({"sources": [{
+                            "url": f"/api/v1/materials/files/tsk521-lock-{uuid.uuid4().hex}.png",
+                            "type": "file",
+                        }]}),
+                        "cid": ids["course"],
+                    },
+                )
+            ).scalar_one()
+            await db.commit()
+
+        first, second = await asyncio.gather(_tick(), _tick())
         locked = [s["locked"] for s in (first, second)]
         assert locked.count(True) == 1, (first, second)
         assert locked.count(False) == 1, (first, second)
@@ -56,6 +99,12 @@ async def test_second_worker_backs_off(monkeypatch):
     finally:
         # Модуль без транзакционной изоляции — убираем за собой руками.
         async with factory() as db:
+            if "material" in ids:
+                await db.execute(
+                    text("DELETE FROM materials WHERE id = :m"), {"m": ids["material"]}
+                )
+            if "course" in ids:
+                await db.execute(text("DELETE FROM courses WHERE id = :c"), {"c": ids["course"]})
             await db.execute(
                 text("DELETE FROM notifications WHERE kind = :k"),
                 {"k": link_audit_service.NOTIFICATION_KIND},

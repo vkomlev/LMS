@@ -7,6 +7,13 @@
 проверки здесь смотрят на конкретную ссылку в `broken_targets`, а не на общий
 счётчик находок: в dev-БД лежит реальный контент со своими ссылками.
 
+То же и с уведомлениями. Отсрочка повтора общая на всю базу, а уведомления этого
+вида в ней бывают и без теста (боевой тик dev-сервера, закоммиченный хвост
+соседнего модуля). Поэтому каждый тест начинает с чистого листа — `_prepare_world`
+стирает чужие уведомления внутри ЕГО откатываемой транзакции (tsk-333; в базе
+ничего не пропадает), а корневой курс и методиста заводит себе сам, а не ищет в
+базе.
+
 Сценарии:
 - целый файл материала в находки не попадает
 - пропавший файл материала попадает и рождает уведомление методисту
@@ -33,18 +40,46 @@ from app.services import link_audit_service
 from app.utils.exceptions import DomainError
 
 
-async def _pick_root(db) -> int:
-    row = (
+async def _prepare_world(db) -> int:
+    """Чистый лист для теста: без чужих уведомлений, со своим корневым курсом.
+
+    Всё — внутри откатываемой транзакции теста: удалённые здесь чужие
+    уведомления после теста возвращаются на место.
+    """
+    await db.execute(
+        text("DELETE FROM notifications WHERE kind = :k"),
+        {"k": link_audit_service.NOTIFICATION_KIND},
+    )
+    course_id = (
         await db.execute(
             text(
-                "SELECT id FROM courses "
-                "WHERE id NOT IN (SELECT course_id FROM course_parents) LIMIT 1"
-            )
+                "INSERT INTO courses (title, access_level) "
+                "VALUES (:t, 'self_guided') RETURNING id"
+            ),
+            {"t": f"tsk521-root-{uuid4().hex[:12]}"},
         )
-    ).fetchone()
-    if row is None:
-        pytest.skip("Нужен хотя бы один корневой курс")
-    return int(row[0])
+    ).scalar_one()
+    return int(course_id)
+
+
+async def _add_methodist(db) -> int:
+    """Свой методист — адресат уведомления; не полагаемся на содержимое базы."""
+    role_id = (
+        await db.execute(text("SELECT id FROM roles WHERE name = 'methodist'"))
+    ).scalar()
+    if role_id is None:
+        pytest.skip("в справочнике ролей нет methodist (scripts/seed_roles.sql)")
+    user_id = (
+        await db.execute(
+            text("INSERT INTO users (full_name) VALUES (:n) RETURNING id"),
+            {"n": f"tsk521 методист {uuid4().hex[:8]}"},
+        )
+    ).scalar_one()
+    await db.execute(
+        text("INSERT INTO user_roles (user_id, role_id) VALUES (:u, :r)"),
+        {"u": user_id, "r": role_id},
+    )
+    return int(user_id)
 
 
 async def _create_material(
@@ -139,7 +174,7 @@ def no_own_hosts(monkeypatch):
 @pytest.mark.asyncio
 async def test_intact_file_is_not_reported(db, db_session_factory, storage, no_own_hosts):
     """Файл на месте — в находках его нет."""
-    course_id = await _pick_root(db)
+    course_id = await _prepare_world(db)
     file_id = _new_name()  # в `missing` не добавляем — значит цел
     mid = await _create_material(db, course_id=course_id, content=_file_content(file_id))
     try:
@@ -155,7 +190,8 @@ async def test_missing_file_is_reported_to_methodist(
     db, db_session_factory, storage, no_own_hosts
 ):
     """Пропавший файл — находка и уведомление методисту с примером и источником."""
-    course_id = await _pick_root(db)
+    course_id = await _prepare_world(db)
+    await _add_methodist(db)
     file_id = _new_name()
     storage.add(file_id)
     mid = await _create_material(db, course_id=course_id, content=_file_content(file_id))
@@ -181,7 +217,7 @@ async def test_missing_file_is_reported_to_methodist(
 @pytest.mark.asyncio
 async def test_missing_task_media_is_reported(db, db_session_factory, storage, no_own_hosts):
     """Медиа задания проверяется наравне с файлами материалов."""
-    course_id = await _pick_root(db)
+    course_id = await _prepare_world(db)
     sha_ext = _new_name()
     storage.add(sha_ext)
     content = {"text": f'<img src="/api/v1/media/{sha_ext}"/>', "format": "html"}
@@ -215,7 +251,7 @@ async def test_foreign_hosts_are_not_checked(db, db_session_factory, storage, mo
 
     monkeypatch.setattr("httpx.AsyncClient.head", _head)
 
-    course_id = await _pick_root(db)
+    course_id = await _prepare_world(db)
     content = {
         "text": (
             f'<img src="{foreign}"/>'
@@ -247,7 +283,7 @@ async def test_own_host_file_is_checked(db, db_session_factory, storage, monkeyp
 
     monkeypatch.setattr("httpx.AsyncClient.head", _head)
 
-    course_id = await _pick_root(db)
+    course_id = await _prepare_world(db)
     content = {"text": f'<img src="{url}"/>', "format": "html"}
     mid = await _create_material(db, course_id=course_id, content=content)
     try:
@@ -272,7 +308,7 @@ async def test_page_link_is_not_checked(db, db_session_factory, storage, monkeyp
 
     monkeypatch.setattr("httpx.AsyncClient.head", _head)
 
-    course_id = await _pick_root(db)
+    course_id = await _prepare_world(db)
     content = {"text": f'<a href="{page}">курс</a>', "format": "html"}
     mid = await _create_material(db, course_id=course_id, content=content)
     try:
@@ -285,7 +321,7 @@ async def test_page_link_is_not_checked(db, db_session_factory, storage, monkeyp
 @pytest.mark.asyncio
 async def test_inactive_material_is_skipped(db, db_session_factory, storage, no_own_hosts):
     """Выключенный материал ученику не показывается — и в проверку не идёт."""
-    course_id = await _pick_root(db)
+    course_id = await _prepare_world(db)
     file_id = _new_name()
     storage.add(file_id)
     mid = await _create_material(
@@ -305,7 +341,8 @@ async def test_second_tick_within_cooldown_stays_quiet(
     db, db_session_factory, storage, no_own_hosts
 ):
     """Ежедневный тик не превращает одну незамеченную ссылку в поток писем."""
-    course_id = await _pick_root(db)
+    course_id = await _prepare_world(db)
+    await _add_methodist(db)
     file_id = _new_name()
     storage.add(file_id)
     mid = await _create_material(db, course_id=course_id, content=_file_content(file_id))
@@ -330,7 +367,7 @@ async def test_storage_outage_aborts_run_instead_of_flagging_everything(
     «Нет ответа» не то же самое, что «файла нет»: иначе одна сетевая ошибка
     объявила бы битыми все ссылки разом и завалила методиста ложной тревогой.
     """
-    course_id = await _pick_root(db)
+    course_id = await _prepare_world(db)
     file_id = _new_name()
     mid = await _create_material(db, course_id=course_id, content=_file_content(file_id))
 
@@ -354,7 +391,7 @@ async def test_unexpected_failure_is_not_passed_off_as_clean_run(
     db, db_session_factory, monkeypatch, no_own_hosts
 ):
     """Программная ошибка внутри проверки помечает прогон, а не молчит."""
-    course_id = await _pick_root(db)
+    course_id = await _prepare_world(db)
     file_id = _new_name()
     mid = await _create_material(db, course_id=course_id, content=_file_content(file_id))
 
