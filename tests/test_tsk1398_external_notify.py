@@ -148,3 +148,45 @@ async def test_telegram_needs_token_and_switch(db, monkeypatch):
 def test_texts_have_no_placeholders_left():
     for kind in svc.INBOX_KIND_MAP.values():
         assert "{url}" in svc._TEXTS[kind[0]]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("description,opted_out", [
+    ("Forbidden: bot was blocked by the user", True),
+    ("Forbidden: bot can't initiate conversation with a user", False),
+])
+async def test_telegram_403_optout_only_when_blocked(db, monkeypatch, description, opted_out):
+    class _Resp:
+        status_code = 403
+
+        def json(self):
+            return {"ok": False, "description": description}
+
+    class _Client:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def post(self, *a, **k):
+            return _Resp()
+
+    monkeypatch.setattr(svc.httpx, "AsyncClient", _Client)
+    monkeypatch.setenv("STUDENT_BOT_TOKEN", "123:abc")
+    settings_store.apply_local(svc.TG_SETTING_KEY, True)
+    u = Users(email=f"tsk1398-403-{random.randint(10**8, 10**10)}@example.com",
+              password_hash=None, full_name="tsk1398", tg_id=random.randint(10**9, 10**10))
+    db.add(u)
+    await db.commit()
+    try:
+        assert await svc.notify_user(db, user_id=u.id, kind=svc.KIND_REVIEW, url="https://x") == 0
+        assert await svc.tg_opted_out(db, u.id) is opted_out
+    finally:
+        settings_store.forget_local(svc.TG_SETTING_KEY)
+        await db.execute(text("DELETE FROM messenger_link WHERE user_id = :u"), {"u": u.id})
+        await db.commit()
+

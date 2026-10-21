@@ -387,8 +387,12 @@ async def _notify_tg(db: AsyncSession, *, user_id: int, message: str, settings: 
                 json={"chat_id": tg_id, "text": message + _FOOTER},
             )
         if r.status_code == 403:
-            # Ученик остановил бота — дальше не пытаемся.
-            await set_tg_optout(db, user_id, "bot_stopped")
+            # 403 бывает и «заблокировал бота», и «ни разу не запускал». Отписка —
+            # только в первом случае: второму поможет запуск бота по ссылке.
+            if "blocked" in (r.json().get("description") or "").lower():
+                await set_tg_optout(db, user_id, "bot_stopped")
+            else:
+                logger.info("tsk-1398: ученик %s не запускал бота Telegram", user_id)
             return 0
         r.raise_for_status()
         return 1
