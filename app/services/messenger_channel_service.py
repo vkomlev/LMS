@@ -154,7 +154,7 @@ async def issue_link(user_id: int, channel: Channel, settings: Optional[Settings
 class LinkState:
     """Состояние канала для кабинета."""
 
-    channel: Channel
+    channel: str
     available: bool
     linked: bool
 
@@ -165,7 +165,12 @@ async def states(db: AsyncSession, user_id: int) -> list[LinkState]:
         "SELECT channel FROM messenger_link WHERE user_id = :u AND disabled_at IS NULL"
     ), {"u": user_id})).scalars().all()
     s = Settings()
-    return [LinkState(c, configured(c, s), c in rows) for c in CHANNELS]
+    out = [LinkState(c, configured(c, s), c in rows) for c in CHANNELS]
+    # tsk-1398: Telegram — для кнопки «Отключить уведомления». Подключается он
+    # своей кнопкой (ссылка на бота, tsk-1253 этап А).
+    tg_id = (await db.execute(text("SELECT tg_id FROM users WHERE id = :u"), {"u": user_id})).scalar()
+    out.append(LinkState("tg", tg_configured(s), bool(tg_id) and not await tg_opted_out(db, user_id)))
+    return out
 
 
 async def bind(db: AsyncSession, channel: Channel, raw_token: str, external_id: str) -> int:
@@ -326,6 +331,32 @@ TG_API = "https://api.telegram.org"
 TG_SETTING_KEY = "notify_tg_enabled"
 
 
+async def tg_opted_out(db: AsyncSession, user_id: int) -> bool:
+    """Ученик отписался от уведомлений в Telegram."""
+    return (await db.execute(text(
+        "SELECT 1 FROM messenger_link WHERE user_id = :u AND channel = 'tg' AND disabled_at IS NOT NULL"
+    ), {"u": user_id})).first() is not None
+
+
+async def set_tg_optout(db: AsyncSession, user_id: int, reason: str) -> None:
+    """Отписать от Telegram (слово «стоп», остановка бота, кабинет). Коммитит."""
+    tg_id = (await db.execute(text("SELECT tg_id FROM users WHERE id = :u"), {"u": user_id})).scalar()
+    await db.execute(text(
+        "INSERT INTO messenger_link (user_id, channel, external_id, disabled_at, disabled_reason) "
+        "VALUES (:u, 'tg', :e, now(), :r) "
+        "ON CONFLICT (user_id, channel) DO UPDATE SET external_id = EXCLUDED.external_id, "
+        "disabled_at = now(), disabled_reason = EXCLUDED.disabled_reason"
+    ), {"u": user_id, "e": str(tg_id or f"user-{user_id}"), "r": reason})
+    await log_event(db, "messenger.disabled", user_id=user_id, details={"channel": "tg", "reason": reason})
+    await db.commit()
+    logger.info("tsk-1398: Telegram ученика %s отключён (%s)", user_id, reason)
+
+
+async def clear_tg_optout(db: AsyncSession, user_id: int) -> None:
+    """Новая привязка Telegram снимает отписку. Не коммитит."""
+    await db.execute(text("DELETE FROM messenger_link WHERE user_id = :u AND channel = 'tg'"), {"u": user_id})
+
+
 def tg_configured(settings: Optional[Settings] = None) -> bool:
     """Есть ли у LMS токен ученического бота Telegram."""
     return bool((settings or Settings()).student_bot_token)
@@ -347,7 +378,7 @@ async def _notify_tg(db: AsyncSession, *, user_id: int, message: str, settings: 
         logger.exception("tsk-1398: не прочитан Telegram ученика %s", user_id)
         await db.rollback()
         return 0
-    if not tg_id:
+    if not tg_id or await tg_opted_out(db, user_id):
         return 0
     try:
         async with httpx.AsyncClient(timeout=10) as client:
@@ -356,7 +387,8 @@ async def _notify_tg(db: AsyncSession, *, user_id: int, message: str, settings: 
                 json={"chat_id": tg_id, "text": message + _FOOTER},
             )
         if r.status_code == 403:
-            logger.info("tsk-1398: ученик %s остановил бота Telegram", user_id)
+            # Ученик остановил бота — дальше не пытаемся.
+            await set_tg_optout(db, user_id, "bot_stopped")
             return 0
         r.raise_for_status()
         return 1
@@ -546,7 +578,8 @@ async def student_channels(db: AsyncSession, user_id: int) -> list[tuple[str, st
         "SELECT channel, external_id FROM messenger_link WHERE user_id = :u AND disabled_at IS NULL"
     ), {"u": user_id})).all()
     out = [(c, e) for c, e in rows if configured(c, s)]
-    if tg_configured(s):
+    out = [(c, e) for c, e in out if c != "tg"]
+    if tg_configured(s) and not await tg_opted_out(db, user_id):
         tg_id = (await db.execute(text("SELECT tg_id FROM users WHERE id = :u"), {"u": user_id})).scalar()
         if tg_id:
             out.append(("tg", str(tg_id)))
@@ -619,3 +652,27 @@ async def route_inbound(db: AsyncSession, *, channel: Channel, external_id: str,
             reply = NO_ADDRESSEE_TEXT
     if reply:
         await reply_safe(channel, external_id, reply)
+
+
+async def route_tg_inbound(db: AsyncSession, *, tg_id: int, body: str) -> Optional[str]:
+    """Сообщение ученика в боте Telegram (пересылает TG_LMS).
+
+    :returns: что ответить в боте, или None — молчать.
+    """
+    from app.services import absence_poll_service
+
+    student_id = (await db.execute(text(
+        "SELECT id FROM users WHERE tg_id = :t AND is_active AND merged_into_user_id IS NULL "
+        "ORDER BY id LIMIT 1"
+    ), {"t": tg_id})).scalar()
+    if student_id is None or not body.strip():
+        return None
+    if is_stop_word(body):
+        await set_tg_optout(db, student_id, "stop_word")
+        return STOPPED_TEXT
+    reply = await absence_poll_service.handle_answer(db, student_id=student_id, channel="tg", body=body)
+    if reply is not None:
+        return reply
+    if await store_inbound(db, student_id=student_id, channel="tg", body=body) is None:
+        return NO_ADDRESSEE_TEXT
+    return None

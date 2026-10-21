@@ -43207,7 +43207,8 @@
             "schema": {
               "enum": [
                 "vk",
-                "max"
+                "max",
+                "tg"
               ],
               "type": "string",
               "title": "Channel"
@@ -43522,6 +43523,106 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/UrgentMessageResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/integrations/student-bot/inbound": {
+      "post": {
+        "tags": [
+          "student-bot"
+        ],
+        "summary": "Bot Inbound",
+        "description": "Ответ на вопрос о занятии, «стоп» или сообщение преподавателю.",
+        "operationId": "bot_inbound_api_v1_integrations_student_bot_inbound_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BotInboundRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BotInboundResponse"
                 }
               }
             }
@@ -55420,6 +55521,46 @@
           "step"
         ],
         "title": "BotDueItem"
+      },
+      "BotInboundRequest": {
+        "properties": {
+          "tg_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Tg Id"
+          },
+          "text": {
+            "type": "string",
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Text"
+          }
+        },
+        "type": "object",
+        "required": [
+          "tg_id",
+          "text"
+        ],
+        "title": "BotInboundRequest",
+        "description": "Текст, который ученик написал боту вне его меню."
+      },
+      "BotInboundResponse": {
+        "properties": {
+          "reply": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reply"
+          }
+        },
+        "type": "object",
+        "title": "BotInboundResponse",
+        "description": "Что бот ответит ученику (null — промолчать)."
       },
       "BotSentRequest": {
         "properties": {
@@ -70292,7 +70433,8 @@
             "type": "string",
             "enum": [
               "vk",
-              "max"
+              "max",
+              "tg"
             ],
             "title": "Channel"
           },

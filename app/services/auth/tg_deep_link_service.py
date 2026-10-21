@@ -69,6 +69,10 @@ async def link_from_bot(db: AsyncSession, *, raw_token: str, tg_id: int) -> int:
     if payload.kind != "tg":
         raise link_token_service.LinkTokenError("invalid")
     await identity_link_service.link_existing_user(db, payload.user_id, "tg", str(tg_id))
+    # tsk-1398: заново подключил — значит, снова хочет уведомления.
+    from app.services import messenger_channel_service
+
+    await messenger_channel_service.clear_tg_optout(db, payload.user_id)
     await log_event(
         db, "auth.identity.linked", user_id=payload.user_id,
         details={"kind": "tg", "source": "bot_deep_link"},

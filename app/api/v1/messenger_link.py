@@ -16,7 +16,7 @@ from __future__ import annotations
 import hmac
 import logging
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import PlainTextResponse, Response
@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_async_db, require_authenticated, require_role
+from app.api.v1.integrations_leads import _service_only
 from app.auth.current_user import CurrentUser
 from app.core.config import Settings
 from app.services import messenger_channel_service as svc
@@ -38,7 +39,7 @@ hook_router = APIRouter(prefix="/integrations", tags=["messenger-hooks"])
 class MessengerState(BaseModel):
     """Канал в кабинете: показывать ли кнопку и подключён ли."""
 
-    channel: Literal["vk", "max"]
+    channel: Literal["vk", "max", "tg"]
     available: bool
     linked: bool
 
@@ -80,12 +81,15 @@ async def issue_messenger_link(
 
 @me_router.delete("/{channel}", status_code=status.HTTP_204_NO_CONTENT, response_class=Response)
 async def disable_messenger(
-    channel: Literal["vk", "max"],
+    channel: Literal["vk", "max", "tg"],
     current_user: CurrentUser = Depends(require_authenticated),
     db: AsyncSession = Depends(get_async_db),
 ) -> Response:
     """Отключить уведомления в канале (сразу)."""
-    await svc.disable_by_user(db, current_user.id, channel)
+    if channel == "tg":
+        await svc.set_tg_optout(db, current_user.id, "cabinet")
+    else:
+        await svc.disable_by_user(db, current_user.id, channel)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -252,3 +256,37 @@ async def send_urgent_message(
     delivered = await svc.send_urgent(db, student_id=student_id, sender_name=name, body=body.text)
     logger.info("tsk-1398: срочное сообщение %s ученику %s, каналы %s", msg.id, student_id, delivered)
     return UrgentMessageResponse(message_id=msg.id, delivered=delivered, available=available)
+
+
+# ─── tsk-1398: сообщения ученика из бота Telegram (пересылает TG_LMS) ──────
+
+class BotInboundRequest(BaseModel):
+    """Текст, который ученик написал боту вне его меню."""
+
+    tg_id: int = Field(gt=0)
+    text: str = Field(min_length=1, max_length=4000)
+
+
+class BotInboundResponse(BaseModel):
+    """Что бот ответит ученику (null — промолчать)."""
+
+    reply: Optional[str] = None
+
+
+student_bot_router = APIRouter(prefix="/integrations/student-bot", tags=["student-bot"])
+
+
+@student_bot_router.post("/inbound", response_model=BotInboundResponse)
+async def bot_inbound(
+    body: BotInboundRequest,
+    _: CurrentUser = Depends(_service_only),
+    db: AsyncSession = Depends(get_async_db),
+) -> BotInboundResponse:
+    """Ответ на вопрос о занятии, «стоп» или сообщение преподавателю."""
+    try:
+        reply = await svc.route_tg_inbound(db, tg_id=body.tg_id, body=body.text)
+    except Exception:
+        logger.exception("tsk-1398: сообщение из бота Telegram не обработано")
+        await db.rollback()
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Не удалось обработать сообщение")
+    return BotInboundResponse(reply=reply)

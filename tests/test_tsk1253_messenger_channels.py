@@ -112,7 +112,7 @@ async def test_vk_link_via_callback_once(client, db, channels_env):
         assert channels_env[-1][:2] == ("vk", vk_id) and "стоп" in channels_env[-1][2]
 
         r = await client.get("/api/v1/me/messengers", cookies={"session": token})
-        assert {c["channel"]: c["linked"] for c in r.json()} == {"vk": True, "max": False}
+        assert {c["channel"]: c["linked"] for c in r.json()} == {"vk": True, "max": False, "tg": False}
 
         # Повтор той же ссылки — токен погашен, привязка не меняется.
         r = await client.post("/api/v1/integrations/vk/callback", json=event)

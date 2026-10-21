@@ -327,3 +327,88 @@ async def test_answer_kept_when_no_show_threshold_longer_than_lesson(db, env):
     finally:
         await _cleanup(db, [teacher, student], [occ])
 
+
+# ─── Telegram: сообщения из бота, отписка ─────────────────────────────────
+
+def _service_headers() -> dict[str, str]:
+    from app.core.config import Settings
+
+    return {"X-API-Key": next(iter(Settings().valid_api_keys))}
+
+
+async def _tg_student(db) -> tuple[int, int]:
+    sid = await _user(db, "student")
+    tg_id = random.randint(10**9, 10**10)
+    await db.execute(text("UPDATE users SET tg_id = :t WHERE id = :u"), {"t": tg_id, "u": sid})
+    await db.commit()
+    return sid, tg_id
+
+
+@pytest.mark.asyncio
+async def test_tg_inbound_needs_service_key(client):
+    r = await client.post("/api/v1/integrations/student-bot/inbound", json={"tg_id": 1, "text": "x"})
+    assert r.status_code in (401, 403)
+
+
+@pytest.mark.asyncio
+async def test_tg_inbound_stores_reply_and_stop(client, db, env, monkeypatch):
+    from app.services.messages_service import MessagesService
+
+    monkeypatch.setenv("STUDENT_BOT_TOKEN", "123:abc")
+    teacher = await _user(db, "teacher")
+    student, tg_id = await _tg_student(db)
+    try:
+        await MessagesService().send_message(
+            db, message_type="text", content={"text": "Где вы?"}, recipient_id=student, sender_id=teacher,
+        )
+        url = "/api/v1/integrations/student-bot/inbound"
+        r = await client.post(url, json={"tg_id": tg_id, "text": "Еду"}, headers=_service_headers())
+        assert r.status_code == 200 and r.json()["reply"] is None
+        row = (await db.execute(text(
+            "SELECT recipient_id, source_system FROM messages WHERE sender_id = :s"), {"s": student})).first()
+        assert row == (teacher, "tg")
+        assert ("tg", str(tg_id)) in await svc.student_channels(db, student)
+
+        r = await client.post(url, json={"tg_id": tg_id, "text": "Стоп"}, headers=_service_headers())
+        assert r.json()["reply"] == svc.STOPPED_TEXT
+        assert await svc.tg_opted_out(db, student)
+        assert all(c != "tg" for c, _ in await svc.student_channels(db, student))
+
+        # Неизвестный tg_id — молчим.
+        r = await client.post(url, json={"tg_id": 5, "text": "привет"}, headers=_service_headers())
+        assert r.json()["reply"] is None
+    finally:
+        await _cleanup(db, [teacher, student], [])
+
+
+@pytest.mark.asyncio
+async def test_tg_poll_answer_and_cabinet_disable(client, db, env, monkeypatch):
+    from app.services.auth.session_service import create_session
+
+    monkeypatch.setenv("STUDENT_BOT_TOKEN", "123:abc")
+
+    async def fake_tg(chat_id, message, buttons):
+        return 1
+
+    monkeypatch.setattr(svc, "send_tg_with_buttons", fake_tg)
+    teacher = await _user(db, "teacher")
+    student, tg_id = await _tg_student(db)
+    occ, _ = await _lesson(db, teacher, student, started_min_ago=6)
+    token, _, _ = await create_session(db, user_id=student)
+    await db.commit()
+    try:
+        assert await polls.ask_due(db) == 1, "Telegram — тоже канал для опроса"
+        await db.commit()
+        r = await client.post("/api/v1/integrations/student-bot/inbound",
+                              json={"tg_id": tg_id, "text": polls.ANSWERS["forgot"]}, headers=_service_headers())
+        assert r.json()["reply"] == polls.REPLIES["reason"]
+
+        r = await client.get("/api/v1/me/messengers", cookies={"session": token})
+        assert {c["channel"]: c["linked"] for c in r.json()}["tg"] is True
+        r = await client.delete("/api/v1/me/messengers/tg", cookies={"session": token})
+        assert r.status_code == 204
+        r = await client.get("/api/v1/me/messengers", cookies={"session": token})
+        assert {c["channel"]: c["linked"] for c in r.json()}["tg"] is False
+    finally:
+        await _cleanup(db, [teacher, student], [occ])
+
