@@ -296,7 +296,7 @@ def resolve_for(model: str) -> ProviderConfig:
     if anthropic_direct.is_direct(model):
         key = anthropic_direct.api_key() if anthropic_direct.enabled() else None
         return ProviderConfig(
-            base_url=anthropic_direct.DEFAULT_BASE_URL, api_key=key,
+            base_url=anthropic_direct.base_url(), api_key=key,
             name=anthropic_direct.PROVIDER_NAME,
         )
     return resolve_provider()

@@ -59,6 +59,17 @@ def enabled() -> bool:
     )
 
 
+def base_url() -> str:
+    """Адрес Messages API: `ANTHROPIC_DIRECT_BASE_URL` или официальный.
+
+    tsk-1376: с боевого сервера (RU) api.anthropic.com отвечает 403 по стране —
+    временный выход через пересыльщик на машине оператора и обратный SSH-тоннель
+    (`http://127.0.0.1:<порт>`). Ключ при этом по-прежнему берётся из окружения сервера.
+    """
+    raw = (os.environ.get("ANTHROPIC_DIRECT_BASE_URL") or "").strip().rstrip("/")
+    return raw or DEFAULT_BASE_URL
+
+
 def api_key() -> Optional[str]:
     """Ключ прямого API. Значение нигде не печатается и не логируется."""
     value = os.environ.get("CLAUDE_API_KEY")
