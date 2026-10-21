@@ -147,7 +147,7 @@ async def test_reason_answer_becomes_followup_after_no_show(client, db, env, db_
         await db.commit()
         r = await client.post("/api/v1/integrations/max/webhook", headers=headers, json={
             "update_type": "message_created",
-            "message": {"sender": {"user_id": int(ext)}, "body": {"text": polls.ANSWERS["illness"]}},
+            "message": {"sender": {"user_id": int(ext)}, "body": {"text": polls.ANSWERS["other"]}},
         })
         assert r.status_code == 200
         assert env[-1]["text"] == polls.REPLIES["reason"]
@@ -158,7 +158,7 @@ async def test_reason_answer_becomes_followup_after_no_show(client, db, env, db_
         await cron.lesson_attendance_cron_tick(db_session_factory)
         assert await _status(db, part) == "no_show"
         reason, asked_by, note = await _followup(db, student, occ)
-        assert reason == "illness" and asked_by is None and "MAX" in note
+        assert reason == "other" and asked_by is None and "MAX" in note
         # Ответ не попал в переписку как обычное сообщение.
         n = (await db.execute(text("SELECT count(*) FROM messages WHERE sender_id = :s"), {"s": student})).scalar()
         assert n == 0
@@ -266,7 +266,8 @@ async def test_urgent_message(client, db, env):
 
 
 def test_parse_answer():
-    assert polls.parse_answer("Не приду: болею") == "illness"
+    assert polls.parse_answer("Не приду: уважительная причина") == "other"
+    assert polls.parse_answer("Не приду: болею") is None, "кнопки «болею» нет (ст. 10 152-ФЗ)"
     assert polls.parse_answer("  опаздываю, скоро буду ") == "late"
     assert polls.parse_answer("привет") is None
 
