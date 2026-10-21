@@ -554,6 +554,17 @@ class Settings:
         # Ник ученического бота без «@» — стартовая ссылка t.me/<ник>?start=q_<токен>.
         # Пусто — кнопка бота на итоге не показывается.
         self.quiz_funnel_bot_username: str = os.getenv("QUIZ_FUNNEL_BOT_USERNAME", "")
+        # Каналы уведомлений ВК и MAX (tsk-1253, этап Б). Пустой ключ — канал
+        # не настроен, кнопки «Подключить» в кабинете нет.
+        # ВК: сообщения сообщества (ключ сообщества с правом messages) и Callback API.
+        self.vk_group_id: str = os.getenv("VK_GROUP_ID", "")
+        self.vk_group_token: str = os.getenv("VK_GROUP_TOKEN", "")
+        self.vk_callback_secret: str = os.getenv("VK_CALLBACK_SECRET", "")
+        self.vk_callback_confirmation: str = os.getenv("VK_CALLBACK_CONFIRMATION", "")
+        # MAX: бот «MAX для бизнеса», события — вебхук с секретом в X-Max-Bot-Api-Secret.
+        self.max_bot_token: str = os.getenv("MAX_BOT_TOKEN", "")
+        self.max_bot_username: str = os.getenv("MAX_BOT_USERNAME", "")
+        self.max_webhook_secret: str = os.getenv("MAX_WEBHOOK_SECRET", "")
         # Где лежат PDF-бонусы веток (имя файла — из спецификации квиза).
         self.quiz_funnel_pdf_base: str = os.getenv("QUIZ_FUNNEL_PDF_BASE", "/media/funnel")
         # Напоминания гостю в боте (+1/+3/+7 дней). Отдельный рубильник: PDF можно

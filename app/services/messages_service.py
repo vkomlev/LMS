@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.messages import Messages
 from app.models.users import Users
 from app.repos.messages_repo import MessagesRepository
-from app.services import notify_email_mirror_service
+from app.services import messenger_channel_service, notify_email_mirror_service
 from app.services.base import BaseService
 from app.utils.exceptions import DomainError
 
@@ -104,6 +104,11 @@ class MessagesService(BaseService[Messages]):
         # по умолчанию; сбой письма сообщение не роняет).
         notify_email_mirror_service.schedule_teacher_message_mirror(
             sender_id=msg.sender_id, recipient_id=msg.recipient_id,
+        )
+        # tsk-1253, этап Б: то же в ВК и MAX (свои рубильники, выключены).
+        messenger_channel_service.schedule_teacher_message(
+            sender_id=msg.sender_id, recipient_id=msg.recipient_id,
+            url=notify_email_mirror_service.cabinet_url("/me/messages"),
         )
         return msg
 

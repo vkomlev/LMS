@@ -34,7 +34,7 @@ import redis.asyncio as aioredis
 
 logger = logging.getLogger(__name__)
 
-LinkTokenKind = Literal["email", "tg", "vk"]
+LinkTokenKind = Literal["email", "tg", "vk", "vk_msg", "max"]
 TTL = timedelta(minutes=5)
 TTL_SECONDS = int(TTL.total_seconds())
 

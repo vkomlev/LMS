@@ -43,7 +43,7 @@ from app.core import settings_store
 from app.core.config import Settings
 from app.core.cron_registry import register_interval_job
 from app.db.session import async_session_factory
-from app.services import inbox_service, notify_email_mirror_service
+from app.services import inbox_service, messenger_channel_service, notify_email_mirror_service
 from app.services.learning_gap_signals_service import real_student_plan_filter
 from app.services.learning_gaps_service import own_activity_results_filter
 
@@ -189,6 +189,7 @@ async def enqueue_nudges(
     picked = rows if limit is None else rows[:limit]
     targets = [sid for sid, _ in picked]
     emailed = 0
+    messaged = 0
     if not dry_run:
         url = f"{Settings().public_base_url.rstrip('/')}/me/continue"
         for student_id, has_schedule in picked:
@@ -211,6 +212,11 @@ async def enqueue_nudges(
                 kind=notify_email_mirror_service.KIND_REENGAGE, url=url,
             ):
                 emailed += 1
+            # tsk-1253, этап Б: ВК и MAX — свои рубильники, выключены по умолчанию.
+            messaged += await messenger_channel_service.notify_user(
+                db, user_id=student_id,
+                kind=messenger_channel_service.KIND_REENGAGE, url=url,
+            )
 
     # Итог в лог всегда: молчащий проход неотличим от отсутствующего.
     logger.info(
@@ -219,7 +225,7 @@ async def enqueue_nudges(
     )
     return {
         "quiet_total": len(quiet), "queued": len(targets), "students": targets,
-        "emailed": emailed,
+        "emailed": emailed, "messaged": messaged,
     }
 
 
