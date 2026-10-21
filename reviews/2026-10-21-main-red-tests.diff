@@ -1,0 +1,586 @@
+diff --git a/app/services/link_audit_service.py b/app/services/link_audit_service.py
+index 1812dd6..4f2faa5 100644
+--- a/app/services/link_audit_service.py
++++ b/app/services/link_audit_service.py
+@@ -256,7 +256,12 @@ async def link_audit_tick(
+     settings = Settings()
+     factory = session_factory or async_session_factory
+     own_hosts = settings.link_audit_own_hosts
+-    summary: dict = {"locked": False, "checked": 0, "broken": 0, "notified": 0}
++    # `broken_targets` — с первой строки: иначе на базе без ссылок (или при
++    # отступлении по блокировке) ключа в сводке не было, и её форма зависела
++    # от содержимого базы.
++    summary: dict = {
++        "locked": False, "checked": 0, "broken": 0, "notified": 0, "broken_targets": {},
++    }
+ 
+     async with factory() as db:
+         got = await db.execute(
+diff --git a/tests/test_preview_next_item_tsk1334.py b/tests/test_preview_next_item_tsk1334.py
+index c13b416..e066ec0 100644
+--- a/tests/test_preview_next_item_tsk1334.py
++++ b/tests/test_preview_next_item_tsk1334.py
+@@ -4,7 +4,10 @@
+ подраздел C (материал mC, задание tC). Порядок tsk-1250: материалы узла,
+ подразделы, задания узла → mR, mC, tC, tR. Рекомендуемый материал в обходе
+ не выдаётся, но с него идти можно. Прогресс не учитывается, ничего не пишется.
+-Работает с dev-БД, подчищает за собой.
++
++Дерево живёт в общей откатываемой транзакции фикстуры `db` (tsk-333): ручка
++только читает и ходит через `get_async_db`, параллельные соединения ей не нужны,
++поэтому свой движок с реальными коммитами и ручной уборкой здесь лишний.
+ """
+ from __future__ import annotations
+ 
+@@ -16,115 +19,93 @@ from pathlib import Path
+ import pytest
+ import pytest_asyncio
+ from sqlalchemy import text
+-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+-from sqlalchemy.pool import NullPool
+ 
+ project_root = Path(__file__).resolve().parents[1]
+ sys.path.insert(0, str(project_root))
+ 
+-from app.core.config import Settings
+ from app.api.main import app
+ from app.api.deps import get_current_user
+ from app.auth.current_user import CurrentUser
+ 
+ pytestmark = pytest.mark.asyncio
+ 
+-_settings = Settings()
+-
+ 
+ @pytest_asyncio.fixture(scope="function")
+-async def tree():
++async def tree(db):
+     """Дерево R → C с материалами и заданиями, преподаватель и ученик."""
+-    engine = create_async_engine(_settings.database_url, poolclass=NullPool)
+     ids: dict[str, int] = {}
+-    async with AsyncSession(engine, expire_on_commit=False) as s:
+-        async def course(title: str) -> int:
+-            return (
+-                await s.execute(
+-                    text(
+-                        "INSERT INTO courses (title, access_level) "
+-                        "VALUES (:t, 'self_guided') RETURNING id"
+-                    ),
+-                    {"t": f"tsk1334 {title}"},
+-                )
+-            ).scalar()
+-
+-        async def material(course_id: int, level: str, pos: int) -> int:
+-            return (
+-                await s.execute(
+-                    text(
+-                        "INSERT INTO materials (course_id, title, type, content, order_position, "
+-                        "requirement_level, is_active) VALUES (:c, 'tsk1334', 'text', "
+-                        "CAST(:body AS jsonb), :p, :lvl, true) RETURNING id"
+-                    ),
+-                    {"c": course_id, "body": json.dumps({"body": "x"}), "p": pos, "lvl": level},
+-                )
+-            ).scalar()
+-
+-        async def task(course_id: int) -> int:
+-            return (
+-                await s.execute(
+-                    text(
+-                        "INSERT INTO tasks (task_content, solution_rules, course_id, "
+-                        "difficulty_id, external_uid, max_attempts, is_active) VALUES "
+-                        "(CAST(:tc AS jsonb), CAST(:sr AS jsonb), :cid, "
+-                        "(SELECT id FROM difficulties ORDER BY id LIMIT 1), :uid, 3, true) "
+-                        "RETURNING id"
+-                    ),
+-                    {
+-                        "tc": '{"type":"SC","stem":"?","options":[{"id":"a","text":"1"}]}',
+-                        "sr": '{"max_score":1,"correct_options":["a"]}',
+-                        "cid": course_id,
+-                        "uid": f"tsk1334-{uuid.uuid4().hex[:12]}",
+-                    },
+-                )
+-            ).scalar()
+-
+-        try:
+-            ids["R"] = await course("корень")
+-            ids["C"] = await course("раздел")
+-            await s.execute(
++
++    async def course(title: str) -> int:
++        return (
++            await db.execute(
++                text(
++                    "INSERT INTO courses (title, access_level) "
++                    "VALUES (:t, 'self_guided') RETURNING id"
++                ),
++                {"t": f"tsk1334 {title}"},
++            )
++        ).scalar()
++
++    async def material(course_id: int, level: str, pos: int) -> int:
++        return (
++            await db.execute(
++                text(
++                    "INSERT INTO materials (course_id, title, type, content, order_position, "
++                    "requirement_level, is_active) VALUES (:c, 'tsk1334', 'text', "
++                    "CAST(:body AS jsonb), :p, :lvl, true) RETURNING id"
++                ),
++                {"c": course_id, "body": json.dumps({"body": "x"}), "p": pos, "lvl": level},
++            )
++        ).scalar()
++
++    async def task(course_id: int) -> int:
++        return (
++            await db.execute(
+                 text(
+-                    "INSERT INTO course_parents (course_id, parent_course_id, order_number) "
+-                    "VALUES (:c, :p, 1)"
++                    "INSERT INTO tasks (task_content, solution_rules, course_id, "
++                    "difficulty_id, external_uid, max_attempts, is_active) VALUES "
++                    "(CAST(:tc AS jsonb), CAST(:sr AS jsonb), :cid, "
++                    "(SELECT id FROM difficulties ORDER BY id LIMIT 1), :uid, 3, true) "
++                    "RETURNING id"
+                 ),
+-                {"c": ids["C"], "p": ids["R"]},
++                {
++                    "tc": '{"type":"SC","stem":"?","options":[{"id":"a","text":"1"}]}',
++                    "sr": '{"max_score":1,"correct_options":["a"]}',
++                    "cid": course_id,
++                    "uid": f"tsk1334-{uuid.uuid4().hex[:12]}",
++                },
+             )
+-            ids["mR"] = await material(ids["R"], "required", 1)
+-            ids["mRec"] = await material(ids["R"], "recommended", 2)
+-            ids["mC"] = await material(ids["C"], "required", 1)
+-            ids["tC"] = await task(ids["C"])
+-            ids["tR"] = await task(ids["R"])
+-            for key, role in (("teacher", "teacher"), ("student", "student")):
+-                ids[key] = (
+-                    await s.execute(
+-                        text("INSERT INTO users (full_name) VALUES (:n) RETURNING id"),
+-                        {"n": f"tsk1334 {key}"},
+-                    )
+-                ).scalar()
+-                await s.execute(
+-                    text(
+-                        "INSERT INTO user_roles (user_id, role_id) "
+-                        "SELECT :u, id FROM roles WHERE name = :r"
+-                    ),
+-                    {"u": ids[key], "r": role},
+-                )
+-            await s.commit()
+-            yield ids
+-        finally:
+-            await s.rollback()
+-            users = [ids[k] for k in ("teacher", "student") if k in ids]
+-            courses = [ids[k] for k in ("R", "C") if k in ids]
+-            await s.execute(text("DELETE FROM user_roles WHERE user_id = ANY(:u)"), {"u": users})
+-            await s.execute(text("DELETE FROM users WHERE id = ANY(:u)"), {"u": users})
+-            await s.execute(text("DELETE FROM tasks WHERE course_id = ANY(:c)"), {"c": courses})
+-            await s.execute(text("DELETE FROM materials WHERE course_id = ANY(:c)"), {"c": courses})
+-            await s.execute(
+-                text("DELETE FROM course_parents WHERE course_id = ANY(:c)"), {"c": courses}
++        ).scalar()
++
++    ids["R"] = await course("корень")
++    ids["C"] = await course("раздел")
++    await db.execute(
++        text(
++            "INSERT INTO course_parents (course_id, parent_course_id, order_number) "
++            "VALUES (:c, :p, 1)"
++        ),
++        {"c": ids["C"], "p": ids["R"]},
++    )
++    ids["mR"] = await material(ids["R"], "required", 1)
++    ids["mRec"] = await material(ids["R"], "recommended", 2)
++    ids["mC"] = await material(ids["C"], "required", 1)
++    ids["tC"] = await task(ids["C"])
++    ids["tR"] = await task(ids["R"])
++    for key, role in (("teacher", "teacher"), ("student", "student")):
++        ids[key] = (
++            await db.execute(
++                text("INSERT INTO users (full_name) VALUES (:n) RETURNING id"),
++                {"n": f"tsk1334 {key}"},
+             )
+-            await s.execute(text("DELETE FROM courses WHERE id = ANY(:c)"), {"c": courses})
+-            await s.commit()
+-            await engine.dispose()
++        ).scalar()
++        await db.execute(
++            text(
++                "INSERT INTO user_roles (user_id, role_id) "
++                "SELECT :u, id FROM roles WHERE name = :r"
++            ),
++            {"u": ids[key], "r": role},
++        )
++    yield ids
+ 
+ 
+ async def _next(client, user_id: int, kind: str, item_id: int, root: int | None = None):
+diff --git a/tests/test_tsk301_ai_spend_guard.py b/tests/test_tsk301_ai_spend_guard.py
+index 9650da4..8543e10 100644
+--- a/tests/test_tsk301_ai_spend_guard.py
++++ b/tests/test_tsk301_ai_spend_guard.py
+@@ -24,6 +24,12 @@
+ действительно есть в конфиге, в `.env.example` и читается в самом файле.
+ Рубильник намеренно НЕ разрешён точке с возможностью ученика: иначе он стал бы
+ дешёвым способом обойти дверь прав.
++
++Системная точка может и не держать рубильник сама, если она — общее ядро,
++которое зовёт другая системная точка (tsk-1312: гейт роли наставника зовёт
++еженедельная проверка цепочек). Тогда запись ссылается на вызывающего, и страж
++проверяет, что тот правда системный, правда с рубильником и правда импортирует
++это ядро — иначе «выше выключают» осталось бы словами.
+ """
+ from __future__ import annotations
+ 
+@@ -66,6 +72,7 @@ class SpendPoint:
+     #: Гейт стоит в этом же файле.
+     gated_here: bool = False
+     #: Гейт стоит выше по потоку — путь до места, где он реально вызывается.
++    #: У системной точки — путь до системной точки с рубильником, которая её зовёт.
+     gated_upstream: Optional[str] = None
+     #: Гейт — рубильник оператора: имя переменной окружения, которой расход
+     #: включается и выключается. Только для системного расхода (tsk-678).
+@@ -88,10 +95,10 @@ class SpendPoint:
+                 "рубильник не заменяет дверь прав: у точки с возможностью "
+                 f"{self.capability!r} гейт обязан стоять здесь или выше по потоку"
+             )
+-        if not self.capability and not self.gated_by_toggle:
++        if not self.capability and not self.gated_by_toggle and not self.gated_upstream:
+             raise AssertionError(
+                 "точка без возможности ученика обязана быть системной и назвать "
+-                "свой рубильник"
++                "свой рубильник или системного вызывающего с рубильником"
+             )
+ 
+ 
+@@ -149,6 +156,26 @@ AI_SPEND_POINTS: dict[str, SpendPoint] = {
+     "app/services/llm_chain_check_cron_service.py": SpendPoint(
+         gated_by_toggle="LLM_CHAIN_CHECK_ENABLED", wired=True
+     ),
++    # tsk-990: черновик развивающего отзыва преподавателю. Зовётся только из
++    # фонового тика оценки (`code_review_cron_service`) сразу после разбора по
++    # рубрике — то есть по работе, которая попала в очередь через прогейченный
++    # вход `attempts.py`. Новой возможности не заводится по доводу tsk-646.
++    # Сверх двери — рубильник школы `feedback_draft_llm_enabled` (кабинет,
++    # по умолчанию выключен): это ТРЕТИЙ вызов модели на текстовую работу с
++    # критериями. Учёт — общий транспорт: `llm_usage_event` с
++    # purpose=feedback_draft и student_id ученика. Квоты у `code_review` нет
++    # (возможность тарифа — да/нет), списывать нечего, как и у соседей.
++    "app/services/feedback_draft_service.py": SpendPoint(
++        capability="code_review", gated_upstream="app/api/v1/attempts.py", wired=True
++    ),
++    # tsk-1312: общее ядро гейта роли наставника. В приложении его зовёт только
++    # еженедельная проверка цепочек — за `LLM_CHAIN_CHECK_ENABLED` и собственным
++    # `LLM_CHAIN_CHECK_ROLE_ENABLED`; второй вызывающий — ручной стенд
++    # `scripts/tutor_role_gate.py`, вне `app/`. Учёт — общий транспорт:
++    # `llm_usage_event` с purpose вызывающего (chain_check / tutor_role_gate).
++    "app/services/ai_tutor/role_gate.py": SpendPoint(
++        gated_upstream="app/services/llm_chain_check_cron_service.py", wired=True
++    ),
+ }
+ 
+ 
+@@ -207,13 +234,35 @@ def test_registry_has_no_phantom_points() -> None:
+     sorted(p for p, point in AI_SPEND_POINTS.items() if point.gated_upstream),
+ )
+ def test_upstream_gate_target_exists(rel_path: str) -> None:
+-    """Ссылка «гейт выше по потоку» ведёт в реальный зарегистрированный файл."""
+-    upstream = AI_SPEND_POINTS[rel_path].gated_upstream
++    """Ссылка «гейт выше по потоку» ведёт в реальный зарегистрированный файл.
++
++    Ученическая точка обязана упираться в дверь прав. Системная — в системную
++    точку с рубильником, которая её действительно импортирует (tsk-1312).
++    """
++    point = AI_SPEND_POINTS[rel_path]
++    upstream = point.gated_upstream
+     assert upstream in AI_SPEND_POINTS, (
+         f"{rel_path}: ссылка на вышестоящий гейт {upstream!r} не найдена в реестре"
+     )
+-    assert AI_SPEND_POINTS[upstream].gated_here, (
+-        f"{rel_path}: {upstream} сам не гейтит — цепочка «выше по потоку» разорвана"
++    target = AI_SPEND_POINTS[upstream]
++    if point.capability:
++        assert target.gated_here, (
++            f"{rel_path}: {upstream} сам не гейтит — цепочка «выше по потоку» разорвана"
++        )
++        return
++    assert target.gated_by_toggle and not target.capability, (
++        f"{rel_path}: системная точка обязана упираться в системный рубильник, "
++        f"а {upstream} его не держит"
++    )
++    module = rel_path.removesuffix(".py").replace("/", ".")
++    package, _, name = module.rpartition(".")
++    upstream_source = (APP_ROOT.parent / upstream).read_text(encoding="utf-8")
++    imported = (
++        f"from {package} import {name}" in upstream_source
++        or f"import {module}" in upstream_source
++    )
++    assert imported, (
++        f"{rel_path}: {upstream} это ядро не импортирует — его рубильник ничего не выключает"
+     )
+ 
+ 
+diff --git a/tests/test_tsk521_link_audit.py b/tests/test_tsk521_link_audit.py
+index f910f10..a53d3bb 100644
+--- a/tests/test_tsk521_link_audit.py
++++ b/tests/test_tsk521_link_audit.py
+@@ -7,6 +7,13 @@
+ проверки здесь смотрят на конкретную ссылку в `broken_targets`, а не на общий
+ счётчик находок: в dev-БД лежит реальный контент со своими ссылками.
+ 
++То же и с уведомлениями. Отсрочка повтора общая на всю базу, а уведомления этого
++вида в ней бывают и без теста (боевой тик dev-сервера, закоммиченный хвост
++соседнего модуля). Поэтому каждый тест начинает с чистого листа — `_prepare_world`
++стирает чужие уведомления внутри ЕГО откатываемой транзакции (tsk-333; в базе
++ничего не пропадает), а корневой курс и методиста заводит себе сам, а не ищет в
++базе.
++
+ Сценарии:
+ - целый файл материала в находки не попадает
+ - пропавший файл материала попадает и рождает уведомление методисту
+@@ -33,18 +40,46 @@ from app.services import link_audit_service
+ from app.utils.exceptions import DomainError
+ 
+ 
+-async def _pick_root(db) -> int:
+-    row = (
++async def _prepare_world(db) -> int:
++    """Чистый лист для теста: без чужих уведомлений, со своим корневым курсом.
++
++    Всё — внутри откатываемой транзакции теста: удалённые здесь чужие
++    уведомления после теста возвращаются на место.
++    """
++    await db.execute(
++        text("DELETE FROM notifications WHERE kind = :k"),
++        {"k": link_audit_service.NOTIFICATION_KIND},
++    )
++    course_id = (
+         await db.execute(
+             text(
+-                "SELECT id FROM courses "
+-                "WHERE id NOT IN (SELECT course_id FROM course_parents) LIMIT 1"
+-            )
++                "INSERT INTO courses (title, access_level) "
++                "VALUES (:t, 'self_guided') RETURNING id"
++            ),
++            {"t": f"tsk521-root-{uuid4().hex[:12]}"},
++        )
++    ).scalar_one()
++    return int(course_id)
++
++
++async def _add_methodist(db) -> int:
++    """Свой методист — адресат уведомления; не полагаемся на содержимое базы."""
++    role_id = (
++        await db.execute(text("SELECT id FROM roles WHERE name = 'methodist'"))
++    ).scalar()
++    if role_id is None:
++        pytest.skip("в справочнике ролей нет methodist (scripts/seed_roles.sql)")
++    user_id = (
++        await db.execute(
++            text("INSERT INTO users (full_name) VALUES (:n) RETURNING id"),
++            {"n": f"tsk521 методист {uuid4().hex[:8]}"},
+         )
+-    ).fetchone()
+-    if row is None:
+-        pytest.skip("Нужен хотя бы один корневой курс")
+-    return int(row[0])
++    ).scalar_one()
++    await db.execute(
++        text("INSERT INTO user_roles (user_id, role_id) VALUES (:u, :r)"),
++        {"u": user_id, "r": role_id},
++    )
++    return int(user_id)
+ 
+ 
+ async def _create_material(
+@@ -139,7 +174,7 @@ def no_own_hosts(monkeypatch):
+ @pytest.mark.asyncio
+ async def test_intact_file_is_not_reported(db, db_session_factory, storage, no_own_hosts):
+     """Файл на месте — в находках его нет."""
+-    course_id = await _pick_root(db)
++    course_id = await _prepare_world(db)
+     file_id = _new_name()  # в `missing` не добавляем — значит цел
+     mid = await _create_material(db, course_id=course_id, content=_file_content(file_id))
+     try:
+@@ -155,7 +190,8 @@ async def test_missing_file_is_reported_to_methodist(
+     db, db_session_factory, storage, no_own_hosts
+ ):
+     """Пропавший файл — находка и уведомление методисту с примером и источником."""
+-    course_id = await _pick_root(db)
++    course_id = await _prepare_world(db)
++    await _add_methodist(db)
+     file_id = _new_name()
+     storage.add(file_id)
+     mid = await _create_material(db, course_id=course_id, content=_file_content(file_id))
+@@ -181,7 +217,7 @@ async def test_missing_file_is_reported_to_methodist(
+ @pytest.mark.asyncio
+ async def test_missing_task_media_is_reported(db, db_session_factory, storage, no_own_hosts):
+     """Медиа задания проверяется наравне с файлами материалов."""
+-    course_id = await _pick_root(db)
++    course_id = await _prepare_world(db)
+     sha_ext = _new_name()
+     storage.add(sha_ext)
+     content = {"text": f'<img src="/api/v1/media/{sha_ext}"/>', "format": "html"}
+@@ -215,7 +251,7 @@ async def test_foreign_hosts_are_not_checked(db, db_session_factory, storage, mo
+ 
+     monkeypatch.setattr("httpx.AsyncClient.head", _head)
+ 
+-    course_id = await _pick_root(db)
++    course_id = await _prepare_world(db)
+     content = {
+         "text": (
+             f'<img src="{foreign}"/>'
+@@ -247,7 +283,7 @@ async def test_own_host_file_is_checked(db, db_session_factory, storage, monkeyp
+ 
+     monkeypatch.setattr("httpx.AsyncClient.head", _head)
+ 
+-    course_id = await _pick_root(db)
++    course_id = await _prepare_world(db)
+     content = {"text": f'<img src="{url}"/>', "format": "html"}
+     mid = await _create_material(db, course_id=course_id, content=content)
+     try:
+@@ -272,7 +308,7 @@ async def test_page_link_is_not_checked(db, db_session_factory, storage, monkeyp
+ 
+     monkeypatch.setattr("httpx.AsyncClient.head", _head)
+ 
+-    course_id = await _pick_root(db)
++    course_id = await _prepare_world(db)
+     content = {"text": f'<a href="{page}">курс</a>', "format": "html"}
+     mid = await _create_material(db, course_id=course_id, content=content)
+     try:
+@@ -285,7 +321,7 @@ async def test_page_link_is_not_checked(db, db_session_factory, storage, monkeyp
+ @pytest.mark.asyncio
+ async def test_inactive_material_is_skipped(db, db_session_factory, storage, no_own_hosts):
+     """Выключенный материал ученику не показывается — и в проверку не идёт."""
+-    course_id = await _pick_root(db)
++    course_id = await _prepare_world(db)
+     file_id = _new_name()
+     storage.add(file_id)
+     mid = await _create_material(
+@@ -305,7 +341,8 @@ async def test_second_tick_within_cooldown_stays_quiet(
+     db, db_session_factory, storage, no_own_hosts
+ ):
+     """Ежедневный тик не превращает одну незамеченную ссылку в поток писем."""
+-    course_id = await _pick_root(db)
++    course_id = await _prepare_world(db)
++    await _add_methodist(db)
+     file_id = _new_name()
+     storage.add(file_id)
+     mid = await _create_material(db, course_id=course_id, content=_file_content(file_id))
+@@ -330,7 +367,7 @@ async def test_storage_outage_aborts_run_instead_of_flagging_everything(
+     «Нет ответа» не то же самое, что «файла нет»: иначе одна сетевая ошибка
+     объявила бы битыми все ссылки разом и завалила методиста ложной тревогой.
+     """
+-    course_id = await _pick_root(db)
++    course_id = await _prepare_world(db)
+     file_id = _new_name()
+     mid = await _create_material(db, course_id=course_id, content=_file_content(file_id))
+ 
+@@ -354,7 +391,7 @@ async def test_unexpected_failure_is_not_passed_off_as_clean_run(
+     db, db_session_factory, monkeypatch, no_own_hosts
+ ):
+     """Программная ошибка внутри проверки помечает прогон, а не молчит."""
+-    course_id = await _pick_root(db)
++    course_id = await _prepare_world(db)
+     file_id = _new_name()
+     mid = await _create_material(db, course_id=course_id, content=_file_content(file_id))
+ 
+diff --git a/tests/test_tsk521_link_audit_lock.py b/tests/test_tsk521_link_audit_lock.py
+index d51e8ed..1d7367f 100644
+--- a/tests/test_tsk521_link_audit_lock.py
++++ b/tests/test_tsk521_link_audit_lock.py
+@@ -14,6 +14,8 @@
+ from __future__ import annotations
+ 
+ import asyncio
++import json
++import uuid
+ 
+ import pytest
+ from sqlalchemy import text
+@@ -26,11 +28,19 @@ from app.services import link_audit_service
+ 
+ @pytest.mark.asyncio
+ async def test_second_worker_backs_off(monkeypatch):
+-    """Пока один worker держит блокировку, второй отступает и работу не дублирует."""
++    """Пока один worker держит блокировку, второй отступает и работу не дублирует.
++
++    Блокировка живёт, пока идёт проход, поэтому держатель ждёт, пока второй тик
++    не вернётся: исход не зависит ни от объёма базы, ни от скорости соединений.
++    """
+     # Своё в порядке, чужие домены вне охвата — тик не должен ходить в сеть.
+     monkeypatch.setenv("LINK_AUDIT_OWN_HOSTS", "")
++    other_done = asyncio.Event()
+ 
+     async def _exists(_name: str) -> bool:
++        # Держатель блокировки стоит здесь, пока второй тик не отступит. Если
++        # блокировку возьмут оба по очереди, ожидание кончится таймаутом.
++        await asyncio.wait_for(other_done.wait(), timeout=10)
+         return True
+ 
+     monkeypatch.setattr(
+@@ -40,11 +50,44 @@ async def test_second_worker_backs_off(monkeypatch):
+ 
+     engine = create_async_engine(Settings().database_url, poolclass=NullPool)
+     factory = async_sessionmaker(engine, expire_on_commit=False)
++    ids: dict[str, int] = {}
++
++    async def _tick() -> dict:
++        summary = await link_audit_service.link_audit_tick(factory)
++        other_done.set()
++        return summary
++
+     try:
+-        first, second = await asyncio.gather(
+-            link_audit_service.link_audit_tick(factory),
+-            link_audit_service.link_audit_tick(factory),
+-        )
++        # Хотя бы одна цель, чтобы держатель блокировки дошёл до проверки.
++        async with factory() as db:
++            ids["course"] = (
++                await db.execute(
++                    text(
++                        "INSERT INTO courses (title, access_level) "
++                        "VALUES (:t, 'self_guided') RETURNING id"
++                    ),
++                    {"t": f"tsk521-lock-{uuid.uuid4().hex[:12]}"},
++                )
++            ).scalar_one()
++            ids["material"] = (
++                await db.execute(
++                    text(
++                        "INSERT INTO materials (title, type, content, course_id, is_active) "
++                        "VALUES ('tsk521-lock', 'image', CAST(:c AS jsonb), :cid, true) "
++                        "RETURNING id"
++                    ),
++                    {
++                        "c": json.dumps({"sources": [{
++                            "url": f"/api/v1/materials/files/tsk521-lock-{uuid.uuid4().hex}.png",
++                            "type": "file",
++                        }]}),
++                        "cid": ids["course"],
++                    },
++                )
++            ).scalar_one()
++            await db.commit()
++
++        first, second = await asyncio.gather(_tick(), _tick())
+         locked = [s["locked"] for s in (first, second)]
+         assert locked.count(True) == 1, (first, second)
+         assert locked.count(False) == 1, (first, second)
+@@ -56,6 +99,12 @@ async def test_second_worker_backs_off(monkeypatch):
+     finally:
+         # Модуль без транзакционной изоляции — убираем за собой руками.
+         async with factory() as db:
++            if "material" in ids:
++                await db.execute(
++                    text("DELETE FROM materials WHERE id = :m"), {"m": ids["material"]}
++                )
++            if "course" in ids:
++                await db.execute(text("DELETE FROM courses WHERE id = :c"), {"c": ids["course"]})
+             await db.execute(
+                 text("DELETE FROM notifications WHERE kind = :k"),
+                 {"k": link_audit_service.NOTIFICATION_KIND},
