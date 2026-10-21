@@ -110,22 +110,195 @@ def _answer_tokens(answers: Sequence[str]) -> list[tuple[str, ...]]:
     Сверяем числами, а не строкой: модель пишет «29 рублей 47 копеек» или
     разносит «10» и «164» по разным строкам разбора — строка эталона целиком в
     такой реплике не встречается, а числа — встречаются все.
+
+    tsk-1342: числа берутся тем же разбором, что и текст реплики, — со знаком и
+    со склейкой разрядов; у отрицательного эталона есть и отпечаток без знака.
+    Эталон, который читается двояко («12 345» — два числа или двенадцать
+    тысяч), даёт оба отпечатка: текст склеит «12 345» в одно число, а
+    «12 и 345» оставит двумя.
     """
     out: list[tuple[str, ...]] = []
     for ans in answers:
-        nums = tuple(_norm_num(n) for n in re.findall(_NUM, ans or ""))
-        if not nums:
-            continue
-        # Одиночный короткий ответ («5») слишком часто встречается сам по себе
-        # в любом объяснении. Его ловят правила расчёта и заголовка ответа.
-        if len(nums) == 1 and len(nums[0]) < 2:
-            continue
-        out.append(nums)
+        variants = {
+            tuple(n for n, _, _ in _tokens(ans or "", group=False)),
+            tuple(n for n, _, _ in _tokens(ans or "", group=True)),
+        }
+        # Отрицательный эталон ловим и без прилипшего минуса: «минус 14»,
+        # «– 14» — то же число, сказанное словами или через тире.
+        variants |= {tuple(n.lstrip("-") for n in v) for v in variants}
+        for nums in sorted(variants):
+            if not nums:
+                continue
+            # Одиночный короткий ответ («5») слишком часто встречается сам по
+            # себе в любом объяснении. Его ловят правила расчёта и заголовка.
+            if len(nums) == 1 and len(nums[0].lstrip("-")) < 2:
+                continue
+            out.append(nums)
     return out
 
 
-def _numbers_in(text: str) -> set[str]:
-    return {_norm_num(n) for n in re.findall(rf"(?<![\d.,]){_NUM}(?!\d)", text)}
+# ───────────── чьи это числа: цитата ученика, разряды, знак (tsk-1342) ─────────────
+#
+# Пересчёт стенда 14.10 дал 7 ложных срезов из 19: страж видел все числа эталона
+# и не различал, откуда они. Эталон «14» внутри цитаты неверного ответа ученика
+# «23 14 7» (сессия 202), «30» внутри «30 720 байт» (сессия 74), «2000» внутри
+# «-2000» из кода ученика (сессия 200). Поэтому число судится не само по себе,
+# а вместе с соседями: в составе какого числа и какой цепочки чисел оно стоит.
+
+_SIGNED_NUM = re.compile(r"([-−]?)(?<![\d.,])(\d+(?:[.,]\d+)?)(?!\d)")
+# Перед знаком минуса — начало, пробел или открывающий знак: «x = -2000»,
+# «range(-5». После цифры или буквы это вычитание: «3000-2000» — число 2000.
+_SIGN_AFTER = " \t\n([{=«\"':;,"
+# Разделитель разрядов: обычный, неразрывный, узкий пробел — ровно один.
+_THOUSANDS_GAPS = (" ", "\u00a0", "\u202f", "\u2009")
+# Что связывает числа в одну цепочку: пробелы, запятая, точка с запятой, «и».
+_RUN_GAP = re.compile(r"\s*(?:[,;]\s*)?|\s+и\s+")
+
+
+@dataclass
+class _Tok:
+    """Число текста до нормализации: знак, группы разрядов, место в тексте."""
+
+    sign: str
+    groups: list[str]     # «30 720» → ["30", "720"]; обычное число — одна группа
+    start: int
+    end: int
+
+
+def _raw_tokens(text: str) -> list[_Tok]:
+    """Числа текста как есть, без склейки разрядов; минус — только знаком числа."""
+    out: list[_Tok] = []
+    for m in _SIGNED_NUM.finditer(text):
+        sign, start = "", m.start(2)
+        if m.group(1) and (m.start() == 0 or text[m.start() - 1] in _SIGN_AFTER):
+            sign, start = "-", m.start()
+        out.append(_Tok(sign, [m.group(2)], start, m.end()))
+    return out
+
+
+_LIST_GAP = re.compile(r"[ \t\u00a0]*(?:[,;][ \t\u00a0]*)?")
+
+
+def _linked(text: str, a: _Tok, b: _Tok) -> bool:
+    """Стоят ли два соседних числа в перечне через пробел или запятую.
+
+    «и» здесь не связка: «1 000 000 и 5» — миллион и пять, а не перечень.
+    Перевод строки тоже: «Шаг 2» и «30 720 байт» на соседних строках — номер шага и число байт.
+    """
+    gap = text[a.end:b.start]
+    return bool(gap) and _LIST_GAP.fullmatch(gap) is not None
+
+
+def _group(text: str, raw: list[_Tok]) -> list[_Tok]:
+    """Склеить разряды: «30 720» — одно число 30720.
+
+    Склейка — только когда за группой из 1-3 цифр идут группы ровно по три цифры
+    через одиночный пробел и рядом нет других чисел цепочки. «7 14 100 200» —
+    перечень, а не четырнадцать миллионов; «14 100%» — два числа.
+    """
+    out: list[_Tok] = []
+    i = 0
+    while i < len(raw):
+        head = raw[i]
+        j = i
+        if head.groups[0].isdigit() and len(head.groups[0]) <= 3 and not (
+            i > 0 and _linked(text, raw[i - 1], head)
+        ):
+            while (
+                j + 1 < len(raw)
+                and not raw[j + 1].sign
+                and raw[j + 1].groups[0].isdigit()
+                and len(raw[j + 1].groups[0]) == 3
+                and text[raw[j].end:raw[j + 1].start] in _THOUSANDS_GAPS
+            ):
+                j += 1
+            tail_end = raw[j].end
+            if j > i and (
+                text[tail_end:tail_end + 1] == "%"
+                or (j + 1 < len(raw) and _linked(text, raw[j], raw[j + 1]))
+            ):
+                j = i
+        if j == i:
+            out.append(head)
+        else:
+            out.append(_Tok(head.sign, [t.groups[0] for t in raw[i:j + 1]],
+                            head.start, raw[j].end))
+        i = j + 1
+    return out
+
+
+def _tokens(text: str, *, group: bool = True) -> list[tuple[str, int, int]]:
+    """Числа текста с позициями: (нормализованное число, начало, конец)."""
+    toks = _raw_tokens(text)
+    if group:
+        toks = _group(text, toks)
+    return [(t.sign + _norm_num("".join(t.groups)), t.start, t.end) for t in toks]
+
+
+def _runs(text: str) -> list[tuple[str, ...]]:
+    """Цепочки чисел: «23 14 7», «23, 14 и 7», столбик из строк-чисел — одна цепочка."""
+    runs: list[list[str]] = []
+    prev_end: Optional[int] = None
+    for num, start, end in _tokens(text):
+        gap = text[prev_end:start] if prev_end is not None else ""
+        if runs and gap and _RUN_GAP.fullmatch(gap):
+            runs[-1].append(num)
+        else:
+            runs.append([num])
+        prev_end = end
+    return [tuple(r) for r in runs]
+
+
+@dataclass(frozen=True)
+class StudentNumbers:
+    """Что из чисел ученик написал сам.
+
+    `runs` — все его цепочки чисел: по ним узнаётся цитата из двух и больше чисел
+    («ты ввёл 23 14 7»). `named` — числа, которые ученик НАЗВАЛ как ответ: в его
+    сообщении это единственная цепочка, и сообщение не похоже на код. Перебор
+    «48? 49? 50?» и константы кода («range(14)», «mx = 2000») ответом не считаются:
+    иначе наставник подтверждал бы угаданное из перебора или число из кода.
+    """
+
+    runs: tuple[tuple[str, ...], ...] = ()
+    named: frozenset[tuple[str, ...]] = frozenset()
+
+
+def _looks_like_code(text: str) -> bool:
+    """Похоже ли сообщение ученика на код: строка программы или присваивание."""
+    return any(_CODE_LINE.match(ln) or "=" in ln for ln in text.splitlines())
+
+
+def student_runs(texts: Sequence[str]) -> StudentNumbers:
+    """Числа ученика: реплики, сданный ответ, заметка «где застрял»."""
+    runs: list[tuple[str, ...]] = []
+    named: set[tuple[str, ...]] = set()
+    for t in texts:
+        if not t:
+            continue
+        msg_runs = _runs(_plain(t))
+        runs.extend(msg_runs)
+        if len(msg_runs) == 1 and not _looks_like_code(t):
+            named.add(msg_runs[0])
+    return StudentNumbers(tuple(runs), frozenset(named))
+
+
+def _is_quote(run: tuple[str, ...], known: StudentNumbers) -> bool:
+    """Повторяет ли цепочка наставника то, что написал ученик.
+
+    Цепочку из двух и больше чисел считаем цитатой, если она стоит у ученика
+    подряд («23 14 7» или её кусок «23, 14» — наводящий выбор куска числами не
+    отличить, это осознанная граница). Одиночное число — только если ученик сам
+    назвал его ответом (`StudentNumbers.named`). «14» из чужой цепочки
+    «23 14 7» цитатой не считается — иначе прошёл бы разбор «31, 23, 14 — третье
+    и есть ответ» (сессия 202).
+    """
+    if len(run) == 1:
+        return run in known.named
+    n = len(run)
+    return any(
+        k[i:i + n] == run for k in known.runs for i in range(len(k) - n + 1)
+    )
 
 
 def judge_text_line(line: str, *, stem_numbers: set[str]) -> Optional[str]:
@@ -141,12 +314,40 @@ def judge_text_line(line: str, *, stem_numbers: set[str]) -> Optional[str]:
     return None
 
 
-def leaks_answer(text: str, answers: list[tuple[str, ...]]) -> bool:
-    """Встречаются ли в тексте все числа какого-либо эталона."""
+def leaks_answer(
+    text: str,
+    answers: list[tuple[str, ...]],
+    known: Optional[StudentNumbers] = None,
+) -> bool:
+    """Встречаются ли в тексте все числа какого-либо эталона.
+
+    `known` — числа ученика (`student_runs`), tsk-1342. Два случая:
+
+    * ученик сам назвал эталон («49», вывод «4656011 65465222») — назвать его
+      уже не слив: наставник подтверждает то, что у ученика есть;
+    * иначе слив — когда все числа эталона есть в тексте и хотя бы одно из них
+      наставник назвал САМ, а не в цитате ученика («ты ввёл 23 14 7»). Эталон
+      «29 47», где ученик написал только 29, а наставник добавил 47, — слив.
+    """
     if not answers:
         return False
-    seen = _numbers_in(_plain(text))
-    return any(all(n in seen for n in nums) for nums in answers)
+    known = known or StudentNumbers()
+    # Эталон назван учеником, только если стоит у него ЦЕЛИКОМ отдельной
+    # цепочкой: «10 164 5» — не «10 164», лишнее число и есть его ошибка.
+    full = set(known.runs)
+    pending = [
+        nums for nums in answers
+        if not (nums in known.named or (len(nums) > 1 and nums in full))
+    ]
+    if not pending:
+        return False
+    runs = _runs(_plain(text))
+    seen = {n for run in runs for n in run}
+    own = {n for run in runs if not _is_quote(run, known) for n in run}
+    return any(
+        all(n in seen for n in nums) and any(n in own for n in nums)
+        for nums in pending
+    )
 
 
 @dataclass(frozen=True)
@@ -221,12 +422,18 @@ class TutorStreamGuard:
     уже разрешено показывать; после блокировки не отдаёт ничего.
     """
 
-    def __init__(self, *, mode: str, stem: str, answers: Sequence[str] = ()) -> None:
+    def __init__(
+        self, *, mode: str, stem: str, answers: Sequence[str] = (),
+        student_said: Sequence[str] = (),
+    ) -> None:
         self._mode = mode
         self._stem = stem or ""
         # tsk-1259: эталоны задания. Живут только здесь, в модель не уходят —
         # по ним страж узнаёт итоговый ответ, как бы модель его ни подала.
         self._answers = _answer_tokens(answers)
+        # tsk-1342: что ученик написал сам — реплики разговора, сданный ответ,
+        # заметка «где застрял». Цитата этого сливом не считается.
+        self._known = student_runs(student_said)
         self._stem_nums = _stem_numbers(self._stem)
         self._shown = ""          # всё, что уже ушло ученику
         self._buf = ""            # необработанный хвост куска
@@ -322,7 +529,9 @@ class TutorStreamGuard:
         reason = judge_block(
             code, mode=self._mode, stem=self._stem, index=self._blocks_passed
         )
-        if reason is None and leaks_answer(self._shown + code, self._answers):
+        if reason is None and leaks_answer(
+            self._shown + code, self._answers, self._known
+        ):
             reason = "итоговый ответ к заданию в блоке"
         if reason is None:
             self._blocks_passed += 1
@@ -410,6 +619,7 @@ class TutorStreamGuard:
         if reason is None and leaks_answer(
             self._shown + _join(pending) + (self._held_full or "") + "\n" + line,
             self._answers,
+            self._known,
         ):
             reason = "итоговый ответ к заданию"
         return reason

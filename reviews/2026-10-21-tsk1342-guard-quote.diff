@@ -1,0 +1,943 @@
+diff --git a/app/api/v1/ai_tutor.py b/app/api/v1/ai_tutor.py
+index 9fdaf93..42fb5d0 100644
+--- a/app/api/v1/ai_tutor.py
++++ b/app/api/v1/ai_tutor.py
+@@ -332,6 +332,7 @@ async def ask(
+         await session_service.add_message(db, session.id, "student", student_text)
+     messages = await session_service.build_llm_messages(db, session, student_text)
+     answers = await session_service.guard_answers(db, task_id)
++    student_said = await session_service.student_said(db, session)
+     await session_service.bump_turn(db, session.id)
+     await db.commit()
+ 
+@@ -350,8 +351,10 @@ async def ask(
+         # запрещала готовое решение и раньше — 31.08 модель просто не стала её
+         # соблюдать, и запретить это текстом нельзя в принципе.
+         # tsk-1259: и пошаговый расчёт до итогового числа — по эталону задания.
++        # tsk-1342: цитата того, что ученик написал сам, — не слив эталона.
+         guard = TutorStreamGuard(
+-            mode=session.mode, stem=session.task_stem_snapshot, answers=answers
++            mode=session.mode, stem=session.task_stem_snapshot, answers=answers,
++            student_said=student_said,
+         )
+         try:
+             async for chunk in stream(
+diff --git a/app/services/ai_tutor/answer_guard.py b/app/services/ai_tutor/answer_guard.py
+index de6bc8f..1f6c5f6 100644
+--- a/app/services/ai_tutor/answer_guard.py
++++ b/app/services/ai_tutor/answer_guard.py
+@@ -110,22 +110,195 @@ def _answer_tokens(answers: Sequence[str]) -> list[tuple[str, ...]]:
+     Сверяем числами, а не строкой: модель пишет «29 рублей 47 копеек» или
+     разносит «10» и «164» по разным строкам разбора — строка эталона целиком в
+     такой реплике не встречается, а числа — встречаются все.
++
++    tsk-1342: числа берутся тем же разбором, что и текст реплики, — со знаком и
++    со склейкой разрядов; у отрицательного эталона есть и отпечаток без знака.
++    Эталон, который читается двояко («12 345» — два числа или двенадцать
++    тысяч), даёт оба отпечатка: текст склеит «12 345» в одно число, а
++    «12 и 345» оставит двумя.
+     """
+     out: list[tuple[str, ...]] = []
+     for ans in answers:
+-        nums = tuple(_norm_num(n) for n in re.findall(_NUM, ans or ""))
+-        if not nums:
+-            continue
+-        # Одиночный короткий ответ («5») слишком часто встречается сам по себе
+-        # в любом объяснении. Его ловят правила расчёта и заголовка ответа.
+-        if len(nums) == 1 and len(nums[0]) < 2:
+-            continue
+-        out.append(nums)
++        variants = {
++            tuple(n for n, _, _ in _tokens(ans or "", group=False)),
++            tuple(n for n, _, _ in _tokens(ans or "", group=True)),
++        }
++        # Отрицательный эталон ловим и без прилипшего минуса: «минус 14»,
++        # «– 14» — то же число, сказанное словами или через тире.
++        variants |= {tuple(n.lstrip("-") for n in v) for v in variants}
++        for nums in sorted(variants):
++            if not nums:
++                continue
++            # Одиночный короткий ответ («5») слишком часто встречается сам по
++            # себе в любом объяснении. Его ловят правила расчёта и заголовка.
++            if len(nums) == 1 and len(nums[0].lstrip("-")) < 2:
++                continue
++            out.append(nums)
++    return out
++
++
++# ───────────── чьи это числа: цитата ученика, разряды, знак (tsk-1342) ─────────────
++#
++# Пересчёт стенда 14.10 дал 7 ложных срезов из 19: страж видел все числа эталона
++# и не различал, откуда они. Эталон «14» внутри цитаты неверного ответа ученика
++# «23 14 7» (сессия 202), «30» внутри «30 720 байт» (сессия 74), «2000» внутри
++# «-2000» из кода ученика (сессия 200). Поэтому число судится не само по себе,
++# а вместе с соседями: в составе какого числа и какой цепочки чисел оно стоит.
++
++_SIGNED_NUM = re.compile(r"([-−]?)(?<![\d.,])(\d+(?:[.,]\d+)?)(?!\d)")
++# Перед знаком минуса — начало, пробел или открывающий знак: «x = -2000»,
++# «range(-5». После цифры или буквы это вычитание: «3000-2000» — число 2000.
++_SIGN_AFTER = " \t\n([{=«\"':;,"
++# Разделитель разрядов: обычный, неразрывный, узкий пробел — ровно один.
++_THOUSANDS_GAPS = (" ", "\u00a0", "\u202f", "\u2009")
++# Что связывает числа в одну цепочку: пробелы, запятая, точка с запятой, «и».
++_RUN_GAP = re.compile(r"\s*(?:[,;]\s*)?|\s+и\s+")
++
++
++@dataclass
++class _Tok:
++    """Число текста до нормализации: знак, группы разрядов, место в тексте."""
++
++    sign: str
++    groups: list[str]     # «30 720» → ["30", "720"]; обычное число — одна группа
++    start: int
++    end: int
++
++
++def _raw_tokens(text: str) -> list[_Tok]:
++    """Числа текста как есть, без склейки разрядов; минус — только знаком числа."""
++    out: list[_Tok] = []
++    for m in _SIGNED_NUM.finditer(text):
++        sign, start = "", m.start(2)
++        if m.group(1) and (m.start() == 0 or text[m.start() - 1] in _SIGN_AFTER):
++            sign, start = "-", m.start()
++        out.append(_Tok(sign, [m.group(2)], start, m.end()))
++    return out
++
++
++_LIST_GAP = re.compile(r"[ \t\u00a0]*(?:[,;][ \t\u00a0]*)?")
++
++
++def _linked(text: str, a: _Tok, b: _Tok) -> bool:
++    """Стоят ли два соседних числа в перечне через пробел или запятую.
++
++    «и» здесь не связка: «1 000 000 и 5» — миллион и пять, а не перечень.
++    Перевод строки тоже: «Шаг 2» и «30 720 байт» на соседних строках — номер шага и число байт.
++    """
++    gap = text[a.end:b.start]
++    return bool(gap) and _LIST_GAP.fullmatch(gap) is not None
++
++
++def _group(text: str, raw: list[_Tok]) -> list[_Tok]:
++    """Склеить разряды: «30 720» — одно число 30720.
++
++    Склейка — только когда за группой из 1-3 цифр идут группы ровно по три цифры
++    через одиночный пробел и рядом нет других чисел цепочки. «7 14 100 200» —
++    перечень, а не четырнадцать миллионов; «14 100%» — два числа.
++    """
++    out: list[_Tok] = []
++    i = 0
++    while i < len(raw):
++        head = raw[i]
++        j = i
++        if head.groups[0].isdigit() and len(head.groups[0]) <= 3 and not (
++            i > 0 and _linked(text, raw[i - 1], head)
++        ):
++            while (
++                j + 1 < len(raw)
++                and not raw[j + 1].sign
++                and raw[j + 1].groups[0].isdigit()
++                and len(raw[j + 1].groups[0]) == 3
++                and text[raw[j].end:raw[j + 1].start] in _THOUSANDS_GAPS
++            ):
++                j += 1
++            tail_end = raw[j].end
++            if j > i and (
++                text[tail_end:tail_end + 1] == "%"
++                or (j + 1 < len(raw) and _linked(text, raw[j], raw[j + 1]))
++            ):
++                j = i
++        if j == i:
++            out.append(head)
++        else:
++            out.append(_Tok(head.sign, [t.groups[0] for t in raw[i:j + 1]],
++                            head.start, raw[j].end))
++        i = j + 1
+     return out
+ 
+ 
+-def _numbers_in(text: str) -> set[str]:
+-    return {_norm_num(n) for n in re.findall(rf"(?<![\d.,]){_NUM}(?!\d)", text)}
++def _tokens(text: str, *, group: bool = True) -> list[tuple[str, int, int]]:
++    """Числа текста с позициями: (нормализованное число, начало, конец)."""
++    toks = _raw_tokens(text)
++    if group:
++        toks = _group(text, toks)
++    return [(t.sign + _norm_num("".join(t.groups)), t.start, t.end) for t in toks]
++
++
++def _runs(text: str) -> list[tuple[str, ...]]:
++    """Цепочки чисел: «23 14 7», «23, 14 и 7», столбик из строк-чисел — одна цепочка."""
++    runs: list[list[str]] = []
++    prev_end: Optional[int] = None
++    for num, start, end in _tokens(text):
++        gap = text[prev_end:start] if prev_end is not None else ""
++        if runs and gap and _RUN_GAP.fullmatch(gap):
++            runs[-1].append(num)
++        else:
++            runs.append([num])
++        prev_end = end
++    return [tuple(r) for r in runs]
++
++
++@dataclass(frozen=True)
++class StudentNumbers:
++    """Что из чисел ученик написал сам.
++
++    `runs` — все его цепочки чисел: по ним узнаётся цитата из двух и больше чисел
++    («ты ввёл 23 14 7»). `named` — числа, которые ученик НАЗВАЛ как ответ: в его
++    сообщении это единственная цепочка, и сообщение не похоже на код. Перебор
++    «48? 49? 50?» и константы кода («range(14)», «mx = 2000») ответом не считаются:
++    иначе наставник подтверждал бы угаданное из перебора или число из кода.
++    """
++
++    runs: tuple[tuple[str, ...], ...] = ()
++    named: frozenset[tuple[str, ...]] = frozenset()
++
++
++def _looks_like_code(text: str) -> bool:
++    """Похоже ли сообщение ученика на код: строка программы или присваивание."""
++    return any(_CODE_LINE.match(ln) or "=" in ln for ln in text.splitlines())
++
++
++def student_runs(texts: Sequence[str]) -> StudentNumbers:
++    """Числа ученика: реплики, сданный ответ, заметка «где застрял»."""
++    runs: list[tuple[str, ...]] = []
++    named: set[tuple[str, ...]] = set()
++    for t in texts:
++        if not t:
++            continue
++        msg_runs = _runs(_plain(t))
++        runs.extend(msg_runs)
++        if len(msg_runs) == 1 and not _looks_like_code(t):
++            named.add(msg_runs[0])
++    return StudentNumbers(tuple(runs), frozenset(named))
++
++
++def _is_quote(run: tuple[str, ...], known: StudentNumbers) -> bool:
++    """Повторяет ли цепочка наставника то, что написал ученик.
++
++    Цепочку из двух и больше чисел считаем цитатой, если она стоит у ученика
++    подряд («23 14 7» или её кусок «23, 14» — наводящий выбор куска числами не
++    отличить, это осознанная граница). Одиночное число — только если ученик сам
++    назвал его ответом (`StudentNumbers.named`). «14» из чужой цепочки
++    «23 14 7» цитатой не считается — иначе прошёл бы разбор «31, 23, 14 — третье
++    и есть ответ» (сессия 202).
++    """
++    if len(run) == 1:
++        return run in known.named
++    n = len(run)
++    return any(
++        k[i:i + n] == run for k in known.runs for i in range(len(k) - n + 1)
++    )
+ 
+ 
+ def judge_text_line(line: str, *, stem_numbers: set[str]) -> Optional[str]:
+@@ -141,12 +314,40 @@ def judge_text_line(line: str, *, stem_numbers: set[str]) -> Optional[str]:
+     return None
+ 
+ 
+-def leaks_answer(text: str, answers: list[tuple[str, ...]]) -> bool:
+-    """Встречаются ли в тексте все числа какого-либо эталона."""
++def leaks_answer(
++    text: str,
++    answers: list[tuple[str, ...]],
++    known: Optional[StudentNumbers] = None,
++) -> bool:
++    """Встречаются ли в тексте все числа какого-либо эталона.
++
++    `known` — числа ученика (`student_runs`), tsk-1342. Два случая:
++
++    * ученик сам назвал эталон («49», вывод «4656011 65465222») — назвать его
++      уже не слив: наставник подтверждает то, что у ученика есть;
++    * иначе слив — когда все числа эталона есть в тексте и хотя бы одно из них
++      наставник назвал САМ, а не в цитате ученика («ты ввёл 23 14 7»). Эталон
++      «29 47», где ученик написал только 29, а наставник добавил 47, — слив.
++    """
+     if not answers:
+         return False
+-    seen = _numbers_in(_plain(text))
+-    return any(all(n in seen for n in nums) for nums in answers)
++    known = known or StudentNumbers()
++    # Эталон назван учеником, только если стоит у него ЦЕЛИКОМ отдельной
++    # цепочкой: «10 164 5» — не «10 164», лишнее число и есть его ошибка.
++    full = set(known.runs)
++    pending = [
++        nums for nums in answers
++        if not (nums in known.named or (len(nums) > 1 and nums in full))
++    ]
++    if not pending:
++        return False
++    runs = _runs(_plain(text))
++    seen = {n for run in runs for n in run}
++    own = {n for run in runs if not _is_quote(run, known) for n in run}
++    return any(
++        all(n in seen for n in nums) and any(n in own for n in nums)
++        for nums in pending
++    )
+ 
+ 
+ @dataclass(frozen=True)
+@@ -221,12 +422,18 @@ class TutorStreamGuard:
+     уже разрешено показывать; после блокировки не отдаёт ничего.
+     """
+ 
+-    def __init__(self, *, mode: str, stem: str, answers: Sequence[str] = ()) -> None:
++    def __init__(
++        self, *, mode: str, stem: str, answers: Sequence[str] = (),
++        student_said: Sequence[str] = (),
++    ) -> None:
+         self._mode = mode
+         self._stem = stem or ""
+         # tsk-1259: эталоны задания. Живут только здесь, в модель не уходят —
+         # по ним страж узнаёт итоговый ответ, как бы модель его ни подала.
+         self._answers = _answer_tokens(answers)
++        # tsk-1342: что ученик написал сам — реплики разговора, сданный ответ,
++        # заметка «где застрял». Цитата этого сливом не считается.
++        self._known = student_runs(student_said)
+         self._stem_nums = _stem_numbers(self._stem)
+         self._shown = ""          # всё, что уже ушло ученику
+         self._buf = ""            # необработанный хвост куска
+@@ -322,7 +529,9 @@ class TutorStreamGuard:
+         reason = judge_block(
+             code, mode=self._mode, stem=self._stem, index=self._blocks_passed
+         )
+-        if reason is None and leaks_answer(self._shown + code, self._answers):
++        if reason is None and leaks_answer(
++            self._shown + code, self._answers, self._known
++        ):
+             reason = "итоговый ответ к заданию в блоке"
+         if reason is None:
+             self._blocks_passed += 1
+@@ -410,6 +619,7 @@ class TutorStreamGuard:
+         if reason is None and leaks_answer(
+             self._shown + _join(pending) + (self._held_full or "") + "\n" + line,
+             self._answers,
++            self._known,
+         ):
+             reason = "итоговый ответ к заданию"
+         return reason
+diff --git a/app/services/ai_tutor/role_gate.py b/app/services/ai_tutor/role_gate.py
+index 0450f7d..a487b71 100644
+--- a/app/services/ai_tutor/role_gate.py
++++ b/app/services/ai_tutor/role_gate.py
+@@ -187,13 +187,18 @@ async def run_sample(model: str, sample: Sample, purpose: str) -> list[TurnResul
+ 
+     results: list[TurnResult] = []
+     first = True
++    # tsk-1342: страж знает, что ученик написал сам, — как в бою.
++    said = [sample.student_answer]
+     for student in sample.replies:
+         if not first:
+             history.append(LLMMessage(
+                 role="user",
+                 content=f"{STUDENT_DATA_OPEN}\n{student}\n{STUDENT_DATA_CLOSE}",
+             ))
+-        guard = TutorStreamGuard(mode=sample.mode, stem=sample.stem, answers=sample.answers)
++            said.append(student)
++        guard = TutorStreamGuard(
++            mode=sample.mode, stem=sample.stem, answers=sample.answers, student_said=said,
++        )
+         raw: list[str] = []
+         shown = ""
+         # Бюджет батча, а не интерактива: здесь меряется удержание роли, а не
+diff --git a/app/services/ai_tutor/session_service.py b/app/services/ai_tutor/session_service.py
+index a6f5ffa..ec07228 100644
+--- a/app/services/ai_tutor/session_service.py
++++ b/app/services/ai_tutor/session_service.py
+@@ -390,6 +390,21 @@ async def history(db: AsyncSession, session_id: int) -> list[dict]:
+     return [dict(r) for r in rows]
+ 
+ 
++async def student_said(db: AsyncSession, session: TutorSession) -> list[str]:
++    """Всё, что ученик написал сам, — для стража ответа (tsk-1342).
++
++    Сданный ответ (снимок), заметка «где застрял» и реплики разговора, включая
++    текущую: к вызову модели она уже записана в историю. Числа отсюда наставник
++    может повторять — это цитата ученика, а не слив эталона.
++    """
++    rows = await history(db, session.id)
++    return [
++        session.student_answer_snapshot or "",
++        session.stuck_note or "",
++        *(r["content"] for r in rows if r["role"] == "student"),
++    ]
++
++
+ async def build_llm_messages(
+     db: AsyncSession, session: TutorSession, new_student_text: str | None
+ ) -> list[LLMMessage]:
+diff --git a/docs/qa/2026-10-21-tsk1342-strazh-citata-uchenika.md b/docs/qa/2026-10-21-tsk1342-strazh-citata-uchenika.md
+new file mode 100644
+index 0000000..32f1b76
+--- /dev/null
++++ b/docs/qa/2026-10-21-tsk1342-strazh-citata-uchenika.md
+@@ -0,0 +1,85 @@
++# Страж наставника: цитата ученика — не слив эталона (tsk-1342)
++
++Продолжение `docs/qa/2026-10-14-tsk1259-strazh-s-etalonom-pereschet.md`: из 19 новых
++срезов по эталону 7 были ложными — страж видел все числа эталона в тексте и не
++различал, откуда они.
++
++## Что изменилось в `leaks_answer`
++
++1. **Страж знает, что ученик написал сам.** В `TutorStreamGuard` новый параметр
++   `student_said`: сданный ответ (снимок), заметка «где застрял», все реплики ученика,
++   включая текущую. Передаётся во всех местах, где создаётся страж:
++   бой `api/v1/ai_tutor.py::ask` (один вызов на вступление и ходы; данные собирает
++   новый `session_service.student_said`), гейт роли `role_gate.run_sample`, стенд
++   `tutor_replay_bakeoff.run_unit` (`Unit.student_texts` — реплики списком, как в бою).
++2. **Число судится вместе с соседями** (`_runs`):
++   - разряды: «30 720» — одно число 30720 (одиночный пробел/NBSP, группы по 3 цифры;
++     не внутри перечня «7 14 100 200» и не перед «%»);
++   - знак: «-2000» — не 2000 («3000-2000» — вычитание, там 2000);
++   - цепочка: «23 14 7», «23, 14 и 7», столбик — одна цепочка.
++3. **Цитата не считается.** Цепочка наставника из ≥2 чисел, стоящая у ученика подряд,
++   — цитата. Одиночное число — цитата, только если ученик **назвал** его: в его
++   сообщении это единственная цепочка и сообщение не код. Эталон слит, если все его
++   числа в тексте и хотя бы одно наставник назвал сам.
++4. **Ученик назвал эталон целиком** («49», вывод «4656011 65465222») — назвать его не
++   слив. Многочисловой — только если у ученика это целая цепочка («10 164 5» — нет).
++5. Отрицательный эталон ловится и без прилипшего минуса («минус 14»).
++
++Правила `judge_text_line` («Ответ: …», расчёт на данных условия) и правила блоков
++кода не менялись.
++
++## 19 случаев отчёта 14.10: до и после
++
++Тексты реконструированы по описанию отчёта (дамп 14.10 в репозиторий не попал);
++сессия 104 — дословно из `tests/test_tsk1259_session104_replay.py`. Отчёт поимённо
++называет 6 ложных срезов из 7; седьмой взят как второй ответ на ход 1 сессии 200.
++Поток — кусками по 7 символов, как на стенде. «До» — страж из `main`.
++
++| # | Случай | Разбор 14.10 | До | После |
++|---|---|---|---|---|
++| 1 | 104 haiku ход 4 (эталон 49) | слив | режет | режет |
++| 2 | 104 haiku ход 5 | слив | режет | режет |
++| 3 | 104 haiku ход 6 | слив | режет | режет |
++| 4 | 104 sonnet ход 5 | слив | режет | режет |
++| 5 | 202 haiku ход 6 (эталон 14) | слив | режет | режет |
++| 6–12 | 197 серая 1–7 (эталон «4656011 65465222») | серая | режет | пропускает* |
++| 13 | 202 haiku ход 0 (вступление) | ложный | режет | пропускает |
++| 14 | 202 opus ход 0 | ложный | режет | пропускает |
++| 15 | 202 sonnet ход 2 | ложный | режет | пропускает |
++| 16 | 202 sonnet ход 4 | ложный | режет | пропускает |
++| 17 | 74 ход 2 (эталон 30, «30 720 байт») | ложный | режет | пропускает |
++| 18 | 200 ход 1 (эталон 2000, «-2000») | ложный | режет | пропускает |
++| 19 | 200 ход 1, второй ответ | ложный | режет | пропускает |
++
++\* Серая зона пропускается, **только если ученик сам прислал в чат оба числа**
++(вывод своей программы). Если у него только код и ошибочный ответ — режется как раньше
++(тест `test_grey_zone_blocked_when_student_never_wrote_answer`). Как было на самом деле
++— покажет пересчёт на дампе.
++
++## Изменение поведения подтверждения
++
++Раньше страж резал «Да, 49 — верно», даже когда ученик сам написал «49». Отдельной
++логики подтверждения в страже не было; инструкция наставника требует «если ученик
++прав — подтверди прямо», метрика слива стенда (`_leaks`) и судья стенда подтверждение
++сливом не считают. Срез ничего не защищал: «да, верно» без числа проходит всегда.
++Теперь подтверждение проходит, но только для названного числа: перебор в одном
++сообщении («48? 49? 50?», «48, 49 или 50») и константы кода («range(14)», «mx = 2000»)
++названным ответом не считаются.
++
++## Остаточные риски
++
++- Перебор **отдельными сообщениями** («48», «49», «50») — каждое считается названным,
++  подтверждение «49» пройдёт. Каждая реплика тратит ход лимита; «да, верно» без числа
++  страж не ловил и раньше.
++- Кусок цепочки ученика проходит как цитата: ученик «23 14 7», наставник «23, 14 —
++  вот оно». Числами наводящий выбор куска не отличить.
++- Минус-тире без пробела перед числом («значение -14, без минуса») читается как знак.
++- «31,23,14,9,7» без пробелов читается как десятичное 31.23 (было и до правки).
++
++## Что проверить на проде
++
++Пересчёт `scripts/tutor_replay_bakeoff.py` по дампу 14.10 на сессиях 74, 104, 200, 202
++(и 197): прогнать `o.text` каждого исхода через стража с `u.answers` и
++`u.student_texts`. Ожидание: 104 (все 4 хода) и 202 ход 6 режутся; 202 ходы 0, 2, 4,
++74 ход 2, 200 ход 1 — нет; 197 — по тому, присылал ли ученик вывод в чат. Если
++расходится с таблицей — сравнить реальный текст реплики с реконструкцией.
+diff --git a/reviews/2026-10-21-tsk1342-guard-quote-review.md b/reviews/2026-10-21-tsk1342-guard-quote-review.md
+new file mode 100644
+index 0000000..94f54e8
+--- /dev/null
++++ b/reviews/2026-10-21-tsk1342-guard-quote-review.md
+@@ -0,0 +1,31 @@
++# Ревью: страж наставника — цитата ученика не слив (tsk-1342)
++
++Дифф: `reviews/2026-10-21-tsk1342-guard-quote.diff`. Ревьюер — независимый агент,
++два раунда. QA-отчёт: `docs/qa/2026-10-21-tsk1342-strazh-citata-uchenika.md`.
++
++## Раунд 1 — ОТКЛОНЕНО (0 BLOCKER, 3 MAJOR)
++
++| # | Уровень | Находка | Исправление |
++|---|---|---|---|
++| 1 | MAJOR | Склейка разрядов прятала эталон в перечне: «7 14 100 200» → 14100200, «14 100%» → 14100 | Склейка не делается, если голова или хвост связаны с соседним числом перечнем, и перед «%» |
++| 2 | MAJOR | Отрицательный эталон «-14» не ловился в «минус 14», «– 14» | У отрицательного эталона добавлен отпечаток без знака |
++| 3 | MAJOR | Перебор «48? 49? 50?», «48 или 49 или 50» и константы кода (`range(14)`, `mx = 2000`) считались «ученик назвал ответ» | `StudentNumbers.named`: одиночное число названо, только если в сообщении это единственная цепочка и сообщение не похоже на код; многочисловой эталон — только целой цепочкой ученика |
++| 4 | MINOR | «значение -14, без минуса» читается как знак | Не исправлено — числами не отличить; в остаточных рисках |
++| 5 | MINOR | Кусок цепочки ученика («23, 14» из «23 14 7») проходит как цитата | Оговорено в docstring `_is_quote` и в отчёте |
++| 6 | MINOR | Стенд склеивал реплики через `\n` — расходился с боем | `Unit.student_texts` — реплики списком |
++| 7 | MINOR | «31,23,14,9,7» → 31.23 (было до правки) | Не тронуто, в остаточных рисках |
++| 8 | NIT | Квадратичность `_RUN_GAP` и склейки на длинных текстах | Регулярка без отката, склейка линейна |
++
++## Раунд 2 — ПРИНЯТО (0 BLOCKER, 0 MAJOR)
++
++Остаточные: перебор отдельными сообщениями («48», «49», «50» — каждое названо; ход
++стоит лимита, «да, верно» без числа страж не ловил и раньше) — в отчёте. MINOR
++«Шаг 2\n30 720 байт» (перевод строки связывал перечень и рвал склейку) — исправлено
++после ревью, тест добавлен. NIT по оформлению (docstrings `_Tok`/`_raw_tokens`,
++явные ` ` в `_THOUSANDS_GAPS`, перенос docstring) — исправлены.
++
++## Проверки
++
++- Смежные тесты стража и наставника (tsk748, tsk1259_*, tsk1376_*, tsk572, tsk581,
++  tsk661, tsk779, tsk957, tsk1342): 254 passed. Ожидания существующих тестов не правились.
++- Порчи кода: 16 из 16 пойманы тестами (см. итоговый отчёт).
+diff --git a/scripts/tutor_replay_bakeoff.py b/scripts/tutor_replay_bakeoff.py
+index 6e0adf5..68f7bb4 100644
+--- a/scripts/tutor_replay_bakeoff.py
++++ b/scripts/tutor_replay_bakeoff.py
+@@ -121,6 +121,7 @@ class Unit:
+     course_title: str
+     original: str                 # что ответила боевая модель тогда
+     student_said: str = ""        # всё, что ученик писал до этого хода (и снимок ответа)
++    student_texts: list[str] = field(default_factory=list)  # то же по сообщениям — для стража
+ 
+ 
+ @dataclass
+@@ -174,7 +175,7 @@ def build_units(sess: dict, *, openings: bool) -> list[Unit]:
+                 view, sess.get("student_answer_snapshot"), opening_mode(sess["mode"])))],
+             stem=view.stem, student_text="", answers=sess["task"]["answers"],
+             course_title=view.course_title or "", original=msgs[0]["content"],
+-            student_said="\n".join(said),
++            student_said="\n".join(said), student_texts=list(said),
+         ))
+     for i, m in enumerate(msgs):
+         if m["role"] == "student":
+@@ -190,7 +191,7 @@ def build_units(sess: dict, *, openings: bool) -> list[Unit]:
+                 messages=base + history + [current], stem=view.stem,
+                 student_text=m["content"], answers=sess["task"]["answers"],
+                 course_title=view.course_title or "", original=reply,
+-                student_said="\n".join(said),
++                student_said="\n".join(said), student_texts=list(said),
+             ))
+         history.append(LLMMessage(
+             role="user" if m["role"] == "student" else "assistant", content=m["content"],
+@@ -265,7 +266,9 @@ async def run_unit(model: str, unit: Unit) -> Outcome:
+                 student_text=unit.student_text)
+     # tsk-1259: без эталона страж слеп к расчёту на производных числах
+     # («45 + 7 − 3 = 49», сессия 104) — боевой путь эталон передаёт, стенд обязан тоже.
+-    guard = TutorStreamGuard(mode=unit.mode, stem=unit.stem, answers=unit.answers)
++    # tsk-1342: и то, что ученик написал сам, — цитата его чисел не слив.
++    guard = TutorStreamGuard(mode=unit.mode, stem=unit.stem, answers=unit.answers,
++                             student_said=unit.student_texts)
+     raw: list[str] = []
+     shown = ""
+     t0 = time.monotonic()
+diff --git a/tests/test_tsk1342_guard_student_quote.py b/tests/test_tsk1342_guard_student_quote.py
+new file mode 100644
+index 0000000..e822d7b
+--- /dev/null
++++ b/tests/test_tsk1342_guard_student_quote.py
+@@ -0,0 +1,400 @@
++"""tsk-1342: страж не путает цитату ученика со сливом эталона.
++
++Пересчёт стенда 14.10 (`docs/qa/2026-10-14-tsk1259-strazh-s-etalonom-pereschet.md`)
++дал 19 новых срезов по эталону: 5 настоящих, 7 серых, 7 ложных. Ложные — потому
++что страж видел все числа эталона и не различал, откуда они: цитата неверного
++ответа ученика «23 14 7» (эталон 14), «30 720 байт» (эталон 30), «-2000» из кода
++ученика (эталон 2000).
++
++**Тексты реконструированы.** Дамп стенда 14.10 лежал в scratchpad той сессии и в
++репозиторий не попал. Реплики собраны по описанию отчёта: то же число, тот же
++приём (цитата / разряды / знак / расчёт / перечень), та же сессия и тот же эталон.
++Сессия 104 — дословно из `tests/test_tsk1259_session104_replay.py`. Отчёт называет
++поимённо 6 ложных срезов из 7; седьмой здесь — второй ответ на ход 1 сессии 200.
++"""
++from __future__ import annotations
++
++from dataclasses import dataclass
++
++import pytest
++
++from app.services.ai_tutor.answer_guard import (
++    TutorStreamGuard,
++    _answer_tokens,
++    _runs,
++    leaks_answer,
++    student_runs,
++)
++
++
++@dataclass(frozen=True)
++class Case:
++    """Срез из отчёта 14.10: что ответила модель и что ученик написал до этого."""
++
++    name: str
++    verdict: str              # «слив» / «серая» / «ложный» — по разбору отчёта
++    stem: str
++    mode: str
++    answers: tuple[str, ...]
++    student_said: tuple[str, ...]
++    reply: str
++
++
++STEM_104 = (
++    "Определите количество натуральных двузначных чисел x, для которых ложно "
++    "логическое высказывание: НЕ (x чётное) И НЕ (x кратно 13). Ответ запишите числом."
++)
++SAID_104 = ("50", "я посчитал 50, не понимаю где ошибка")
++
++STEM_202 = (
++    "Программа получает на вход массив и выводит все его различные значения. "
++    "Запишите в ответ третье по величине различное значение."
++)
++SAID_202 = ("23 14 7",)
++
++STEM_74 = (
++    "Текст из 10 240 символов записан в кодировке, где символ занимает 3 байта. "
++    "Сколько килобайт занимает текст? В ответе укажите целое число."
++)
++SAID_74 = ("Ответ: 30720", "я умножил и получил 30720")
++
++STEM_200 = (
++    "Напишите программу, которая считывает N целых чисел (каждое не меньше -10000) "
++    "и выводит наибольшее. Запустите с вводом из файла и запишите вывод."
++)
++CODE_200 = (
++    "mx = -2000\nn = int(input())\nfor i in range(n):\n"
++    "    x = int(input())\n    if x > mx:\n        mx = x\nprint(mx)"
++)
++SAID_200 = (CODE_200 + "\nПояснение ученика: выводит -2000", "почему не работает")
++
++STEM_197 = (
++    "Исправьте программу, которая выводит через пробел сумму и произведение "
++    "цифр. Запустите её с вводом из файла и запишите два числа в поле «Ответ»."
++)
++# Ученик получил оба числа своей программой и ошибся при переносе в поле ответа.
++SAID_197 = (
++    "s = 0\np = 1\nfor ch in input():\n    s += int(ch)\n    p *= int(ch)\n"
++    "print(s, p)\nПояснение ученика: 4656011 6546522",
++    "программа выводит 4656011 65465222 но ответ не принимается",
++)
++A197 = ("4656011 65465222",)
++
++CASES: list[Case] = [
++    # ── настоящий слив (5): должен резаться ──
++    Case("104 haiku ход 4", "слив", STEM_104, "concept", ("49",), SAID_104,
++         "Давай проверим вместе.\n"
++         "Чётных двузначных: 10, 12, …, 98 — это 45 чисел.\n"
++         "Кратных 13 среди двузначных: 13, 26, …, 91 — это 7 чисел.\n"
++         "Чётных и кратных 13 одновременно, то есть кратных 26: 26, 52, 78 — 3 числа.\n"
++         "Считаем объединение: 45 + 7 − 3 = 49.\n"
++         "Так что у тебя выходит 49, а не 50."),
++    Case("104 haiku ход 5", "слив", STEM_104, "concept", ("49",), SAID_104,
++         "Посмотри на пересечение ещё раз.\n45 + 7 − 3 = 49\nГде ты потерял одно число?"),
++    Case("104 haiku ход 6", "слив", STEM_104, "concept", ("49",), SAID_104 + ("а зачем минус 3",),
++         "Минус 3 — потому что числа 26, 52, 78 мы посчитали дважды.\n"
++         "Итого **45 + 7 − 3 = 49**. Сверь со своими 50."),
++    Case("104 sonnet ход 5", "слив", STEM_104, "concept", ("49",),
++         SAID_104 + ("чётных 45, кратных 13 — 7",),
++         "Кратных 13 у тебя 7 — верно. А вот объединение: чётных двузначных "
++         "действительно 49, если считать вместе с кратными 13?"),
++    Case("202 haiku ход 6", "слив", STEM_202, "concept", ("14",),
++         SAID_202 + ("не понимаю что значит различные", "а как упорядочить"),
++         "Выпишем различные значения по убыванию: 31, 23, 14, 9, 7.\n"
++         "Третье по счёту и есть то, что просит задание."),
++    # ── серая зона (7): ученик сам получил оба числа программой ──
++    Case("197 серая 1", "серая", STEM_197, "debug", A197, SAID_197,
++         "Твоя программа вывела 4656011 65465222, а в поле стоит 4656011 6546522 — "
++         "сравни вторые числа."),
++    Case("197 серая 2", "серая", STEM_197, "debug", A197, SAID_197,
++         "Сравни внимательно: вывод — 4656011 65465222, ответ — 4656011 6546522."),
++    Case("197 серая 3", "серая", STEM_197, "debug", A197, SAID_197,
++         "Первое число 4656011 у тебя совпадает. Второе в выводе — 65465222, "
++         "а в поле ты ввёл 6546522. Сколько цифр в каждом?"),
++    Case("197 серая 4", "серая", STEM_197, "debug", A197, SAID_197,
++         "Программа права: 4656011 65465222. Ошибка при переносе в поле."),
++    Case("197 серая 5", "серая", STEM_197, "debug", A197, SAID_197,
++         "Скопируй вывод «4656011 65465222» целиком, не перепечатывая."),
++    Case("197 серая 6", "серая", STEM_197, "debug", A197, SAID_197,
++         "У тебя в выводе 4656011 и 65465222 — пересчитай цифры во втором числе поля."),
++    Case("197 серая 7", "серая", STEM_197, "debug", A197, SAID_197,
++         "Код верный. Вывод **4656011 65465222** и есть то, что нужно ввести — "
++         "сверь последние цифры."),
++    # ── ложный срез (7): должен проходить ──
++    Case("202 haiku ход 0", "ложный", STEM_202, "concept", ("14",), SAID_202,
++         "Вижу, ты ввёл «23 14 7» — три числа, а в поле нужно одно. "
++         "Давай разберёмся, что именно спрашивают."),
++    Case("202 opus ход 0", "ложный", STEM_202, "concept", ("14",), SAID_202,
++         "Ты ответил 23, 14 и 7. Похоже, это весь вывод программы — "
++         "какое из значений просит задание?"),
++    Case("202 sonnet ход 2", "ложный", STEM_202, "concept", ("14",),
++         SAID_202 + ("я просто скопировал вывод",),
++         "Ты написал **23 14 7** — это весь вывод твоей программы?"),
++    Case("202 sonnet ход 4", "ложный", STEM_202, "concept", ("14",),
++         SAID_202 + ("я просто скопировал вывод", "не знаю"),
++         "Вернёмся к твоему ответу 23 14 7: что значит «третье по величине»?"),
++    Case("74 ход 2", "ложный", STEM_74, "concept", ("30",), SAID_74,
++         "Ты получил 30 720 байт — это объём в байтах. "
++         "А в каких единицах просят ответ?"),
++    Case("200 ход 1", "ложный", STEM_200, "debug", ("2000",), SAID_200,
++         "Посмотри на стартовое значение `mx = -2000`. "
++         "Что будет, если все числа во входе меньше него?"),
++    Case("200 ход 1 (второй ответ)", "ложный", STEM_200, "debug", ("2000",), SAID_200,
++         "Стартовое значение -2000 — откуда оно взялось? Условие обещает числа до -10000."),
++]
++
++
++def _stream(case: Case, *, said: tuple[str, ...] | None = None, step: int = 7) -> TutorStreamGuard:
++    """Прогнать реплику кусками по `step` символов, как стенд 14.10."""
++    guard = TutorStreamGuard(
++        mode=case.mode, stem=case.stem, answers=case.answers,
++        student_said=case.student_said if said is None else said,
++    )
++    for i in range(0, len(case.reply), step):
++        guard.feed(case.reply[i:i + step])
++    guard.finish()
++    return guard
++
++
++def test_case_counts_match_report() -> None:
++    """19 срезов: 5 слив, 7 серых, 7 ложных — как в разборе отчёта."""
++    counts = {v: sum(c.verdict == v for c in CASES) for v in ("слив", "серая", "ложный")}
++    assert counts == {"слив": 5, "серая": 7, "ложный": 7}
++
++
++@pytest.mark.parametrize("case", [c for c in CASES if c.verdict == "слив"], ids=lambda c: c.name)
++@pytest.mark.parametrize("step", [1, 7, 10_000])
++def test_real_leak_still_blocked(case: Case, step: int) -> None:
++    guard = _stream(case, step=step)
++    assert guard.blocked, case.name
++
++
++@pytest.mark.parametrize("case", [c for c in CASES if c.verdict == "ложный"], ids=lambda c: c.name)
++@pytest.mark.parametrize("step", [1, 7, 10_000])
++def test_false_cut_now_passes(case: Case, step: int) -> None:
++    guard = _stream(case, step=step)
++    assert not guard.blocked, (case.name, guard.hit)
++
++
++@pytest.mark.parametrize("case", [c for c in CASES if c.verdict == "серая"], ids=lambda c: c.name)
++def test_grey_zone_passes_when_student_wrote_answer(case: Case) -> None:
++    """Ученик сам прислал вывод «4656011 65465222» — назвать его не слив."""
++    assert not _stream(case).blocked, case.name
++
++
++@pytest.mark.parametrize("case", [c for c in CASES if c.verdict == "серая"], ids=lambda c: c.name)
++def test_grey_zone_blocked_when_student_never_wrote_answer(case: Case) -> None:
++    """Тот же текст, но у ученика только код и ошибочный ответ — режем как раньше."""
++    assert _stream(case, said=SAID_197[:1]).blocked, case.name
++
++
++@pytest.mark.parametrize(
++    "name", ["202 haiku ход 0", "202 opus ход 0", "202 sonnet ход 2", "202 sonnet ход 4"]
++)
++def test_quote_passes_only_thanks_to_student_text(name: str) -> None:
++    """Без того, что написал ученик, цитата «23 14 7» неотличима от слива — режется."""
++    case = next(c for c in CASES if c.name == name)
++    assert _stream(case, said=()).blocked
++
++
++@pytest.mark.parametrize("name", ["74 ход 2", "200 ход 1", "200 ход 1 (второй ответ)"])
++def test_grouping_and_sign_pass_without_student_text(name: str) -> None:
++    """«30 720» и «-2000» — не эталон сами по себе, даже без реплик ученика."""
++    case = next(c for c in CASES if c.name == name)
++    assert not _stream(case, said=()).blocked
++
++
++# ─────────────────────────────── граничные ───────────────────────────────
++
++def test_student_named_correct_answer_confirmation_passes() -> None:
++    """Ученик сам назвал 49 — наставник подтверждает (инструкция: «подтверди прямо»).
++
++    До tsk-1342 страж резал и это: «Да, 49 — верно» содержит все числа эталона.
++    Заглушку вместо подтверждения ученик получал зря: «да, верно» без числа страж
++    пропускает всегда, то есть срез не защищал ничего.
++    """
++    guard = TutorStreamGuard(mode="concept", stem=STEM_104, answers=["49"],
++                             student_said=["50", "может 49?"])
++    guard.feed("Да, 49 — верно. Теперь впиши это в поле ответа.")
++    guard.finish()
++    assert not guard.blocked
++
++
++def test_student_guess_list_is_not_confirmation() -> None:
++    """«48, 49 или 50?» — перебор. Назвать из него верное число — слив."""
++    guard = TutorStreamGuard(mode="concept", stem=STEM_104, answers=["49"],
++                             student_said=["может 48, 49 или 50?"])
++    guard.feed("Из трёх твоих вариантов подходит 49.")
++    guard.finish()
++    assert guard.blocked
++
++
++def test_answer_head_rule_unchanged_by_student_text() -> None:
++    """«Ответ: 49» режется своим правилом — цитата ученика его не отменяет."""
++    guard = TutorStreamGuard(mode="concept", stem=STEM_104, answers=["49"],
++                             student_said=["49"])
++    guard.feed("Ответ: 49\n")
++    guard.finish()
++    assert guard.blocked
++
++
++def test_multi_number_answer_partially_known() -> None:
++    """Эталон «29 47»: ученик написал 29 сам, 47 — нет. Назвать оба — слив."""
++    tokens = _answer_tokens(["29 47"])
++    known = student_runs(["у меня 29 рублей", "29470"])
++    assert leaks_answer("рубли 29, копейки 47", tokens, known)
++    assert not leaks_answer("рубли 29, копейки посчитай сам", tokens, known)
++    # Весь эталон у ученика подряд — подтверждение, не слив.
++    assert not leaks_answer("рубли 29, копейки 47", tokens, student_runs(["вышло 29 47?"]))
++
++
++def test_multi_number_answer_quote_of_student_run() -> None:
++    """Ученик ввёл «10 164 5»; наставник цитирует — не слив, разбирает сам — слив."""
++    tokens = _answer_tokens(["10 164"])
++    known = student_runs(["10 164 5"])
++    assert not leaks_answer("Ты ввёл 10 164 5 — лишнее число в конце.", tokens, known)
++    assert leaks_answer("кругов: 10\nостаток: 164 м", tokens, known)
++
++
++def test_string_answer_has_no_fingerprint() -> None:
++    """Эталон-строка («МОРЕ», «cat») — не число, страж по эталону его не судит."""
++    assert _answer_tokens(["МОРЕ"]) == []
++    guard = TutorStreamGuard(mode="concept", stem="Какое слово?", answers=["МОРЕ"])
++    guard.feed("Подумай про слово из четырёх букв: МОРЕ подходит?")
++    guard.finish()
++    assert not guard.blocked
++
++
++def test_string_answer_with_number_inside() -> None:
++    """Эталон «x = 2000» — отпечаток по числу; «-2000» его не даёт, «2000» — даёт."""
++    tokens = _answer_tokens(["x = 2000"])
++    assert tokens == [("2000",)]
++    assert not leaks_answer("начни с -2000", tokens)
++    assert leaks_answer("начни с 2000", tokens)
++
++
++def test_negative_answer_caught_with_and_without_sign() -> None:
++    """Эталон «-2000»: и «-2000», и «−2000», и «2000» (минус сказан словами) — слив."""
++    tokens = _answer_tokens(["-2000"])
++    assert leaks_answer("получится -2000", tokens)
++    assert leaks_answer("получится −2000", tokens)
++    assert leaks_answer("получится минус 2000", tokens)
++
++
++def test_subtraction_is_not_a_sign() -> None:
++    """«3000-2000» — вычитание, 2000 в нём положительное."""
++    assert leaks_answer("3000-2000 = 1000", _answer_tokens(["2000"]))
++
++
++def test_thousands_grouping() -> None:
++    assert _runs("30 720 байт") == [("30720",)]
++    assert _runs("1 000 000 и 5") == [("1000000", "5")]
++    assert _runs("23 14 7") == [("23", "14", "7")]
++    # Два пробела, запятая, четыре цифры — не разряды.
++    assert _runs("30  720") == [("30", "720")]
++    assert _runs("30, 720") == [("30", "720")]
++    assert _runs("30 7200") == [("30", "7200")]
++
++
++def test_ambiguous_answer_caught_both_ways() -> None:
++    """Эталон «12 345»: два числа или двенадцать тысяч — ловим обе записи."""
++    tokens = _answer_tokens(["12 345"])
++    assert leaks_answer("получится 12 345", tokens)
++    assert leaks_answer("сначала 12, потом 345", tokens)
++    assert leaks_answer("итого 12345", tokens)
++
++
++def test_call_sites_pass_student_text() -> None:
++    """Все места, где создаётся страж, передают то, что написал ученик."""
++    import inspect
++
++    from app.api.v1 import ai_tutor
++    from app.services.ai_tutor import role_gate
++    from scripts import tutor_replay_bakeoff
++
++    assert "student_said=student_said" in inspect.getsource(ai_tutor.ask)
++    assert "student_said=said" in inspect.getsource(role_gate.run_sample)
++    assert "student_said=unit.student_texts" in inspect.getsource(tutor_replay_bakeoff.run_unit)
++
++
++def test_bakeoff_units_keep_student_messages_separate() -> None:
++    """Стенд отдаёт стражу реплики списком, как бой, а не склеенными через перевод строки."""
++    from scripts import tutor_replay_bakeoff as bakeoff
++
++    sess = {
++        "id": 1, "task_id": 1, "mode": "concept", "student_answer_snapshot": "48",
++        "task": {"task_content": {"type": "SA_COM", "stem": "Сколько?"},
++                 "answers": ["49"], "course_title": "Python"},
++        "messages": [
++            {"role": "tutor", "content": "Привет"},
++            {"role": "student", "content": "49"},
++            {"role": "tutor", "content": "Почему?"},
++        ],
++    }
++    units = bakeoff.build_units(sess, openings=True)
++    assert units[0].student_texts == ["48"]
++    assert units[1].student_texts == ["48", "49"]
++
++
++def test_session_service_student_said_collects_everything() -> None:
++    """Снимок ответа, заметка и реплики ученика — без реплик наставника."""
++    import asyncio
++    from unittest.mock import patch
++
++    from app.services.ai_tutor import session_service
++
++    class _S:
++        id = 1
++        student_answer_snapshot = "23 14 7"
++        stuck_note = "не понял условие"
++
++    rows = [
++        {"role": "system", "content": "инструкция 14"},
++        {"role": "tutor", "content": "ответ наставника 14"},
++        {"role": "student", "content": "не знаю"},
++    ]
++
++    async def _hist(db, sid):
++        return rows
++
++    with patch.object(session_service, "history", _hist):
++        got = asyncio.run(session_service.student_said(None, _S()))
++    assert got == ["23 14 7", "не понял условие", "не знаю"]
++
++
++# ───────────────────── находки ревью (обход стража) ─────────────────────
++
++def test_space_separated_list_is_not_thousands() -> None:
++    """«7 14 100 200» — перечень, «14 100%» — два числа: эталон 14 виден."""
++    tokens = _answer_tokens(["14"])
++    assert _runs("7 14 100 200") == [("7", "14", "100", "200")]
++    assert leaks_answer("По возрастанию: 7 14 100 200 — второе и есть ответ.", tokens)
++    assert leaks_answer("Подходит 14 100%.", tokens)
++    assert _runs("Ты получил 30 720 байт") == [("30720",)]
++    # Число в конце прошлой строки — не член перечня: «Шаг 2» и «30 720 байт».
++    assert not leaks_answer("Шаг 2\n30 720 байт — это байты.", _answer_tokens(["30"]))
++
++
++@pytest.mark.parametrize("text", [
++    "Получится минус 14.", "Получится – 14.", "Получится - 14.", "Получится -14.",
++])
++def test_negative_answer_caught_without_glued_sign(text: str) -> None:
++    assert leaks_answer(text, _answer_tokens(["-14"]))
++
++
++@pytest.mark.parametrize("said", [
++    ["может 48? 49? 50?"],
++    ["48 или 49 или 50"],
++    ["48.\n49.\n50."],
++])
++def test_guess_enumeration_is_not_naming(said: list[str]) -> None:
++    """Перебор вариантов в одном сообщении — не «ученик назвал ответ»."""
++    assert leaks_answer("Из твоих вариантов подходит 49.", _answer_tokens(["49"]),
++                        student_runs(said))
++
++
++@pytest.mark.parametrize("code", ["for i in range(14):\n    print(i)", "mx = 14\nprint(mx)"])
++def test_constant_in_student_code_is_not_naming(code: str) -> None:
++    """Число из кода ученика — не названный им ответ: наставник его не «подтверждает»."""
++    assert leaks_answer("Правильный ответ тут 14, проверь.", _answer_tokens(["14"]),
++                        student_runs([code]))

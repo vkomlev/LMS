@@ -187,13 +187,18 @@ async def run_sample(model: str, sample: Sample, purpose: str) -> list[TurnResul
 
     results: list[TurnResult] = []
     first = True
+    # tsk-1342: страж знает, что ученик написал сам, — как в бою.
+    said = [sample.student_answer]
     for student in sample.replies:
         if not first:
             history.append(LLMMessage(
                 role="user",
                 content=f"{STUDENT_DATA_OPEN}\n{student}\n{STUDENT_DATA_CLOSE}",
             ))
-        guard = TutorStreamGuard(mode=sample.mode, stem=sample.stem, answers=sample.answers)
+            said.append(student)
+        guard = TutorStreamGuard(
+            mode=sample.mode, stem=sample.stem, answers=sample.answers, student_said=said,
+        )
         raw: list[str] = []
         shown = ""
         # Бюджет батча, а не интерактива: здесь меряется удержание роли, а не

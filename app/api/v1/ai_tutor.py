@@ -332,6 +332,7 @@ async def ask(
         await session_service.add_message(db, session.id, "student", student_text)
     messages = await session_service.build_llm_messages(db, session, student_text)
     answers = await session_service.guard_answers(db, task_id)
+    student_said = await session_service.student_said(db, session)
     await session_service.bump_turn(db, session.id)
     await db.commit()
 
@@ -350,8 +351,10 @@ async def ask(
         # запрещала готовое решение и раньше — 31.08 модель просто не стала её
         # соблюдать, и запретить это текстом нельзя в принципе.
         # tsk-1259: и пошаговый расчёт до итогового числа — по эталону задания.
+        # tsk-1342: цитата того, что ученик написал сам, — не слив эталона.
         guard = TutorStreamGuard(
-            mode=session.mode, stem=session.task_stem_snapshot, answers=answers
+            mode=session.mode, stem=session.task_stem_snapshot, answers=answers,
+            student_said=student_said,
         )
         try:
             async for chunk in stream(

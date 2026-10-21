@@ -390,6 +390,21 @@ async def history(db: AsyncSession, session_id: int) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+async def student_said(db: AsyncSession, session: TutorSession) -> list[str]:
+    """Всё, что ученик написал сам, — для стража ответа (tsk-1342).
+
+    Сданный ответ (снимок), заметка «где застрял» и реплики разговора, включая
+    текущую: к вызову модели она уже записана в историю. Числа отсюда наставник
+    может повторять — это цитата ученика, а не слив эталона.
+    """
+    rows = await history(db, session.id)
+    return [
+        session.student_answer_snapshot or "",
+        session.stuck_note or "",
+        *(r["content"] for r in rows if r["role"] == "student"),
+    ]
+
+
 async def build_llm_messages(
     db: AsyncSession, session: TutorSession, new_student_text: str | None
 ) -> list[LLMMessage]:

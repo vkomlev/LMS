@@ -123,6 +123,7 @@ class Unit:
     course_title: str
     original: str                 # что ответила боевая модель тогда
     student_said: str = ""        # всё, что ученик писал до этого хода (и снимок ответа)
+    student_texts: list[str] = field(default_factory=list)  # то же по сообщениям — для стража
 
 
 @dataclass
@@ -176,7 +177,7 @@ def build_units(sess: dict, *, openings: bool) -> list[Unit]:
                 view, sess.get("student_answer_snapshot"), opening_mode(sess["mode"])))],
             stem=view.stem, student_text="", answers=sess["task"]["answers"],
             course_title=view.course_title or "", original=msgs[0]["content"],
-            student_said="\n".join(said),
+            student_said="\n".join(said), student_texts=list(said),
         ))
     for i, m in enumerate(msgs):
         if m["role"] == "student":
@@ -192,7 +193,7 @@ def build_units(sess: dict, *, openings: bool) -> list[Unit]:
                 messages=base + history + [current], stem=view.stem,
                 student_text=m["content"], answers=sess["task"]["answers"],
                 course_title=view.course_title or "", original=reply,
-                student_said="\n".join(said),
+                student_said="\n".join(said), student_texts=list(said),
             ))
         history.append(LLMMessage(
             role="user" if m["role"] == "student" else "assistant", content=m["content"],
@@ -323,7 +324,9 @@ async def run_unit(model: str, unit: Unit) -> Outcome:
                 student_text=unit.student_text)
     # tsk-1259: без эталона страж слеп к расчёту на производных числах
     # («45 + 7 − 3 = 49», сессия 104) — боевой путь эталон передаёт, стенд обязан тоже.
-    guard = TutorStreamGuard(mode=unit.mode, stem=unit.stem, answers=unit.answers)
+    # tsk-1342: и то, что ученик написал сам, — цитата его чисел не слив.
+    guard = TutorStreamGuard(mode=unit.mode, stem=unit.stem, answers=unit.answers,
+                             student_said=unit.student_texts)
     raw: list[str] = []
     shown = ""
     t0 = time.monotonic()
