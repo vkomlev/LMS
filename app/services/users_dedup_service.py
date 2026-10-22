@@ -105,7 +105,9 @@ async def find_duplicate_candidates(
     users_res = await db.execute(
         select(Users.id, Users.full_name).where(
             Users.is_active.is_(True), Users.full_name.is_not(None),
-        )
+        # tsk-996: в паре user_a — меньший id, равные по score пары — по id
+        # (сортировка ниже стабильна); раньше это решал план запроса.
+        ).order_by(Users.id)
     )
     users = users_res.all()
 

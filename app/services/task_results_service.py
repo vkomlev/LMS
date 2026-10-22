@@ -361,6 +361,9 @@ class TaskResultsService(BaseService[TaskResults]):
                    MAX(submitted_at) AS last_at
             FROM src
             GROUP BY task_id
+            -- tsk-996: порядок строк задаёт порядок уроков при равном first_at
+            -- (сортировка ниже стабильна) — фиксируем тот, что давал Sort.
+            ORDER BY task_id
         """)
         detail_rows = (await db.execute(detail_sql, params)).fetchall()
 

@@ -225,8 +225,8 @@ class TopicMastery:
 # сдачи по нему в базе остаются.
 _REAL_SUBS_CTE = """
 real_subs AS (
-    SELECT tr.user_id, tr.task_id, t.course_id, tr.received_at, tr.is_correct,
-           t.task_content->>'type' AS task_type
+    SELECT tr.id AS result_id, tr.user_id, tr.task_id, t.course_id, tr.received_at,
+           tr.is_correct, t.task_content->>'type' AS task_type
     FROM task_results tr
     JOIN tasks t ON t.id = tr.task_id AND t.is_active
     WHERE {real_student}
@@ -248,7 +248,9 @@ pace AS (
     SELECT course_id, task_id, task_type,
            EXTRACT(EPOCH FROM (
                received_at - LAG(received_at) OVER (
-                   PARTITION BY user_id, course_id ORDER BY received_at
+                   -- tsk-996: при равном received_at — по id сдачи, иначе
+                   -- нулевой промежуток доставался заданию по плану.
+                   PARTITION BY user_id, course_id ORDER BY received_at, result_id
                )
            )) AS gap_seconds
     FROM real_subs
@@ -498,7 +500,10 @@ async def topic_overview(db: AsyncSession, *, days: int = 90) -> dict:
     })).mappings().all()
 
     topics = [_build_topic(r) for r in rows]
-    topics.sort(key=lambda t: (t.signal == SIGNAL_OK, -t.wrong_rate, -t.submissions))
+    # tsk-996: строки SQL без порядка — равные темы добиваются course_id.
+    topics.sort(
+        key=lambda t: (t.signal == SIGNAL_OK, -t.wrong_rate, -t.submissions, t.course_id)
+    )
 
     total_with_tasks = int((await db.execute(text(
         "SELECT COUNT(DISTINCT course_id) FROM tasks WHERE is_active"
@@ -669,7 +674,7 @@ SELECT p.user_id AS student_id,
        (SELECT tasks_total FROM topic_tasks) AS tasks_total
 FROM per_student p
 JOIN users u ON u.id = p.user_id
-ORDER BY p.wrong_rate DESC, p.submissions DESC
+ORDER BY p.wrong_rate DESC, p.submissions DESC, p.user_id
 """
 
 

@@ -251,7 +251,8 @@ async def get_identities(db: AsyncSession, user_id: int) -> list[dict]:
     result = await db.execute(
         select(IdentityLink)
         .where(IdentityLink.user_id == user_id)
-        .order_by(IdentityLink.created_at.asc())
+        # tsk-996: бэкфил M2/M6 дал identity равный created_at — добивка id.
+        .order_by(IdentityLink.created_at.asc(), IdentityLink.id.asc())
     )
     items: list[dict] = []
     for link in result.scalars():
@@ -410,7 +411,7 @@ LEFT JOIN materials_total_per_root mt ON mt.root_course_id = uc.course_id
 LEFT JOIN materials_done_per_root  md ON md.root_course_id = uc.course_id
 LEFT JOIN last_active_per_root     la ON la.root_course_id = uc.course_id
 LEFT JOIN student_course_state    scs ON scs.course_id = uc.course_id AND scs.student_id = :user_id
-ORDER BY la.last_active_at DESC NULLS LAST, uc.order_number ASC NULLS LAST
+ORDER BY la.last_active_at DESC NULLS LAST, uc.order_number ASC NULLS LAST, uc.course_id
 """.replace("__LEARNING_PATH__", learning_path_results_filter("tr"))
 
 
@@ -486,7 +487,8 @@ WITH last_task AS (
     JOIN tasks t ON t.id = tr.task_id
     WHERE tr.user_id = :user_id
       AND {real_student_results_filter("tr")}
-    ORDER BY tr.received_at DESC NULLS LAST
+    -- tsk-996: пакетная проверка пишет равный received_at — добивка id.
+    ORDER BY tr.received_at DESC NULLS LAST, tr.id DESC
     LIMIT 1
 ),
 last_material AS (
@@ -495,7 +497,7 @@ last_material AS (
     JOIN materials m ON m.id = smp.material_id
     WHERE smp.student_id = :user_id AND smp.status = 'completed'
       AND {real_student_material_filter("smp")}
-    ORDER BY smp.completed_at DESC NULLS LAST
+    ORDER BY smp.completed_at DESC NULLS LAST, smp.material_id DESC
     LIMIT 1
 )
 SELECT * FROM (
@@ -503,7 +505,9 @@ SELECT * FROM (
     UNION ALL
     SELECT * FROM last_material
 ) U
-ORDER BY ts DESC NULLS LAST
+-- tsk-996: при равном ts — задание ('task' > 'material'), как и выходило
+-- у обычного плана (задание идёт первым в UNION ALL).
+ORDER BY ts DESC NULLS LAST, kind DESC
 LIMIT 1
 """
 
@@ -823,7 +827,9 @@ WHERE tr.user_id = :user_id
     OR (:filter = 'failed'         AND tr.is_correct = FALSE
                                    AND {learning_path_results_filter('tr')})
   )
-ORDER BY tr.received_at DESC
+-- tsk-996: ручные отметки и пакетная проверка дают равный received_at —
+-- без добивки строки прыгали между страницами.
+ORDER BY tr.received_at DESC, tr.id DESC
 LIMIT :limit OFFSET :offset
 """
 

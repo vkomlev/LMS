@@ -270,7 +270,11 @@ async def evaluate_rules_for_answer(
                 "SELECT id, trigger_event, condition, target_course_uid, refire_policy "
                 "FROM assignment_rule "
                 "WHERE is_active = true AND task_id = :task_id "
-                "AND trigger_event IN ('answer_value', 'task_failed')"
+                "AND trigger_event IN ('answer_value', 'task_failed') "
+                # tsk-996: каждое сработавшее правило зачисляет курс, а триггер
+                # ставит ему order_number = MAX+1 — порядок правил и есть порядок
+                # курсов в плане ученика. Без ORDER BY его решал план запроса.
+                "ORDER BY id"
             ),
             {"task_id": task_id},
         )
@@ -375,7 +379,9 @@ async def _evaluate_course_failed(
                 "SELECT id, condition, target_course_uid, refire_policy "
                 "FROM assignment_rule "
                 "WHERE is_active = true AND course_id = :course_id "
-                "AND trigger_event = 'course_failed'"
+                "AND trigger_event = 'course_failed' "
+                # tsk-996: порядок зачисления = порядок курсов в плане ученика.
+                "ORDER BY id"
             ),
             {"course_id": course_id},
         )
@@ -542,7 +548,9 @@ async def _evaluate_quiz_scale(
                 "SELECT id, condition, target_course_uid, refire_policy "
                 "FROM assignment_rule "
                 "WHERE is_active = true AND course_id = :course_id "
-                "AND trigger_event = 'quiz_scale'"
+                "AND trigger_event = 'quiz_scale' "
+                # tsk-996: порядок зачисления = порядок курсов в плане ученика.
+                "ORDER BY id"
             ),
             {"course_id": course_id},
         )
