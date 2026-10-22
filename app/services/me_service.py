@@ -1023,6 +1023,12 @@ WHERE cd.course_id = ANY(:tree_ids)
         AND scs.course_id = cd.required_course_id
         AND scs.state = 'COMPLETED'
   )
+-- tsk-996: порядок задан явно. Без ORDER BY порядок строк DISTINCT решает
+-- план: Sort+Unique даёт возрастание id, HashAggregate — порядок по хешу.
+-- План зависит от статистики таблиц и может смениться между двумя вызовами
+-- (на dev-базе — общий план подготовленного запроса с 6-го исполнения), и
+-- один и тот же ученик получал замки в разном порядке.
+ORDER BY cd.course_id, cd.required_course_id
 """
 
 

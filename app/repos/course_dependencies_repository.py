@@ -23,6 +23,11 @@ class CourseDependenciesRepository:
     ) -> List[Courses]:
         """
         Вернуть список курсов, от которых зависит данный course_id.
+
+        tsk-996: порядок — по id требуемого курса, явно. Движок next-item
+        отдаёт ученику ПЕРВУЮ незакрытую зависимость (`blocked_dependency`),
+        и без ORDER BY при двух незакрытых «какой курс пройти сначала» решал
+        план запроса, а не данные.
         """
         stmt = (
             select(Courses)
@@ -31,6 +36,7 @@ class CourseDependenciesRepository:
                 Courses.id == t_course_dependencies.c.required_course_id
             )
             .where(t_course_dependencies.c.course_id == course_id)
+            .order_by(t_course_dependencies.c.required_course_id)
         )
         res = await db.execute(stmt)
         return res.scalars().all()

@@ -28,7 +28,7 @@ tsk-662/1250 сохранён).
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from typing import Any, Awaitable, Callable, Optional
 from uuid import uuid4
 
 import pytest
@@ -649,3 +649,112 @@ def test_walk_steps_post_order_and_dedup():
     assert walk_steps(1, lambda c: children.get(c, [])) == [
         (1, HEAD), (2, HEAD), (4, HEAD), (4, TAIL), (2, TAIL), (3, HEAD), (3, TAIL), (1, TAIL),
     ]
+
+
+# ─── Порядок не зависит от плана запроса ────────────────────────────────────
+# Нестабильность `test_output_identical_with_switch_on_and_off[*-dependencies]`:
+# замки программы курса шли из `SELECT DISTINCT` без ORDER BY. Порядок строк
+# решал план: Sort+Unique (по id) или HashAggregate (по хешу). План зависит от
+# статистики таблиц; на dev-базе он менялся посреди теста — общий план
+# подготовленного запроса PostgreSQL берёт с 6-го исполнения, а третий снимок
+# теста и есть 6-й вызов («повторный прогон разошёлся»). На свежем клоне
+# шаблона план не менялся, поэтому изолированно тест был зелёным. Здесь план
+# задаётся настройками планировщика — без расчёта на статистику.
+
+_PLANS = {
+    "custom-sort": ("SET LOCAL enable_sort = on",),
+    "hashagg": ("SET LOCAL enable_sort = off",),
+    "generic": ("SET LOCAL plan_cache_mode = force_generic_plan",),
+    "heap-order": (
+        "SET LOCAL enable_indexscan = off", "SET LOCAL enable_bitmapscan = off",
+        "SET LOCAL enable_hashjoin = off", "SET LOCAL enable_mergejoin = off",
+        "SET LOCAL enable_sort = off",
+    ),
+}
+_PLAN_RESET = (
+    "RESET enable_sort", "RESET plan_cache_mode", "RESET enable_indexscan",
+    "RESET enable_bitmapscan", "RESET enable_hashjoin", "RESET enable_mergejoin",
+)
+
+
+async def _with_plan(db: Any, plan: str, call: Callable[[], Awaitable[Any]]) -> Any:
+    """Выполнить `call` при плане `plan` (настройки — до конца вызова)."""
+    for stmt in _PLANS[plan]:
+        await db.execute(text(stmt))
+    try:
+        _reset_caches(db)
+        return await call()
+    finally:
+        for stmt in _PLAN_RESET:
+            await db.execute(text(stmt))
+
+
+async def _require(db: Any, course_id: int, required_ids: list[int]) -> None:
+    """Зависимости в обратном порядке id: в куче (seq scan) строки идут так же."""
+    for req in sorted(required_ids, reverse=True):
+        await db.execute(
+            text("INSERT INTO course_dependencies (course_id, required_course_id) VALUES (:c, :r)"),
+            {"c": course_id, "r": req},
+        )
+
+
+@pytest.mark.asyncio
+async def test_syllabus_blocked_order_does_not_depend_on_plan(db):
+    """Замки программы курса — в одном порядке при любом плане (по id).
+
+    Строк блокировки семь: порядок хеша совпал бы с порядком id случайно с
+    ничтожной вероятностью, и без ORDER BY тест краснеет стабильно.
+    """
+    root = await _course(db, "замки корень")
+    sections = [await _course(db, f"замки раздел {i}") for i in range(1, 8)]
+    for order, child in enumerate(sections, start=1):
+        await _link(db, root, child, order)
+        await _task(db, child, 1)
+    first, second, *rest = sections
+    for blocked in rest[:-1]:
+        await _require(db, blocked, [first])
+    await _require(db, rest[-1], [first, second])
+    student = await _student(db, root)
+    await db.commit()
+    seen = {}
+    for plan in _PLANS:
+        res = await _with_plan(
+            db, plan,
+            lambda: me_service.get_syllabus_states(db, user_id=student, root_course_id=root),
+        )
+        seen[plan] = (
+            res["blocked_courses"],
+            [(d["course_id"], d["required_course_id"]) for d in res["blocked_dependencies"]],
+        )
+    expected_pairs = sorted([(b, first) for b in rest] + [(rest[-1], second)])
+    expected = (sorted(rest), expected_pairs)
+    assert all(v == expected for v in seen.values()), seen
+
+
+@pytest.mark.asyncio
+async def test_next_item_names_same_dependency_under_any_plan(db):
+    """При двух незакрытых требованиях движок называет одно и то же — меньший id.
+
+    Ученику это видно прямо: «Требуется завершить курс X». Раньше X зависел от
+    порядка строк `list_dependencies`, то есть от плана запроса.
+    """
+    required = [await _course(db, f"замки требуемый {i}") for i in (1, 2)]
+    root = await _course(db, "замки зависимый")
+    for course in (*required, root):
+        await _task(db, course, 1)
+    await _require(db, root, required)
+    # Новая версия строки ложится в конец кучи: при чтении без индекса меньший
+    # id идёт последним — как бывает на живой базе после правок курса.
+    await db.execute(
+        text("UPDATE courses SET title = title || ' ' WHERE id = :c"), {"c": min(required)}
+    )
+    student = await _student(db, *required, root)
+    await db.commit()
+    engine = LearningEngineService()
+    named = {}
+    for plan in _PLANS:
+        res = await _with_plan(
+            db, plan, lambda: engine.resolve_next_item(db, student, root_course_id=root)
+        )
+        named[plan] = (res.type, res.dependency_course_id)
+    assert set(named.values()) == {("blocked_dependency", min(required))}, named
