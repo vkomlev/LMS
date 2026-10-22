@@ -5,6 +5,8 @@
 """
 from __future__ import annotations
 
+from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -187,6 +189,21 @@ async def delete_group(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Тарифная группа не найдена")
 
 
+def _single_active_conflict(exc: IntegrityError) -> Optional[str]:
+    """tsk-996: понятный текст, если упёрлись в «один вариант без оси на группу».
+
+    Индекс `uq_pricing_tariff_single_active`: NULL-ось не ловится
+    `uq_pricing_tariff_axis_point`, а второй такой вариант задваивал план
+    на витрине. ``None`` — конфликт другой, текст остаётся прежним.
+    """
+    if "uq_pricing_tariff_single_active" in str(exc.orig):
+        return (
+            "В группе уже есть действующий вариант без оси — у группы может быть "
+            "только одна цена без уточнения. Выключите прежний или задайте ось"
+        )
+    return None
+
+
 @router.post(
     "/pricing/tariffs",
     response_model=PricingGroupRead,
@@ -208,7 +225,8 @@ async def create_tariff(
         await db.rollback()
         raise HTTPException(
             status.HTTP_409_CONFLICT,
-            "Такой вариант в группе уже есть либо группа не найдена",
+            _single_active_conflict(exc)
+            or "Такой вариант в группе уже есть либо группа не найдена",
         ) from exc
     return await _get_group_or_404(db, body.group_id)
 
@@ -237,7 +255,8 @@ async def update_tariff(
         # Частичный уникальный индекс: две действующие точки одной оси в группе.
         raise HTTPException(
             status.HTTP_409_CONFLICT,
-            "В группе уже есть действующий вариант на эту же точку оси",
+            _single_active_conflict(exc)
+            or "В группе уже есть действующий вариант на эту же точку оси",
         ) from exc
     if not ok:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Вариант тарифа не найден")

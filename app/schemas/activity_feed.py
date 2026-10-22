@@ -56,7 +56,17 @@ class ActivityFeedResponse(BaseModel):
     )
     next_before: Optional[datetime] = Field(
         default=None,
-        description="Курсор для следующей страницы («показать ещё») — передать в `before`",
+        description=(
+            "Устаревший курсор только по времени (передать в `before`): события с тем же "
+            "временем на стыке страниц теряются. Новым клиентам — `next_cursor`"
+        ),
+    )
+    next_cursor: Optional[str] = Field(
+        default=None,
+        description=(
+            "tsk-996: составной курсор следующей страницы («показать ещё») — передать "
+            "в `cursor` как есть. Непрозрачная строка; null, если событий на странице нет"
+        ),
     )
     on_lesson_student_ids: List[int] = Field(
         default_factory=list,

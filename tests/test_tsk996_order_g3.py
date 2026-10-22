@@ -373,7 +373,7 @@ async def test_activity_feed_top_same_under_any_plan(db):
     service = CurrentUser(id=0, is_service=True)
 
     async def top() -> list[int]:
-        page, _, _ = await feed.get_activity_feed(db, service, limit=3, student_id=student)
+        page, _, _, _ = await feed.get_activity_feed(db, service, limit=3, student_id=student)
         return [ev["task_id"] for ev in page if ev["type"] == "task_solved"]
 
     # task_results вставлены по возрастанию task_id: больший id работы — больший task_id.
