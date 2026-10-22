@@ -780,7 +780,7 @@ async def list_requests(
             text(
                 _REQUEST_SELECT
                 + where
-                + " ORDER BY (r.status = 'open') DESC, r.created_at DESC LIMIT :lim"
+                + " ORDER BY (r.status = 'open') DESC, r.created_at DESC, r.id DESC LIMIT :lim"
             ),
             params,
         )

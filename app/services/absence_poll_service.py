@@ -137,7 +137,8 @@ async def handle_answer(db: AsyncSession, *, student_id: int, channel: str, body
     poll = (await db.execute(text(
         "SELECT ap.id, ap.occurrence_id FROM absence_poll ap "
         "WHERE ap.student_id = :s AND ap.applied_at IS NULL AND ap.asked_at > :since "
-        "ORDER BY ap.asked_at DESC LIMIT 1"
+        # tsk-996: опросы одного тика делят asked_at — при ничьей свежий по id.
+        "ORDER BY ap.asked_at DESC, ap.id DESC LIMIT 1"
     ), {"s": student_id, "since": datetime.now(timezone.utc) - ANSWER_WINDOW})).first()
     if poll is None:
         return None

@@ -27,7 +27,9 @@ class OperatingHoursRepository:
     """CRUD часов работы школы (общие для всей школы, не per-teacher)."""
 
     async def list_all(self, db: AsyncSession) -> list[OperatingHours]:
-        res = await db.execute(select(OperatingHours).order_by(OperatingHours.weekday))
+        res = await db.execute(
+            select(OperatingHours).order_by(OperatingHours.weekday, OperatingHours.id)
+        )
         return list(res.scalars().all())
 
     async def get_by_weekday(self, db: AsyncSession, weekday: int) -> Optional[OperatingHours]:
@@ -45,7 +47,8 @@ class OperatingHoursRepository:
         stmt = select(OperatingHours).where(OperatingHours.weekday == weekday)
         if exclude_id is not None:
             stmt = stmt.where(OperatingHours.id != exclude_id)
-        res = await db.execute(stmt)
+        # tsk-996: первое пересечение попадает в текст 409 — порядок полный.
+        res = await db.execute(stmt.order_by(OperatingHours.id))
         return list(res.scalars().all())
 
     async def create(self, db: AsyncSession, **fields) -> OperatingHours:
@@ -100,7 +103,9 @@ class LessonSlotRepository:
                     ),
                 )
             )
-        res = await db.execute(stmt.order_by(LessonSlot.weekday, LessonSlot.start_time))
+        res = await db.execute(
+            stmt.order_by(LessonSlot.weekday, LessonSlot.start_time, LessonSlot.id)
+        )
         return list(res.scalars().all())
 
     async def create(self, db: AsyncSession, **fields) -> LessonSlot:
@@ -172,7 +177,7 @@ class LessonSlotTeacherRepository:
         stmt = select(LessonSlotTeacher).where(LessonSlotTeacher.slot_id == slot_id)
         if active_only:
             stmt = stmt.where(LessonSlotTeacher.is_active.is_(True))
-        res = await db.execute(stmt)
+        res = await db.execute(stmt.order_by(LessonSlotTeacher.id))
         return list(res.scalars().all())
 
     async def create(self, db: AsyncSession, **fields) -> LessonSlotTeacher:
@@ -208,7 +213,8 @@ class LessonOccurrenceTeacherRepository:
         )
         if active_only:
             stmt = stmt.where(LessonOccurrenceTeacher.is_active.is_(True))
-        res = await db.execute(stmt)
+        # tsk-996: первый ведущий решает, к чьему занятию присоединят ученика.
+        res = await db.execute(stmt.order_by(LessonOccurrenceTeacher.id))
         return list(res.scalars().all())
 
     async def create(self, db: AsyncSession, **fields) -> LessonOccurrenceTeacher:
@@ -238,7 +244,7 @@ class LessonSlotStudentRepository:
         stmt = select(LessonSlotStudent).where(LessonSlotStudent.slot_id == slot_id)
         if active_only:
             stmt = stmt.where(LessonSlotStudent.is_active.is_(True))
-        res = await db.execute(stmt)
+        res = await db.execute(stmt.order_by(LessonSlotStudent.id))
         return list(res.scalars().all())
 
     async def list_for_slots(
@@ -258,7 +264,7 @@ class LessonSlotStudentRepository:
         stmt = select(LessonSlotStudent).where(LessonSlotStudent.student_id == student_id)
         if active_only:
             stmt = stmt.where(LessonSlotStudent.is_active.is_(True))
-        res = await db.execute(stmt)
+        res = await db.execute(stmt.order_by(LessonSlotStudent.id))
         return list(res.scalars().all())
 
     async def create(self, db: AsyncSession, **fields) -> LessonSlotStudent:
@@ -327,7 +333,9 @@ class LessonOccurrenceRepository:
             stmt = stmt.where(LessonOccurrence.scheduled_at >= from_dt)
         if to_dt is not None:
             stmt = stmt.where(LessonOccurrence.scheduled_at <= to_dt)
-        stmt = stmt.order_by(LessonOccurrence.scheduled_at.asc()).limit(limit)
+        stmt = stmt.order_by(
+            LessonOccurrence.scheduled_at.asc(), LessonOccurrence.id.asc()
+        ).limit(limit)
         res = await db.execute(stmt)
         return list(res.scalars().all())
 
@@ -353,7 +361,9 @@ class LessonOccurrenceRepository:
         )
         if from_dt is not None:
             stmt = stmt.where(LessonOccurrence.scheduled_at >= from_dt)
-        stmt = stmt.order_by(LessonOccurrence.scheduled_at.asc()).limit(limit)
+        stmt = stmt.order_by(
+            LessonOccurrence.scheduled_at.asc(), LessonOccurrence.id.asc()
+        ).limit(limit)
         res = await db.execute(stmt)
         return list(res.scalars().all())
 
@@ -374,6 +384,7 @@ class LessonOccurrenceRepository:
                     LessonOccurrenceTeacher.occurrence_id.in_(occurrence_ids),
                     LessonOccurrenceTeacher.is_active.is_(True),
                 )
+                .order_by(LessonOccurrenceTeacher.id)
             )
         ).all()
         names_by_occurrence: dict[int, list[str]] = {}
@@ -440,9 +451,9 @@ class LessonOccurrenceParticipantRepository:
         self, db: AsyncSession, occurrence_id: int
     ) -> list[LessonOccurrenceParticipant]:
         res = await db.execute(
-            select(LessonOccurrenceParticipant).where(
-                LessonOccurrenceParticipant.occurrence_id == occurrence_id
-            )
+            select(LessonOccurrenceParticipant)
+            .where(LessonOccurrenceParticipant.occurrence_id == occurrence_id)
+            .order_by(LessonOccurrenceParticipant.id)
         )
         return list(res.scalars().all())
 
@@ -479,7 +490,9 @@ class LessonOccurrenceParticipantRepository:
             stmt = stmt.where(LessonOccurrence.scheduled_at >= from_dt)
         if to_dt is not None:
             stmt = stmt.where(LessonOccurrence.scheduled_at <= to_dt)
-        stmt = stmt.order_by(LessonOccurrence.scheduled_at.asc()).limit(limit)
+        stmt = stmt.order_by(
+            LessonOccurrence.scheduled_at.asc(), LessonOccurrence.id.asc()
+        ).limit(limit)
         res = await db.execute(stmt)
         return [(p, o) for p, o in res.all()]
 
@@ -554,6 +567,9 @@ class LessonOccurrenceParticipantRepository:
                 LessonOccurrenceParticipant.status == "scheduled",
                 LessonOccurrence.scheduled_at <= cutoff,
             )
+            # tsk-996: окна соседних занятий с запасом перекрываются — явку
+            # ставим идущему (раннему), при равном времени — по id.
+            .order_by(LessonOccurrence.scheduled_at.asc(), LessonOccurrence.id.asc())
         )
         res = await db.execute(stmt)
         for participant, occurrence in res.all():

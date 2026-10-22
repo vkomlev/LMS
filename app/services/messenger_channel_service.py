@@ -579,7 +579,8 @@ async def student_channels(db: AsyncSession, user_id: int) -> list[tuple[str, st
     """Активные внешние каналы ученика: [(канал, внешний id)], Telegram — по tg_id."""
     s = Settings()
     rows = (await db.execute(text(
-        "SELECT channel, external_id FROM messenger_link WHERE user_id = :u AND disabled_at IS NULL"
+        "SELECT channel, external_id FROM messenger_link WHERE user_id = :u AND disabled_at IS NULL "
+        "ORDER BY channel"
     ), {"u": user_id})).all()
     out = [(c, e) for c, e in rows if configured(c, s)]
     out = [(c, e) for c, e in out if c != "tg"]

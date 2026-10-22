@@ -296,7 +296,7 @@ async def schedule_plan(db: AsyncSession, student_id: int) -> SchedulePlan:
                   JOIN lesson_slot ls ON ls.id = lss.slot_id
                   LEFT JOIN users u ON u.id = ls.teacher_id
                  WHERE lss.student_id = :s AND lss.is_active AND ls.is_active
-                 ORDER BY ls.weekday, ls.start_time
+                 ORDER BY ls.weekday, ls.start_time, ls.id
                 """
             ),
             {"s": student_id},
@@ -499,6 +499,7 @@ async def _notify_marketers(
                     "  JOIN users u ON u.id = ur.user_id "
                     " WHERE r.name IN ('marketer', 'admin') "
                     "   AND u.is_active AND u.blocked_at IS NULL"
+                    " ORDER BY ur.user_id"
                 )
             )
         ).all()

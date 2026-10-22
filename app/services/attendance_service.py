@@ -178,7 +178,7 @@ SELECT lo.id, lo.scheduled_at, lop.status,
   JOIN lesson_occurrence lo ON lo.id = lop.occurrence_id
  WHERE lop.student_id = :student_id
    AND lo.scheduled_at >= :since AND lo.scheduled_at <= :until
- ORDER BY lo.scheduled_at
+ ORDER BY lo.scheduled_at, lo.id
 """
 
 

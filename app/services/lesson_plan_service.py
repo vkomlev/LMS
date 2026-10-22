@@ -203,7 +203,7 @@ async def _load_unasked_absences(
                 "           AND lo2.scheduled_at >= lo.scheduled_at "
                 "           AND lo2.scheduled_at < :before"
                 "      ) "
-                "ORDER BY lo.scheduled_at DESC"
+                "ORDER BY lo.scheduled_at DESC, lo.id DESC"
             ),
             {
                 "ids": student_ids,
@@ -278,7 +278,9 @@ async def _load_recent_achievements(
                 "FROM user_achievements ua "
                 "JOIN achievements a ON a.id = ua.achievement_id "
                 "WHERE ua.user_id = ANY(:ids) AND ua.earned_at >= :since "
-                "ORDER BY ua.user_id, ua.earned_at DESC"
+                # tsk-996: вехи одного прохода делят earned_at — при ничьей по
+                # achievement_id (выбор порядка — оператор может пересмотреть).
+                "ORDER BY ua.user_id, ua.earned_at DESC, ua.achievement_id DESC"
             ),
             {"ids": student_ids, "since": now - timedelta(days=_WINS_LOOKBACK_DAYS)},
         )
