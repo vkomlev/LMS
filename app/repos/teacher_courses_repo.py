@@ -59,11 +59,13 @@ class TeacherCoursesRepository:
             stmt = stmt.where(t_teacher_courses.c.course_id == course_id)
         
         # Сортировка
+        # tsk-996: после ключа — PK связи в том же направлении (полный порядок страниц).
         sort_column = getattr(t_teacher_courses.c, sort_by, t_teacher_courses.c.linked_at)
+        keys = (sort_column, t_teacher_courses.c.teacher_id, t_teacher_courses.c.course_id)
         if order.lower() == "asc":
-            stmt = stmt.order_by(sort_column.asc())
+            stmt = stmt.order_by(*(k.asc() for k in keys))
         else:
-            stmt = stmt.order_by(sort_column.desc())
+            stmt = stmt.order_by(*(k.desc() for k in keys))
         
         stmt = stmt.offset(skip).limit(limit)
         result = await db.execute(stmt)

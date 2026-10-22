@@ -41,14 +41,17 @@ class UserCoursesRepository(BaseRepository[UserCourses]):
         """
         stmt = select(UserCourses).where(UserCourses.user_id == user_id)
         
+        # tsk-996: course_id — добивка; движок (resolve_next_item без корня)
+        # обходит курсы в этом порядке, и при равных ключах «следующий» прыгал.
         if order_by_order:
             # Сортировка по order_number (NULL в конце)
             stmt = stmt.order_by(
                 UserCourses.order_number.asc().nulls_last(),
-                UserCourses.added_at.asc()
+                UserCourses.added_at.asc(),
+                UserCourses.course_id.asc(),
             )
         else:
-            stmt = stmt.order_by(UserCourses.added_at.asc())
+            stmt = stmt.order_by(UserCourses.added_at.asc(), UserCourses.course_id.asc())
         
         result = await db.execute(stmt)
         return list(result.scalars().all())
@@ -87,7 +90,7 @@ class UserCoursesRepository(BaseRepository[UserCourses]):
             stmt = select(UserCourses).where(
                 UserCourses.user_id == user_id,
                 UserCourses.course_id.in_(course_ids)
-            )
+            ).order_by(UserCourses.course_id)  # tsk-996: как скан PK
             result = await db.execute(stmt)
             return list(result.scalars().all())
         
@@ -104,7 +107,7 @@ class UserCoursesRepository(BaseRepository[UserCourses]):
             existing_stmt = select(UserCourses).where(
                 UserCourses.user_id == user_id,
                 UserCourses.course_id.in_(existing_course_ids)
-            )
+            ).order_by(UserCourses.course_id)  # tsk-996
             existing_result = await db.execute(existing_stmt)
             existing_objs = list(existing_result.scalars().all())
             return created_objs + existing_objs
@@ -150,7 +153,7 @@ class UserCoursesRepository(BaseRepository[UserCourses]):
         stmt = select(UserCourses).where(
             UserCourses.user_id == user_id,
             UserCourses.course_id.in_(updated_course_ids)
-        )
+        ).order_by(UserCourses.course_id)  # tsk-996: как скан PK
         result = await db.execute(stmt)
         return list(result.scalars().all())
 
@@ -176,7 +179,7 @@ class UserCoursesRepository(BaseRepository[UserCourses]):
         stmt = (
             select(UserCourses)
             .where(UserCourses.course_id == course_id)
-            .order_by(UserCourses.added_at.asc())
+            .order_by(UserCourses.added_at.asc(), UserCourses.user_id.asc())  # tsk-996
             .limit(limit)
             .offset(offset)
         )

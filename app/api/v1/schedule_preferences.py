@@ -173,7 +173,7 @@ async def list_pending_schedule_preference_reminders(
                 "SELECT n.id, n.modified_at, n.kind, n.title, n.content, n.payload, n.read_at "
                 "  FROM notifications n "
                 " WHERE n.user_id = :uid AND n.kind = :kind "
-                " ORDER BY n.modified_at ASC LIMIT :lim"
+                " ORDER BY n.modified_at ASC, n.id ASC LIMIT :lim"
             ),
             {
                 "uid": student_id,

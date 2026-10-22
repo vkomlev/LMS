@@ -97,7 +97,7 @@ async def list_pending_lesson_reminders(
             "WHERE n.user_id = :uid "
             "  AND n.kind = 'lesson_reminder' "
             f"  {since_clause}"  # nosec B608 — since_clause из закрытого набора (либо "", либо литерал с :since bind)
-            "ORDER BY n.modified_at ASC "
+            "ORDER BY n.modified_at ASC, n.id ASC "
             "LIMIT :limit"
         ),
         params,

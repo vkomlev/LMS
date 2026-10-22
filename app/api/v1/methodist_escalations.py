@@ -114,7 +114,7 @@ async def list_pending_escalations(
             # tsk-1338: сигнал «нужно повторение» тоже доставляет бот.
             "'learning_gap_escalated') "
             f"  {since_clause}"  # nosec B608 — since_clause из закрытого набора (либо "", либо литерал с :since bind)
-            "ORDER BY n.modified_at DESC "
+            "ORDER BY n.modified_at DESC, n.id DESC "
             "LIMIT :limit"
         ),
         params,

@@ -179,6 +179,8 @@ class CoursesRepository(BaseRepository[Courses]):
             .outerjoin(t_course_parents, Courses.id == t_course_parents.c.course_id)
             .where(t_course_parents.c.course_id.is_(None))
             .options(selectinload(Courses.parent_courses))
+            # tsk-996: по id — как давал привычный seq scan; anti-join через хеш его не держит
+            .order_by(Courses.id)
         )
         result = await db.execute(stmt)
         return list(result.scalars().all())
@@ -225,7 +227,7 @@ class CoursesRepository(BaseRepository[Courses]):
             select(Courses)
             .outerjoin(t_course_parents, Courses.id == t_course_parents.c.course_id)
             .where(*conditions)
-            .order_by(Courses.title)
+            .order_by(Courses.title, Courses.id)  # tsk-996: одноимённые курсы — по id
             .offset(offset)
             .limit(limit)
         )

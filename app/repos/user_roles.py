@@ -24,6 +24,7 @@ class UserRolesRepository:
             select(Roles)
             .join(t_user_roles, Roles.id == t_user_roles.c.role_id)
             .where(t_user_roles.c.user_id == user_id)
+            .order_by(Roles.id)  # tsk-996
         )
         result = await db.execute(stmt)
         return result.scalars().all()
