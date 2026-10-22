@@ -307,7 +307,7 @@ JOIN users u ON u.id = c.id
 LEFT JOIN sig ON sig.curator_id = c.id
 LEFT JOIN overdue ON overdue.curator_id = c.id
 LEFT JOIN stale_reviews ON stale_reviews.curator_id = c.id
-ORDER BY u.full_name
+ORDER BY u.full_name, c.id
 """
 
 

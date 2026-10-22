@@ -357,7 +357,7 @@ async def list_course_pricing(db: AsyncSession) -> list[CoursePricingRead]:
                   LEFT JOIN course_pricing cp ON cp.course_id = c.id
                   LEFT JOIN pricing_group pg ON pg.id = cp.group_id
                  WHERE parents.course_id IS NULL
-                 ORDER BY (cp.sale_status = 'paid') DESC NULLS LAST, c.title
+                 ORDER BY (cp.sale_status = 'paid') DESC NULLS LAST, c.title, c.id
                 """
             )
         )

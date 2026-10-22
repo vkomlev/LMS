@@ -148,7 +148,7 @@ async def list_due(db: AsyncSession, limit: int = 50) -> List[DueReminder]:
                 QuizFunnelBotLead.trial_requested_at.is_(None),
                 QuizFunnelBotLead.tg_id.is_not(None),
             )
-            .order_by(QuizFunnelBotLead.next_reminder_at)
+            .order_by(QuizFunnelBotLead.next_reminder_at, QuizFunnelBotLead.id)
             .limit(limit)
         )
     ).all()

@@ -239,13 +239,15 @@ async def _fetch_debtors(
                   -- бы со справочником при первом новом тарифе-архиве
                   -- (урок tsk-610). Подписок без даты конца может оказаться
                   -- несколько — берём последнюю начавшуюся, как это делает
-                  -- расчёт начислений.
+                  -- расчёт начислений. Сейчас открытая подписка одна
+                  -- (uq_student_subscription_active); `s.id DESC` — добивка как в
+                  -- pricing_service, чтобы выбор не решал план (tsk-996).
                   LEFT JOIN LATERAL (
                         SELECT p.course_work
                           FROM student_subscription s
                           JOIN subscription_plan p ON p.id = s.plan_id
                          WHERE s.student_id = ch.student_id AND s.ends_on IS NULL
-                         ORDER BY s.starts_on DESC
+                         ORDER BY s.starts_on DESC, s.id DESC
                          LIMIT 1
                   ) plan ON TRUE
                  -- Слитые и заблокированные учётки не тревожим: за ними уже нет
@@ -261,7 +263,7 @@ async def _fetch_debtors(
                    -- трактовать пустоту как уход значило бы выкинуть из
                    -- рассылки всех, кому тариф просто не успели поставить.
                    AND COALESCE(plan.course_work, TRUE) = :course_work
-                 ORDER BY u.full_name, ch.period
+                 ORDER BY u.full_name, ch.period, ch.student_id, pg.name
                 """
             ),
             {

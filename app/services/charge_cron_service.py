@@ -175,7 +175,7 @@ SELECT u.id                                   AS student_id,
            SELECT 1 FROM student_monthly_charge ch
             WHERE ch.student_id = u.id AND ch.period = :period
        )
- ORDER BY u.full_name
+ ORDER BY u.full_name, u.id
 """
 
 

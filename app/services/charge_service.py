@@ -1251,7 +1251,7 @@ async def list_charges(db: AsyncSession, *, period: date) -> list[dict]:
                            AND a.period = ch.period
                   ) adj ON TRUE
                  WHERE ch.period = :p
-                 ORDER BY u.full_name, pg.name
+                 ORDER BY u.full_name, pg.name, ch.student_id
                 """
             ),
             {"p": period},
@@ -1429,7 +1429,7 @@ async def find_shifted_past_months(
                  WHERE ch.period < :cur
                    AND ch.frozen_total_minor IS NOT NULL
                    AND ch.frozen_total_minor <> ({_TOTAL_MINOR_SQL})
-                 ORDER BY ch.period DESC, u.full_name
+                 ORDER BY ch.period DESC, u.full_name, pg.name, ch.id
                 """
             ),
             {"cur": current},
@@ -1492,7 +1492,7 @@ async def list_overrides(db: AsyncSession) -> list[dict]:
                 "  FROM student_price_override o "
                 "  JOIN users u ON u.id = o.student_id "
                 "  JOIN pricing_group pg ON pg.id = o.group_id "
-                " ORDER BY u.full_name, pg.name"
+                " ORDER BY u.full_name, pg.name, o.student_id"
             )
         )
     ).all()

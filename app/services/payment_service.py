@@ -1077,7 +1077,7 @@ async def export_confirmed(
                   LEFT JOIN pricing_group pg ON pg.id = p.group_id
                  WHERE p.status = 'confirmed'
                    AND COALESCE(p.paid_on, p.created_at::date) BETWEEN :d1 AND :d2
-                 ORDER BY on_date, u.full_name
+                 ORDER BY on_date, u.full_name, p.id
                 """
             ),
             {"d1": date_from, "d2": date_to},

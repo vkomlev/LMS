@@ -349,7 +349,7 @@ async def purchasable_plans(db: AsyncSession) -> list[dict]:
                 "  JOIN pricing_tariff t ON t.group_id = g.id AND t.is_active "
                 "                       AND t.match_kind IS NULL "
                 " WHERE p.is_active AND NOT p.lessons "
-                " ORDER BY t.price_minor"
+                " ORDER BY t.price_minor, p.sort_order, p.code, t.id"
             )
         )
     ).mappings().all()
@@ -794,7 +794,7 @@ async def manual_pricing_state(db: AsyncSession, student_id: int) -> dict:
                 "  JOIN pricing_group g ON g.id = ch.group_id "
                 " WHERE ch.student_id = :sid AND ch.status = 'open' "
                 "   AND ch.manual_minor IS NOT NULL "
-                " ORDER BY ch.period"
+                " ORDER BY ch.period, g.name"
             ),
             {"sid": student_id},
         )
