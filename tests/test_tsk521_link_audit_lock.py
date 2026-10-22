@@ -26,8 +26,7 @@ from app.core.config import Settings
 from app.services import link_audit_service
 
 
-@pytest.mark.asyncio
-async def test_second_worker_backs_off(monkeypatch):
+async def _backs_off_scenario(monkeypatch) -> None:
     """Пока один worker держит блокировку, второй отступает и работу не дублирует.
 
     Блокировка живёт, пока идёт проход, поэтому держатель ждёт, пока второй тик
@@ -47,6 +46,15 @@ async def test_second_worker_backs_off(monkeypatch):
         link_audit_service.material_files_storage, "material_file_exists", _exists
     )
     monkeypatch.setattr(link_audit_service, "_cas_media_exists", _exists)
+
+    # Уведомления тик в этом тесте не пишет вовсе: модуль ходит в общую базу
+    # настоящими коммитами, и убирать за собой уведомления по виду значило бы
+    # стереть и чужие (боевой тик dev-сервера, соседи). Проверке блокировки
+    # рассылка не нужна: отступивший worker до неё не доходит в любом случае.
+    async def _notify_nobody(db, **_kwargs) -> int:  # noqa: ANN001
+        return 0
+
+    monkeypatch.setattr(link_audit_service, "_notify_methodists", _notify_nobody)
 
     engine = create_async_engine(Settings().database_url, poolclass=NullPool)
     factory = async_sessionmaker(engine, expire_on_commit=False)
@@ -92,10 +100,10 @@ async def test_second_worker_backs_off(monkeypatch):
         assert locked.count(True) == 1, (first, second)
         assert locked.count(False) == 1, (first, second)
 
-        # Отступивший worker не делает работу: ни проверок, ни уведомлений.
+        # Отступивший worker не делает работу. Рассылка заглушена (см. выше),
+        # поэтому признак — число проверок: до рассылки он не доходит вовсе.
         backed_off = first if first["locked"] is False else second
         assert backed_off["checked"] == 0, backed_off
-        assert backed_off["notified"] == 0, backed_off
     finally:
         # Модуль без транзакционной изоляции — убираем за собой руками.
         async with factory() as db:
@@ -105,9 +113,51 @@ async def test_second_worker_backs_off(monkeypatch):
                 )
             if "course" in ids:
                 await db.execute(text("DELETE FROM courses WHERE id = :c"), {"c": ids["course"]})
-            await db.execute(
-                text("DELETE FROM notifications WHERE kind = :k"),
-                {"k": link_audit_service.NOTIFICATION_KIND},
-            )
+            await db.commit()
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_second_worker_backs_off(monkeypatch):
+    """Второй worker отступает, пока первый держит блокировку."""
+    await _backs_off_scenario(monkeypatch)
+
+
+@pytest.mark.asyncio
+async def test_cleanup_keeps_foreign_notifications(monkeypatch):
+    """Чужое уведомление о битых ссылках переживает прогон модуля.
+
+    Раньше `finally` стирал ВСЕ уведомления этого вида настоящим коммитом —
+    в том числе боевого тика dev-сервера и соседних тестов. Чужое здесь
+    старое (3 дня) — отсрочка рассылки его не видит, и тик идёт обычным путём.
+    """
+    engine = create_async_engine(Settings().database_url, poolclass=NullPool)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    marker = f"tsk521-lock-чужое-{uuid.uuid4().hex[:12]}"
+    try:
+        async with factory() as db:
+            foreign_id = (
+                await db.execute(
+                    text(
+                        "INSERT INTO notifications (content, kind, title, modified_at) "
+                        "VALUES (:c, :k, 'чужое', now() - interval '3 days') RETURNING id"
+                    ),
+                    {"c": marker, "k": link_audit_service.NOTIFICATION_KIND},
+                )
+            ).scalar_one()
+            await db.commit()
+
+        await _backs_off_scenario(monkeypatch)
+
+        async with factory() as db:
+            survived = (
+                await db.execute(
+                    text("SELECT content FROM notifications WHERE id = :i"), {"i": foreign_id}
+                )
+            ).scalar_one_or_none()
+        assert survived == marker, "уборка теста стёрла чужое уведомление"
+    finally:
+        async with factory() as db:
+            await db.execute(text("DELETE FROM notifications WHERE content = :c"), {"c": marker})
             await db.commit()
         await engine.dispose()
