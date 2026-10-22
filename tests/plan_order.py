@@ -14,7 +14,7 @@
     assert_same(seen)
 
 `run_under_plans` возвращает {план: результат}. Настройки действуют только
-до конца вызова и снимаются в `finally` (внешняя транзакция теста остаётся).
+до конца вызова: снимаются после него (при ошибке — откатом транзакции теста).
 """
 from __future__ import annotations
 
@@ -57,16 +57,20 @@ async def with_plan(
     *,
     before: Optional[Callable[[], None]] = None,
 ) -> Any:
-    """Выполнить `call` при плане `plan`; `before` — сброс кешей перед вызовом."""
+    """Выполнить `call` при плане `plan`; `before` — сброс кешей перед вызовом.
+
+    Настройки снимаются только при успехе: если вызов сломал транзакцию,
+    RESET упал бы сам и спрятал исходную ошибку, а `SET LOCAL` и так уйдёт
+    с откатом внешней транзакции теста.
+    """
     for stmt in PLANS[plan]:
         await db.execute(text(stmt))
-    try:
-        if before is not None:
-            before()
-        return await call()
-    finally:
-        for stmt in _RESET:
-            await db.execute(text(stmt))
+    if before is not None:
+        before()
+    result = await call()
+    for stmt in _RESET:
+        await db.execute(text(stmt))
+    return result
 
 
 async def run_under_plans(

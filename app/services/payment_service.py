@@ -493,7 +493,7 @@ async def _payments_by_charge(
                        reviewed_at, created_at
                   FROM student_payment
                  WHERE student_id = :s AND purpose = 'monthly'
-                 ORDER BY created_at DESC
+                 ORDER BY created_at DESC, id DESC
                 """
             ),
             {"s": student_id},

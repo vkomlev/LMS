@@ -574,7 +574,7 @@ async def list_student_pricing(
                                      AS m(student_id, group_id)
                               JOIN users u ON u.id = m.student_id AND u.is_active
                               JOIN pricing_group pg ON pg.id = m.group_id
-                             ORDER BY u.full_name
+                             ORDER BY u.full_name, m.student_id, m.group_id
                             """
                         ),
                         {

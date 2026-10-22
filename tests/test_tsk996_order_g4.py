@@ -286,12 +286,16 @@ async def test_dependencies_assigned_in_id_order_under_any_plan(db):
 
 
 async def test_course_anchor_same_under_any_plan(db):
-    """Задания, закрытые одной пачкой: якорь — задание с бОльшим id."""
+    """Задания, закрытые одной пачкой: якорь — задание с меньшим id.
+
+    Сдачи вставлены в обратном порядке заданий: в куче первым идёт последнее.
+    Заданий семь — порядок хеша совпал бы с порядком id лишь случайно.
+    """
     course = await _course(db, "якорь")
-    tasks = [await _task(db, course, position=i) for i in (1, 2, 3)]
+    tasks = [await _task(db, course, position=i) for i in range(1, 8)]
     material = await _material(db, course)
     student = await _user(db)
-    result_ids = [await _result(db, student, t, at=SAME) for t in tasks]
+    result_ids = [await _result(db, student, t, at=SAME) for t in reversed(tasks)]
     await db.execute(
         text(
             "INSERT INTO student_material_progress (student_id, material_id, status, completed_at) "
@@ -305,7 +309,7 @@ async def test_course_anchor_same_under_any_plan(db):
     items.append({"item_type": "material", "item_id": material})
 
     seen = await run_under_plans(db, lambda: anchor_for(db, student_id=student, items=items))
-    assert_same(seen, ("task", tasks[-1]))
+    assert_same(seen, ("task", tasks[0]))
 
 
 async def test_last_position_same_under_any_plan(db):
@@ -474,6 +478,18 @@ def _ranked(ids: list[int]) -> list[int]:
 TOP = 4
 
 
+async def _assert_top_same(db, call, ours: list[int]) -> None:
+    """Top-N под любым планом один и тот же — начало полного списка.
+
+    Ожидание берётся из полного списка, а не из своих данных: чужие кандидаты
+    в базе прогона (если есть) тест не ломают. Свои — в полном списке в
+    порядке `_ranked`.
+    """
+    full = await call(limit=10**6)
+    assert [x for x in full if x in ours] == _ranked(ours), full
+    assert_same(await run_under_plans(db, call), full[:TOP])
+
+
 async def test_topic_gaps_ties_same_under_any_plan(db):
     """Темы с равными долей и числом сдач на границе LIMIT — по id темы."""
     courses = [await _course(db, f"тема {i}") for i in range(TIES)]
@@ -486,13 +502,13 @@ async def test_topic_gaps_ties_same_under_any_plan(db):
     await move_to_heap_end(db, "task_results", first_ids[0])
     await db.commit()
 
-    async def call() -> list[int]:
+    async def call(limit: int = TOP) -> list[int]:
         gaps = await learning_gaps_service.find_topic_gaps(
-            db, min_submissions=1, min_students=1, threshold=0.0, limit=TOP
+            db, min_submissions=1, min_students=1, threshold=0.0, limit=limit
         )
         return [g.course_id for g in gaps]
 
-    assert_same(await run_under_plans(db, call), _ranked(courses)[:TOP])
+    await _assert_top_same(db, call, courses)
 
 
 async def test_ai_authorship_ties_same_under_any_plan(db):
@@ -512,13 +528,13 @@ async def test_ai_authorship_ties_same_under_any_plan(db):
     await move_to_heap_end(db, "task_results", first_ids[0])
     await db.commit()
 
-    async def call() -> list[int]:
+    async def call(limit: int = TOP) -> list[int]:
         rows = await sig.find_ai_authorship_gaps(
-            db, days=30, min_flagged=1, min_share=0.0, limit=TOP
+            db, days=30, min_flagged=1, min_share=0.0, limit=limit
         )
         return [r["student_id"] for r in rows]
 
-    assert_same(await run_under_plans(db, call), _ranked(students)[:TOP])
+    await _assert_top_same(db, call, students)
 
 
 async def test_dropout_risk_ties_same_under_any_plan(db):
@@ -555,11 +571,11 @@ async def test_dropout_risk_ties_same_under_any_plan(db):
     await move_to_heap_end(db, "users", students[0])
     await db.commit()
 
-    async def call() -> list[int]:
-        rows = await sig.find_dropout_risk(db, days=14, limit=TOP)
+    async def call(limit: int = TOP) -> list[int]:
+        rows = await sig.find_dropout_risk(db, days=14, limit=limit)
         return [r["student_id"] for r in rows]
 
-    assert_same(await run_under_plans(db, call), _ranked(students)[:TOP])
+    await _assert_top_same(db, call, students)
 
 
 async def test_dropout_by_activity_ties_same_under_any_plan(db):
@@ -577,11 +593,11 @@ async def test_dropout_by_activity_ties_same_under_any_plan(db):
     await move_to_heap_end(db, "users", students[0])
     await db.commit()
 
-    async def call() -> list[int]:
-        rows = await sig.find_dropout_risk_by_activity(db, days=14, limit=TOP)
+    async def call(limit: int = TOP) -> list[int]:
+        rows = await sig.find_dropout_risk_by_activity(db, days=14, limit=limit)
         return [r["student_id"] for r in rows]
 
-    assert_same(await run_under_plans(db, call), _ranked(students)[:TOP])
+    await _assert_top_same(db, call, students)
 
 
 async def test_signal_feed_ties_same_under_any_plan(db):

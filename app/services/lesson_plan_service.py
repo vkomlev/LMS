@@ -312,7 +312,7 @@ async def _load_open_help(
                 "LEFT JOIN tasks tk ON tk.id = h.task_id "
                 "WHERE h.student_id = ANY(:ids) AND h.status = 'open' "
                 "  AND h.created_at >= COALESCE(:since, '-infinity'::timestamptz) "
-                "ORDER BY h.created_at DESC"
+                "ORDER BY h.created_at DESC, h.id DESC"
             ),
             {"ids": student_ids, "since": since},
         )

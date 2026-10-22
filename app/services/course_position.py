@@ -81,8 +81,9 @@ async def anchor_for(
                        AND {real_student_material_filter('smp')}
                 ) x
                 -- tsk-996: пакетная сдача даёт равный `at` — без добивки якорь
-                -- выбирал план. При равенстве — задание, затем больший id.
-                ORDER BY at DESC NULLS LAST, kind DESC, id DESC
+                -- выбирал план. При равенстве — задание с меньшим id: так
+                -- выходило при обычном плане (GroupAggregate по task_id).
+                ORDER BY at DESC NULLS LAST, kind DESC, id
                 LIMIT 1
                 """
             ),
