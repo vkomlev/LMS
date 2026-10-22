@@ -33,6 +33,7 @@
 """
 from __future__ import annotations
 
+import ast
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -254,15 +255,121 @@ def test_upstream_gate_target_exists(rel_path: str) -> None:
         f"{rel_path}: системная точка обязана упираться в системный рубильник, "
         f"а {upstream} его не держит"
     )
-    module = rel_path.removesuffix(".py").replace("/", ".")
-    package, _, name = module.rpartition(".")
     upstream_source = (APP_ROOT.parent / upstream).read_text(encoding="utf-8")
-    imported = (
-        f"from {package} import {name}" in upstream_source
-        or f"import {module}" in upstream_source
-    )
-    assert imported, (
+    assert _module_of(rel_path) in _imported_modules(upstream_source, upstream), (
         f"{rel_path}: {upstream} это ядро не импортирует — его рубильник ничего не выключает"
+    )
+
+
+def _module_of(rel_path: str) -> str:
+    """`app/services/x.py` → `app.services.x` (`__init__.py` — сам пакет)."""
+    return rel_path.removesuffix(".py").removesuffix("/__init__").replace("/", ".")
+
+
+def _imported_modules(source: str, rel_path: str) -> set[str]:
+    """Модули, которые файл импортирует, — разбором `ast`, а не подстрокой.
+
+    Подстрока не видит импорта с псевдонимом, относительного и многострочного,
+    а `ast` видит и их, и отложенный импорт внутри функции. Для `from X import
+    Y` в набор попадают и `X`, и `X.Y`: `Y` может оказаться модулем пакета.
+
+    Не видны динамический импорт (`importlib.import_module("…")`) и обращение
+    к подмодулю как к атрибуту пакета после `import app.services.ai_tutor`.
+    В `app/` так ядро не зовут; появится — расширять здесь.
+    """
+    package = _module_of(rel_path)
+    if not rel_path.endswith("/__init__.py"):
+        package = package.rpartition(".")[0]
+    found: set[str] = set()
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Import):
+            found.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            base = node.module or ""
+            if node.level:
+                parts = package.split(".")
+                parent = ".".join(parts[: len(parts) - node.level + 1])
+                base = f"{parent}.{base}" if base else parent
+            found.add(base)
+            found.update(f"{base}.{alias.name}" for alias in node.names)
+    return found
+
+
+#: Системное ядро — системная точка без своего рубильника, выключаемая
+#: рубильником вызывающего (tsk-1312: гейт роли наставника).
+_SYSTEM_CORES = sorted(
+    p for p, point in AI_SPEND_POINTS.items()
+    if not point.capability and point.gated_upstream
+)
+
+
+def _core_importers_outside_system(sources: dict[str, str]) -> dict[str, list[str]]:
+    """Кто импортирует системное ядро, не будучи системной точкой реестра.
+
+    Ядро тратит деньги без ученика: нет ни двери прав, ни квоты
+    (`student_ai_quota` списывает только `ai_tutor`), учёт идёт с
+    `student_id = NULL`. Ученическая ручка, позвавшая его напрямую, получила бы
+    ученику модель мимо лимита — а реестр бы этого не заметил: файл ручки в
+    нём уже есть, с возможностью и дверью. Поэтому импортировать ядро в `app/`
+    вправе только системные точки реестра (у них нет `capability`).
+    """
+    system = {p for p, point in AI_SPEND_POINTS.items() if not point.capability}
+    cores = {_module_of(core): core for core in _SYSTEM_CORES}
+    bad: dict[str, list[str]] = {}
+    for rel_path, source in sources.items():
+        if rel_path in system:
+            continue
+        hit = sorted(cores[m] for m in _imported_modules(source, rel_path) if m in cores)
+        if hit:
+            bad[rel_path] = hit
+    return bad
+
+
+def test_system_core_imported_only_by_system_points() -> None:
+    """Системное ядро не зовут ученические ручки и прочий код `app/` (tsk-301).
+
+    `test_upstream_gate_target_exists` проверяет, что системный вызывающий у
+    ядра ЕСТЬ, но не что он ЕДИНСТВЕННЫЙ: импорт ядра из ученической ручки
+    прошёл бы молча. Скрипты вне `app/` (ручной стенд) не проверяются — их
+    запускает оператор, а не ученик.
+    """
+    assert _SYSTEM_CORES, "в реестре нет системного ядра — проверять нечего"
+    sources = {
+        _rel(path): path.read_text(encoding="utf-8") for path in APP_ROOT.rglob("*.py")
+    }
+    bad = _core_importers_outside_system(sources)
+    assert not bad, (
+        "системное ядро ИИ импортируется мимо системных точек (расход без "
+        f"двери прав и квоты): {bad}"
+    )
+
+
+@pytest.mark.parametrize(
+    "rel_path, planted",
+    [
+        ("app/api/v1/ai_tutor.py", "from app.services.ai_tutor.role_gate import judge\n"),
+        ("app/api/v1/ai_tutor.py", "from app.services.ai_tutor import role_gate as rg\n"),
+        ("app/api/v1/learning.py", "import app.services.ai_tutor.role_gate\n"),
+        ("app/services/ai_tutor/service.py", "from .role_gate import judge\n"),
+        ("app/services/ai_tutor/__init__.py", "from . import role_gate\n"),
+        (
+            "app/services/code_review_service.py",
+            "async def f():\n    from ..services.ai_tutor import role_gate\n",
+        ),
+    ],
+)
+def test_system_core_guard_catches_planted_import(rel_path: str, planted: str) -> None:
+    """Подсаженный импорт ядра в ученическую ручку страж правда ловит.
+
+    Сегодня таких импортов нет, и главный тест зелёный, — без этой проверки
+    нельзя отличить «нарушений нет» от «страж их не видит».
+    """
+    core = "app/services/ai_tutor/role_gate.py"
+    assert core in _SYSTEM_CORES
+    assert _core_importers_outside_system({rel_path: planted}) == {rel_path: [core]}
+    # Системному вызывающему импорт ядра разрешён.
+    assert not _core_importers_outside_system(
+        {"app/services/llm_chain_check_cron_service.py": planted}
     )
 
 
