@@ -279,7 +279,10 @@ async def link_audit_tick(
                     "SELECT 'material' AS kind, id, content::text AS body "
                     "FROM materials WHERE is_active "
                     "UNION ALL "
-                    "SELECT 'task', id, task_content::text FROM tasks WHERE is_active"
+                    "SELECT 'task', id, task_content::text FROM tasks WHERE is_active "
+                    # tsk-996: порядок строк решает, какие «где встретилась»
+                    # попадут в уведомление: материалы, затем задания, по id.
+                    "ORDER BY 1, 2"
                 )
             )
         ).fetchall()

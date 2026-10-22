@@ -64,7 +64,7 @@ async def list_for_user(
     offset: int,
     unread_only: bool,
 ) -> list[Notifications]:
-    """Список inbox-записей пользователя, ORDER BY modified_at DESC."""
+    """Список inbox-записей пользователя, ORDER BY modified_at DESC, id DESC."""
     # SQL template с переключаемым WHERE-фрагментом; в template вставляется
     # только литерал из 2 вариантов (никакого user-input). Все динамические
     # значения идут через bind (user_id, limit, offset).
@@ -75,7 +75,7 @@ async def list_for_user(
         "FROM notifications "
         "WHERE user_id = :user_id "
         + unread_clause + " "  # nosec B608 — unread_clause из 2 литералов, не user-input
-        "ORDER BY modified_at DESC "
+        "ORDER BY modified_at DESC, id DESC "
         "LIMIT :limit OFFSET :offset"
     )
     result = await db.execute(

@@ -254,7 +254,7 @@ async def get_or_create_help_request(
     tsk-1384: `stuck_reason` (`note` | `no_start`) — тоже только при создании.
     """
     r = await db.execute(
-        text("SELECT id FROM help_requests WHERE event_id = :event_id LIMIT 1"),
+        text("SELECT id FROM help_requests WHERE event_id = :event_id ORDER BY id LIMIT 1"),
         {"event_id": event_id},
     )
     row = r.fetchone()
@@ -370,7 +370,7 @@ async def get_or_create_material_help_request(
             WHERE student_id = :student_id AND material_id = :material_id
               AND status = 'open' AND request_type = 'manual_help'
               AND created_at >= :since
-            ORDER BY created_at DESC LIMIT 1
+            ORDER BY created_at DESC, id DESC LIMIT 1
         """),
         {"student_id": student_id, "material_id": material_id, "since": since},
     )
@@ -717,7 +717,7 @@ async def create_oral_help_request(
                     SELECT id FROM help_requests
                     WHERE student_id = :student_id AND task_id = :task_id
                       AND status = 'open' AND request_type = 'manual_help'
-                    ORDER BY created_at DESC LIMIT 1
+                    ORDER BY created_at DESC, id DESC LIMIT 1
                 """),
                 {"student_id": student_id, "task_id": task_id},
             )
@@ -856,12 +856,12 @@ def _order_by_sort(sort: str) -> str:
     то, что случилось последним.
     """
     if sort == "due_at":
-        return "ORDER BY hr.due_at ASC NULLS LAST, hr.created_at ASC"
+        return "ORDER BY hr.due_at ASC NULLS LAST, hr.created_at ASC, hr.id ASC"
     if sort == "created_at":
-        return "ORDER BY hr.created_at ASC"
+        return "ORDER BY hr.created_at ASC, hr.id ASC"
     if sort == "closed_at":
         return "ORDER BY hr.closed_at DESC NULLS LAST, hr.id DESC"
-    return "ORDER BY hr.priority ASC, hr.due_at ASC NULLS LAST, hr.created_at ASC"
+    return "ORDER BY hr.priority ASC, hr.due_at ASC NULLS LAST, hr.created_at ASC, hr.id ASC"
 
 
 async def list_help_requests(
@@ -1116,7 +1116,7 @@ async def get_help_request_detail(
             FROM help_request_replies hrr
             JOIN messages m ON m.id = hrr.message_id
             WHERE hrr.request_id = :request_id
-            ORDER BY hrr.created_at ASC
+            ORDER BY hrr.created_at ASC, hrr.id ASC
         """),
         {"request_id": request_id},
     )
@@ -1765,7 +1765,7 @@ async def get_student_help_request(
                     SELECT hrr.message_id, hrr.body, hrr.created_at, m.attachment_id
                     FROM help_request_replies hrr
                     JOIN messages m ON m.id = hrr.message_id
-                    WHERE hrr.request_id = :request_id ORDER BY hrr.created_at ASC
+                    WHERE hrr.request_id = :request_id ORDER BY hrr.created_at ASC, hrr.id ASC
                 """),
                 {"request_id": request_id},
             )

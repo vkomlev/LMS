@@ -98,7 +98,9 @@ async def load_stuck_tasks(
                 "    WHERE ok.user_id = w.user_id AND ok.task_id = w.task_id "
                 "      AND ok.is_correct = true "
                 ") "
-                "ORDER BY w.last_at DESC"
+                # tsk-996: первое задание ученика называется преподавателю —
+                # при равном last_at выбор не должен зависеть от плана.
+                "ORDER BY w.last_at DESC, w.task_id DESC"
             ),
             {
                 "ids": student_ids,

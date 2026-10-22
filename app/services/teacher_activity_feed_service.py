@@ -151,7 +151,7 @@ async def _fetch_task_solved(
                 JOIN tasks t ON t.id = tr.task_id
                 JOIN users u ON u.id = tr.user_id
                 WHERE {where_sql}
-                ORDER BY tr.submitted_at DESC
+                ORDER BY tr.submitted_at DESC, tr.id DESC
                 LIMIT :limit
             """),  # nosec B608 — where_sql из закрытого набора литералов модуля
             params,
@@ -227,7 +227,7 @@ async def _fetch_help_requested(
                 LEFT JOIN tasks t ON t.id = hr.task_id
                 LEFT JOIN materials m ON m.id = hr.material_id
                 WHERE {where_sql}
-                ORDER BY hr.created_at DESC
+                ORDER BY hr.created_at DESC, hr.id DESC
                 LIMIT :limit
             """),  # nosec B608 — where_sql из закрытого набора литералов модуля
             params,
@@ -309,7 +309,7 @@ async def _fetch_material_studied(
                 JOIN materials m ON m.id = smp.material_id
                 JOIN users u ON u.id = smp.student_id
                 WHERE {where_sql}
-                ORDER BY smp.completed_at DESC
+                ORDER BY smp.completed_at DESC, smp.student_id DESC, smp.material_id DESC
                 LIMIT :limit
             """),  # nosec B608 — where_sql из закрытого набора литералов модуля
             params,
@@ -382,7 +382,7 @@ async def _fetch_student_idle(
                 LEFT JOIN tasks t ON t.id = e.task_id
                 LEFT JOIN materials m ON m.id = e.material_id
                 WHERE {where_sql}
-                ORDER BY e.detected_at DESC
+                ORDER BY e.detected_at DESC, e.id DESC
                 LIMIT :limit
             """),  # nosec B608 — where_sql из закрытого набора литералов модуля
             params,

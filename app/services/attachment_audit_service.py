@@ -73,7 +73,9 @@ async def _collect_references(db: AsyncSession) -> Dict[Reference, Owner]:
     """Собирает все ссылки на файлы вложений из базы.
 
     Один владелец на ссылку: если одно и то же имя встретилось дважды,
-    достаточно любого — запись нужна, чтобы человек нашёл, откуда она.
+    достаточно одного — запись нужна, чтобы человек нашёл, откуда она.
+    Берётся строка с меньшим id (tsk-996): иначе владелец в уведомлении
+    зависел бы от плана запроса и менялся от прогона к прогону.
     """
     found: Dict[Reference, Owner] = {}
 
@@ -83,7 +85,8 @@ async def _collect_references(db: AsyncSession) -> Dict[Reference, Owner]:
                 "SELECT id, answer_json FROM task_results "
                 "WHERE jsonb_array_length("
                 "  COALESCE(answer_json->'response'->'meta'->'attachments', '[]'::jsonb)"
-                ") > 0"
+                ") > 0 "
+                "ORDER BY id"
             )
         )
     ).fetchall()
@@ -93,7 +96,10 @@ async def _collect_references(db: AsyncSession) -> Dict[Reference, Owner]:
 
     rows = (
         await db.execute(
-            text("SELECT id, attachment_id FROM messages WHERE attachment_id IS NOT NULL")
+            text(
+                "SELECT id, attachment_id FROM messages WHERE attachment_id IS NOT NULL "
+                "ORDER BY id"
+            )
         )
     ).fetchall()
     for message_id, name in rows:
@@ -102,7 +108,10 @@ async def _collect_references(db: AsyncSession) -> Dict[Reference, Owner]:
 
     rows = (
         await db.execute(
-            text("SELECT id, receipt_file FROM student_payment WHERE receipt_file IS NOT NULL")
+            text(
+                "SELECT id, receipt_file FROM student_payment WHERE receipt_file IS NOT NULL "
+                "ORDER BY id"
+            )
         )
     ).fetchall()
     for payment_id, name in rows:
