@@ -330,6 +330,14 @@ class Settings:
             "NODE_AFTER_CHILDREN_ENABLED", "false"
         ).lower() in ("true", "1", "yes")
 
+        # tsk-1403: программа курса кладёт хвост узла (задания без якоря) в
+        # раздел-дубль после подразделов, как его выдаёт обход. false — прежняя
+        # раскладка. Читается через
+        # `app.services.node_sequence.syllabus_tail_after_children_enabled`.
+        self.syllabus_tail_after_children_enabled: bool = os.getenv(
+            "SYLLABUS_TAIL_AFTER_CHILDREN_ENABLED", "false"
+        ).lower() in ("true", "1", "yes")
+
         # tsk-302 этап 3: фоновая оценка кода ученика (чистота + признак
         # ИИ-авторства). Синхронно её делать нельзя — это внешний вызов модели
         # в пользовательском пути приёма ответа; ученик ждать не должен, а к

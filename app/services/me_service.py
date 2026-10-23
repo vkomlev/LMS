@@ -22,6 +22,8 @@ from app.services.requirement_override_service import reason_payload, resolve_le
 from app.services.node_sequence import (
     anchor_of,
     in_after_part,
+    in_tail,
+    syllabus_tail_after_children_enabled,
     node_sequence,
     node_sequence_enabled,
 )
@@ -1445,6 +1447,14 @@ async def get_syllabus_states(
 
     items: list[dict] = []
     after_sections: set[int] = set()
+    # tsk-1403: при рубильнике весь хвост узла с подразделами (и задания без
+    # якоря, включая влитые прозрачных подкурсов) уходит в раздел-дубль после
+    # потомков — туда, где его выдаёт обход next-item. Узел без подразделов
+    # дубля не получает: у него хвост и так идёт после головы.
+    tail_to_after = syllabus_tail_after_children_enabled()
+    with_children = {
+        m["parent_course_id"] for m in section_meta if m.get("parent_course_id") is not None
+    }
     if node_sequence_enabled():
         # tsk-996: порядок элементов раздела — общая `node_sequence` (голова,
         # затем хвост узла; подразделы идут своими секциями, как и прежде).
@@ -1485,7 +1495,9 @@ async def get_syllabus_states(
                     item = _syllabus_material_item(mats[entry.item_id], graced, reasons)
                 else:
                     item = _syllabus_task_item(tsks[entry.item_id], graced, reasons)
-                if in_after_part(entry):
+                if in_after_part(entry) or (
+                    tail_to_after and cid in with_children and in_tail(entry)
+                ):
                     item["part"] = "after"
                     after_items.append(item)
                 else:

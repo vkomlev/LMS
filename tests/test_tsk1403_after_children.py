@@ -352,3 +352,72 @@ async def test_bulk_upsert_placement_only_when_given(db):
         await db.execute(text("DELETE FROM materials WHERE course_id=:c"), {"c": course})
         await db.execute(text("DELETE FROM courses WHERE id=:c"), {"c": course})
         await db.commit()
+
+
+# ─── Программа курса: хвост узла после подразделов ──────────────────────────
+
+
+@pytest.fixture
+def tail_on(monkeypatch):
+    monkeypatch.setenv("SYLLABUS_TAIL_AFTER_CHILDREN_ENABLED", "true")
+
+
+@pytest.mark.asyncio
+async def test_syllabus_tail_goes_after_children(db, tree, flag_on, tail_on):
+    """Задание хвоста без якоря — в разделе-дубле после разбора, как в обходе."""
+    data = await me_service.get_syllabus_states(
+        db, user_id=tree["user_id"], root_course_id=tree["root"]
+    )
+    root_items = [
+        (i.get("material_id") or i.get("task_id"), i.get("part"))
+        for i in data["items"] if i["course_id"] == tree["root"]
+    ]
+    assert root_items == [
+        (tree["intro"], None),
+        (tree["after"], "after"), (tree["rt"], "after"), (tree["rt2"], "after"),
+    ]
+    child_items = [i for i in data["items"] if i["course_id"] == tree["child"]]
+    assert all("part" not in i for i in child_items)
+
+
+@pytest.mark.asyncio
+async def test_syllabus_tail_only_flag(db, tree, flag_off, tail_on):
+    """Только рубильник программы: хвост (с якорным заданием) после подразделов."""
+    data = await me_service.get_syllabus_states(
+        db, user_id=tree["user_id"], root_course_id=tree["root"]
+    )
+    assert [(s["course_id"], s.get("part")) for s in data["sections"]] == [
+        (tree["root"], None), (tree["child"], None), (tree["root"], "after"),
+    ]
+    root_items = [
+        (i.get("material_id") or i.get("task_id"), i.get("part"))
+        for i in data["items"] if i["course_id"] == tree["root"]
+    ]
+    # Без NODE_AFTER разбор и его задание — в голове, хвост — только rt2.
+    assert root_items == [
+        (tree["intro"], None), (tree["after"], None), (tree["rt"], None),
+        (tree["rt2"], "after"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_syllabus_tail_leaf_node_no_duplicate(db, flag_on, tail_on):
+    """Узел без подразделов раздела-дубля не получает."""
+    user_id = await _student(db)
+    root = await _course(db, "tsk1403 лист программы")
+    m1 = await _material(db, course_id=root, order_position=1, title="m1")
+    t1 = await _task(db, course_id=root, order_position=1)
+    await _enroll(db, user_id, root)
+    await db.commit()
+    try:
+        data = await me_service.get_syllabus_states(db, user_id=user_id, root_course_id=root)
+        assert len(data["sections"]) == 1
+        assert all("part" not in i for i in data["items"])
+        assert [i.get("material_id") or i.get("task_id") for i in data["items"]] == [m1, t1]
+    finally:
+        await db.execute(text("DELETE FROM user_courses WHERE user_id=:u"), {"u": user_id})
+        await db.execute(text("DELETE FROM identity_link WHERE user_id=:u"), {"u": user_id})
+        await db.execute(text("DELETE FROM tasks WHERE course_id=:c"), {"c": root})
+        await db.execute(text("DELETE FROM materials WHERE course_id=:c"), {"c": root})
+        await db.execute(text("DELETE FROM courses WHERE id=:c"), {"c": root})
+        await db.commit()

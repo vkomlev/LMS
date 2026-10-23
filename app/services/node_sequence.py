@@ -132,6 +132,23 @@ def node_after_children_enabled() -> bool:
     return os.getenv("NODE_AFTER_CHILDREN_ENABLED", "false").lower() in ("true", "1", "yes")
 
 
+def syllabus_tail_after_children_enabled() -> bool:
+    """Рубильник `SYLLABUS_TAIL_AFTER_CHILDREN_ENABLED` (tsk-1403, по умолчанию выкл.).
+
+    Программа курса показывает задания хвоста узла (без якоря) в его
+    разделе-дубле после подразделов — там, где их выдаёт обход. ``false`` —
+    прежняя раскладка: хвост в разделе узла над подразделами.
+    """
+    return os.getenv("SYLLABUS_TAIL_AFTER_CHILDREN_ENABLED", "false").lower() in (
+        "true", "1", "yes",
+    )
+
+
+def in_tail(entry: "NodeEntry") -> bool:
+    """Элемент хвоста узла — после подразделов (вся часть SEG_TAIL)."""
+    return entry.key[0] == SEG_TAIL
+
+
 def is_after(placement: Optional[str]) -> bool:
     """Материал действует как «после подразделов» (признак + рубильник)."""
     return placement == PLACEMENT_AFTER and node_after_children_enabled()
@@ -382,6 +399,8 @@ __all__ = [
     "node_after_children_enabled",
     "is_after",
     "in_after_part",
+    "in_tail",
+    "syllabus_tail_after_children_enabled",
     "PLACEMENT_AFTER",
     "PLACEMENT_HEAD",
     "order_key",
