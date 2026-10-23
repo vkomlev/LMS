@@ -263,6 +263,11 @@ async def _issue_homework_after_lessons(db: AsyncSession) -> int:
                    AND lo.scheduled_at + (lo.duration_minutes || ' minutes')::interval
                        <= :now
                    AND lo.scheduled_at >= :since
+                 -- tsk-996: из двух закончившихся занятий ДЗ выдаёт первое
+                 -- обработанное (второе гасит «уже выдавали»). Порядок —
+                 -- хронологический, как давал типичный план (куча в порядке
+                 -- вставки); раньше он зависел от плана.
+                 ORDER BY lo.scheduled_at, lo.id, lop.student_id
                 """
             ),
             {"now": now_utc, "since": now_utc - timedelta(hours=_HOMEWORK_LOOKBACK_HOURS)},

@@ -1095,7 +1095,8 @@ orphaned AS (
                AND ( (d.kind = 'task' AND hi2.kind = 'task' AND hi2.task_id = d.task_id)
                   OR (d.kind = 'material' AND hi2.kind = 'material' AND hi2.material_id = d.material_id) )
        )
-     ORDER BY kind, coalesce(task_id, material_id), cancelled_at
+     -- tsk-996: при равном cancelled_at tier — из более ранней выдачи.
+     ORDER BY kind, coalesce(task_id, material_id), cancelled_at, old_homework_id
 )
 SELECT o.kind, o.task_id, o.material_id, o.tier,
        t.course_id AS task_course_id,
@@ -1111,6 +1112,8 @@ SELECT o.kind, o.task_id, o.material_id, o.tier,
   LEFT JOIN materials m ON m.id = o.material_id
   LEFT JOIN courses tc ON tc.id = t.course_id
   LEFT JOIN courses mc ON mc.id = m.course_id
+ -- tsk-996: позиции нумеруются по порядку строк — он задан явно, а не планом.
+ ORDER BY o.kind, coalesce(o.task_id, o.material_id)
 """.replace(
     "{done_after_home}",
     _item_done_sql(

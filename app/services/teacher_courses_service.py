@@ -56,22 +56,24 @@ class TeacherCoursesService:
             .where(t_teacher_courses.c.course_id == course_id)
         )
         
-        # Сортировка
+        # Сортировка. tsk-996: Users.id — добивка в том же направлении: при равном
+        # linked_at (массовая привязка) `resolve_assigned_teacher` (limit=1) брал
+        # разного преподавателя, а страницы перекрывались.
         if sort_by == "email":
             if order.lower() == "asc":
-                stmt = stmt.order_by(Users.email.asc())
+                stmt = stmt.order_by(Users.email.asc(), Users.id.asc())
             else:
-                stmt = stmt.order_by(Users.email.desc())
+                stmt = stmt.order_by(Users.email.desc(), Users.id.desc())
         elif sort_by == "full_name":
             if order.lower() == "asc":
-                stmt = stmt.order_by(Users.full_name.asc().nulls_last())
+                stmt = stmt.order_by(Users.full_name.asc().nulls_last(), Users.id.asc())
             else:
-                stmt = stmt.order_by(Users.full_name.desc().nulls_last())
+                stmt = stmt.order_by(Users.full_name.desc().nulls_last(), Users.id.desc())
         else:  # linked_at (по умолчанию)
             if order.lower() == "asc":
-                stmt = stmt.order_by(t_teacher_courses.c.linked_at.asc())
+                stmt = stmt.order_by(t_teacher_courses.c.linked_at.asc(), Users.id.asc())
             else:
-                stmt = stmt.order_by(t_teacher_courses.c.linked_at.desc())
+                stmt = stmt.order_by(t_teacher_courses.c.linked_at.desc(), Users.id.desc())
         
         # Пагинация
         stmt = stmt.offset(skip).limit(limit)
@@ -116,22 +118,22 @@ class TeacherCoursesService:
             .where(t_teacher_courses.c.teacher_id == teacher_id)
         )
         
-        # Сортировка
+        # Сортировка; tsk-996: Courses.id — добивка в том же направлении
         if sort_by == "title":
             if order.lower() == "asc":
-                stmt = stmt.order_by(Courses.title.asc())
+                stmt = stmt.order_by(Courses.title.asc(), Courses.id.asc())
             else:
-                stmt = stmt.order_by(Courses.title.desc())
+                stmt = stmt.order_by(Courses.title.desc(), Courses.id.desc())
         elif sort_by == "created_at":
             if order.lower() == "asc":
-                stmt = stmt.order_by(Courses.created_at.asc())
+                stmt = stmt.order_by(Courses.created_at.asc(), Courses.id.asc())
             else:
-                stmt = stmt.order_by(Courses.created_at.desc())
+                stmt = stmt.order_by(Courses.created_at.desc(), Courses.id.desc())
         else:  # linked_at (по умолчанию)
             if order.lower() == "asc":
-                stmt = stmt.order_by(t_teacher_courses.c.linked_at.asc())
+                stmt = stmt.order_by(t_teacher_courses.c.linked_at.asc(), Courses.id.asc())
             else:
-                stmt = stmt.order_by(t_teacher_courses.c.linked_at.desc())
+                stmt = stmt.order_by(t_teacher_courses.c.linked_at.desc(), Courses.id.desc())
         
         # Пагинация
         stmt = stmt.offset(skip).limit(limit)

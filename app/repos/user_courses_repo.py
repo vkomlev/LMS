@@ -8,6 +8,16 @@ from app.models.user_courses import UserCourses
 from app.repos.base import BaseRepository
 
 
+#: Порядок курсов ученика — как в ``GET /users/{id}/courses``: ``order_number``
+#: (NULL в конце), затем время привязки и ``course_id``. tsk-996: им же
+#: упорядочены ответы bulk-привязки и reorder, раньше шедшие по ``course_id``.
+_COURSE_ORDER = (
+    UserCourses.order_number.asc().nulls_last(),
+    UserCourses.added_at.asc(),
+    UserCourses.course_id.asc(),
+)
+
+
 class UserCoursesRepository(BaseRepository[UserCourses]):
     """
     Репозиторий для связей пользователей с курсами.
@@ -41,14 +51,13 @@ class UserCoursesRepository(BaseRepository[UserCourses]):
         """
         stmt = select(UserCourses).where(UserCourses.user_id == user_id)
         
+        # tsk-996: course_id — добивка; движок (resolve_next_item без корня)
+        # обходит курсы в этом порядке, и при равных ключах «следующий» прыгал.
         if order_by_order:
             # Сортировка по order_number (NULL в конце)
-            stmt = stmt.order_by(
-                UserCourses.order_number.asc().nulls_last(),
-                UserCourses.added_at.asc()
-            )
+            stmt = stmt.order_by(*_COURSE_ORDER)
         else:
-            stmt = stmt.order_by(UserCourses.added_at.asc())
+            stmt = stmt.order_by(UserCourses.added_at.asc(), UserCourses.course_id.asc())
         
         result = await db.execute(stmt)
         return list(result.scalars().all())
@@ -80,36 +89,26 @@ class UserCoursesRepository(BaseRepository[UserCourses]):
         existing_course_ids = {row[0] for row in existing_result.fetchall()}
         
         # Создаем только новые связи
-        new_course_ids = [cid for cid in course_ids if cid not in existing_course_ids]
+        # dict.fromkeys — без повторов: [5, 5] дал бы две вставки одного PK (500)
+        new_course_ids = list(dict.fromkeys(
+            cid for cid in course_ids if cid not in existing_course_ids
+        ))
         
-        if not new_course_ids:
-            # Все курсы уже привязаны, возвращаем существующие
-            stmt = select(UserCourses).where(
-                UserCourses.user_id == user_id,
-                UserCourses.course_id.in_(course_ids)
-            )
-            result = await db.execute(stmt)
-            return list(result.scalars().all())
-        
-        # Создаем новые связи (order_number будет установлен триггером автоматически)
-        objs_in = [
-            {"user_id": user_id, "course_id": course_id, "order_number": None}
-            for course_id in new_course_ids
-        ]
-        
-        created_objs = await self.batch_create(db, objs_in)
-        
-        # Если были существующие курсы, получаем их тоже
-        if existing_course_ids:
-            existing_stmt = select(UserCourses).where(
-                UserCourses.user_id == user_id,
-                UserCourses.course_id.in_(existing_course_ids)
-            )
-            existing_result = await db.execute(existing_stmt)
-            existing_objs = list(existing_result.scalars().all())
-            return created_objs + existing_objs
-        
-        return created_objs
+        if new_course_ids:
+            # Создаем новые связи (order_number будет установлен триггером автоматически)
+            objs_in = [
+                {"user_id": user_id, "course_id": course_id, "order_number": None}
+                for course_id in new_course_ids
+            ]
+            await self.batch_create(db, objs_in)
+
+        # Новые и уже привязанные курсы — одним списком в порядке GET (tsk-996)
+        stmt = select(UserCourses).where(
+            UserCourses.user_id == user_id,
+            UserCourses.course_id.in_(course_ids)
+        ).order_by(*_COURSE_ORDER).execution_options(populate_existing=True)
+        result = await db.execute(stmt)
+        return list(result.scalars().all())
 
     async def reorder_user_courses(
         self,
@@ -150,7 +149,10 @@ class UserCoursesRepository(BaseRepository[UserCourses]):
         stmt = select(UserCourses).where(
             UserCourses.user_id == user_id,
             UserCourses.course_id.in_(updated_course_ids)
-        )
+        ).order_by(*_COURSE_ORDER).execution_options(populate_existing=True)
+        # tsk-996: порядок как в GET /users/{id}/courses; populate_existing —
+        # order_number из базы, а не из закешированных сессией объектов
+        # (expire_on_commit=False, UPDATE выше идёт мимо identity map).
         result = await db.execute(stmt)
         return list(result.scalars().all())
 
@@ -176,7 +178,7 @@ class UserCoursesRepository(BaseRepository[UserCourses]):
         stmt = (
             select(UserCourses)
             .where(UserCourses.course_id == course_id)
-            .order_by(UserCourses.added_at.asc())
+            .order_by(UserCourses.added_at.asc(), UserCourses.user_id.asc())  # tsk-996
             .limit(limit)
             .offset(offset)
         )

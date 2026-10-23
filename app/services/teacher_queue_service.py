@@ -297,7 +297,7 @@ async def claim_next_help_request(
                   AND {HELP_REQUESTS_ACL_SQL}
                   {type_cond}
                   {course_cond}
-                ORDER BY hr.priority ASC, hr.due_at ASC NULLS LAST, hr.created_at ASC
+                ORDER BY hr.priority ASC, hr.due_at ASC NULLS LAST, hr.created_at ASC, hr.id ASC
                 LIMIT 1
                 FOR UPDATE OF hr SKIP LOCKED
             )
@@ -697,7 +697,7 @@ async def claim_next_review(
                   AND {REVIEW_ACL_SQL}
                   {course_cond}
                   {user_cond}
-                ORDER BY tr.submitted_at ASC
+                ORDER BY tr.submitted_at ASC, tr.id ASC
                 LIMIT 1
                 FOR UPDATE OF tr SKIP LOCKED
             )
@@ -1580,7 +1580,7 @@ async def list_pending_reviews(
             JOIN tasks t ON t.id = tr.task_id
             LEFT JOIN users u ON u.id = tr.user_id
             {where_sql}
-            ORDER BY tr.submitted_at ASC
+            ORDER BY tr.submitted_at ASC, tr.id ASC
             LIMIT :limit OFFSET :offset
         """),  # nosec B608 — where_sql/has_evidence_sql из закрытого набора литералов модуля
         page_params,

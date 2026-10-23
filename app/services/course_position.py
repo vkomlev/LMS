@@ -80,7 +80,10 @@ async def anchor_for(
                        AND smp.material_id = ANY(CAST(:material_ids AS int[]))
                        AND {real_student_material_filter('smp')}
                 ) x
-                ORDER BY at DESC NULLS LAST
+                -- tsk-996: пакетная сдача даёт равный `at` — без добивки якорь
+                -- выбирал план. При равенстве — задание с меньшим id: так
+                -- выходило при обычном плане (GroupAggregate по task_id).
+                ORDER BY at DESC NULLS LAST, kind DESC, id
                 LIMIT 1
                 """
             ),

@@ -298,7 +298,7 @@ async def test_episode_appears_in_teacher_feed(db, db_session_factory, scene):
     await db.flush()
     await lesson_idle_cron_tick(session_factory=db_session_factory)
 
-    events, _, _ = await teacher_activity_feed_service.get_activity_feed(
+    events, _, _, _ = await teacher_activity_feed_service.get_activity_feed(
         db, CurrentUser(id=scene["teacher_id"], is_service=False), limit=50
     )
     idle = [e for e in events if e["type"] == "student_idle"]
@@ -308,7 +308,7 @@ async def test_episode_appears_in_teacher_feed(db, db_session_factory, scene):
 
     stranger_id, _ = await _new_user(db, "teacher", "stranger")
     await db.flush()
-    other_events, _, _ = await teacher_activity_feed_service.get_activity_feed(
+    other_events, _, _, _ = await teacher_activity_feed_service.get_activity_feed(
         db, CurrentUser(id=stranger_id, is_service=False), limit=50
     )
     assert [e for e in other_events if e["type"] == "student_idle"] == []
@@ -326,7 +326,7 @@ async def test_resolved_episode_reads_as_returned(db, db_session_factory, scene)
     await db.flush()
     await lesson_idle_cron_tick(session_factory=db_session_factory)
 
-    events, _, _ = await teacher_activity_feed_service.get_activity_feed(
+    events, _, _, _ = await teacher_activity_feed_service.get_activity_feed(
         db, CurrentUser(id=scene["teacher_id"], is_service=False), limit=50
     )
     idle = [e for e in events if e["type"] == "student_idle"]

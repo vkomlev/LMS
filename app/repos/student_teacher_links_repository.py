@@ -22,7 +22,12 @@ class StudentTeacherLinksRepository:
         student_id: int,
     ) -> List[Users]:
         """
-        Вернуть всех преподавателей для заданного студента.
+        Вернуть всех преподавателей для заданного студента (по id преподавателя).
+
+        tsk-996: порядок задан явно — `resolve_assigned_teacher` берёт первого,
+        и заявка о помощи уходила разным преподавателям в зависимости от плана.
+        По teacher_id — как давали привычные планы (скан PK (student_id,
+        teacher_id) либо хеш-соединение по куче users ≈ id).
         """
         stmt = (
             select(Users)
@@ -31,6 +36,7 @@ class StudentTeacherLinksRepository:
                 Users.id == t_student_teacher_links.c.teacher_id,
             )
             .where(t_student_teacher_links.c.student_id == student_id)
+            .order_by(t_student_teacher_links.c.teacher_id)
         )
         res = await db.execute(stmt)
         return res.scalars().all()
@@ -50,6 +56,7 @@ class StudentTeacherLinksRepository:
                 Users.id == t_student_teacher_links.c.student_id,
             )
             .where(t_student_teacher_links.c.teacher_id == teacher_id)
+            .order_by(t_student_teacher_links.c.student_id)  # tsk-996
         )
         res = await db.execute(stmt)
         return res.scalars().all()

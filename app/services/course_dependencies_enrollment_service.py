@@ -117,7 +117,10 @@ async def ensure_dependencies_assigned(
     res = await db.execute(
         text(
             "SELECT c.id, EXISTS (SELECT 1 FROM course_parents cp WHERE cp.course_id = c.id) "
-            "FROM courses c WHERE c.id = ANY(:ids)"
+            "FROM courses c WHERE c.id = ANY(:ids) "
+            # tsk-996: порядок `assignable` уходит в INSERT, и триггер даёт
+            # order_number в этом порядке — без ORDER BY его решал план.
+            "ORDER BY c.id"
         ),
         {"ids": required},
     )

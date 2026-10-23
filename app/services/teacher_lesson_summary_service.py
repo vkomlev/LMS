@@ -16,7 +16,7 @@
 "выполнено/с 1 раза/запросил помощь" за окно между занятиями и не отдаёт
 "предыдущее occurrence ученика + серию пропусков подряд" — это единственные
 новые SQL-агрегации модуля, `get_student_progress` — не оконный снепшот,
-`get_activity_feed` поддерживает только курсор `before`.
+`get_activity_feed` — постраничная лента по курсору, а не оконный срез.
 
 Важно: в реальном потоке сдачи ответа (``app/api/v1/attempts.py``)
 ``task_results.count_retry`` НИКОГДА не передаётся явно — всегда дефолт 0,
@@ -180,7 +180,7 @@ _READY_FOR_HARDER_SQL = """
 WITH firsts AS (
     SELECT tr.user_id, tr.task_id, t.difficulty_id, tr.is_correct,
            row_number() OVER (
-               PARTITION BY tr.user_id, tr.task_id ORDER BY tr.received_at
+               PARTITION BY tr.user_id, tr.task_id ORDER BY tr.received_at, tr.id
            ) AS rn
     FROM task_results tr
     JOIN tasks t ON t.id = tr.task_id AND t.is_active
@@ -240,6 +240,7 @@ asked AS (
 SELECT s.user_id, s.tasks, s.first_try_ok, s.hard_tasks,
        COALESCE(a.episodes, 0) AS help_episodes
 FROM solved s LEFT JOIN asked a ON a.student_id = s.user_id
+ORDER BY s.user_id
 """
 
 _participant_repo = LessonOccurrenceParticipantRepository()
@@ -263,7 +264,7 @@ async def _load_prev_occurrence_and_streak(
                 "FROM lesson_occurrence_participant lop "
                 "JOIN lesson_occurrence lo ON lo.id = lop.occurrence_id "
                 "WHERE lop.student_id = :student_id AND lo.scheduled_at < :before "
-                "ORDER BY lo.scheduled_at DESC "
+                "ORDER BY lo.scheduled_at DESC, lo.id DESC "
                 "LIMIT :lookback"
             ),
             {"student_id": student_id, "before": before, "lookback": _MISSED_STREAK_LOOKBACK},
@@ -309,7 +310,7 @@ async def _load_last_activity(db: AsyncSession, *, student_id: int) -> Optional[
                 "      AND tr.source_system IS DISTINCT FROM :manual_source "
                 # tsk-992/tsk-994: повтор и итоговый срез — не «последнее решённое».
                 f"      AND {learning_path_results_filter('tr')} "
-                "    ORDER BY tr.submitted_at DESC LIMIT 1 "
+                "    ORDER BY tr.submitted_at DESC, tr.id DESC LIMIT 1 "
                 ") t "
                 "JOIN tasks tk ON tk.id = t.task_id "
                 "LEFT JOIN courses c ON c.id = tk.course_id"
@@ -328,7 +329,7 @@ async def _load_last_activity(db: AsyncSession, *, student_id: int) -> Optional[
                 "WHERE smp.student_id = :student_id AND smp.status = 'completed' "
                 "  AND smp.completed_at IS NOT NULL "
                 "  AND smp.source IS DISTINCT FROM :manual_source "
-                "ORDER BY smp.completed_at DESC LIMIT 1"
+                "ORDER BY smp.completed_at DESC, smp.material_id DESC LIMIT 1"
             ),
             {"student_id": student_id, "manual_source": MANUAL_SOURCE},
         )
@@ -1356,7 +1357,7 @@ async def get_school_ready_for_harder_summary(db: AsyncSession) -> dict[str, Any
     students = [
         {"student_id": sid, "full_name": profiles.get(sid), **detail}
         for sid, detail in sorted(
-            harder_by_student.items(), key=lambda kv: -kv[1]["percent"],
+            harder_by_student.items(), key=lambda kv: (-kv[1]["percent"], kv[0]),
         )
     ]
     return {

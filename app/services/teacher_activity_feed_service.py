@@ -23,9 +23,13 @@ ACL — тот же принцип, что у ``manual_progress_service.can_edit
 """
 from __future__ import annotations
 
+import base64
+import binascii
+import json
 import logging
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -45,6 +49,112 @@ _ELEVATED_ROLES = frozenset({"admin", "methodist"})
 # tsk-1396: запас окна занятия для ведущего (в т.ч. на подмене), минуты.
 _LESSON_WINDOW_BEFORE_MIN = 15
 _LESSON_WINDOW_AFTER_MIN = 30
+
+#: tsk-996: место источника в общем порядке ленты при равном времени. Лента
+#: идёт по убыванию ``(время, ранг источника, ключ строки)`` — это полный
+#: порядок: ключ строки уникален внутри источника, ранг различает источники.
+_SOURCE_RANK: Dict[str, int] = {
+    "task_solved": 4,
+    "help_requested": 3,
+    "material_studied": 2,
+    "student_idle": 1,
+}
+#: Длина ключа строки у каждого источника (у прогресса материала ключ составной).
+_KEY_LEN: Dict[str, int] = {
+    "task_solved": 1, "help_requested": 1, "material_studied": 2, "student_idle": 1,
+}
+
+#: Верхняя граница ключа курсора: ключи источников — ``integer``, число больше
+#: вызвало бы ошибку драйвера (500) вместо 422.
+_MAX_KEY = 2**31 - 1
+
+
+@dataclass(frozen=True)
+class FeedCursor:
+    """Составной курсор ленты (tsk-996): последнее событие отданной страницы.
+
+    Следующая страница — события строго «после» него в порядке ленты, то есть
+    раньше по времени, а при равном времени — ниже по рангу источника или ключу
+    строки. Курсор только по времени (``before``) терял события с тем же
+    временем, что у последнего на странице.
+    """
+
+    timestamp: datetime
+    source: str
+    key: Tuple[int, ...]
+
+    def encode(self) -> str:
+        """Непрозрачная строка для клиента (base64url от JSON, без «=»)."""
+        raw = json.dumps(
+            {"t": self.timestamp.isoformat(), "s": self.source, "k": list(self.key)},
+            separators=(",", ":"),
+        )
+        return base64.urlsafe_b64encode(raw.encode("utf-8")).decode("ascii").rstrip("=")
+
+    @classmethod
+    def decode(cls, value: str) -> "FeedCursor":
+        """Разобрать курсор клиента; на любой мусор — ``ValueError``.
+
+        Время обязано быть с часовым поясом: колонки ленты — ``timestamptz``,
+        а наивное время сравнивалось бы по поясу сессии БД.
+        """
+        try:
+            padded = value + "=" * (-len(value) % 4)
+            data = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")))
+            ts = datetime.fromisoformat(data["t"])
+            source = data["s"]
+            key = tuple(data["k"])
+        except (ValueError, TypeError, KeyError, UnicodeError, binascii.Error) as exc:
+            raise ValueError("некорректный курсор ленты") from exc
+        if ts.tzinfo is None or ts.utcoffset() is None:
+            raise ValueError("время в курсоре ленты без часового пояса")
+        if not 1970 <= ts.year <= 9000:
+            # Крайние даты после перевода в UTC выходят за диапазон PG → 500.
+            raise ValueError("время в курсоре ленты вне допустимого диапазона")
+        if not isinstance(source, str) or source not in _SOURCE_RANK:
+            raise ValueError("неизвестный источник в курсоре ленты")
+        if len(key) != _KEY_LEN[source] or not all(
+            isinstance(k, int) and not isinstance(k, bool) and 0 < k <= _MAX_KEY for k in key
+        ):
+            raise ValueError("некорректный ключ в курсоре ленты")
+        return cls(timestamp=ts, source=source, key=key)
+
+
+def _page_condition(
+    conds: List[str],
+    params: Dict[str, Any],
+    *,
+    source: str,
+    time_col: str,
+    key_cols: Sequence[str],
+    before: Optional[datetime],
+    cursor: Optional[FeedCursor],
+) -> None:
+    """Условие «после курсора» для одного источника.
+
+    ``cursor`` — составной (tsk-996): источник с рангом ниже курсорного берёт
+    и равное время, с рангом выше — только строго раньше, тот же источник —
+    сравнение ``(время, ключ) < (время курсора, ключ курсора)``. Отдельное
+    ``время <= курсор`` рядом с ним — чтобы план мог идти по индексу времени.
+    ``before`` — прежний курсор только по времени, оставлен для старых клиентов.
+    Столбцы — литералы из закрытого набора call-sites модуля.
+    """
+    if cursor is not None:
+        params["cursor_ts"] = cursor.timestamp
+        own, theirs = _SOURCE_RANK[source], _SOURCE_RANK[cursor.source]
+        if own < theirs:
+            conds.append(f"{time_col} <= :cursor_ts")
+        elif own > theirs:
+            conds.append(f"{time_col} < :cursor_ts")
+        else:
+            names = [f"cursor_k{i}" for i in range(len(key_cols))]
+            params.update(zip(names, cursor.key))
+            lhs = ", ".join([time_col, *key_cols])
+            rhs = ", ".join([":cursor_ts", *(f":{n}" for n in names)])
+            conds.append(f"{time_col} <= :cursor_ts AND ({lhs}) < ({rhs})")
+    elif before is not None:
+        conds.append(f"{time_col} < :before")
+        params["before"] = before
 
 
 def _scope_predicate(student_col: str, course_col: str, time_col: Optional[str] = None) -> str:
@@ -123,16 +233,17 @@ def _outcome_of(is_correct: Optional[bool]) -> str:
 
 async def _fetch_task_solved(
     db: AsyncSession, *, teacher_id: int, elevated: bool, limit: int, before: Optional[datetime],
-    student_id: Optional[int] = None,
+    student_id: Optional[int] = None, cursor: Optional[FeedCursor] = None,
 ) -> List[Dict[str, Any]]:
     """Реальные результаты заданий (без синтетических зачётов tsk-297)."""
     conds = ["tr.source_system IS DISTINCT FROM :manual_source"]
     params: Dict[str, Any] = {
         "manual_source": _MANUAL_SOURCE, "teacher_id": teacher_id, "limit": limit,
     }
-    if before is not None:
-        conds.append("tr.submitted_at < :before")
-        params["before"] = before
+    _page_condition(
+        conds, params, source="task_solved", time_col="tr.submitted_at",
+        key_cols=("tr.id",), before=before, cursor=cursor,
+    )
     _add_student_filter(conds, params, "tr.user_id", student_id)
     if not elevated:
         conds.append(_scope_predicate("tr.user_id", "t.course_id", "tr.submitted_at"))
@@ -145,13 +256,13 @@ async def _fetch_task_solved(
                        tr.task_id, t.course_id, t.external_uid,
                        t.task_content->>'title' AS title_raw, t.task_content->>'stem' AS stem,
                        tr.is_correct, tr.submitted_at AS event_at,
-                       tr.code_review, tr.source_system
+                       tr.code_review, tr.source_system, tr.id AS row_id
                 FROM task_results tr
                 JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
                 JOIN tasks t ON t.id = tr.task_id
                 JOIN users u ON u.id = tr.user_id
                 WHERE {where_sql}
-                ORDER BY tr.submitted_at DESC
+                ORDER BY tr.submitted_at DESC, tr.id DESC
                 LIMIT :limit
             """),  # nosec B608 — where_sql из закрытого набора литералов модуля
             params,
@@ -190,20 +301,22 @@ async def _fetch_task_solved(
             # строку списка всё равно не поместятся; подробности преподаватель
             # смотрит в карточке задания.
             "code_review": build_code_review_badge(r["code_review"]),
+            "_key": (int(r["row_id"]),),
         })
     return events
 
 
 async def _fetch_help_requested(
     db: AsyncSession, *, teacher_id: int, elevated: bool, limit: int, before: Optional[datetime],
-    student_id: Optional[int] = None,
+    student_id: Optional[int] = None, cursor: Optional[FeedCursor] = None,
 ) -> List[Dict[str, Any]]:
     """Заявки помощи (момент создания — ``created_at``)."""
     conds = ["1 = 1"]
     params: Dict[str, Any] = {"teacher_id": teacher_id, "limit": limit}
-    if before is not None:
-        conds.append("hr.created_at < :before")
-        params["before"] = before
+    _page_condition(
+        conds, params, source="help_requested", time_col="hr.created_at",
+        key_cols=("hr.id",), before=before, cursor=cursor,
+    )
     _add_student_filter(conds, params, "hr.student_id", student_id)
     if not elevated:
         conds.append(
@@ -221,13 +334,13 @@ async def _fetch_help_requested(
                        hr.material_id, m.title AS material_title,
                        hr.context_json->>'trigger' AS trigger,
                        hr.context_json->>'base_attempts_added' AS added,
-                       hr.origin, hr.stuck_reason
+                       hr.origin, hr.stuck_reason, hr.id AS row_id
                 FROM help_requests hr
                 JOIN users u ON u.id = hr.student_id
                 LEFT JOIN tasks t ON t.id = hr.task_id
                 LEFT JOIN materials m ON m.id = hr.material_id
                 WHERE {where_sql}
-                ORDER BY hr.created_at DESC
+                ORDER BY hr.created_at DESC, hr.id DESC
                 LIMIT :limit
             """),  # nosec B608 — where_sql из закрытого набора литералов модуля
             params,
@@ -275,13 +388,14 @@ async def _fetch_help_requested(
             "timestamp": r["event_at"],
             "summary": summary,
             "outcome": outcome,
+            "_key": (int(r["row_id"]),),
         })
     return events
 
 
 async def _fetch_material_studied(
     db: AsyncSession, *, teacher_id: int, elevated: bool, limit: int, before: Optional[datetime],
-    student_id: Optional[int] = None,
+    student_id: Optional[int] = None, cursor: Optional[FeedCursor] = None,
 ) -> List[Dict[str, Any]]:
     """Завершённые материалы (без синтетических зачётов tsk-297)."""
     conds = [
@@ -292,9 +406,10 @@ async def _fetch_material_studied(
     params: Dict[str, Any] = {
         "manual_source": _MANUAL_SOURCE, "teacher_id": teacher_id, "limit": limit,
     }
-    if before is not None:
-        conds.append("smp.completed_at < :before")
-        params["before"] = before
+    _page_condition(
+        conds, params, source="material_studied", time_col="smp.completed_at",
+        key_cols=("smp.student_id", "smp.material_id",), before=before, cursor=cursor,
+    )
     _add_student_filter(conds, params, "smp.student_id", student_id)
     if not elevated:
         conds.append(_scope_predicate("smp.student_id", "m.course_id", "smp.completed_at"))
@@ -309,7 +424,7 @@ async def _fetch_material_studied(
                 JOIN materials m ON m.id = smp.material_id
                 JOIN users u ON u.id = smp.student_id
                 WHERE {where_sql}
-                ORDER BY smp.completed_at DESC
+                ORDER BY smp.completed_at DESC, smp.student_id DESC, smp.material_id DESC
                 LIMIT :limit
             """),  # nosec B608 — where_sql из закрытого набора литералов модуля
             params,
@@ -329,13 +444,14 @@ async def _fetch_material_studied(
             "timestamp": r["event_at"],
             "summary": f"{student} — изучил материал «{r['material_title']}»",
             "outcome": None,
+            "_key": (int(r["student_id"]), int(r["material_id"])),
         })
     return events
 
 
 async def _fetch_student_idle(
     db: AsyncSession, *, teacher_id: int, elevated: bool, limit: int, before: Optional[datetime],
-    student_id: Optional[int] = None,
+    student_id: Optional[int] = None, cursor: Optional[FeedCursor] = None,
 ) -> List[Dict[str, Any]]:
     """Простои учеников на занятиях (tsk-591) — эпизоды «затих → вернулся».
 
@@ -347,9 +463,10 @@ async def _fetch_student_idle(
     """
     conds = ["1 = 1"]
     params: Dict[str, Any] = {"teacher_id": teacher_id, "limit": limit}
-    if before is not None:
-        conds.append("e.detected_at < :before")
-        params["before"] = before
+    _page_condition(
+        conds, params, source="student_idle", time_col="e.detected_at",
+        key_cols=("e.id",), before=before, cursor=cursor,
+    )
     _add_student_filter(conds, params, "e.student_id", student_id)
     if not elevated:
         conds.append(
@@ -376,13 +493,13 @@ async def _fetch_student_idle(
                        e.silent_since, e.detected_at, e.resolved_at,
                        t.external_uid, t.task_content->>'title' AS title_raw,
                        t.task_content->>'stem' AS stem,
-                       m.title AS material_title
+                       m.title AS material_title, e.id AS row_id
                 FROM lesson_idle_episode e
                 JOIN users u ON u.id = e.student_id
                 LEFT JOIN tasks t ON t.id = e.task_id
                 LEFT JOIN materials m ON m.id = e.material_id
                 WHERE {where_sql}
-                ORDER BY e.detected_at DESC
+                ORDER BY e.detected_at DESC, e.id DESC
                 LIMIT :limit
             """),  # nosec B608 — where_sql из закрытого набора литералов модуля
             params,
@@ -424,6 +541,7 @@ async def _fetch_student_idle(
             "timestamp": r["detected_at"],
             "summary": f"{student} — {body}{tail}",
             "outcome": "resolved" if resolved else "ongoing",
+            "_key": (int(r["row_id"]),),
         })
     return events
 
@@ -434,14 +552,23 @@ async def get_activity_feed(
     *,
     limit: int = 100,
     before: Optional[datetime] = None,
+    cursor: Optional[FeedCursor] = None,
     student_id: Optional[int] = None,
-) -> Tuple[List[Dict[str, Any]], bool, Optional[datetime]]:
+) -> Tuple[List[Dict[str, Any]], bool, Optional[datetime], Optional[str]]:
     """Собрать топ-``limit`` событий по всем ученикам преподавателя, по убыванию времени.
 
-    :param before: курсор пагинации — вернуть только события строго раньше этого
-        момента (клиент передаёт ``next_before`` предыдущей страницы).
-    :returns: (события, has_more, next_before). ``has_more`` — True в двух
-        случаях: (1) слитый набор источников больше ``limit`` — значит,
+    Порядок полный (tsk-996): ``(время, ранг источника, ключ строки)`` по
+    убыванию, см. ``_SOURCE_RANK``.
+
+    :param cursor: составной курсор пагинации (tsk-996) — клиент передаёт
+        ``next_cursor`` предыдущей страницы; события с тем же временем на стыке
+        страниц не теряются и не повторяются.
+    :param before: прежний курсор только по времени — вернуть события строго
+        раньше этого момента. Оставлен для старых клиентов: события с тем же
+        временем, что у последнего на странице, с ним теряются. При ``cursor``
+        не используется.
+    :returns: (события, has_more, next_before, next_cursor). ``has_more`` — True
+        в двух случаях: (1) слитый набор источников больше ``limit`` — значит,
         страница обрезала уже известные (полученные) события; (2) хотя бы
         один источник вернул ровно ``limit`` строк — у него могут быть ещё
         более старые записи, которые не запрашивались вовсе (``LIMIT`` мог
@@ -449,9 +576,10 @@ async def get_activity_feed(
         источника по 60 строк каждый (180 > ``limit``=100) не капнутся ни по
         одному, но обрежутся при слиянии — без проверки (1) страница молча
         потеряла бы 80 реальных событий.
-        ``next_before`` — время последнего (самого старого) события в ответе.
+        ``next_before`` — время последнего (самого старого) события в ответе,
+        ``next_cursor`` — составной курсор по нему же.
     :param student_id: tsk-1362 — только события этого ученика (в пределах ACL);
-        пагинация та же, курсор ``before`` работает внутри отбора.
+        пагинация та же, курсор работает внутри отбора.
     """
     elevated = await _is_elevated(db, current_user)
     teacher_id = current_user.id
@@ -459,7 +587,7 @@ async def get_activity_feed(
     task_events, help_events, material_events, idle_events = [
         await fn(
             db, teacher_id=teacher_id, elevated=elevated, limit=limit, before=before,
-            student_id=student_id,
+            student_id=student_id, cursor=cursor,
         )
         for fn in (
             _fetch_task_solved,
@@ -472,13 +600,21 @@ async def get_activity_feed(
     sources = (task_events, help_events, material_events, idle_events)
     merged = sorted(
         [event for source in sources for event in source],
-        key=lambda e: e["timestamp"],
+        key=lambda e: (e["timestamp"], _SOURCE_RANK[e["type"]], e["_key"]),
         reverse=True,
     )
     has_more = len(merged) > limit or any(len(source) == limit for source in sources)
     page = merged[:limit]
     next_before = page[-1]["timestamp"] if page else None
-    return page, has_more, next_before
+    next_cursor = (
+        FeedCursor(
+            timestamp=page[-1]["timestamp"], source=page[-1]["type"], key=page[-1]["_key"],
+        ).encode()
+        if page else None
+    )
+    for event in page:
+        del event["_key"]
+    return page, has_more, next_before, next_cursor
 
 
 async def list_feed_students(

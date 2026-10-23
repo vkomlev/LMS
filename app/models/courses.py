@@ -142,6 +142,8 @@ class Courses(Base):
         primaryjoin=id == t_course_parents.c.course_id,
         secondaryjoin=id == t_course_parents.c.parent_course_id,
         back_populates="child_courses",
+        # tsk-996: parent_course_ids в ответах API — по id родителя, а не по плану
+        order_by=t_course_parents.c.parent_course_id,
     )
     # Дети курса (обратная сторона связи)
     child_courses: Mapped[List["Courses"]] = relationship(

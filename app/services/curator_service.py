@@ -230,7 +230,7 @@ LEFT JOIN tier2 t2 ON t2.student_id = s.id
 LEFT JOIN users cu ON cu.id = COALESCE(t1.teacher_id, t2.teacher_id)
 LEFT JOIN student_curator cur ON cur.student_id = s.id AND cur.ended_at IS NULL
 LEFT JOIN users cur_u ON cur_u.id = cur.curator_id
-ORDER BY s.full_name
+ORDER BY s.full_name, s.id
 """
 
 
@@ -567,7 +567,7 @@ SELECT o.id AS student_id,
           JOIN users u2 ON u2.id = p.teacher_id
          WHERE p.student_id = o.id) AS teacher_names
 FROM orphans o
-ORDER BY o.full_name
+ORDER BY o.full_name, o.id
 LIMIT :limit
 """
 
@@ -636,7 +636,7 @@ async def coverage(db: AsyncSession) -> Dict[str, Any]:
         WHERE sc.ended_at IS NULL
           AND s.is_active AND s.merged_into_user_id IS NULL AND s.blocked_at IS NULL
         GROUP BY u.id, u.full_name
-        ORDER BY count(*) DESC
+        ORDER BY count(*) DESC, u.id
     """))).mappings().all()
     without = (await db.execute(text(f"""
         SELECT count(*)

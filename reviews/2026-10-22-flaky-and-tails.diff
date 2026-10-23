@@ -1,0 +1,410 @@
+diff --git a/app/repos/course_dependencies_repository.py b/app/repos/course_dependencies_repository.py
+index 02cb38a..4d06a9b 100644
+--- a/app/repos/course_dependencies_repository.py
++++ b/app/repos/course_dependencies_repository.py
+@@ -23,6 +23,11 @@ class CourseDependenciesRepository:
+     ) -> List[Courses]:
+         """
+         Вернуть список курсов, от которых зависит данный course_id.
++
++        tsk-996: порядок — по id требуемого курса, явно. Движок next-item
++        отдаёт ученику ПЕРВУЮ незакрытую зависимость (`blocked_dependency`),
++        и без ORDER BY при двух незакрытых «какой курс пройти сначала» решал
++        план запроса, а не данные.
+         """
+         stmt = (
+             select(Courses)
+@@ -31,6 +36,7 @@ class CourseDependenciesRepository:
+                 Courses.id == t_course_dependencies.c.required_course_id
+             )
+             .where(t_course_dependencies.c.course_id == course_id)
++            .order_by(t_course_dependencies.c.required_course_id)
+         )
+         res = await db.execute(stmt)
+         return res.scalars().all()
+diff --git a/app/services/me_service.py b/app/services/me_service.py
+index b12cdaa..67c91d0 100644
+--- a/app/services/me_service.py
++++ b/app/services/me_service.py
+@@ -1023,6 +1023,12 @@ WHERE cd.course_id = ANY(:tree_ids)
+         AND scs.course_id = cd.required_course_id
+         AND scs.state = 'COMPLETED'
+   )
++-- tsk-996: порядок задан явно. Без ORDER BY порядок строк DISTINCT решает
++-- план: Sort+Unique даёт возрастание id, HashAggregate — порядок по хешу.
++-- План зависит от статистики таблиц и может смениться между двумя вызовами
++-- (на dev-базе — общий план подготовленного запроса с 6-го исполнения), и
++-- один и тот же ученик получал замки в разном порядке.
++ORDER BY cd.course_id, cd.required_course_id
+ """
+ 
+ 
+diff --git a/tests/test_tsk301_ai_spend_guard.py b/tests/test_tsk301_ai_spend_guard.py
+index 8543e10..1b5e5b2 100644
+--- a/tests/test_tsk301_ai_spend_guard.py
++++ b/tests/test_tsk301_ai_spend_guard.py
+@@ -33,6 +33,7 @@
+ """
+ from __future__ import annotations
+ 
++import ast
+ import re
+ from dataclasses import dataclass
+ from pathlib import Path
+@@ -254,18 +255,124 @@ def test_upstream_gate_target_exists(rel_path: str) -> None:
+         f"{rel_path}: системная точка обязана упираться в системный рубильник, "
+         f"а {upstream} его не держит"
+     )
+-    module = rel_path.removesuffix(".py").replace("/", ".")
+-    package, _, name = module.rpartition(".")
+     upstream_source = (APP_ROOT.parent / upstream).read_text(encoding="utf-8")
+-    imported = (
+-        f"from {package} import {name}" in upstream_source
+-        or f"import {module}" in upstream_source
+-    )
+-    assert imported, (
++    assert _module_of(rel_path) in _imported_modules(upstream_source, upstream), (
+         f"{rel_path}: {upstream} это ядро не импортирует — его рубильник ничего не выключает"
+     )
+ 
+ 
++def _module_of(rel_path: str) -> str:
++    """`app/services/x.py` → `app.services.x` (`__init__.py` — сам пакет)."""
++    return rel_path.removesuffix(".py").removesuffix("/__init__").replace("/", ".")
++
++
++def _imported_modules(source: str, rel_path: str) -> set[str]:
++    """Модули, которые файл импортирует, — разбором `ast`, а не подстрокой.
++
++    Подстрока не видит импорта с псевдонимом, относительного и многострочного,
++    а `ast` видит и их, и отложенный импорт внутри функции. Для `from X import
++    Y` в набор попадают и `X`, и `X.Y`: `Y` может оказаться модулем пакета.
++
++    Не видны динамический импорт (`importlib.import_module("…")`) и обращение
++    к подмодулю как к атрибуту пакета после `import app.services.ai_tutor`.
++    В `app/` так ядро не зовут; появится — расширять здесь.
++    """
++    package = _module_of(rel_path)
++    if not rel_path.endswith("/__init__.py"):
++        package = package.rpartition(".")[0]
++    found: set[str] = set()
++    for node in ast.walk(ast.parse(source)):
++        if isinstance(node, ast.Import):
++            found.update(alias.name for alias in node.names)
++        elif isinstance(node, ast.ImportFrom):
++            base = node.module or ""
++            if node.level:
++                parts = package.split(".")
++                parent = ".".join(parts[: len(parts) - node.level + 1])
++                base = f"{parent}.{base}" if base else parent
++            found.add(base)
++            found.update(f"{base}.{alias.name}" for alias in node.names)
++    return found
++
++
++#: Системное ядро — системная точка без своего рубильника, выключаемая
++#: рубильником вызывающего (tsk-1312: гейт роли наставника).
++_SYSTEM_CORES = sorted(
++    p for p, point in AI_SPEND_POINTS.items()
++    if not point.capability and point.gated_upstream
++)
++
++
++def _core_importers_outside_system(sources: dict[str, str]) -> dict[str, list[str]]:
++    """Кто импортирует системное ядро, не будучи системной точкой реестра.
++
++    Ядро тратит деньги без ученика: нет ни двери прав, ни квоты
++    (`student_ai_quota` списывает только `ai_tutor`), учёт идёт с
++    `student_id = NULL`. Ученическая ручка, позвавшая его напрямую, получила бы
++    ученику модель мимо лимита — а реестр бы этого не заметил: файл ручки в
++    нём уже есть, с возможностью и дверью. Поэтому импортировать ядро в `app/`
++    вправе только системные точки реестра (у них нет `capability`).
++    """
++    system = {p for p, point in AI_SPEND_POINTS.items() if not point.capability}
++    cores = {_module_of(core): core for core in _SYSTEM_CORES}
++    bad: dict[str, list[str]] = {}
++    for rel_path, source in sources.items():
++        if rel_path in system:
++            continue
++        hit = sorted(cores[m] for m in _imported_modules(source, rel_path) if m in cores)
++        if hit:
++            bad[rel_path] = hit
++    return bad
++
++
++def test_system_core_imported_only_by_system_points() -> None:
++    """Системное ядро не зовут ученические ручки и прочий код `app/` (tsk-301).
++
++    `test_upstream_gate_target_exists` проверяет, что системный вызывающий у
++    ядра ЕСТЬ, но не что он ЕДИНСТВЕННЫЙ: импорт ядра из ученической ручки
++    прошёл бы молча. Скрипты вне `app/` (ручной стенд) не проверяются — их
++    запускает оператор, а не ученик.
++    """
++    assert _SYSTEM_CORES, "в реестре нет системного ядра — проверять нечего"
++    sources = {
++        _rel(path): path.read_text(encoding="utf-8") for path in APP_ROOT.rglob("*.py")
++    }
++    bad = _core_importers_outside_system(sources)
++    assert not bad, (
++        "системное ядро ИИ импортируется мимо системных точек (расход без "
++        f"двери прав и квоты): {bad}"
++    )
++
++
++@pytest.mark.parametrize(
++    "rel_path, planted",
++    [
++        ("app/api/v1/ai_tutor.py", "from app.services.ai_tutor.role_gate import judge\n"),
++        ("app/api/v1/ai_tutor.py", "from app.services.ai_tutor import role_gate as rg\n"),
++        ("app/api/v1/learning.py", "import app.services.ai_tutor.role_gate\n"),
++        ("app/services/ai_tutor/service.py", "from .role_gate import judge\n"),
++        ("app/services/ai_tutor/__init__.py", "from . import role_gate\n"),
++        (
++            "app/services/code_review_service.py",
++            "async def f():\n    from ..services.ai_tutor import role_gate\n",
++        ),
++    ],
++)
++def test_system_core_guard_catches_planted_import(rel_path: str, planted: str) -> None:
++    """Подсаженный импорт ядра в ученическую ручку страж правда ловит.
++
++    Сегодня таких импортов нет, и главный тест зелёный, — без этой проверки
++    нельзя отличить «нарушений нет» от «страж их не видит».
++    """
++    core = "app/services/ai_tutor/role_gate.py"
++    assert core in _SYSTEM_CORES
++    assert _core_importers_outside_system({rel_path: planted}) == {rel_path: [core]}
++    # Системному вызывающему импорт ядра разрешён.
++    assert not _core_importers_outside_system(
++        {"app/services/llm_chain_check_cron_service.py": planted}
++    )
++
++
+ @pytest.mark.parametrize(
+     "rel_path",
+     sorted(
+diff --git a/tests/test_tsk521_link_audit_lock.py b/tests/test_tsk521_link_audit_lock.py
+index 1d7367f..7c22b5d 100644
+--- a/tests/test_tsk521_link_audit_lock.py
++++ b/tests/test_tsk521_link_audit_lock.py
+@@ -26,8 +26,7 @@ from app.core.config import Settings
+ from app.services import link_audit_service
+ 
+ 
+-@pytest.mark.asyncio
+-async def test_second_worker_backs_off(monkeypatch):
++async def _backs_off_scenario(monkeypatch) -> None:
+     """Пока один worker держит блокировку, второй отступает и работу не дублирует.
+ 
+     Блокировка живёт, пока идёт проход, поэтому держатель ждёт, пока второй тик
+@@ -48,6 +47,15 @@ async def test_second_worker_backs_off(monkeypatch):
+     )
+     monkeypatch.setattr(link_audit_service, "_cas_media_exists", _exists)
+ 
++    # Уведомления тик в этом тесте не пишет вовсе: модуль ходит в общую базу
++    # настоящими коммитами, и убирать за собой уведомления по виду значило бы
++    # стереть и чужие (боевой тик dev-сервера, соседи). Проверке блокировки
++    # рассылка не нужна: отступивший worker до неё не доходит в любом случае.
++    async def _notify_nobody(db, **_kwargs) -> int:  # noqa: ANN001
++        return 0
++
++    monkeypatch.setattr(link_audit_service, "_notify_methodists", _notify_nobody)
++
+     engine = create_async_engine(Settings().database_url, poolclass=NullPool)
+     factory = async_sessionmaker(engine, expire_on_commit=False)
+     ids: dict[str, int] = {}
+@@ -92,10 +100,10 @@ async def test_second_worker_backs_off(monkeypatch):
+         assert locked.count(True) == 1, (first, second)
+         assert locked.count(False) == 1, (first, second)
+ 
+-        # Отступивший worker не делает работу: ни проверок, ни уведомлений.
++        # Отступивший worker не делает работу. Рассылка заглушена (см. выше),
++        # поэтому признак — число проверок: до рассылки он не доходит вовсе.
+         backed_off = first if first["locked"] is False else second
+         assert backed_off["checked"] == 0, backed_off
+-        assert backed_off["notified"] == 0, backed_off
+     finally:
+         # Модуль без транзакционной изоляции — убираем за собой руками.
+         async with factory() as db:
+@@ -105,9 +113,51 @@ async def test_second_worker_backs_off(monkeypatch):
+                 )
+             if "course" in ids:
+                 await db.execute(text("DELETE FROM courses WHERE id = :c"), {"c": ids["course"]})
+-            await db.execute(
+-                text("DELETE FROM notifications WHERE kind = :k"),
+-                {"k": link_audit_service.NOTIFICATION_KIND},
+-            )
++            await db.commit()
++        await engine.dispose()
++
++
++@pytest.mark.asyncio
++async def test_second_worker_backs_off(monkeypatch):
++    """Второй worker отступает, пока первый держит блокировку."""
++    await _backs_off_scenario(monkeypatch)
++
++
++@pytest.mark.asyncio
++async def test_cleanup_keeps_foreign_notifications(monkeypatch):
++    """Чужое уведомление о битых ссылках переживает прогон модуля.
++
++    Раньше `finally` стирал ВСЕ уведомления этого вида настоящим коммитом —
++    в том числе боевого тика dev-сервера и соседних тестов. Чужое здесь
++    старое (3 дня) — отсрочка рассылки его не видит, и тик идёт обычным путём.
++    """
++    engine = create_async_engine(Settings().database_url, poolclass=NullPool)
++    factory = async_sessionmaker(engine, expire_on_commit=False)
++    marker = f"tsk521-lock-чужое-{uuid.uuid4().hex[:12]}"
++    try:
++        async with factory() as db:
++            foreign_id = (
++                await db.execute(
++                    text(
++                        "INSERT INTO notifications (content, kind, title, modified_at) "
++                        "VALUES (:c, :k, 'чужое', now() - interval '3 days') RETURNING id"
++                    ),
++                    {"c": marker, "k": link_audit_service.NOTIFICATION_KIND},
++                )
++            ).scalar_one()
++            await db.commit()
++
++        await _backs_off_scenario(monkeypatch)
++
++        async with factory() as db:
++            survived = (
++                await db.execute(
++                    text("SELECT content FROM notifications WHERE id = :i"), {"i": foreign_id}
++                )
++            ).scalar_one_or_none()
++        assert survived == marker, "уборка теста стёрла чужое уведомление"
++    finally:
++        async with factory() as db:
++            await db.execute(text("DELETE FROM notifications WHERE content = :c"), {"c": marker})
+             await db.commit()
+         await engine.dispose()
+diff --git a/tests/test_tsk996_node_sequence.py b/tests/test_tsk996_node_sequence.py
+index 79b0a1a..3d36e5e 100644
+--- a/tests/test_tsk996_node_sequence.py
++++ b/tests/test_tsk996_node_sequence.py
+@@ -28,7 +28,7 @@ tsk-662/1250 сохранён).
+ from __future__ import annotations
+ 
+ from datetime import datetime, timedelta, timezone
+-from typing import Any, Optional
++from typing import Any, Awaitable, Callable, Optional
+ from uuid import uuid4
+ 
+ import pytest
+@@ -649,3 +649,112 @@ def test_walk_steps_post_order_and_dedup():
+     assert walk_steps(1, lambda c: children.get(c, [])) == [
+         (1, HEAD), (2, HEAD), (4, HEAD), (4, TAIL), (2, TAIL), (3, HEAD), (3, TAIL), (1, TAIL),
+     ]
++
++
++# ─── Порядок не зависит от плана запроса ────────────────────────────────────
++# Нестабильность `test_output_identical_with_switch_on_and_off[*-dependencies]`:
++# замки программы курса шли из `SELECT DISTINCT` без ORDER BY. Порядок строк
++# решал план: Sort+Unique (по id) или HashAggregate (по хешу). План зависит от
++# статистики таблиц; на dev-базе он менялся посреди теста — общий план
++# подготовленного запроса PostgreSQL берёт с 6-го исполнения, а третий снимок
++# теста и есть 6-й вызов («повторный прогон разошёлся»). На свежем клоне
++# шаблона план не менялся, поэтому изолированно тест был зелёным. Здесь план
++# задаётся настройками планировщика — без расчёта на статистику.
++
++_PLANS = {
++    "custom-sort": ("SET LOCAL enable_sort = on",),
++    "hashagg": ("SET LOCAL enable_sort = off",),
++    "generic": ("SET LOCAL plan_cache_mode = force_generic_plan",),
++    "heap-order": (
++        "SET LOCAL enable_indexscan = off", "SET LOCAL enable_bitmapscan = off",
++        "SET LOCAL enable_hashjoin = off", "SET LOCAL enable_mergejoin = off",
++        "SET LOCAL enable_sort = off",
++    ),
++}
++_PLAN_RESET = (
++    "RESET enable_sort", "RESET plan_cache_mode", "RESET enable_indexscan",
++    "RESET enable_bitmapscan", "RESET enable_hashjoin", "RESET enable_mergejoin",
++)
++
++
++async def _with_plan(db: Any, plan: str, call: Callable[[], Awaitable[Any]]) -> Any:
++    """Выполнить `call` при плане `plan` (настройки — до конца вызова)."""
++    for stmt in _PLANS[plan]:
++        await db.execute(text(stmt))
++    try:
++        _reset_caches(db)
++        return await call()
++    finally:
++        for stmt in _PLAN_RESET:
++            await db.execute(text(stmt))
++
++
++async def _require(db: Any, course_id: int, required_ids: list[int]) -> None:
++    """Зависимости в обратном порядке id: в куче (seq scan) строки идут так же."""
++    for req in sorted(required_ids, reverse=True):
++        await db.execute(
++            text("INSERT INTO course_dependencies (course_id, required_course_id) VALUES (:c, :r)"),
++            {"c": course_id, "r": req},
++        )
++
++
++@pytest.mark.asyncio
++async def test_syllabus_blocked_order_does_not_depend_on_plan(db):
++    """Замки программы курса — в одном порядке при любом плане (по id).
++
++    Строк блокировки семь: порядок хеша совпал бы с порядком id случайно с
++    ничтожной вероятностью, и без ORDER BY тест краснеет стабильно.
++    """
++    root = await _course(db, "замки корень")
++    sections = [await _course(db, f"замки раздел {i}") for i in range(1, 8)]
++    for order, child in enumerate(sections, start=1):
++        await _link(db, root, child, order)
++        await _task(db, child, 1)
++    first, second, *rest = sections
++    for blocked in rest[:-1]:
++        await _require(db, blocked, [first])
++    await _require(db, rest[-1], [first, second])
++    student = await _student(db, root)
++    await db.commit()
++    seen = {}
++    for plan in _PLANS:
++        res = await _with_plan(
++            db, plan,
++            lambda: me_service.get_syllabus_states(db, user_id=student, root_course_id=root),
++        )
++        seen[plan] = (
++            res["blocked_courses"],
++            [(d["course_id"], d["required_course_id"]) for d in res["blocked_dependencies"]],
++        )
++    expected_pairs = sorted([(b, first) for b in rest] + [(rest[-1], second)])
++    expected = (sorted(rest), expected_pairs)
++    assert all(v == expected for v in seen.values()), seen
++
++
++@pytest.mark.asyncio
++async def test_next_item_names_same_dependency_under_any_plan(db):
++    """При двух незакрытых требованиях движок называет одно и то же — меньший id.
++
++    Ученику это видно прямо: «Требуется завершить курс X». Раньше X зависел от
++    порядка строк `list_dependencies`, то есть от плана запроса.
++    """
++    required = [await _course(db, f"замки требуемый {i}") for i in (1, 2)]
++    root = await _course(db, "замки зависимый")
++    for course in (*required, root):
++        await _task(db, course, 1)
++    await _require(db, root, required)
++    # Новая версия строки ложится в конец кучи: при чтении без индекса меньший
++    # id идёт последним — как бывает на живой базе после правок курса.
++    await db.execute(
++        text("UPDATE courses SET title = title || ' ' WHERE id = :c"), {"c": min(required)}
++    )
++    student = await _student(db, *required, root)
++    await db.commit()
++    engine = LearningEngineService()
++    named = {}
++    for plan in _PLANS:
++        res = await _with_plan(
++            db, plan, lambda: engine.resolve_next_item(db, student, root_course_id=root)
++        )
++        named[plan] = (res.type, res.dependency_course_id)
++    assert set(named.values()) == {("blocked_dependency", min(required))}, named

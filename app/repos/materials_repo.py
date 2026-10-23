@@ -161,7 +161,7 @@ class MaterialsRepository(BaseRepository[Materials]):
         stmt = select(Materials).where(
             Materials.course_id == course_id,
             Materials.id.in_(material_ids),
-        ).order_by(Materials.order_position.asc().nulls_last())
+        ).order_by(Materials.order_position.asc().nulls_last(), Materials.id.asc())
         result = await db.execute(stmt)
         return list(result.scalars().all())
 

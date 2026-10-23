@@ -117,7 +117,8 @@ WHERE {real_student}
 GROUP BY tr.user_id, t.course_id, c.title
 HAVING COUNT(*) >= :min_submissions
    AND COUNT(*) FILTER (WHERE tr.is_correct IS FALSE)::float / COUNT(*) >= :threshold
-ORDER BY wrong_rate DESC
+-- tsk-996: доли часто равны — без добивки LIMIT резал кандидатов по плану.
+ORDER BY wrong_rate DESC, submissions DESC, tr.user_id, t.course_id
 LIMIT :limit
 """
 
@@ -226,7 +227,8 @@ WHERE closed.closed_at IS NULL OR r.received_at > closed.closed_at
 GROUP BY r.user_id, roots.root_course_id, c.title
 HAVING COUNT(*) FILTER (WHERE r.flagged) >= :min_flagged
    AND COUNT(*) FILTER (WHERE r.flagged)::float / COUNT(*) >= :min_share
-ORDER BY COUNT(*) FILTER (WHERE r.flagged) DESC
+-- tsk-996: равные счётчики на границе LIMIT — по ученику и корню.
+ORDER BY COUNT(*) FILTER (WHERE r.flagged) DESC, r.user_id, roots.root_course_id
 LIMIT :limit
 """
 
@@ -408,7 +410,8 @@ WHERE u.is_active
   AND (closed.closed_at IS NULL
        OR w.last_own_work > closed.closed_at
        OR ls.last_attended > closed.closed_at)
-ORDER BY w.last_own_work
+-- tsk-996: равное время сдачи на границе LIMIT — по ученику.
+ORDER BY w.last_own_work, u.id
 LIMIT :limit
 """
 
@@ -535,7 +538,8 @@ WHERE u.is_active
       WHERE o.student_id = u.id AND o.reason = 'dropout_risk'
         AND o.status NOT IN ('resolved', 'dismissed')
   )
-ORDER BY a.last_active
+-- tsk-996: равная активность на границе LIMIT — по ученику.
+ORDER BY a.last_active, u.id
 LIMIT :limit
 """
 
@@ -936,7 +940,10 @@ async def list_signals(
                                   / NULLIF((s.meta->>'reviewed')::float, 0), 0)
                      ELSE s.wrong_rate
                  END DESC,
-                 s.created_at DESC
+                 s.created_at DESC,
+                 -- tsk-996: при равных силе и времени — по id, иначе порядок
+                 -- (и что уйдёт за LIMIT) решал план.
+                 s.id DESC
         LIMIT :limit
     """), {"statuses": list(statuses), "limit": limit})).mappings().all()
     return [dict(r) for r in rows]

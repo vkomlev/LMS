@@ -24,7 +24,7 @@ import logging
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_bare_db, require_role
@@ -52,7 +52,19 @@ _GATE = require_role("teacher", "methodist", "admin")
 async def get_teacher_activity_feed(
     limit: int = Query(100, ge=1, le=200, description="Размер страницы"),
     before: Optional[datetime] = Query(
-        None, description="Курсор пагинации — только события строго раньше этого момента"
+        None,
+        description=(
+            "Устаревший курсор только по времени — события строго раньше этого момента. "
+            "События с тем же временем на стыке страниц теряются; использовать `cursor`"
+        ),
+    ),
+    cursor: Optional[str] = Query(
+        None,
+        max_length=512,
+        description=(
+            "tsk-996: составной курсор пагинации — `next_cursor` предыдущей страницы. "
+            "Нельзя вместе с `before`"
+        ),
     ),
     student_id: Optional[int] = Query(
         None, ge=1, description="tsk-1362: только события этого ученика (в пределах ACL)"
@@ -61,13 +73,25 @@ async def get_teacher_activity_feed(
     current_user: CurrentUser = Depends(_GATE),
 ) -> ActivityFeedResponse:
     """Топ-``limit`` событий по всем ученикам преподавателя, по убыванию времени."""
-    events, has_more, next_before = await teacher_activity_feed_service.get_activity_feed(
-        db, current_user, limit=limit, before=before, student_id=student_id,
+    feed_cursor: Optional[teacher_activity_feed_service.FeedCursor] = None
+    if cursor is not None:
+        if before is not None:
+            raise HTTPException(status_code=422, detail="Передайте либо cursor, либо before")
+        try:
+            feed_cursor = teacher_activity_feed_service.FeedCursor.decode(cursor)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+    (
+        events, has_more, next_before, next_cursor,
+    ) = await teacher_activity_feed_service.get_activity_feed(
+        db, current_user, limit=limit, before=before, cursor=feed_cursor,
+        student_id=student_id,
     )
     return ActivityFeedResponse(
         events=[ActivityFeedEvent(**e) for e in events],
         has_more=has_more,
         next_before=next_before,
+        next_cursor=next_cursor,
         on_lesson_student_ids=await lesson_plan_service.students_on_lesson_now(
             db, teacher_id=current_user.id,
         ),

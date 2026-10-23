@@ -680,7 +680,7 @@ async def get_pending_review_results(
         select(TaskResults)
         .join(Tasks, TaskResults.task_id == Tasks.id)
         .where(and_(*conditions))
-        .order_by(TaskResults.submitted_at.desc())
+        .order_by(TaskResults.submitted_at.desc(), TaskResults.id.desc())
         .limit(limit)
         .offset(offset)
     )

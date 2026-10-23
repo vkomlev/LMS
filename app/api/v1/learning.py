@@ -628,7 +628,7 @@ async def start_or_get_attempt(
             Attempts.finished_at.is_(None),
             Attempts.cancelled_at.is_(None),
         )
-        .order_by(Attempts.created_at.desc())
+        .order_by(Attempts.created_at.desc(), Attempts.id.desc())  # tsk-996
         .limit(1)
     )
     r = await db.execute(stmt)

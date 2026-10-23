@@ -527,7 +527,7 @@ async def _course_attempt(
                 Attempts.finished_at.is_(None),
                 Attempts.cancelled_at.is_(None),
             )
-            .order_by(Attempts.created_at.desc())
+            .order_by(Attempts.created_at.desc(), Attempts.id.desc())  # tsk-996
             .limit(1)
         )
     ).scalar_one_or_none()

@@ -179,6 +179,8 @@ class CoursesRepository(BaseRepository[Courses]):
             .outerjoin(t_course_parents, Courses.id == t_course_parents.c.course_id)
             .where(t_course_parents.c.course_id.is_(None))
             .options(selectinload(Courses.parent_courses))
+            # tsk-996: по id — как давал привычный seq scan; anti-join через хеш его не держит
+            .order_by(Courses.id)
         )
         result = await db.execute(stmt)
         return list(result.scalars().all())
@@ -225,7 +227,7 @@ class CoursesRepository(BaseRepository[Courses]):
             select(Courses)
             .outerjoin(t_course_parents, Courses.id == t_course_parents.c.course_id)
             .where(*conditions)
-            .order_by(Courses.title)
+            .order_by(Courses.title, Courses.id)  # tsk-996: одноимённые курсы — по id
             .offset(offset)
             .limit(limit)
         )
@@ -264,10 +266,16 @@ class CoursesRepository(BaseRepository[Courses]):
         parent_ids_map: Dict[int, List[int]] = {}
         if all_children:
             child_ids = [c.id for c in all_children]
+            # tsk-996: дети узла — в порядке `/children` (`get_children`):
+            # `order_number` (NULL в конце), затем id. Без ORDER BY они шли
+            # в порядке плана (примерно кучи `course_parents`). Ведущий
+            # `parent_course_id` заодно даёт `parent_course_ids` узла по id —
+            # как у `relationship parent_courses`.
             query = text("""
                 SELECT cp.parent_course_id, cp.course_id
                 FROM course_parents cp
                 WHERE cp.course_id = ANY(:child_ids)
+                ORDER BY cp.parent_course_id, cp.order_number ASC NULLS LAST, cp.course_id
             """)
             result = await db.execute(query, {"child_ids": child_ids})
             for parent_id, child_id in result.fetchall():

@@ -256,7 +256,12 @@ async def link_audit_tick(
     settings = Settings()
     factory = session_factory or async_session_factory
     own_hosts = settings.link_audit_own_hosts
-    summary: dict = {"locked": False, "checked": 0, "broken": 0, "notified": 0}
+    # `broken_targets` — с первой строки: иначе на базе без ссылок (или при
+    # отступлении по блокировке) ключа в сводке не было, и её форма зависела
+    # от содержимого базы.
+    summary: dict = {
+        "locked": False, "checked": 0, "broken": 0, "notified": 0, "broken_targets": {},
+    }
 
     async with factory() as db:
         got = await db.execute(
@@ -274,7 +279,10 @@ async def link_audit_tick(
                     "SELECT 'material' AS kind, id, content::text AS body "
                     "FROM materials WHERE is_active "
                     "UNION ALL "
-                    "SELECT 'task', id, task_content::text FROM tasks WHERE is_active"
+                    "SELECT 'task', id, task_content::text FROM tasks WHERE is_active "
+                    # tsk-996: порядок строк решает, какие «где встретилась»
+                    # попадут в уведомление: материалы, затем задания, по id.
+                    "ORDER BY 1, 2"
                 )
             )
         ).fetchall()

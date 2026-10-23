@@ -60,7 +60,7 @@ async def list_breaks(
                   FROM student_break b
                   JOIN users u ON u.id = b.student_id
                  WHERE (CAST(:student_id AS int) IS NULL OR b.student_id = :student_id)
-                 ORDER BY b.starts_on DESC, u.full_name
+                 ORDER BY b.starts_on DESC, u.full_name, b.id
                 """
             ),
             {"student_id": student_id},

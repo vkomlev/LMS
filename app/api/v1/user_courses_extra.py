@@ -70,11 +70,11 @@ async def _get_teacher_courses(
         .where(t_teacher_courses.c.teacher_id == user_id)
     )
     
-    # Сортировка
+    # Сортировка; tsk-996: id курса — добивка при равном linked_at (массовая привязка)
     if order_by_order:
-        stmt = stmt.order_by(t_teacher_courses.c.linked_at.desc())
+        stmt = stmt.order_by(t_teacher_courses.c.linked_at.desc(), Courses.id.desc())
     else:
-        stmt = stmt.order_by(t_teacher_courses.c.linked_at.asc())
+        stmt = stmt.order_by(t_teacher_courses.c.linked_at.asc(), Courses.id.asc())
     
     result = await db.execute(stmt)
     rows = result.all()
@@ -102,13 +102,15 @@ async def _get_student_courses(
     """Получить курсы студента из user_courses."""
     stmt = select(UserCourses).where(UserCourses.user_id == user_id)
     
+    # tsk-996: course_id — добивка при равных order_number/added_at
     if order_by_order:
         stmt = stmt.order_by(
             UserCourses.order_number.asc().nulls_last(),
-            UserCourses.added_at.asc()
+            UserCourses.added_at.asc(),
+            UserCourses.course_id.asc(),
         )
     else:
-        stmt = stmt.order_by(UserCourses.added_at.asc())
+        stmt = stmt.order_by(UserCourses.added_at.asc(), UserCourses.course_id.asc())
     
     # Явно загружаем связанные курсы
     stmt = stmt.options(selectinload(UserCourses.course))

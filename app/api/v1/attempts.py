@@ -223,7 +223,7 @@ async def _build_attempt_with_results(
     stmt = select(TaskResults).where(
         TaskResults.attempt_id == attempt.id,
         learning_path_results_clause(TaskResults.source_system),
-    )
+    ).order_by(TaskResults.id)  # tsk-996: results[0] — «первая задача попытки»
     result = await db.execute(stmt)
     rows: List[TaskResults] = result.scalars().all()
 

@@ -155,7 +155,8 @@ async def _create_from_topics(
             text(
                 "SELECT c.id, c.title FROM courses c WHERE c.id = ANY(:ids) AND ("
                 " EXISTS (SELECT 1 FROM user_courses u WHERE u.course_id = c.id) OR"
-                " EXISTS (SELECT 1 FROM teacher_courses t WHERE t.course_id = c.id))"
+                " EXISTS (SELECT 1 FROM teacher_courses t WHERE t.course_id = c.id)) "
+                "ORDER BY c.id"
             ),
             {"ids": topic_ids},
         )
@@ -257,6 +258,7 @@ async def _assert_lock_hits_only_student(
                   AND NOT EXISTS (SELECT 1 FROM course_dependencies d
                                   WHERE d.course_id = r.id AND d.required_course_id = :c)
                 GROUP BY r.id, r.title
+                ORDER BY r.id
                 """
             ),
             {"c": course_id, "u": user_id, "roots": locks},
@@ -365,7 +367,7 @@ async def list_for_student(db: AsyncSession, user_id: int) -> list[IndividualCou
                  AND mine.is_active
                 WHERE uc.user_id = :u
                 GROUP BY c.id, c.title, c.course_uid, uc.is_active, uc.order_number
-                ORDER BY uc.order_number
+                ORDER BY uc.order_number, c.id
                 """
             ),
             {"u": user_id},
@@ -380,7 +382,7 @@ async def list_for_student(db: AsyncSession, user_id: int) -> list[IndividualCou
             await db.execute(
                 text(
                     "SELECT c.id, c.title FROM course_parents p JOIN courses c ON c.id=p.course_id "
-                    "WHERE p.parent_course_id=:c ORDER BY p.order_number"
+                    "WHERE p.parent_course_id=:c ORDER BY p.order_number, p.course_id"
                 ),
                 {"c": cid},
             )

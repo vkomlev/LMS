@@ -6,12 +6,46 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.orm.attributes import InstrumentedAttribute
-from sqlalchemy.sql import ColumnElement
+from sqlalchemy.sql import ColumnElement, operators
+from sqlalchemy.sql.elements import UnaryExpression
 from sqlalchemy.sql.sqltypes import String, Text
 from app.db.base import Base
 
 
 ModelType = TypeVar("ModelType", bound=Base)
+
+
+_SORT_MODIFIERS = (
+    operators.asc_op, operators.desc_op, operators.nulls_first_op, operators.nulls_last_op,
+)
+
+
+def _sort_parts(expr: Any) -> Tuple[Any, bool]:
+    """Колонка выражения сортировки и признак DESC (снимает asc/desc/nulls_*)."""
+    descending = False
+    while isinstance(expr, UnaryExpression) and expr.modifier in _SORT_MODIFIERS:
+        if expr.modifier is operators.desc_op:
+            descending = True
+        expr = expr.element
+    return expr, descending
+
+
+def with_pk_tiebreak(order_by: Optional[Sequence[Any]], model: Any) -> list[Any]:
+    """Дописать PK модели в конец сортировки — полный порядок для LIMIT/OFFSET (tsk-996).
+
+    Без добивки строки с равным ключом (`now()` одной транзакции, тёзки) идут
+    в порядке плана PostgreSQL: страницы перекрываются и теряют строки.
+    Направление PK — как у последнего ключа; PK, уже стоящий в сортировке,
+    не повторяется. Без сортировки — по PK по возрастанию (порядок seq scan ≈ id).
+    """
+    keys = list(order_by or [])
+    descending = _sort_parts(keys[-1])[1] if keys else False
+    used = [_sort_parts(k)[0] for k in keys]
+    for pk in inspect(model).primary_key:
+        if any(getattr(u, "table", None) is pk.table and getattr(u, "key", None) == pk.key for u in used):
+            continue
+        keys.append(pk.desc() if descending else pk.asc())
+    return keys
 
 
 class BaseRepository(Generic[ModelType]):
@@ -347,8 +381,8 @@ class BaseRepository(Generic[ModelType]):
                 conds.append(c.like(pattern, escape="\\"))
 
         stmt = select(self.model).where(or_(*conds))
-        if order_by is not None:
-            stmt = stmt.order_by(order_by)
+        # tsk-996: PK последним ключом — одноимённые строки не прыгают между страницами.
+        stmt = stmt.order_by(*with_pk_tiebreak([] if order_by is None else [order_by], self.model))
         stmt = stmt.offset(offset).limit(limit)
 
         res = await db.execute(stmt)
@@ -406,14 +440,16 @@ class BaseRepository(Generic[ModelType]):
                     total — полное количество записей без учёта limit/offset.
             """
             filters = list(filters or [])
+            # tsk-996: PK последним ключом — иначе равные ключи (или отсутствие
+            # сортировки) дают дубли/пропуски между страницами LIMIT/OFFSET.
+            order_by = with_pk_tiebreak(order_by, self.model)
 
             # Основной запрос за данными
             stmt: Select = select(self.model)
             if filters:
                 for f in filters:
                     stmt = stmt.where(f)
-            if order_by:
-                stmt = stmt.order_by(*order_by)
+            stmt = stmt.order_by(*order_by)
             if limit is not None:
                 stmt = stmt.limit(limit)
             if offset:
@@ -446,8 +482,7 @@ class BaseRepository(Generic[ModelType]):
                 if filters:
                     for f in filters:
                         stmt_with_load = stmt_with_load.where(f)
-                if order_by:
-                    stmt_with_load = stmt_with_load.order_by(*order_by)
+                stmt_with_load = stmt_with_load.order_by(*order_by)
                 result = await db.execute(stmt_with_load)
                 items = list(result.scalars().all())
 

@@ -456,7 +456,7 @@ class MessagesService(BaseService[Messages]):
         stmt = (
             stmt.where(model.sender_id.isnot(None))
             .group_by(model.sender_id)
-            .order_by(func.count().desc())
+            .order_by(func.count().desc(), model.sender_id.asc())
         )
 
         result = await db.execute(stmt)
@@ -494,7 +494,7 @@ class MessagesService(BaseService[Messages]):
                 model.sender_id.isnot(None),
             )
             .group_by(model.sender_id)
-            .order_by(func.count().desc())
+            .order_by(func.count().desc(), model.sender_id.asc())
         )
 
         res = await db.execute(stmt)
@@ -618,7 +618,7 @@ class MessagesService(BaseService[Messages]):
                 func.row_number()
                 .over(
                     partition_by=peer_id_expr,
-                    order_by=m.sent_at.desc(),
+                    order_by=(m.sent_at.desc(), m.id.desc()),
                 )
                 .label("rn"),
             )
@@ -659,7 +659,7 @@ class MessagesService(BaseService[Messages]):
             .join(Users, Users.id == base.c.peer_id)
             .outerjoin(unread, unread.c.peer_id == base.c.peer_id)
             .where(base.c.rn == 1)  # только последнее сообщение на peer
-            .order_by(base.c.last_sent_at.desc())
+            .order_by(base.c.last_sent_at.desc(), base.c.last_message_id.desc())
             .limit(limit)
             .offset(offset)
         )

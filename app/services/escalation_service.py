@@ -149,7 +149,7 @@ async def escalation_cron_tick(
                       OR jsonb_typeof(tr.metrics) <> 'object'
                       OR NOT (tr.metrics ? 'escalated_at')
                   )
-                ORDER BY tr.submitted_at ASC
+                ORDER BY tr.submitted_at ASC, tr.id ASC
                 LIMIT 100
                 """
             ),

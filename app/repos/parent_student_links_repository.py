@@ -32,6 +32,7 @@ class ParentStudentLinksRepository:
                 Users.id == t_parent_student_links.c.student_id,
             )
             .where(t_parent_student_links.c.parent_id == parent_id)
+            .order_by(t_parent_student_links.c.student_id)  # tsk-996: как скан PK
         )
         res = await db.execute(stmt)
         return res.scalars().all()
@@ -51,6 +52,7 @@ class ParentStudentLinksRepository:
                 Users.id == t_parent_student_links.c.parent_id,
             )
             .where(t_parent_student_links.c.student_id == student_id)
+            .order_by(t_parent_student_links.c.parent_id)  # tsk-996
         )
         res = await db.execute(stmt)
         return res.scalars().all()

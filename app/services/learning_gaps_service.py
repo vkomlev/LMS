@@ -244,7 +244,8 @@ GROUP BY t.course_id, c.title
 HAVING COUNT(*) >= :min_submissions
    AND COUNT(DISTINCT tr.user_id) >= :min_students
    AND COUNT(*) FILTER (WHERE tr.is_correct IS FALSE)::float / COUNT(*) >= :threshold
-ORDER BY wrong_rate DESC, submissions DESC
+-- tsk-996: равные доля и число сдач на границе LIMIT — по теме.
+ORDER BY wrong_rate DESC, submissions DESC, t.course_id
 LIMIT :limit
 """
 

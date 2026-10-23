@@ -128,7 +128,7 @@ LEFT JOIN LATERAL (
       AND o.scheduled_at >= now() - make_interval(days => :missed_window)
       AND o.scheduled_at < now()
 ) miss ON TRUE
-ORDER BY u.full_name
+ORDER BY u.full_name, u.id
 """
 
 

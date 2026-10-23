@@ -93,7 +93,7 @@ _PENDING_SQL = """
             OR (tr.code_review->>'claimed_at')::timestamptz
                  < now() - make_interval(mins => :claim_ttl_min)
           )
-    ORDER BY tr.submitted_at ASC
+    ORDER BY tr.submitted_at ASC, tr.id ASC
     LIMIT :limit
 """
 

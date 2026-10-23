@@ -145,7 +145,7 @@ async def source_replies(db: AsyncSession, task_id: int) -> list[SourceReply]:
     """
     rows = (
         await db.execute(
-            text(_ELIGIBLE_REPLIES_SQL + " AND h.task_id = :task_id ORDER BY r.created_at DESC"),
+            text(_ELIGIBLE_REPLIES_SQL + " AND h.task_id = :task_id ORDER BY r.created_at DESC, r.id DESC"),
             {"exclude": EXCLUDE_REPLY_RE, "task_id": task_id},
         )
     ).all()
@@ -525,7 +525,7 @@ async def queue(
                 text(
                     "SELECT r.id, r.body, h.message FROM help_request_replies r "
                     "JOIN help_requests h ON h.id = r.request_id "
-                    "WHERE r.id = ANY(:ids) ORDER BY r.created_at"
+                    "WHERE r.id = ANY(:ids) ORDER BY r.created_at, r.id"
                 ),
                 {"ids": list(d.source_reply_ids)},
             )

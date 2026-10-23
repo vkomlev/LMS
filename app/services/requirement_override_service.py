@@ -321,32 +321,33 @@ async def active_overrides(db: AsyncSession, student_id: int) -> Dict[Target, Ov
 _RESOLVE_SQL = """
 /* tsk1361-resolve */
 WITH RECURSIVE ov AS (
-    SELECT target_kind, target_id, level, source, reason_code, reason_text, created_at
+    SELECT id, target_kind, target_id, level, source, reason_code, reason_text, created_at
       FROM student_requirement_override
      WHERE student_id = :sid AND revoked_at IS NULL
 ),
 node AS (
     SELECT o.target_id AS course_id, o.level, o.source, o.reason_code,
-           o.reason_text, o.created_at, 1 AS depth, ARRAY[o.target_id] AS path
+           o.reason_text, o.created_at, o.id AS override_id, 1 AS depth,
+           ARRAY[o.target_id] AS path
       FROM ov o WHERE o.target_kind = 'course'
     UNION ALL
     SELECT cp.course_id, n.level, n.source, n.reason_code, n.reason_text,
-           n.created_at, n.depth + 1, n.path || cp.course_id
+           n.created_at, n.override_id, n.depth + 1, n.path || cp.course_id
       FROM node n
       JOIN course_parents cp ON cp.parent_course_id = n.course_id
      WHERE NOT cp.course_id = ANY(n.path)
 ),
 cand AS (
     SELECT 'task' AS kind, t.id AS item_id, n.level, n.source, n.reason_code,
-           n.reason_text, n.created_at, n.depth
+           n.reason_text, n.created_at, n.override_id, n.depth
       FROM node n JOIN tasks t ON t.course_id = n.course_id AND t.is_active
     UNION ALL
     SELECT 'material', m.id, n.level, n.source, n.reason_code, n.reason_text,
-           n.created_at, n.depth
+           n.created_at, n.override_id, n.depth
       FROM node n JOIN materials m ON m.course_id = n.course_id AND m.is_active
     UNION ALL
     SELECT o.target_kind, o.target_id, o.level, o.source, o.reason_code,
-           o.reason_text, o.created_at, 0
+           o.reason_text, o.created_at, o.id, 0
       FROM ov o WHERE o.target_kind IN ('task', 'material')
 ),
 best AS (
@@ -355,7 +356,11 @@ best AS (
       FROM cand
      -- Ничья (узел на одной глубине по двум путям — подкурс у нескольких
      -- родителей): побеждает более позднее решение, чтобы выбор не был случайным.
-     ORDER BY kind, item_id, (source = 'human') DESC, depth ASC, created_at DESC
+     -- tsk-996: строки правил одной сверки пишутся одной транзакцией — равный
+     -- created_at; тогда побеждает строка с большим id (выбор может пересмотреть
+     -- оператор).
+     ORDER BY kind, item_id, (source = 'human') DESC, depth ASC, created_at DESC,
+              override_id DESC
 )
 SELECT b.kind, b.item_id, b.level, b.source, b.reason_code, b.reason_text,
        COALESCE(t.requirement_level, m.requirement_level) AS base_level

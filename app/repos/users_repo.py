@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import ColumnElement
 
 from app.models.users import Users
-from app.repos.base import BaseRepository
+from app.repos.base import BaseRepository, with_pk_tiebreak
 from app.utils.name_search import name_match_clause
 
 class UsersRepository(BaseRepository[Users]):
@@ -98,14 +98,12 @@ class UsersRepository(BaseRepository[Users]):
             )
 
         # Сортировка
-        if order_by:
-            # Добавляем NULLS LAST для всех полей сортировки, чтобы NULL значения шли в конец
-            from sqlalchemy import nullslast
-            order_by_with_nulls = []
-            for order_expr in order_by:
-                # nullslast работает с любыми выражениями сортировки (asc/desc)
-                order_by_with_nulls.append(nullslast(order_expr))
-            stmt = stmt.order_by(*order_by_with_nulls)
+        # Добавляем NULLS LAST для всех полей сортировки, чтобы NULL значения шли в конец
+        # (nullslast работает с любыми выражениями сортировки asc/desc).
+        from sqlalchemy import nullslast
+        order_by_with_nulls = [nullslast(order_expr) for order_expr in order_by or []]
+        # tsk-996: Users.id последним ключом — тёзки/равный created_at не прыгают между страницами
+        stmt = stmt.order_by(*with_pk_tiebreak(order_by_with_nulls, Users))
         
         # Пагинация
         if limit is not None:
@@ -184,7 +182,7 @@ class UsersRepository(BaseRepository[Users]):
         stmt = (
             select(Users)
             .where(name_cond, Users.is_active.is_(True))
-            .order_by(Users.full_name.asc())
+            .order_by(Users.full_name.asc(), Users.id.asc())  # tsk-996: тёзки — по id
         )
 
         if blocked is not None:

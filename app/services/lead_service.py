@@ -66,7 +66,7 @@ async def list_sources(db: AsyncSession) -> list[LeadSourceRead]:
         await db.execute(
             text(
                 "SELECT id, code, name, sort_order FROM lead_source "
-                "WHERE is_active ORDER BY sort_order, name"
+                "WHERE is_active ORDER BY sort_order, name, id"
             )
         )
     ).all()
@@ -257,7 +257,7 @@ async def search_students(db: AsyncSession, *, q: str, limit: int = 20) -> list[
                   JOIN roles r ON r.id = ur.role_id AND r.name = 'student'
                  WHERE u.is_active
                    AND {name_sql}
-                 ORDER BY u.full_name
+                 ORDER BY u.full_name, u.id
                  LIMIT :limit
                 """
             ),
@@ -398,7 +398,7 @@ async def list_external_leads(
                   JOIN leads l ON l.id = r.lead_id
                  WHERE r.source = :source
                    AND l.created_at >= now() - make_interval(days => :days)
-                 ORDER BY l.created_at DESC
+                 ORDER BY l.created_at DESC, l.id DESC, r.external_id
                 """
             ),
             {"source": external_source, "days": days},

@@ -1,0 +1,1378 @@
+diff --git a/app/api/v1/marketer_pricing.py b/app/api/v1/marketer_pricing.py
+index 07e316d..f96cdca 100644
+--- a/app/api/v1/marketer_pricing.py
++++ b/app/api/v1/marketer_pricing.py
+@@ -5,6 +5,8 @@
+ """
+ from __future__ import annotations
+ 
++from typing import Optional
++
+ from fastapi import APIRouter, Depends, HTTPException, status
+ from sqlalchemy.exc import IntegrityError
+ from sqlalchemy.ext.asyncio import AsyncSession
+@@ -187,6 +189,21 @@ async def delete_group(
+         raise HTTPException(status.HTTP_404_NOT_FOUND, "Тарифная группа не найдена")
+ 
+ 
++def _single_active_conflict(exc: IntegrityError) -> Optional[str]:
++    """tsk-996: понятный текст, если упёрлись в «один вариант без оси на группу».
++
++    Индекс `uq_pricing_tariff_single_active`: NULL-ось не ловится
++    `uq_pricing_tariff_axis_point`, а второй такой вариант задваивал план
++    на витрине. ``None`` — конфликт другой, текст остаётся прежним.
++    """
++    if "uq_pricing_tariff_single_active" in str(exc.orig):
++        return (
++            "В группе уже есть действующий вариант без оси — у группы может быть "
++            "только одна цена без уточнения. Выключите прежний или задайте ось"
++        )
++    return None
++
++
+ @router.post(
+     "/pricing/tariffs",
+     response_model=PricingGroupRead,
+@@ -208,7 +225,8 @@ async def create_tariff(
+         await db.rollback()
+         raise HTTPException(
+             status.HTTP_409_CONFLICT,
+-            "Такой вариант в группе уже есть либо группа не найдена",
++            _single_active_conflict(exc)
++            or "Такой вариант в группе уже есть либо группа не найдена",
+         ) from exc
+     return await _get_group_or_404(db, body.group_id)
+ 
+@@ -237,7 +255,8 @@ async def update_tariff(
+         # Частичный уникальный индекс: две действующие точки одной оси в группе.
+         raise HTTPException(
+             status.HTTP_409_CONFLICT,
+-            "В группе уже есть действующий вариант на эту же точку оси",
++            _single_active_conflict(exc)
++            or "В группе уже есть действующий вариант на эту же точку оси",
+         ) from exc
+     if not ok:
+         raise HTTPException(status.HTTP_404_NOT_FOUND, "Вариант тарифа не найден")
+diff --git a/app/api/v1/teacher_activity_feed.py b/app/api/v1/teacher_activity_feed.py
+index d224eac..16a153d 100644
+--- a/app/api/v1/teacher_activity_feed.py
++++ b/app/api/v1/teacher_activity_feed.py
+@@ -24,7 +24,7 @@ import logging
+ from datetime import datetime
+ from typing import Optional
+ 
+-from fastapi import APIRouter, Depends, Query
++from fastapi import APIRouter, Depends, HTTPException, Query
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+ from app.api.deps import get_bare_db, require_role
+@@ -52,7 +52,19 @@ _GATE = require_role("teacher", "methodist", "admin")
+ async def get_teacher_activity_feed(
+     limit: int = Query(100, ge=1, le=200, description="Размер страницы"),
+     before: Optional[datetime] = Query(
+-        None, description="Курсор пагинации — только события строго раньше этого момента"
++        None,
++        description=(
++            "Устаревший курсор только по времени — события строго раньше этого момента. "
++            "События с тем же временем на стыке страниц теряются; использовать `cursor`"
++        ),
++    ),
++    cursor: Optional[str] = Query(
++        None,
++        max_length=512,
++        description=(
++            "tsk-996: составной курсор пагинации — `next_cursor` предыдущей страницы. "
++            "Нельзя вместе с `before`"
++        ),
+     ),
+     student_id: Optional[int] = Query(
+         None, ge=1, description="tsk-1362: только события этого ученика (в пределах ACL)"
+@@ -61,13 +73,25 @@ async def get_teacher_activity_feed(
+     current_user: CurrentUser = Depends(_GATE),
+ ) -> ActivityFeedResponse:
+     """Топ-``limit`` событий по всем ученикам преподавателя, по убыванию времени."""
+-    events, has_more, next_before = await teacher_activity_feed_service.get_activity_feed(
+-        db, current_user, limit=limit, before=before, student_id=student_id,
++    feed_cursor: Optional[teacher_activity_feed_service.FeedCursor] = None
++    if cursor is not None:
++        if before is not None:
++            raise HTTPException(status_code=422, detail="Передайте либо cursor, либо before")
++        try:
++            feed_cursor = teacher_activity_feed_service.FeedCursor.decode(cursor)
++        except ValueError as exc:
++            raise HTTPException(status_code=422, detail=str(exc)) from exc
++    (
++        events, has_more, next_before, next_cursor,
++    ) = await teacher_activity_feed_service.get_activity_feed(
++        db, current_user, limit=limit, before=before, cursor=feed_cursor,
++        student_id=student_id,
+     )
+     return ActivityFeedResponse(
+         events=[ActivityFeedEvent(**e) for e in events],
+         has_more=has_more,
+         next_before=next_before,
++        next_cursor=next_cursor,
+         on_lesson_student_ids=await lesson_plan_service.students_on_lesson_now(
+             db, teacher_id=current_user.id,
+         ),
+diff --git a/app/db/migrations/versions/2026_10_22_tsk996_pricing_tariff_single_active.py b/app/db/migrations/versions/2026_10_22_tsk996_pricing_tariff_single_active.py
+new file mode 100644
+index 0000000..e7edbdb
+--- /dev/null
++++ b/app/db/migrations/versions/2026_10_22_tsk996_pricing_tariff_single_active.py
+@@ -0,0 +1,57 @@
++"""tsk-996: один действующий вариант тарифа без оси на группу.
++
++`uq_pricing_tariff_axis_point` (tsk-505) — уникальный `(group_id, match_kind,
++match_value) WHERE is_active`. Вариант без оси (`match_kind IS NULL`, тогда и
++`match_value IS NULL`) им не ловится: NULL с NULL в уникальном индексе не
++конфликтуют. Два таких варианта в группе задваивали план на витрине
++`GET /payments/plans` (`purchasable_plans`), а при оплате выигрывал самый
++дорогой. Аналог для NULL — частичный уникальный индекс по `group_id`.
++
++Перед созданием индекса — проверка: если дубли уже есть, миграция падает с
++понятным списком групп, а не чистит данные молча (какой вариант оставить,
++решает маркетолог). На проде 22.10 дублей не было.
++
++Данных не меняет. Rollback: `alembic downgrade tsk1398_messenger_link_tg` —
++индекс удаляется.
++"""
++from typing import Sequence, Union
++
++import sqlalchemy as sa
++from alembic import op
++
++revision: str = "tsk996_tariff_single_active"
++down_revision: Union[str, None] = "tsk1398_messenger_link_tg"
++branch_labels: Union[str, Sequence[str], None] = None
++depends_on: Union[str, Sequence[str], None] = None
++
++_INDEX = "uq_pricing_tariff_single_active"
++
++
++def upgrade() -> None:
++    """Проверить отсутствие дублей и создать индекс."""
++    dupes = op.get_bind().execute(
++        sa.text(
++            "SELECT group_id, array_agg(id ORDER BY id) AS ids "
++            "FROM pricing_tariff WHERE is_active AND match_kind IS NULL "
++            "GROUP BY group_id HAVING count(*) > 1 ORDER BY group_id"
++        )
++    ).all()
++    if dupes:
++        listing = "; ".join(f"группа {r.group_id}: варианты {list(r.ids)}" for r in dupes)
++        raise RuntimeError(
++            "tsk-996: в тарифных группах больше одного действующего варианта без оси "
++            f"({listing}). Оставьте по одному (лишние — is_active = false) и повторите "
++            "миграцию."
++        )
++    op.create_index(
++        _INDEX,
++        "pricing_tariff",
++        ["group_id"],
++        unique=True,
++        postgresql_where=sa.text("is_active AND match_kind IS NULL"),
++    )
++
++
++def downgrade() -> None:
++    """Снять индекс."""
++    op.drop_index(_INDEX, table_name="pricing_tariff")
+diff --git a/app/repos/courses_repo.py b/app/repos/courses_repo.py
+index efa5d70..ad41f00 100644
+--- a/app/repos/courses_repo.py
++++ b/app/repos/courses_repo.py
+@@ -266,10 +266,16 @@ class CoursesRepository(BaseRepository[Courses]):
+         parent_ids_map: Dict[int, List[int]] = {}
+         if all_children:
+             child_ids = [c.id for c in all_children]
++            # tsk-996: дети узла — в порядке `/children` (`get_children`):
++            # `order_number` (NULL в конце), затем id. Без ORDER BY они шли
++            # в порядке плана (примерно кучи `course_parents`). Ведущий
++            # `parent_course_id` заодно даёт `parent_course_ids` узла по id —
++            # как у `relationship parent_courses`.
+             query = text("""
+                 SELECT cp.parent_course_id, cp.course_id
+                 FROM course_parents cp
+                 WHERE cp.course_id = ANY(:child_ids)
++                ORDER BY cp.parent_course_id, cp.order_number ASC NULLS LAST, cp.course_id
+             """)
+             result = await db.execute(query, {"child_ids": child_ids})
+             for parent_id, child_id in result.fetchall():
+diff --git a/app/repos/user_courses_repo.py b/app/repos/user_courses_repo.py
+index 70bc482..1a4cb18 100644
+--- a/app/repos/user_courses_repo.py
++++ b/app/repos/user_courses_repo.py
+@@ -8,6 +8,16 @@ from app.models.user_courses import UserCourses
+ from app.repos.base import BaseRepository
+ 
+ 
++#: Порядок курсов ученика — как в ``GET /users/{id}/courses``: ``order_number``
++#: (NULL в конце), затем время привязки и ``course_id``. tsk-996: им же
++#: упорядочены ответы bulk-привязки и reorder, раньше шедшие по ``course_id``.
++_COURSE_ORDER = (
++    UserCourses.order_number.asc().nulls_last(),
++    UserCourses.added_at.asc(),
++    UserCourses.course_id.asc(),
++)
++
++
+ class UserCoursesRepository(BaseRepository[UserCourses]):
+     """
+     Репозиторий для связей пользователей с курсами.
+@@ -45,11 +55,7 @@ class UserCoursesRepository(BaseRepository[UserCourses]):
+         # обходит курсы в этом порядке, и при равных ключах «следующий» прыгал.
+         if order_by_order:
+             # Сортировка по order_number (NULL в конце)
+-            stmt = stmt.order_by(
+-                UserCourses.order_number.asc().nulls_last(),
+-                UserCourses.added_at.asc(),
+-                UserCourses.course_id.asc(),
+-            )
++            stmt = stmt.order_by(*_COURSE_ORDER)
+         else:
+             stmt = stmt.order_by(UserCourses.added_at.asc(), UserCourses.course_id.asc())
+         
+@@ -83,36 +89,26 @@ class UserCoursesRepository(BaseRepository[UserCourses]):
+         existing_course_ids = {row[0] for row in existing_result.fetchall()}
+         
+         # Создаем только новые связи
+-        new_course_ids = [cid for cid in course_ids if cid not in existing_course_ids]
+-        
+-        if not new_course_ids:
+-            # Все курсы уже привязаны, возвращаем существующие
+-            stmt = select(UserCourses).where(
+-                UserCourses.user_id == user_id,
+-                UserCourses.course_id.in_(course_ids)
+-            ).order_by(UserCourses.course_id)  # tsk-996: как скан PK
+-            result = await db.execute(stmt)
+-            return list(result.scalars().all())
+-        
+-        # Создаем новые связи (order_number будет установлен триггером автоматически)
+-        objs_in = [
+-            {"user_id": user_id, "course_id": course_id, "order_number": None}
+-            for course_id in new_course_ids
+-        ]
+-        
+-        created_objs = await self.batch_create(db, objs_in)
+-        
+-        # Если были существующие курсы, получаем их тоже
+-        if existing_course_ids:
+-            existing_stmt = select(UserCourses).where(
+-                UserCourses.user_id == user_id,
+-                UserCourses.course_id.in_(existing_course_ids)
+-            ).order_by(UserCourses.course_id)  # tsk-996
+-            existing_result = await db.execute(existing_stmt)
+-            existing_objs = list(existing_result.scalars().all())
+-            return created_objs + existing_objs
+-        
+-        return created_objs
++        # dict.fromkeys — без повторов: [5, 5] дал бы две вставки одного PK (500)
++        new_course_ids = list(dict.fromkeys(
++            cid for cid in course_ids if cid not in existing_course_ids
++        ))
++        
++        if new_course_ids:
++            # Создаем новые связи (order_number будет установлен триггером автоматически)
++            objs_in = [
++                {"user_id": user_id, "course_id": course_id, "order_number": None}
++                for course_id in new_course_ids
++            ]
++            await self.batch_create(db, objs_in)
++
++        # Новые и уже привязанные курсы — одним списком в порядке GET (tsk-996)
++        stmt = select(UserCourses).where(
++            UserCourses.user_id == user_id,
++            UserCourses.course_id.in_(course_ids)
++        ).order_by(*_COURSE_ORDER).execution_options(populate_existing=True)
++        result = await db.execute(stmt)
++        return list(result.scalars().all())
+ 
+     async def reorder_user_courses(
+         self,
+@@ -153,7 +149,10 @@ class UserCoursesRepository(BaseRepository[UserCourses]):
+         stmt = select(UserCourses).where(
+             UserCourses.user_id == user_id,
+             UserCourses.course_id.in_(updated_course_ids)
+-        ).order_by(UserCourses.course_id)  # tsk-996: как скан PK
++        ).order_by(*_COURSE_ORDER).execution_options(populate_existing=True)
++        # tsk-996: порядок как в GET /users/{id}/courses; populate_existing —
++        # order_number из базы, а не из закешированных сессией объектов
++        # (expire_on_commit=False, UPDATE выше идёт мимо identity map).
+         result = await db.execute(stmt)
+         return list(result.scalars().all())
+ 
+diff --git a/app/schemas/activity_feed.py b/app/schemas/activity_feed.py
+index 46b6b1e..f899e67 100644
+--- a/app/schemas/activity_feed.py
++++ b/app/schemas/activity_feed.py
+@@ -56,7 +56,17 @@ class ActivityFeedResponse(BaseModel):
+     )
+     next_before: Optional[datetime] = Field(
+         default=None,
+-        description="Курсор для следующей страницы («показать ещё») — передать в `before`",
++        description=(
++            "Устаревший курсор только по времени (передать в `before`): события с тем же "
++            "временем на стыке страниц теряются. Новым клиентам — `next_cursor`"
++        ),
++    )
++    next_cursor: Optional[str] = Field(
++        default=None,
++        description=(
++            "tsk-996: составной курсор следующей страницы («показать ещё») — передать "
++            "в `cursor` как есть. Непрозрачная строка; null, если событий на странице нет"
++        ),
+     )
+     on_lesson_student_ids: List[int] = Field(
+         default_factory=list,
+diff --git a/app/services/teacher_activity_feed_service.py b/app/services/teacher_activity_feed_service.py
+index 58d2cad..e9ac40a 100644
+--- a/app/services/teacher_activity_feed_service.py
++++ b/app/services/teacher_activity_feed_service.py
+@@ -23,9 +23,13 @@ ACL — тот же принцип, что у ``manual_progress_service.can_edit
+ """
+ from __future__ import annotations
+ 
++import base64
++import binascii
++import json
+ import logging
++from dataclasses import dataclass
+ from datetime import datetime
+-from typing import Any, Dict, List, Optional, Tuple
++from typing import Any, Dict, List, Optional, Sequence, Tuple
+ 
+ from sqlalchemy import text
+ from sqlalchemy.ext.asyncio import AsyncSession
+@@ -46,6 +50,112 @@ _ELEVATED_ROLES = frozenset({"admin", "methodist"})
+ _LESSON_WINDOW_BEFORE_MIN = 15
+ _LESSON_WINDOW_AFTER_MIN = 30
+ 
++#: tsk-996: место источника в общем порядке ленты при равном времени. Лента
++#: идёт по убыванию ``(время, ранг источника, ключ строки)`` — это полный
++#: порядок: ключ строки уникален внутри источника, ранг различает источники.
++_SOURCE_RANK: Dict[str, int] = {
++    "task_solved": 4,
++    "help_requested": 3,
++    "material_studied": 2,
++    "student_idle": 1,
++}
++#: Длина ключа строки у каждого источника (у прогресса материала ключ составной).
++_KEY_LEN: Dict[str, int] = {
++    "task_solved": 1, "help_requested": 1, "material_studied": 2, "student_idle": 1,
++}
++
++#: Верхняя граница ключа курсора: ключи источников — ``integer``, число больше
++#: вызвало бы ошибку драйвера (500) вместо 422.
++_MAX_KEY = 2**31 - 1
++
++
++@dataclass(frozen=True)
++class FeedCursor:
++    """Составной курсор ленты (tsk-996): последнее событие отданной страницы.
++
++    Следующая страница — события строго «после» него в порядке ленты, то есть
++    раньше по времени, а при равном времени — ниже по рангу источника или ключу
++    строки. Курсор только по времени (``before``) терял события с тем же
++    временем, что у последнего на странице.
++    """
++
++    timestamp: datetime
++    source: str
++    key: Tuple[int, ...]
++
++    def encode(self) -> str:
++        """Непрозрачная строка для клиента (base64url от JSON, без «=»)."""
++        raw = json.dumps(
++            {"t": self.timestamp.isoformat(), "s": self.source, "k": list(self.key)},
++            separators=(",", ":"),
++        )
++        return base64.urlsafe_b64encode(raw.encode("utf-8")).decode("ascii").rstrip("=")
++
++    @classmethod
++    def decode(cls, value: str) -> "FeedCursor":
++        """Разобрать курсор клиента; на любой мусор — ``ValueError``.
++
++        Время обязано быть с часовым поясом: колонки ленты — ``timestamptz``,
++        а наивное время сравнивалось бы по поясу сессии БД.
++        """
++        try:
++            padded = value + "=" * (-len(value) % 4)
++            data = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")))
++            ts = datetime.fromisoformat(data["t"])
++            source = data["s"]
++            key = tuple(data["k"])
++        except (ValueError, TypeError, KeyError, UnicodeError, binascii.Error) as exc:
++            raise ValueError("некорректный курсор ленты") from exc
++        if ts.tzinfo is None or ts.utcoffset() is None:
++            raise ValueError("время в курсоре ленты без часового пояса")
++        if not 1970 <= ts.year <= 9000:
++            # Крайние даты после перевода в UTC выходят за диапазон PG → 500.
++            raise ValueError("время в курсоре ленты вне допустимого диапазона")
++        if not isinstance(source, str) or source not in _SOURCE_RANK:
++            raise ValueError("неизвестный источник в курсоре ленты")
++        if len(key) != _KEY_LEN[source] or not all(
++            isinstance(k, int) and not isinstance(k, bool) and 0 < k <= _MAX_KEY for k in key
++        ):
++            raise ValueError("некорректный ключ в курсоре ленты")
++        return cls(timestamp=ts, source=source, key=key)
++
++
++def _page_condition(
++    conds: List[str],
++    params: Dict[str, Any],
++    *,
++    source: str,
++    time_col: str,
++    key_cols: Sequence[str],
++    before: Optional[datetime],
++    cursor: Optional[FeedCursor],
++) -> None:
++    """Условие «после курсора» для одного источника.
++
++    ``cursor`` — составной (tsk-996): источник с рангом ниже курсорного берёт
++    и равное время, с рангом выше — только строго раньше, тот же источник —
++    сравнение ``(время, ключ) < (время курсора, ключ курсора)``. Отдельное
++    ``время <= курсор`` рядом с ним — чтобы план мог идти по индексу времени.
++    ``before`` — прежний курсор только по времени, оставлен для старых клиентов.
++    Столбцы — литералы из закрытого набора call-sites модуля.
++    """
++    if cursor is not None:
++        params["cursor_ts"] = cursor.timestamp
++        own, theirs = _SOURCE_RANK[source], _SOURCE_RANK[cursor.source]
++        if own < theirs:
++            conds.append(f"{time_col} <= :cursor_ts")
++        elif own > theirs:
++            conds.append(f"{time_col} < :cursor_ts")
++        else:
++            names = [f"cursor_k{i}" for i in range(len(key_cols))]
++            params.update(zip(names, cursor.key))
++            lhs = ", ".join([time_col, *key_cols])
++            rhs = ", ".join([":cursor_ts", *(f":{n}" for n in names)])
++            conds.append(f"{time_col} <= :cursor_ts AND ({lhs}) < ({rhs})")
++    elif before is not None:
++        conds.append(f"{time_col} < :before")
++        params["before"] = before
++
+ 
+ def _scope_predicate(student_col: str, course_col: str, time_col: Optional[str] = None) -> str:
+     """SQL-фрагмент «ученик/курс в зоне ответственности :teacher_id».
+@@ -123,16 +233,17 @@ def _outcome_of(is_correct: Optional[bool]) -> str:
+ 
+ async def _fetch_task_solved(
+     db: AsyncSession, *, teacher_id: int, elevated: bool, limit: int, before: Optional[datetime],
+-    student_id: Optional[int] = None,
++    student_id: Optional[int] = None, cursor: Optional[FeedCursor] = None,
+ ) -> List[Dict[str, Any]]:
+     """Реальные результаты заданий (без синтетических зачётов tsk-297)."""
+     conds = ["tr.source_system IS DISTINCT FROM :manual_source"]
+     params: Dict[str, Any] = {
+         "manual_source": _MANUAL_SOURCE, "teacher_id": teacher_id, "limit": limit,
+     }
+-    if before is not None:
+-        conds.append("tr.submitted_at < :before")
+-        params["before"] = before
++    _page_condition(
++        conds, params, source="task_solved", time_col="tr.submitted_at",
++        key_cols=("tr.id",), before=before, cursor=cursor,
++    )
+     _add_student_filter(conds, params, "tr.user_id", student_id)
+     if not elevated:
+         conds.append(_scope_predicate("tr.user_id", "t.course_id", "tr.submitted_at"))
+@@ -145,7 +256,7 @@ async def _fetch_task_solved(
+                        tr.task_id, t.course_id, t.external_uid,
+                        t.task_content->>'title' AS title_raw, t.task_content->>'stem' AS stem,
+                        tr.is_correct, tr.submitted_at AS event_at,
+-                       tr.code_review, tr.source_system
++                       tr.code_review, tr.source_system, tr.id AS row_id
+                 FROM task_results tr
+                 JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
+                 JOIN tasks t ON t.id = tr.task_id
+@@ -190,20 +301,22 @@ async def _fetch_task_solved(
+             # строку списка всё равно не поместятся; подробности преподаватель
+             # смотрит в карточке задания.
+             "code_review": build_code_review_badge(r["code_review"]),
++            "_key": (int(r["row_id"]),),
+         })
+     return events
+ 
+ 
+ async def _fetch_help_requested(
+     db: AsyncSession, *, teacher_id: int, elevated: bool, limit: int, before: Optional[datetime],
+-    student_id: Optional[int] = None,
++    student_id: Optional[int] = None, cursor: Optional[FeedCursor] = None,
+ ) -> List[Dict[str, Any]]:
+     """Заявки помощи (момент создания — ``created_at``)."""
+     conds = ["1 = 1"]
+     params: Dict[str, Any] = {"teacher_id": teacher_id, "limit": limit}
+-    if before is not None:
+-        conds.append("hr.created_at < :before")
+-        params["before"] = before
++    _page_condition(
++        conds, params, source="help_requested", time_col="hr.created_at",
++        key_cols=("hr.id",), before=before, cursor=cursor,
++    )
+     _add_student_filter(conds, params, "hr.student_id", student_id)
+     if not elevated:
+         conds.append(
+@@ -221,7 +334,7 @@ async def _fetch_help_requested(
+                        hr.material_id, m.title AS material_title,
+                        hr.context_json->>'trigger' AS trigger,
+                        hr.context_json->>'base_attempts_added' AS added,
+-                       hr.origin, hr.stuck_reason
++                       hr.origin, hr.stuck_reason, hr.id AS row_id
+                 FROM help_requests hr
+                 JOIN users u ON u.id = hr.student_id
+                 LEFT JOIN tasks t ON t.id = hr.task_id
+@@ -275,13 +388,14 @@ async def _fetch_help_requested(
+             "timestamp": r["event_at"],
+             "summary": summary,
+             "outcome": outcome,
++            "_key": (int(r["row_id"]),),
+         })
+     return events
+ 
+ 
+ async def _fetch_material_studied(
+     db: AsyncSession, *, teacher_id: int, elevated: bool, limit: int, before: Optional[datetime],
+-    student_id: Optional[int] = None,
++    student_id: Optional[int] = None, cursor: Optional[FeedCursor] = None,
+ ) -> List[Dict[str, Any]]:
+     """Завершённые материалы (без синтетических зачётов tsk-297)."""
+     conds = [
+@@ -292,9 +406,10 @@ async def _fetch_material_studied(
+     params: Dict[str, Any] = {
+         "manual_source": _MANUAL_SOURCE, "teacher_id": teacher_id, "limit": limit,
+     }
+-    if before is not None:
+-        conds.append("smp.completed_at < :before")
+-        params["before"] = before
++    _page_condition(
++        conds, params, source="material_studied", time_col="smp.completed_at",
++        key_cols=("smp.student_id", "smp.material_id",), before=before, cursor=cursor,
++    )
+     _add_student_filter(conds, params, "smp.student_id", student_id)
+     if not elevated:
+         conds.append(_scope_predicate("smp.student_id", "m.course_id", "smp.completed_at"))
+@@ -329,13 +444,14 @@ async def _fetch_material_studied(
+             "timestamp": r["event_at"],
+             "summary": f"{student} — изучил материал «{r['material_title']}»",
+             "outcome": None,
++            "_key": (int(r["student_id"]), int(r["material_id"])),
+         })
+     return events
+ 
+ 
+ async def _fetch_student_idle(
+     db: AsyncSession, *, teacher_id: int, elevated: bool, limit: int, before: Optional[datetime],
+-    student_id: Optional[int] = None,
++    student_id: Optional[int] = None, cursor: Optional[FeedCursor] = None,
+ ) -> List[Dict[str, Any]]:
+     """Простои учеников на занятиях (tsk-591) — эпизоды «затих → вернулся».
+ 
+@@ -347,9 +463,10 @@ async def _fetch_student_idle(
+     """
+     conds = ["1 = 1"]
+     params: Dict[str, Any] = {"teacher_id": teacher_id, "limit": limit}
+-    if before is not None:
+-        conds.append("e.detected_at < :before")
+-        params["before"] = before
++    _page_condition(
++        conds, params, source="student_idle", time_col="e.detected_at",
++        key_cols=("e.id",), before=before, cursor=cursor,
++    )
+     _add_student_filter(conds, params, "e.student_id", student_id)
+     if not elevated:
+         conds.append(
+@@ -376,7 +493,7 @@ async def _fetch_student_idle(
+                        e.silent_since, e.detected_at, e.resolved_at,
+                        t.external_uid, t.task_content->>'title' AS title_raw,
+                        t.task_content->>'stem' AS stem,
+-                       m.title AS material_title
++                       m.title AS material_title, e.id AS row_id
+                 FROM lesson_idle_episode e
+                 JOIN users u ON u.id = e.student_id
+                 LEFT JOIN tasks t ON t.id = e.task_id
+@@ -424,6 +541,7 @@ async def _fetch_student_idle(
+             "timestamp": r["detected_at"],
+             "summary": f"{student} — {body}{tail}",
+             "outcome": "resolved" if resolved else "ongoing",
++            "_key": (int(r["row_id"]),),
+         })
+     return events
+ 
+@@ -434,14 +552,23 @@ async def get_activity_feed(
+     *,
+     limit: int = 100,
+     before: Optional[datetime] = None,
++    cursor: Optional[FeedCursor] = None,
+     student_id: Optional[int] = None,
+-) -> Tuple[List[Dict[str, Any]], bool, Optional[datetime]]:
++) -> Tuple[List[Dict[str, Any]], bool, Optional[datetime], Optional[str]]:
+     """Собрать топ-``limit`` событий по всем ученикам преподавателя, по убыванию времени.
+ 
+-    :param before: курсор пагинации — вернуть только события строго раньше этого
+-        момента (клиент передаёт ``next_before`` предыдущей страницы).
+-    :returns: (события, has_more, next_before). ``has_more`` — True в двух
+-        случаях: (1) слитый набор источников больше ``limit`` — значит,
++    Порядок полный (tsk-996): ``(время, ранг источника, ключ строки)`` по
++    убыванию, см. ``_SOURCE_RANK``.
++
++    :param cursor: составной курсор пагинации (tsk-996) — клиент передаёт
++        ``next_cursor`` предыдущей страницы; события с тем же временем на стыке
++        страниц не теряются и не повторяются.
++    :param before: прежний курсор только по времени — вернуть события строго
++        раньше этого момента. Оставлен для старых клиентов: события с тем же
++        временем, что у последнего на странице, с ним теряются. При ``cursor``
++        не используется.
++    :returns: (события, has_more, next_before, next_cursor). ``has_more`` — True
++        в двух случаях: (1) слитый набор источников больше ``limit`` — значит,
+         страница обрезала уже известные (полученные) события; (2) хотя бы
+         один источник вернул ровно ``limit`` строк — у него могут быть ещё
+         более старые записи, которые не запрашивались вовсе (``LIMIT`` мог
+@@ -449,9 +576,10 @@ async def get_activity_feed(
+         источника по 60 строк каждый (180 > ``limit``=100) не капнутся ни по
+         одному, но обрежутся при слиянии — без проверки (1) страница молча
+         потеряла бы 80 реальных событий.
+-        ``next_before`` — время последнего (самого старого) события в ответе.
++        ``next_before`` — время последнего (самого старого) события в ответе,
++        ``next_cursor`` — составной курсор по нему же.
+     :param student_id: tsk-1362 — только события этого ученика (в пределах ACL);
+-        пагинация та же, курсор ``before`` работает внутри отбора.
++        пагинация та же, курсор работает внутри отбора.
+     """
+     elevated = await _is_elevated(db, current_user)
+     teacher_id = current_user.id
+@@ -459,7 +587,7 @@ async def get_activity_feed(
+     task_events, help_events, material_events, idle_events = [
+         await fn(
+             db, teacher_id=teacher_id, elevated=elevated, limit=limit, before=before,
+-            student_id=student_id,
++            student_id=student_id, cursor=cursor,
+         )
+         for fn in (
+             _fetch_task_solved,
+@@ -472,13 +600,21 @@ async def get_activity_feed(
+     sources = (task_events, help_events, material_events, idle_events)
+     merged = sorted(
+         [event for source in sources for event in source],
+-        key=lambda e: e["timestamp"],
++        key=lambda e: (e["timestamp"], _SOURCE_RANK[e["type"]], e["_key"]),
+         reverse=True,
+     )
+     has_more = len(merged) > limit or any(len(source) == limit for source in sources)
+     page = merged[:limit]
+     next_before = page[-1]["timestamp"] if page else None
+-    return page, has_more, next_before
++    next_cursor = (
++        FeedCursor(
++            timestamp=page[-1]["timestamp"], source=page[-1]["type"], key=page[-1]["_key"],
++        ).encode()
++        if page else None
++    )
++    for event in page:
++        del event["_key"]
++    return page, has_more, next_before, next_cursor
+ 
+ 
+ async def list_feed_students(
+diff --git a/app/services/teacher_lesson_summary_service.py b/app/services/teacher_lesson_summary_service.py
+index 8c7344f..c7bef49 100644
+--- a/app/services/teacher_lesson_summary_service.py
++++ b/app/services/teacher_lesson_summary_service.py
+@@ -16,7 +16,7 @@
+ "выполнено/с 1 раза/запросил помощь" за окно между занятиями и не отдаёт
+ "предыдущее occurrence ученика + серию пропусков подряд" — это единственные
+ новые SQL-агрегации модуля, `get_student_progress` — не оконный снепшот,
+-`get_activity_feed` поддерживает только курсор `before`.
++`get_activity_feed` — постраничная лента по курсору, а не оконный срез.
+ 
+ Важно: в реальном потоке сдачи ответа (``app/api/v1/attempts.py``)
+ ``task_results.count_retry`` НИКОГДА не передаётся явно — всегда дефолт 0,
+diff --git a/docs/openapi.json b/docs/openapi.json
+index 9d3a085..f9295b8 100644
+--- a/docs/openapi.json
++++ b/docs/openapi.json
+@@ -27665,10 +27665,29 @@
+                   "type": "null"
+                 }
+               ],
+-              "description": "Курсор пагинации — только события строго раньше этого момента",
++              "description": "Устаревший курсор только по времени — события строго раньше этого момента. События с тем же временем на стыке страниц теряются; использовать `cursor`",
+               "title": "Before"
+             },
+-            "description": "Курсор пагинации — только события строго раньше этого момента"
++            "description": "Устаревший курсор только по времени — события строго раньше этого момента. События с тем же временем на стыке страниц теряются; использовать `cursor`"
++          },
++          {
++            "name": "cursor",
++            "in": "query",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string",
++                  "maxLength": 512
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "description": "tsk-996: составной курсор пагинации — `next_cursor` предыдущей страницы. Нельзя вместе с `before`",
++              "title": "Cursor"
++            },
++            "description": "tsk-996: составной курсор пагинации — `next_cursor` предыдущей страницы. Нельзя вместе с `before`"
+           },
+           {
+             "name": "student_id",
+@@ -53322,7 +53341,19 @@
+               }
+             ],
+             "title": "Next Before",
+-            "description": "Курсор для следующей страницы («показать ещё») — передать в `before`"
++            "description": "Устаревший курсор только по времени (передать в `before`): события с тем же временем на стыке страниц теряются. Новым клиентам — `next_cursor`"
++          },
++          "next_cursor": {
++            "anyOf": [
++              {
++                "type": "string"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Next Cursor",
++            "description": "tsk-996: составной курсор следующей страницы («показать ещё») — передать в `cursor` как есть. Непрозрачная строка; null, если событий на странице нет"
+           },
+           "on_lesson_student_ids": {
+             "items": {
+diff --git a/tests/test_tsk591_lesson_idle_cron.py b/tests/test_tsk591_lesson_idle_cron.py
+index 39e7f44..039164e 100644
+--- a/tests/test_tsk591_lesson_idle_cron.py
++++ b/tests/test_tsk591_lesson_idle_cron.py
+@@ -298,7 +298,7 @@ async def test_episode_appears_in_teacher_feed(db, db_session_factory, scene):
+     await db.flush()
+     await lesson_idle_cron_tick(session_factory=db_session_factory)
+ 
+-    events, _, _ = await teacher_activity_feed_service.get_activity_feed(
++    events, _, _, _ = await teacher_activity_feed_service.get_activity_feed(
+         db, CurrentUser(id=scene["teacher_id"], is_service=False), limit=50
+     )
+     idle = [e for e in events if e["type"] == "student_idle"]
+@@ -308,7 +308,7 @@ async def test_episode_appears_in_teacher_feed(db, db_session_factory, scene):
+ 
+     stranger_id, _ = await _new_user(db, "teacher", "stranger")
+     await db.flush()
+-    other_events, _, _ = await teacher_activity_feed_service.get_activity_feed(
++    other_events, _, _, _ = await teacher_activity_feed_service.get_activity_feed(
+         db, CurrentUser(id=stranger_id, is_service=False), limit=50
+     )
+     assert [e for e in other_events if e["type"] == "student_idle"] == []
+@@ -326,7 +326,7 @@ async def test_resolved_episode_reads_as_returned(db, db_session_factory, scene)
+     await db.flush()
+     await lesson_idle_cron_tick(session_factory=db_session_factory)
+ 
+-    events, _, _ = await teacher_activity_feed_service.get_activity_feed(
++    events, _, _, _ = await teacher_activity_feed_service.get_activity_feed(
+         db, CurrentUser(id=scene["teacher_id"], is_service=False), limit=50
+     )
+     idle = [e for e in events if e["type"] == "student_idle"]
+diff --git a/tests/test_tsk996_followups.py b/tests/test_tsk996_followups.py
+new file mode 100644
+index 0000000..1bd4274
+--- /dev/null
++++ b/tests/test_tsk996_followups.py
+@@ -0,0 +1,580 @@
++"""tsk-996, хвосты прочёски: четыре места, оставленные 22.10 на решение оператора.
++
++1. Лента преподавателя: составной курсор ``cursor`` — события с тем же временем
++   на стыке страниц не теряются и не повторяются; старый ``before`` работает.
++2. Тариф без оси: не больше одного действующего на группу (индекс
++   ``uq_pricing_tariff_single_active``), дубль — 409, миграция с дублями
++   отказывает понятной ошибкой.
++3. ``GET /courses/{id}/tree``: дети узла в порядке ``/children``.
++4. Ответы bulk-привязки и reorder курсов ученика — в порядке
++   ``GET /users/{id}/courses``.
++
++Приём тот же, что в ``test_tsk996_order_g*.py``: ничья по ключу, строки в куче
++не по порядку, вызов под всеми планами (``run_under_plans``).
++"""
++from __future__ import annotations
++
++import importlib.util
++import json
++import os
++import random
++from datetime import datetime, timedelta, timezone
++from pathlib import Path
++from typing import Any
++
++import pytest
++from alembic.operations import Operations
++from alembic.runtime.migration import MigrationContext
++from sqlalchemy import text
++from sqlalchemy.exc import IntegrityError
++
++from app.auth.current_user import CurrentUser
++from app.models.users import Users
++from app.repos.courses_repo import CoursesRepository
++from app.repos.user_courses_repo import UserCoursesRepository
++from app.services import pricing_service
++from app.services import teacher_activity_feed_service as feed
++from app.services.auth import identity_link_service
++from app.services.auth.session_service import create_session
++from tests.plan_order import assert_same, move_to_heap_end, run_under_plans
++
++pytestmark = pytest.mark.asyncio
++
++_TAG = "t996f"
++#: Общий момент «одной пачки» — у всех событий ленты время одно.
++_TS = datetime(2026, 9, 1, 10, 0, tzinfo=timezone.utc)
++_SERVICE = CurrentUser(id=0, is_service=True)
++
++
++# ── фабрики ──────────────────────────────────────────────────────────────────
++
++async def _user(db: Any, name: str, *, role: str | None = None) -> int:
++    u = Users(
++        email=f"{_TAG}-{random.randint(10**8, 10**10)}@example.com",
++        password_hash=None, full_name=f"{_TAG} {name}", tg_id=None,
++    )
++    db.add(u)
++    await db.flush()
++    if role:
++        await db.execute(
++            text(
++                "INSERT INTO user_roles (user_id, role_id) "
++                "SELECT :u, r.id FROM roles r WHERE r.name = :role ON CONFLICT DO NOTHING"
++            ),
++            {"u": u.id, "role": role},
++        )
++    return u.id
++
++
++async def _token(db: Any, user_id: int) -> str:
++    email = f"{_TAG}-s{user_id}@example.com"
++    await identity_link_service.upsert_identity(db, user_id, "email", email)
++    token, _, _ = await create_session(db, user_id=user_id)
++    return token
++
++
++async def _course(db: Any, title: str = "курс") -> int:
++    return (
++        await db.execute(
++            text(
++                "INSERT INTO courses (title, access_level) "
++                "VALUES (:t, 'self_guided') RETURNING id"
++            ),
++            {"t": f"{_TAG} {title} {random.randint(10**6, 10**8)}"},
++        )
++    ).scalar_one()
++
++
++async def _task(db: Any, course_id: int) -> int:
++    return (
++        await db.execute(
++            text(
++                "INSERT INTO tasks (external_uid, max_score, task_content, solution_rules, "
++                "course_id, difficulty_id) "
++                "VALUES (:e, 10, CAST(:c AS jsonb), CAST(:r AS jsonb), :course, "
++                "        (SELECT MIN(id) FROM difficulties)) RETURNING id"
++            ),
++            {
++                "e": f"{_TAG}-{random.randint(10**8, 10**10)}",
++                "c": json.dumps({"type": "SA", "stem": "x", "title": "задание"}),
++                "r": json.dumps({"max_score": 10}),
++                "course": course_id,
++            },
++        )
++    ).scalar_one()
++
++
++async def _material(db: Any, course_id: int) -> int:
++    return (
++        await db.execute(
++            text(
++                "INSERT INTO materials (course_id, title, type, content, order_position) "
++                "VALUES (:c, :t, 'text', CAST(:content AS jsonb), 1) RETURNING id"
++            ),
++            {"c": course_id, "t": f"{_TAG} материал", "content": json.dumps({"body": "x"})},
++        )
++    ).scalar_one()
++
++
++# ── 1. лента преподавателя: составной курсор ─────────────────────────────────
++
++async def _feed_graph(db: Any) -> tuple[int, int]:
++    """Ученик с девятью событиями трёх источников в одну и ту же секунду + одно старше.
++
++    Строки вставляются не по порядку ключа и перекладываются в конец кучи —
++    чтобы порядок внутри ничьей решал не план, а ключ.
++    """
++    student = await _user(db, "ученик")
++    course = await _course(db)
++    attempt = (
++        await db.execute(
++            text("INSERT INTO attempts (user_id) VALUES (:u) RETURNING id"), {"u": student}
++        )
++    ).scalar_one()
++    tasks = [await _task(db, course) for _ in range(4)]
++    result_ids = []
++    for task in tasks:
++        result_ids.append(
++            (
++                await db.execute(
++                    text(
++                        "INSERT INTO task_results (score, user_id, task_id, submitted_at, "
++                        " count_retry, received_at, max_score, source_system, is_correct, "
++                        " attempt_id) "
++                        "VALUES (0, :u, :t, :ts, 0, :ts, 10, 'spw', true, :a) RETURNING id"
++                    ),
++                    {"u": student, "t": task, "ts": _TS, "a": attempt},
++                )
++            ).scalar_one()
++        )
++    help_ids = []
++    for task in tasks[:3]:
++        help_ids.append(
++            (
++                await db.execute(
++                    text(
++                        "INSERT INTO help_requests (status, request_type, student_id, task_id, "
++                        " course_id, created_at, updated_at) "
++                        "VALUES ('open', 'manual_help', :s, :t, :c, :ts, :ts) RETURNING id"
++                    ),
++                    {"s": student, "t": task, "c": course, "ts": _TS},
++                )
++            ).scalar_one()
++        )
++    materials = [await _material(db, course) for _ in range(2)]
++    for material in materials:
++        await db.execute(
++            text(
++                "INSERT INTO student_material_progress "
++                "  (student_id, material_id, status, completed_at, source) "
++                "VALUES (:s, :m, 'completed', :ts, 'system')"
++            ),
++            {"s": student, "m": material, "ts": _TS},
++        )
++    # Простой на занятии в ту же секунду — стык material_studied → student_idle.
++    teacher = await _user(db, "преподаватель")
++    occurrence = (
++        await db.execute(
++            text(
++                "INSERT INTO lesson_occurrence (slot_id, teacher_id, scheduled_at, "
++                " duration_minutes) VALUES (NULL, :t, :at, 90) RETURNING id"
++            ),
++            {"t": teacher, "at": _TS - timedelta(minutes=30)},
++        )
++    ).scalar_one()
++    await db.execute(
++        text(
++            "INSERT INTO lesson_idle_episode (occurrence_id, student_id, kind, context, "
++            " course_id, silent_since, detected_at) "
++            "VALUES (:o, :s, 'idle', 'cabinet', :c, :since, :ts)"
++        ),
++        {
++            "o": occurrence, "s": student, "c": course,
++            "since": _TS - timedelta(minutes=5), "ts": _TS,
++        },
++    )
++    # Событие старше пачки — проверка, что после ничьей лента идёт дальше.
++    await db.execute(
++        text(
++            "INSERT INTO task_results (score, user_id, task_id, submitted_at, count_retry, "
++            " received_at, max_score, source_system, is_correct, attempt_id) "
++            "VALUES (0, :u, :t, :ts, 0, :ts, 10, 'spw', false, :a)"
++        ),
++        {"u": student, "t": tasks[0], "ts": _TS - timedelta(hours=1), "a": attempt},
++    )
++    await move_to_heap_end(db, "task_results", min(result_ids))
++    await move_to_heap_end(db, "help_requests", min(help_ids))
++    await db.commit()
++    return student, len(result_ids) + len(help_ids) + len(materials) + 2
++
++
++def _ident(event: dict) -> tuple:
++    return (event["type"], event["task_id"], event["material_id"], event["outcome"])
++
++
++async def _walk(db: Any, student: int, size: int) -> list[tuple]:
++    """Пройти ленту страницами по ``next_cursor`` до пустой страницы."""
++    out: list[tuple] = []
++    cursor: str | None = None
++    for _ in range(50):
++        page, has_more, _, next_cursor = await feed.get_activity_feed(
++            db, _SERVICE, limit=size, student_id=student,
++            cursor=feed.FeedCursor.decode(cursor) if cursor else None,
++        )
++        if not page:
++            return out
++        out.extend(_ident(e) for e in page)
++        cursor = next_cursor
++        if not has_more:
++            # Последняя страница: дальше событий быть не должно.
++            rest, _, _, _ = await feed.get_activity_feed(
++                db, _SERVICE, limit=size, student_id=student,
++                cursor=feed.FeedCursor.decode(cursor) if cursor else None,
++            )
++            assert rest == []
++            return out
++    raise AssertionError("лента не кончилась за 50 страниц")
++
++
++async def test_feed_cursor_pages_tie_no_loss_no_dupes(db):
++    """Ничья по времени на стыке страниц: все события ровно по одному разу.
++
++    Без составного курсора страница размера 2 обрывала пачку из девяти событий
++    с одинаковым временем: ``before`` строгий, остальные семь терялись.
++    """
++    student, total = await _feed_graph(db)
++    full, _, _, _ = await feed.get_activity_feed(db, _SERVICE, limit=100, student_id=student)
++    expected = [_ident(e) for e in full]
++    assert len(expected) == total
++
++    for size in (1, 2, 3, 4):
++        seen = await run_under_plans(db, lambda size=size: _walk(db, student, size))
++        assert_same(seen, expected)
++
++
++async def test_feed_order_is_total_inside_tie(db):
++    """Внутри ничьей: task_solved → help_requested → material_studied, ключ по убыванию."""
++    student, _ = await _feed_graph(db)
++    page, _, _, _ = await feed.get_activity_feed(db, _SERVICE, limit=100, student_id=student)
++    types = [e["type"] for e in page]
++    assert types == (
++        ["task_solved"] * 4 + ["help_requested"] * 3 + ["material_studied"] * 2
++        + ["student_idle", "task_solved"]
++    )
++    tasks = [e["task_id"] for e in page[:4]]
++    assert tasks == sorted(tasks, reverse=True)
++    materials = [e["material_id"] for e in page[7:9]]
++    assert materials == sorted(materials, reverse=True)
++    assert all("_key" not in e for e in page)
++
++
++async def test_feed_legacy_before_still_strict(db):
++    """Старый ``before`` работает как раньше: только события строго раньше момента."""
++    student, _ = await _feed_graph(db)
++    page, _, next_before, next_cursor = await feed.get_activity_feed(
++        db, _SERVICE, limit=100, student_id=student, before=_TS,
++    )
++    assert [e["outcome"] for e in page] == ["incorrect"]
++    assert next_before == _TS - timedelta(hours=1)
++    assert next_cursor is not None
++
++
++async def test_feed_cursor_roundtrip_and_validation():
++    """Курсор переживает кодирование; мусор, наивное время и чужой ключ — ValueError."""
++    cur = feed.FeedCursor(timestamp=_TS, source="material_studied", key=(5, 7))
++    assert feed.FeedCursor.decode(cur.encode()) == cur
++    naive = feed.FeedCursor(timestamp=_TS.replace(tzinfo=None), source="task_solved", key=(1,))
++    bad_key = feed.FeedCursor(timestamp=_TS, source="task_solved", key=(1, 2))
++    bad_source = feed.FeedCursor(timestamp=_TS, source="nope", key=(1,))
++    import base64
++
++    def raw_cursor(t: str, src: Any, key: Any) -> str:
++        data = json.dumps({"t": t, "s": src, "k": key}).encode()
++        return base64.urlsafe_b64encode(data).decode().rstrip("=")
++
++    forged = [
++        raw_cursor(_TS.isoformat(), [], [1]),  # источник не строка
++        raw_cursor(_TS.isoformat(), "task_solved", [2**31]),  # вне integer
++        raw_cursor(_TS.isoformat(), "task_solved", [0]),
++        raw_cursor("0001-01-01T00:00:00+14:00", "task_solved", [1]),  # крайняя дата
++        raw_cursor("9999-12-31T23:59:59-14:00", "task_solved", [1]),
++    ]
++    for raw in (
++        "", "@@@", "e30", naive.encode(), bad_key.encode(), bad_source.encode(), *forged,
++    ):
++        with pytest.raises(ValueError):
++            feed.FeedCursor.decode(raw)
++
++
++async def test_feed_api_cursor_contract(db, client):
++    """API: ``next_cursor`` в ответе, ``cursor`` принимается; мусор и cursor+before — 422."""
++    student, total = await _feed_graph(db)
++    methodist = await _user(db, "методист", role="methodist")
++    headers = {"Authorization": f"Bearer {await _token(db, methodist)}"}
++    await db.commit()
++    url = "/api/v1/teacher/activity-feed"
++
++    seen: list[tuple] = []
++    params: dict[str, Any] = {"limit": 2, "student_id": student}
++    for _ in range(20):
++        resp = await client.get(url, params=params, headers=headers)
++        assert resp.status_code == 200, resp.text
++        body = resp.json()
++        if not body["events"]:
++            break
++        seen.extend(_ident(e) for e in body["events"])
++        assert body["next_cursor"]
++        params = {"limit": 2, "student_id": student, "cursor": body["next_cursor"]}
++    assert len(seen) == total == len(set(seen))
++
++    bad = await client.get(url, params={"cursor": "мусор"}, headers=headers)
++    assert bad.status_code == 422, bad.text
++    forged = feed.FeedCursor(timestamp=_TS, source="task_solved", key=(2**31,))
++    big = await client.get(url, params={"cursor": forged.encode()}, headers=headers)
++    assert big.status_code == 422, big.text
++    both = await client.get(
++        url, params={"cursor": params["cursor"], "before": _TS.isoformat()}, headers=headers,
++    )
++    assert both.status_code == 422, both.text
++    legacy = await client.get(
++        url, params={"student_id": student, "before": _TS.isoformat()}, headers=headers,
++    )
++    assert legacy.status_code == 200, legacy.text
++    assert len(legacy.json()["events"]) == 1
++
++
++# ── 2. тариф без оси: один действующий на группу ─────────────────────────────
++
++async def _group(db: Any) -> int:
++    return (
++        await db.execute(
++            text("INSERT INTO pricing_group (name) VALUES (:n) RETURNING id"),
++            {"n": f"{_TAG} группа {random.randint(10**6, 10**8)}"},
++        )
++    ).scalar_one()
++
++
++def _tariff(group_id: int, price: int, **kw: Any) -> dict:
++    return {
++        "group_id": group_id, "name": f"{_TAG} {price}", "price_minor": price,
++        "currency": "RUB", "period": "month", "match_kind": None, "match_value": None,
++        "is_default": False, "sort_order": 0, **kw,
++    }
++
++
++async def test_second_active_axisless_tariff_rejected_by_db(db):
++    """Второй действующий вариант без оси в группе — нарушение индекса, не тихий дубль."""
++    group = await _group(db)
++    await pricing_service.create_tariff(db, payload=_tariff(group, 100000))
++    with pytest.raises(IntegrityError, match="uq_pricing_tariff_single_active"):
++        await pricing_service.create_tariff(db, payload=_tariff(group, 200000))
++
++
++async def test_inactive_and_axis_tariffs_not_affected(db):
++    """Выключенный вариант без оси и варианты с осью индексу не мешают."""
++    group = await _group(db)
++    old = await pricing_service.create_tariff(db, payload=_tariff(group, 100000))
++    await pricing_service.update_tariff(db, tariff_id=old, patch={"is_active": False})
++    await pricing_service.create_tariff(db, payload=_tariff(group, 150000))
++    await pricing_service.create_tariff(
++        db, payload=_tariff(group, 90000, match_kind="segment", match_value="insider"),
++    )
++    other = await _group(db)
++    await pricing_service.create_tariff(db, payload=_tariff(other, 100000))
++    count = (
++        await db.execute(
++            text(
++                "SELECT count(*) FROM pricing_tariff "
++                "WHERE group_id = ANY(:g) AND is_active AND match_kind IS NULL"
++            ),
++            {"g": [group, other]},
++        )
++    ).scalar_one()
++    assert count == 2
++
++
++async def test_marketer_api_duplicate_axisless_is_409(db, client):
++    """Кабинет маркетолога: дубль при создании и при включении — понятный 409, не 500."""
++    marketer = await _user(db, "маркетолог", role="marketer")
++    headers = {"Authorization": f"Bearer {await _token(db, marketer)}"}
++    group = await _group(db)
++    await pricing_service.create_tariff(db, payload=_tariff(group, 100000))
++    spare = await pricing_service.create_tariff(
++        db, payload=_tariff(group, 80000, match_kind="segment", match_value="street"),
++    )
++
++    created = await client.post(
++        "/api/v1/marketer/pricing/tariffs",
++        json={"group_id": group, "name": "ещё один", "price_minor": 300000},
++        headers=headers,
++    )
++    assert created.status_code == 409, created.text
++    assert "без оси" in created.json()["detail"]
++
++    # Снять ось у второго варианта — тоже второй вариант без оси.
++    patched = await client.patch(
++        f"/api/v1/marketer/pricing/tariffs/{spare}",
++        json={"match_kind": None, "match_value": None},
++        headers=headers,
++    )
++    assert patched.status_code == 409, patched.text
++    assert "без оси" in patched.json()["detail"]
++
++    # Соединение живое: следующий запрос отвечает нормально.
++    ok = await client.get("/api/v1/marketer/pricing/groups", headers=headers)
++    assert ok.status_code == 200, ok.text
++
++
++def _load_migration() -> Any:
++    path = (
++        Path(__file__).resolve().parents[1]
++        / "app/db/migrations/versions/2026_10_22_tsk996_pricing_tariff_single_active.py"
++    )
++    spec = importlib.util.spec_from_file_location("tsk996_tariff_single_active", path)
++    assert spec is not None and spec.loader is not None
++    module = importlib.util.module_from_spec(spec)
++    spec.loader.exec_module(module)
++    return module
++
++
++async def test_migration_refuses_when_duplicates_exist(db):
++    """Миграция при дублях падает со списком групп и данных не трогает.
++
++    Индекс снимается внутри транзакции теста — откат вернёт его на место.
++    """
++    migration = _load_migration()
++    await db.execute(text("DROP INDEX uq_pricing_tariff_single_active"))
++    group = await _group(db)
++    first = await pricing_service.create_tariff(db, payload=_tariff(group, 100000))
++    second = await pricing_service.create_tariff(db, payload=_tariff(group, 200000))
++
++    def upgrade(sync_conn: Any) -> None:
++        with Operations.context(MigrationContext.configure(sync_conn)):
++            migration.upgrade()
++
++    conn = await db.connection()
++    with pytest.raises(RuntimeError, match=f"группа {group}: варианты \\[{first}, {second}\\]"):
++        await conn.run_sync(upgrade)
++    active = (
++        await db.execute(
++            text("SELECT count(*) FROM pricing_tariff WHERE group_id = :g AND is_active"),
++            {"g": group},
++        )
++    ).scalar_one()
++    assert active == 2
++
++    # Без дублей та же миграция создаёт индекс.
++    await pricing_service.update_tariff(db, tariff_id=second, patch={"is_active": False})
++    await conn.run_sync(upgrade)
++    assert (
++        await db.execute(
++            text("SELECT 1 FROM pg_indexes WHERE indexname = 'uq_pricing_tariff_single_active'")
++        )
++    ).scalar_one() == 1
++
++
++# ── 3. дерево курса: дети в порядке /children ────────────────────────────────
++
++async def _tree_graph(db: Any) -> tuple[int, list[int], list[int]]:
++    """Корень → 4 ребёнка (порядок 3, NULL, 1, 2) → у первого 3 внука (2, 1, NULL).
++
++    Номера ставятся мимо триггера нумерации, чтобы был и NULL. Строки
++    ``course_parents`` вставляются по возрастанию id ребёнка, то есть куча
++    идёт НЕ в порядке ``order_number``.
++    """
++    root = await _course(db, "корень")
++    kids = [await _course(db, f"ребёнок {i}") for i in range(4)]
++    grand = [await _course(db, f"внук {i}") for i in range(3)]
++    await db.execute(text("SELECT set_config('app.skip_course_parent_order_trigger', 'true', true)"))
++    for child, parent, order in (
++        *zip(kids, [root] * 4, [3, None, 1, 2]),
++        *zip(grand, [kids[0]] * 3, [2, 1, None]),
++    ):
++        await db.execute(
++            text(
++                "INSERT INTO course_parents (course_id, parent_course_id, order_number) "
++                "VALUES (:c, :p, :o)"
++            ),
++            {"c": child, "p": parent, "o": order},
++        )
++    await db.execute(text("SELECT set_config('app.skip_course_parent_order_trigger', 'false', true)"))
++    await db.commit()
++    return root, kids, grand
++
++
++async def test_course_tree_children_follow_children_order(db):
++    """Под любым планом дети узла — как в ``/children``: order_number NULLS LAST, id."""
++    root, kids, grand = await _tree_graph(db)
++    repo = CoursesRepository()
++
++    async def tree() -> tuple[list[int], list[int]]:
++        node = await repo.get_course_tree(db, root)
++        first = next(c for c in node.children if c.id == kids[0])
++        return [c.id for c in node.children], [c.id for c in first.children]
++
++    expected = ([kids[2], kids[3], kids[0], kids[1]], [grand[1], grand[0], grand[2]])
++    assert_same(await run_under_plans(db, tree), expected)
++
++    children = [c.id for c, _ in await repo.get_children(db, root)]
++    assert children == expected[0]
++
++
++async def test_course_tree_endpoint_order(db, client):
++    """API ``/courses/{id}/tree`` отдаёт тот же порядок, что ``/children``."""
++    root, kids, _ = await _tree_graph(db)
++    key = os.environ.get("VALID_API_KEYS", "").split(",")[0].strip()
++    tree = await client.get(f"/api/v1/courses/{root}/tree", params={"api_key": key})
++    assert tree.status_code == 200, tree.text
++    children = await client.get(f"/api/v1/courses/{root}/children", params={"api_key": key})
++    assert children.status_code == 200, children.text
++    tree_ids = [c["id"] for c in tree.json()["children"]]
++    assert tree_ids == [kids[2], kids[3], kids[0], kids[1]]
++    assert tree_ids == [c["id"] for c in children.json()]
++
++
++# ── 4. курсы ученика: ответы bulk и reorder ──────────────────────────────────
++
++async def test_bulk_and_reorder_answer_in_get_order(db):
++    """bulk и reorder отдают курсы в порядке GET /users/{id}/courses, не по course_id."""
++    student = await _user(db, "ученик курсов")
++    courses = [await _course(db, f"к{i}") for i in range(4)]
++    await db.commit()
++    repo = UserCoursesRepository()
++
++    # Двое уже привязаны, причём старший id — раньше: триггер даст ему номер 1.
++    await repo.bulk_create_user_courses(db, student, [courses[3]])
++    await repo.bulk_create_user_courses(db, student, [courses[2]])
++
++    async def get_order(ids: list[int]) -> list[int]:
++        return [
++            uc.course_id for uc in await repo.get_user_courses(db, student) if uc.course_id in ids
++        ]
++
++    bulk = [uc.course_id for uc in await repo.bulk_create_user_courses(db, student, courses)]
++    expected = await get_order(courses)
++    assert bulk == expected == [courses[3], courses[2], courses[0], courses[1]]
++
++    async def again() -> list[int]:
++        return [uc.course_id for uc in await repo.bulk_create_user_courses(db, student, courses)]
++
++    await move_to_heap_end(db, "user_courses", courses[3], column="course_id")
++    assert_same(await run_under_plans(db, again), expected)
++
++    reordered = await repo.reorder_user_courses(
++        db, student,
++        [{"course_id": c, "order_number": n} for c, n in zip(courses, [4, 3, 2, 1])],
++    )
++    got = [(uc.course_id, uc.order_number) for uc in reordered]
++    after = await get_order(courses)
++    assert [c for c, _ in got] == after
++    assert after != sorted(after)
++    assert [n for _, n in got] == sorted(n for _, n in got)
++
++
++async def test_bulk_with_repeated_course_id_is_not_500(db):
++    """Повтор курса в одной пачке ([c, c]) — одна привязка, а не две вставки одного PK."""
++    student = await _user(db, "ученик с повтором")
++    course = await _course(db, "повтор")
++    await db.commit()
++    got = await UserCoursesRepository().bulk_create_user_courses(db, student, [course, course])
++    assert [uc.course_id for uc in got] == [course]
+diff --git a/tests/test_tsk996_order_g3.py b/tests/test_tsk996_order_g3.py
+index 43b6af6..5433f45 100644
+--- a/tests/test_tsk996_order_g3.py
++++ b/tests/test_tsk996_order_g3.py
+@@ -373,7 +373,7 @@ async def test_activity_feed_top_same_under_any_plan(db):
+     service = CurrentUser(id=0, is_service=True)
+ 
+     async def top() -> list[int]:
+-        page, _, _ = await feed.get_activity_feed(db, service, limit=3, student_id=student)
++        page, _, _, _ = await feed.get_activity_feed(db, service, limit=3, student_id=student)
+         return [ev["task_id"] for ev in page if ev["type"] == "task_solved"]
+ 
+     # task_results вставлены по возрастанию task_id: больший id работы — больший task_id.

@@ -24,9 +24,16 @@
 действительно есть в конфиге, в `.env.example` и читается в самом файле.
 Рубильник намеренно НЕ разрешён точке с возможностью ученика: иначе он стал бы
 дешёвым способом обойти дверь прав.
+
+Системная точка может и не держать рубильник сама, если она — общее ядро,
+которое зовёт другая системная точка (tsk-1312: гейт роли наставника зовёт
+еженедельная проверка цепочек). Тогда запись ссылается на вызывающего, и страж
+проверяет, что тот правда системный, правда с рубильником и правда импортирует
+это ядро — иначе «выше выключают» осталось бы словами.
 """
 from __future__ import annotations
 
+import ast
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -66,6 +73,7 @@ class SpendPoint:
     #: Гейт стоит в этом же файле.
     gated_here: bool = False
     #: Гейт стоит выше по потоку — путь до места, где он реально вызывается.
+    #: У системной точки — путь до системной точки с рубильником, которая её зовёт.
     gated_upstream: Optional[str] = None
     #: Гейт — рубильник оператора: имя переменной окружения, которой расход
     #: включается и выключается. Только для системного расхода (tsk-678).
@@ -88,10 +96,10 @@ class SpendPoint:
                 "рубильник не заменяет дверь прав: у точки с возможностью "
                 f"{self.capability!r} гейт обязан стоять здесь или выше по потоку"
             )
-        if not self.capability and not self.gated_by_toggle:
+        if not self.capability and not self.gated_by_toggle and not self.gated_upstream:
             raise AssertionError(
                 "точка без возможности ученика обязана быть системной и назвать "
-                "свой рубильник"
+                "свой рубильник или системного вызывающего с рубильником"
             )
 
 
@@ -148,6 +156,26 @@ AI_SPEND_POINTS: dict[str, SpendPoint] = {
     # в неделю на процесс, порядка полуцента, без зависимости от числа учеников.
     "app/services/llm_chain_check_cron_service.py": SpendPoint(
         gated_by_toggle="LLM_CHAIN_CHECK_ENABLED", wired=True
+    ),
+    # tsk-990: черновик развивающего отзыва преподавателю. Зовётся только из
+    # фонового тика оценки (`code_review_cron_service`) сразу после разбора по
+    # рубрике — то есть по работе, которая попала в очередь через прогейченный
+    # вход `attempts.py`. Новой возможности не заводится по доводу tsk-646.
+    # Сверх двери — рубильник школы `feedback_draft_llm_enabled` (кабинет,
+    # по умолчанию выключен): это ТРЕТИЙ вызов модели на текстовую работу с
+    # критериями. Учёт — общий транспорт: `llm_usage_event` с
+    # purpose=feedback_draft и student_id ученика. Квоты у `code_review` нет
+    # (возможность тарифа — да/нет), списывать нечего, как и у соседей.
+    "app/services/feedback_draft_service.py": SpendPoint(
+        capability="code_review", gated_upstream="app/api/v1/attempts.py", wired=True
+    ),
+    # tsk-1312: общее ядро гейта роли наставника. В приложении его зовёт только
+    # еженедельная проверка цепочек — за `LLM_CHAIN_CHECK_ENABLED` и собственным
+    # `LLM_CHAIN_CHECK_ROLE_ENABLED`; второй вызывающий — ручной стенд
+    # `scripts/tutor_role_gate.py`, вне `app/`. Учёт — общий транспорт:
+    # `llm_usage_event` с purpose вызывающего (chain_check / tutor_role_gate).
+    "app/services/ai_tutor/role_gate.py": SpendPoint(
+        gated_upstream="app/services/llm_chain_check_cron_service.py", wired=True
     ),
 }
 
@@ -207,13 +235,141 @@ def test_registry_has_no_phantom_points() -> None:
     sorted(p for p, point in AI_SPEND_POINTS.items() if point.gated_upstream),
 )
 def test_upstream_gate_target_exists(rel_path: str) -> None:
-    """Ссылка «гейт выше по потоку» ведёт в реальный зарегистрированный файл."""
-    upstream = AI_SPEND_POINTS[rel_path].gated_upstream
+    """Ссылка «гейт выше по потоку» ведёт в реальный зарегистрированный файл.
+
+    Ученическая точка обязана упираться в дверь прав. Системная — в системную
+    точку с рубильником, которая её действительно импортирует (tsk-1312).
+    """
+    point = AI_SPEND_POINTS[rel_path]
+    upstream = point.gated_upstream
     assert upstream in AI_SPEND_POINTS, (
         f"{rel_path}: ссылка на вышестоящий гейт {upstream!r} не найдена в реестре"
     )
-    assert AI_SPEND_POINTS[upstream].gated_here, (
-        f"{rel_path}: {upstream} сам не гейтит — цепочка «выше по потоку» разорвана"
+    target = AI_SPEND_POINTS[upstream]
+    if point.capability:
+        assert target.gated_here, (
+            f"{rel_path}: {upstream} сам не гейтит — цепочка «выше по потоку» разорвана"
+        )
+        return
+    assert target.gated_by_toggle and not target.capability, (
+        f"{rel_path}: системная точка обязана упираться в системный рубильник, "
+        f"а {upstream} его не держит"
+    )
+    upstream_source = (APP_ROOT.parent / upstream).read_text(encoding="utf-8")
+    assert _module_of(rel_path) in _imported_modules(upstream_source, upstream), (
+        f"{rel_path}: {upstream} это ядро не импортирует — его рубильник ничего не выключает"
+    )
+
+
+def _module_of(rel_path: str) -> str:
+    """`app/services/x.py` → `app.services.x` (`__init__.py` — сам пакет)."""
+    return rel_path.removesuffix(".py").removesuffix("/__init__").replace("/", ".")
+
+
+def _imported_modules(source: str, rel_path: str) -> set[str]:
+    """Модули, которые файл импортирует, — разбором `ast`, а не подстрокой.
+
+    Подстрока не видит импорта с псевдонимом, относительного и многострочного,
+    а `ast` видит и их, и отложенный импорт внутри функции. Для `from X import
+    Y` в набор попадают и `X`, и `X.Y`: `Y` может оказаться модулем пакета.
+
+    Не видны динамический импорт (`importlib.import_module("…")`) и обращение
+    к подмодулю как к атрибуту пакета после `import app.services.ai_tutor`.
+    В `app/` так ядро не зовут; появится — расширять здесь.
+    """
+    package = _module_of(rel_path)
+    if not rel_path.endswith("/__init__.py"):
+        package = package.rpartition(".")[0]
+    found: set[str] = set()
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Import):
+            found.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            base = node.module or ""
+            if node.level:
+                parts = package.split(".")
+                parent = ".".join(parts[: len(parts) - node.level + 1])
+                base = f"{parent}.{base}" if base else parent
+            found.add(base)
+            found.update(f"{base}.{alias.name}" for alias in node.names)
+    return found
+
+
+#: Системное ядро — системная точка без своего рубильника, выключаемая
+#: рубильником вызывающего (tsk-1312: гейт роли наставника).
+_SYSTEM_CORES = sorted(
+    p for p, point in AI_SPEND_POINTS.items()
+    if not point.capability and point.gated_upstream
+)
+
+
+def _core_importers_outside_system(sources: dict[str, str]) -> dict[str, list[str]]:
+    """Кто импортирует системное ядро, не будучи системной точкой реестра.
+
+    Ядро тратит деньги без ученика: нет ни двери прав, ни квоты
+    (`student_ai_quota` списывает только `ai_tutor`), учёт идёт с
+    `student_id = NULL`. Ученическая ручка, позвавшая его напрямую, получила бы
+    ученику модель мимо лимита — а реестр бы этого не заметил: файл ручки в
+    нём уже есть, с возможностью и дверью. Поэтому импортировать ядро в `app/`
+    вправе только системные точки реестра (у них нет `capability`).
+    """
+    system = {p for p, point in AI_SPEND_POINTS.items() if not point.capability}
+    cores = {_module_of(core): core for core in _SYSTEM_CORES}
+    bad: dict[str, list[str]] = {}
+    for rel_path, source in sources.items():
+        if rel_path in system:
+            continue
+        hit = sorted(cores[m] for m in _imported_modules(source, rel_path) if m in cores)
+        if hit:
+            bad[rel_path] = hit
+    return bad
+
+
+def test_system_core_imported_only_by_system_points() -> None:
+    """Системное ядро не зовут ученические ручки и прочий код `app/` (tsk-301).
+
+    `test_upstream_gate_target_exists` проверяет, что системный вызывающий у
+    ядра ЕСТЬ, но не что он ЕДИНСТВЕННЫЙ: импорт ядра из ученической ручки
+    прошёл бы молча. Скрипты вне `app/` (ручной стенд) не проверяются — их
+    запускает оператор, а не ученик.
+    """
+    assert _SYSTEM_CORES, "в реестре нет системного ядра — проверять нечего"
+    sources = {
+        _rel(path): path.read_text(encoding="utf-8") for path in APP_ROOT.rglob("*.py")
+    }
+    bad = _core_importers_outside_system(sources)
+    assert not bad, (
+        "системное ядро ИИ импортируется мимо системных точек (расход без "
+        f"двери прав и квоты): {bad}"
+    )
+
+
+@pytest.mark.parametrize(
+    "rel_path, planted",
+    [
+        ("app/api/v1/ai_tutor.py", "from app.services.ai_tutor.role_gate import judge\n"),
+        ("app/api/v1/ai_tutor.py", "from app.services.ai_tutor import role_gate as rg\n"),
+        ("app/api/v1/learning.py", "import app.services.ai_tutor.role_gate\n"),
+        ("app/services/ai_tutor/service.py", "from .role_gate import judge\n"),
+        ("app/services/ai_tutor/__init__.py", "from . import role_gate\n"),
+        (
+            "app/services/code_review_service.py",
+            "async def f():\n    from ..services.ai_tutor import role_gate\n",
+        ),
+    ],
+)
+def test_system_core_guard_catches_planted_import(rel_path: str, planted: str) -> None:
+    """Подсаженный импорт ядра в ученическую ручку страж правда ловит.
+
+    Сегодня таких импортов нет, и главный тест зелёный, — без этой проверки
+    нельзя отличить «нарушений нет» от «страж их не видит».
+    """
+    core = "app/services/ai_tutor/role_gate.py"
+    assert core in _SYSTEM_CORES
+    assert _core_importers_outside_system({rel_path: planted}) == {rel_path: [core]}
+    # Системному вызывающему импорт ядра разрешён.
+    assert not _core_importers_outside_system(
+        {"app/services/llm_chain_check_cron_service.py": planted}
     )
 
 
