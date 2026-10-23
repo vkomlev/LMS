@@ -17,9 +17,11 @@ PaymentMethod = Literal["manual", "gateway"]
 PaymentStatus = Literal["pending", "confirmed", "rejected", "reversed"]
 #: За что платили (tsk-615). `monthly` — месяц обучения, всё остальное —
 #: разовая покупка, у которой месяца нет.
-PaymentPurpose = Literal["monthly", "ai_package"]
+PaymentPurpose = Literal["monthly", "ai_package", "course"]
 #: Почему сверка не смогла учесть успешный платёж шлюза (tsk-616).
-ReconcileReason = Literal["charge_missing", "charge_unknown", "package_meta_missing"]
+ReconcileReason = Literal[
+    "charge_missing", "charge_unknown", "package_meta_missing", "course_purchase_problem"
+]
 
 
 class PaymentRead(BaseModel):

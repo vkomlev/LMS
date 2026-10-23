@@ -27,6 +27,10 @@ PricingStatus = Literal[
 #: не выводится, догадка не должна выглядеть фактом.
 FrequencySource = Literal["schedule", "inferred_from_price", "unknown"]
 
+#: За какой срок цена тарифа (tsk-1254). `month` — помесячное начисление,
+#: `once` — разовая покупка курса целиком; помесячный расчёт её не видит.
+TariffPeriod = Literal["month", "once"]
+
 
 class TariffRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -36,12 +40,14 @@ class TariffRead(BaseModel):
     name: str
     price_minor: int
     currency: str
-    period: str
+    period: TariffPeriod
     match_kind: Optional[MatchKind]
     match_value: Optional[str]
     is_default: bool
     sort_order: int
     is_active: bool
+    access_months: Optional[int] = None
+    installments_allowed: bool = False
 
 
 class TariffCreateRequest(BaseModel):
@@ -49,14 +55,22 @@ class TariffCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     price_minor: int = Field(ge=0)
     currency: str = Field(default="RUB", min_length=3, max_length=3)
-    period: str = Field(default="month", min_length=1, max_length=32)
+    period: TariffPeriod = "month"
     match_kind: Optional[MatchKind] = None
     match_value: Optional[str] = Field(default=None, max_length=64)
     is_default: bool = False
     sort_order: int = 0
+    #: Срок доступа разовой покупки, месяцев. Обязателен ровно у `once` (CHECK
+    #: таблицы); по умолчанию — год, решение оператора 06.10.2026.
+    access_months: Optional[int] = Field(default=None, ge=1, le=120)
+    installments_allowed: bool = False
 
     @model_validator(mode="after")
     def _axis_is_all_or_nothing(self) -> "TariffCreateRequest":
+        if self.period == "once" and self.access_months is None:
+            self.access_months = 12
+        if self.period == "month" and (self.access_months is not None or self.installments_allowed):
+            raise ValueError("Срок доступа и доли бывают только у разового тарифа")
         if (self.match_kind is None) != (self.match_value is None):
             raise ValueError("match_kind и match_value задаются вместе или не задаются вовсе")
         if self.match_kind == "attendance_frequency":
@@ -86,12 +100,14 @@ class TariffUpdateRequest(BaseModel):
 
     name: Optional[str] = Field(default=None, min_length=1, max_length=200)
     price_minor: Optional[int] = Field(default=None, ge=0)
-    period: Optional[str] = Field(default=None, min_length=1, max_length=32)
+    period: Optional[TariffPeriod] = None
     match_kind: Optional[MatchKind] = None
     match_value: Optional[str] = Field(default=None, max_length=64)
     is_default: Optional[bool] = None
     sort_order: Optional[int] = None
     is_active: Optional[bool] = None
+    access_months: Optional[int] = Field(default=None, ge=1, le=120)
+    installments_allowed: Optional[bool] = None
 
     @model_validator(mode="after")
     def _axis_is_all_or_nothing(self) -> "TariffUpdateRequest":
@@ -206,11 +222,13 @@ class PublicTariff(BaseModel):
     name: str
     price_minor: int
     currency: str
-    period: str
+    period: TariffPeriod
     match_kind: Optional[MatchKind]
     match_value: Optional[str]
     is_default: bool
     sort_order: int
+    access_months: Optional[int] = None
+    installments_allowed: bool = False
 
 
 class PublicCourseOffer(BaseModel):

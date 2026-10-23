@@ -689,6 +689,17 @@ async def recalculate_student_group(
             )
         return None
 
+    if left_on is None:
+        # tsk-1254: купил курс целиком посреди месяца — помесячно оплачиваются
+        # только дни ДО покупки. Тот же счёт, что у ушедшего: день накануне
+        # первого дня доступа — последний оплачиваемый.
+        cutoff = (
+            await pricing_service.purchased_group_cutoffs(
+                db, period=period, student_id=student_id
+            )
+        ).get((student_id, group_id))
+        if cutoff is not None:
+            left_on = cutoff - timedelta(days=1)
     counts = await lesson_counts_for_month(
         db, student_id=student_id, period=period, left_on=left_on
     )

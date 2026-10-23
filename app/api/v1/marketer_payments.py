@@ -26,6 +26,7 @@ from app.schemas.payment import (
     ReconcileUnmatchedPayment,
 )
 from app.services import (
+    course_purchase_service,
     payment_reminder_service,
     payment_service,
     subscription_service,
@@ -378,6 +379,23 @@ async def reconcile(
             elif outcome:
                 added += 1
             continue
+        # tsk-1254: оплата курса целиком — тоже без начисления, по своей покупке.
+        if payment.metadata.get("purpose") == course_purchase_service.PURPOSE_COURSE:
+            purchase_id = str(payment.metadata.get("course_purchase_id") or "")
+            try:
+                if purchase_id.isdigit() and await course_purchase_service.mark_paid(
+                    db,
+                    purchase_id=int(purchase_id),
+                    amount_minor=payment.amount_minor,
+                    paid_on=date_from if date_from == date_to else date.today(),
+                    gateway_payment_id=payment.id,
+                ):
+                    added += 1
+                elif not purchase_id.isdigit():
+                    unmatched.append(_unmatched(payment, "course_purchase_problem"))
+            except course_purchase_service.PurchaseError:
+                unmatched.append(_unmatched(payment, "course_purchase_problem"))
+            continue
         charge_id = payment.metadata.get("charge_id")
         if not str(charge_id or "").isdigit():
             # Номера начисления нет вовсе — искать по нему нечего, и причина
@@ -444,6 +462,7 @@ _REASON_TEXT: dict[ReconcileReason, str] = {
     ),
     "charge_unknown": "В платеже не указано начисление",
     "package_meta_missing": "В платеже нет ученика или объёма пакета",
+    "course_purchase_problem": "Оплата курса: покупка не найдена или сумма не совпала с ценой",
 }
 
 

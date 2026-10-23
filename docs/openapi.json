@@ -46649,7 +46649,8 @@
                 {
                   "enum": [
                     "monthly",
-                    "ai_package"
+                    "ai_package",
+                    "course"
                   ],
                   "type": "string"
                 },
@@ -48336,6 +48337,839 @@
                   "additionalProperties": true,
                   "type": "object",
                   "title": "Response Yookassa Webhook Api V1 Payments Yookassa Webhook Post"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/course-purchases": {
+      "get": {
+        "tags": [
+          "course_purchases"
+        ],
+        "summary": "Мои покупки курсов и сроки доступа",
+        "operationId": "my_course_purchases_api_v1_me_course_purchases_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response My Course Purchases Api V1 Me Course Purchases Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/course-purchases/gateway": {
+      "post": {
+        "tags": [
+          "course_purchases"
+        ],
+        "summary": "Оплатить курс целиком картой или долями через банк",
+        "description": "Завести покупку и платёж в ЮKassa. Доступ выдаётся по уведомлению.\n\nДоли через банк — это способ оплаты на странице ЮKassa (подключается в её\nкабинете): банк платит школе всю сумму сразу, поэтому здесь путь один.",
+        "operationId": "start_course_payment_api_v1_me_course_purchases_gateway_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CoursePurchaseStartRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayPaymentStart"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Продажа курса целиком выключена"
+          },
+          "503": {
+            "description": "Оплата картой выключена"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/marketer/course-purchases": {
+      "post": {
+        "tags": [
+          "course_purchases"
+        ],
+        "summary": "Завести покупку курса за ученика (и отметить оплату)",
+        "operationId": "staff_create_purchase_api_v1_marketer_course_purchases_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StaffCoursePurchaseRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Staff Create Purchase Api V1 Marketer Course Purchases Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/marketer/course-purchases/{purchase_id}/mark-paid": {
+      "post": {
+        "tags": [
+          "course_purchases"
+        ],
+        "summary": "Отметить оплату ждущей покупки",
+        "operationId": "staff_mark_paid_api_v1_marketer_course_purchases__purchase_id__mark_paid_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "purchase_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Purchase Id"
+            }
+          },
+          {
+            "name": "paid_on",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Paid On"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Staff Mark Paid Api V1 Marketer Course Purchases  Purchase Id  Mark Paid Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/marketer/students/{student_id}/course-purchases": {
+      "get": {
+        "tags": [
+          "course_purchases"
+        ],
+        "summary": "Покупки курсов ученика",
+        "operationId": "staff_student_purchases_api_v1_marketer_students__student_id__course_purchases_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "student_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Student Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response Staff Student Purchases Api V1 Marketer Students  Student Id  Course Purchases Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/marketer/course-access/extend": {
+      "post": {
+        "tags": [
+          "course_purchases"
+        ],
+        "summary": "Продлить доступ к курсу",
+        "operationId": "staff_extend_access_api_v1_marketer_course_access_extend_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExtendAccessRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Staff Extend Access Api V1 Marketer Course Access Extend Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/marketer/course-access/expiring": {
+      "get": {
+        "tags": [
+          "course_purchases"
+        ],
+        "summary": "Доступ кончается в ближайшие дни",
+        "operationId": "staff_expiring_api_v1_marketer_course_access_expiring_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "within_days",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 30,
+              "title": "Within Days"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response Staff Expiring Api V1 Marketer Course Access Expiring Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/marketer/course-purchases/{purchase_id}/refund": {
+      "post": {
+        "tags": [
+          "course_purchases"
+        ],
+        "summary": "Отметить возврат за курс (деньги возвращены вручную)",
+        "operationId": "staff_refund_api_v1_marketer_course_purchases__purchase_id__refund_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "purchase_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Purchase Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RefundRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Staff Refund Api V1 Marketer Course Purchases  Purchase Id  Refund Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -58305,6 +59139,33 @@
         "title": "CourseProgressDetailRead",
         "description": "Ученический срез уже посчитанного дашборда персонала/родителя (П2\nпедагогического аудита LMS 2026-09-17, `student_dashboard_service`).\n\nСознательно БЕЗ `pace_level` (терциль относительно когорты активных\nучеников курса) и без чисел/состава других учеников — когорты у\nбольшинства курсов < 5 человек (tsk-504): сравнение в такой группе легко\nдемотивирует и по сути деанонимизирует одноклассников. Вместо терциля —\n`pace_status`, посчитанный только по собственной позиции ученика."
       },
+      "CoursePurchaseStartRequest": {
+        "properties": {
+          "course_id": {
+            "type": "integer",
+            "title": "Course Id"
+          },
+          "tariff_id": {
+            "type": "integer",
+            "title": "Tariff Id"
+          },
+          "pay_method": {
+            "type": "string",
+            "enum": [
+              "full",
+              "bank_installments"
+            ],
+            "title": "Pay Method",
+            "default": "full"
+          }
+        },
+        "type": "object",
+        "required": [
+          "course_id",
+          "tariff_id"
+        ],
+        "title": "CoursePurchaseStartRequest"
+      },
       "CourseRead": {
         "properties": {
           "id": {
@@ -61276,6 +62137,31 @@
         ],
         "title": "EscalationReadResponse",
         "description": "Ответ POST /escalations/{id}/read (tsk-1338)."
+      },
+      "ExtendAccessRequest": {
+        "properties": {
+          "student_id": {
+            "type": "integer",
+            "title": "Student Id"
+          },
+          "course_id": {
+            "type": "integer",
+            "title": "Course Id"
+          },
+          "months": {
+            "type": "integer",
+            "maximum": 120.0,
+            "minimum": 1.0,
+            "title": "Months"
+          }
+        },
+        "type": "object",
+        "required": [
+          "student_id",
+          "course_id",
+          "months"
+        ],
+        "title": "ExtendAccessRequest"
       },
       "ExternalLeadCreateRequest": {
         "properties": {
@@ -72724,7 +73610,8 @@
             "type": "string",
             "enum": [
               "monthly",
-              "ai_package"
+              "ai_package",
+              "course"
             ],
             "title": "Purpose",
             "default": "monthly"
@@ -72850,7 +73737,8 @@
             "type": "string",
             "enum": [
               "monthly",
-              "ai_package"
+              "ai_package",
+              "course"
             ],
             "title": "Purpose",
             "default": "monthly"
@@ -75035,6 +75923,10 @@
           },
           "period": {
             "type": "string",
+            "enum": [
+              "month",
+              "once"
+            ],
             "title": "Period"
           },
           "match_kind": {
@@ -75070,6 +75962,22 @@
           "sort_order": {
             "type": "integer",
             "title": "Sort Order"
+          },
+          "access_months": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Access Months"
+          },
+          "installments_allowed": {
+            "type": "boolean",
+            "title": "Installments Allowed",
+            "default": false
           }
         },
         "type": "object",
@@ -75967,7 +76875,8 @@
             "enum": [
               "charge_missing",
               "charge_unknown",
-              "package_meta_missing"
+              "package_meta_missing",
+              "course_purchase_problem"
             ],
             "title": "Reason"
           },
@@ -75999,6 +76908,24 @@
           "refresh_token"
         ],
         "title": "RefreshRequest"
+      },
+      "RefundRequest": {
+        "properties": {
+          "note": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "type": "object",
+        "title": "RefundRequest"
       },
       "ReopenKpiItem": {
         "properties": {
@@ -79892,6 +80819,67 @@
         "title": "SortOrder",
         "description": "Направление сортировки"
       },
+      "StaffCoursePurchaseRequest": {
+        "properties": {
+          "student_id": {
+            "type": "integer",
+            "title": "Student Id"
+          },
+          "course_id": {
+            "type": "integer",
+            "title": "Course Id"
+          },
+          "tariff_id": {
+            "type": "integer",
+            "title": "Tariff Id"
+          },
+          "pay_method": {
+            "type": "string",
+            "enum": [
+              "full",
+              "bank_installments"
+            ],
+            "title": "Pay Method",
+            "default": "full"
+          },
+          "mark_paid": {
+            "type": "boolean",
+            "title": "Mark Paid",
+            "default": true
+          },
+          "paid_on": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paid On"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "type": "object",
+        "required": [
+          "student_id",
+          "course_id",
+          "tariff_id"
+        ],
+        "title": "StaffCoursePurchaseRequest"
+      },
       "StaffPaymentCreate": {
         "properties": {
           "charge_id": {
@@ -81579,7 +82567,8 @@
             "type": "string",
             "enum": [
               "monthly",
-              "ai_package"
+              "ai_package",
+              "course"
             ],
             "title": "Purpose"
           },
@@ -82957,8 +83946,10 @@
           },
           "period": {
             "type": "string",
-            "maxLength": 32,
-            "minLength": 1,
+            "enum": [
+              "month",
+              "once"
+            ],
             "title": "Period",
             "default": "month"
           },
@@ -82998,6 +83989,24 @@
             "type": "integer",
             "title": "Sort Order",
             "default": 0
+          },
+          "access_months": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 120.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Access Months"
+          },
+          "installments_allowed": {
+            "type": "boolean",
+            "title": "Installments Allowed",
+            "default": false
           }
         },
         "type": "object",
@@ -83032,6 +84041,10 @@
           },
           "period": {
             "type": "string",
+            "enum": [
+              "month",
+              "once"
+            ],
             "title": "Period"
           },
           "match_kind": {
@@ -83071,6 +84084,22 @@
           "is_active": {
             "type": "boolean",
             "title": "Is Active"
+          },
+          "access_months": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Access Months"
+          },
+          "installments_allowed": {
+            "type": "boolean",
+            "title": "Installments Allowed",
+            "default": false
           }
         },
         "type": "object",
@@ -83120,8 +84149,10 @@
             "anyOf": [
               {
                 "type": "string",
-                "maxLength": 32,
-                "minLength": 1
+                "enum": [
+                  "month",
+                  "once"
+                ]
               },
               {
                 "type": "null"
@@ -83188,6 +84219,30 @@
               }
             ],
             "title": "Is Active"
+          },
+          "access_months": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 120.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Access Months"
+          },
+          "installments_allowed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Installments Allowed"
           }
         },
         "type": "object",

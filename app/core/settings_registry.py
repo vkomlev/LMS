@@ -162,6 +162,20 @@ SETTINGS: Tuple[SettingDef, ...] = (
         max_value=1000,
     ),
     SettingDef(
+        key="course_purchase_prorate_first_month",
+        group=GROUP_MONEY,
+        title="Перевод на покупку курса посреди месяца — доля месяца",
+        description=(
+            "Ученик учился помесячно и купил курс целиком посреди месяца. "
+            "Включено — за дни месяца до покупки начисляется доля по занятиям. "
+            "Выключено — месяц покупки помесячно не начисляется вовсе."
+        ),
+        kind="bool",
+        # Решение оператора 23.10.2026 (tsk-1254): пропорционально.
+        default=True,
+        env_var="COURSE_PURCHASE_PRORATE_FIRST_MONTH",
+    ),
+    SettingDef(
         key="payment_transfer_details",
         group=GROUP_MONEY,
         title="Реквизиты для перевода",

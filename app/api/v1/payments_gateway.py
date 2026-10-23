@@ -21,6 +21,7 @@ from app.core.config import Settings
 from app.db.session import get_async_db
 from app.schemas.payment import GatewayPaymentStart, PaymentStartRequest
 from app.services import (
+    course_purchase_service,
     entitlements_service,
     payment_service,
     subscription_service,
@@ -349,6 +350,8 @@ async def yookassa_webhook(
         return await _record_ai_package(db, payment)
     if payment.metadata.get("purpose") == _PURPOSE_SUBSCRIPTION:
         return await _record_subscription(db, payment)
+    if payment.metadata.get("purpose") == course_purchase_service.PURPOSE_COURSE:
+        return await _record_course_purchase(db, payment)
 
     charge_id = _as_int(payment.metadata.get("charge_id"))
     if charge_id is None:
@@ -375,6 +378,51 @@ async def yookassa_webhook(
         paid_on=date.today(),
     )
     return {"status": "recorded" if created else "already_recorded"}
+
+
+async def _record_course_purchase(db: AsyncSession, payment) -> dict:
+    """Зачесть оплату курса целиком (tsk-1254) и открыть срок доступа.
+
+    Как у пакета: сбой зачисления отвечает 5xx, чтобы шлюз повторил доставку —
+    «деньги списаны, доступ не выдан» хуже повтора. Повтор безопасен:
+    `mark_paid` под блокировкой строки видит уже оплаченную покупку.
+
+    Рубильник продажи здесь НЕ проверяется: деньги уже приняты, и выключение
+    продаж между оплатой и уведомлением не должно их потерять.
+    """
+    purchase_id = _as_int(payment.metadata.get("course_purchase_id"))
+    if purchase_id is None:
+        logger.error(
+            "tsk-1254: платёж %s за курс без ссылки на покупку (metadata=%s)",
+            payment.id, payment.metadata,
+        )
+        return {"status": "ignored"}
+    try:
+        done = await course_purchase_service.mark_paid(
+            db,
+            purchase_id=purchase_id,
+            amount_minor=payment.amount_minor,
+            paid_on=date.today(),
+            gateway_payment_id=payment.id,
+        )
+    except course_purchase_service.PurchaseError as exc:
+        # Покупки нет или сумма не та — повторять бессмысленно, нужен человек.
+        logger.error(
+            "tsk-1254: ДЕНЬГИ СПИСАНЫ, ДОСТУП НЕ ВЫДАН — платёж %s, покупка %s: %s",
+            payment.id, purchase_id, exc.detail,
+        )
+        return {"status": "ignored"}
+    except Exception as exc:
+        await db.rollback()
+        logger.error(
+            "tsk-1254: ДЕНЬГИ СПИСАНЫ, ДОСТУП НЕ ВЫДАН — платёж %s, покупка %s: %s",
+            payment.id, purchase_id, exc, exc_info=True,
+        )
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            "Не удалось зачесть оплату курса, повторите доставку уведомления",
+        ) from exc
+    return {"status": "recorded" if done else "already_recorded"}
 
 
 async def _record_ai_package(db: AsyncSession, payment) -> dict:

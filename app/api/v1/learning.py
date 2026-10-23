@@ -86,6 +86,7 @@ from app.services import attachment_storage
 from app.services import payment_access_service
 # tsk-673: тариф «Выпускник» закрывает работу в курсе (сдачу), оставляя чтение.
 from app.services import graduation_service
+from app.services import course_purchase_service
 from app.services import lesson_attendance_service
 # tsk-301: единственная дверь прав подписки — своей проверки здесь быть не должно.
 from app.services import entitlements_service
@@ -580,6 +581,9 @@ async def start_or_get_attempt(
     # Материалы и чтение самого задания при этом остаются открытыми: закрыта
     # сдача, а не курс (решение оператора 2026-08-25).
     await graduation_service.assert_course_work_allowed(db, body.student_id)
+    await course_purchase_service.assert_access_not_expired(
+        db, student_id=body.student_id, course_id=body.root_course_id
+    )
     task = await tasks_service.get_by_id(db, task_id)
     if task is None or not task.is_active:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Задание не найдено")
@@ -1566,6 +1570,9 @@ async def submit_review_answer(
     # «Выпускник» закрывают работу в курсе — по УЧЕНИКУ, не по вызывающему.
     await payment_access_service.assert_content_allowed(db, body.student_id)
     await graduation_service.assert_course_work_allowed(db, body.student_id)
+    await course_purchase_service.assert_access_not_expired(
+        db, student_id=body.student_id, course_id=course_id
+    )
     outcome = await retrieval_service.submit_review(
         db,
         student_id=body.student_id,
@@ -1679,6 +1686,9 @@ async def start_final_check(
     # тариф «Выпускник» закрывают работу в курсе — по УЧЕНИКУ.
     await payment_access_service.assert_content_allowed(db, body.student_id)
     await graduation_service.assert_course_work_allowed(db, body.student_id)
+    await course_purchase_service.assert_access_not_expired(
+        db, student_id=body.student_id, course_id=course_id
+    )
     run = await final_check_service.start(db, student_id=body.student_id, course_id=course_id)
     return FinalCheckRun(**await final_check_service.serialize_run(db, run))
 
@@ -1730,6 +1740,9 @@ async def answer_final_check(
     _assert_own_student(current_user, body.student_id)
     await payment_access_service.assert_content_allowed(db, body.student_id)
     await graduation_service.assert_course_work_allowed(db, body.student_id)
+    await course_purchase_service.assert_access_not_expired(
+        db, student_id=body.student_id, course_id=course_id
+    )
     outcome = await final_check_service.answer(
         db,
         student_id=body.student_id,

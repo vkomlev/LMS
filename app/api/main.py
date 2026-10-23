@@ -551,6 +551,10 @@ app.include_router(marketer_dashboard_router, prefix=API_PREFIX)
 from app.api.v1.payments_gateway import router as payments_gateway_router
 app.include_router(payments_gateway_router, prefix=API_PREFIX)
 
+# tsk-1254: покупка курса целиком и срок доступа (за рубильником COURSE_PURCHASE_ENABLED).
+from app.api.v1.course_purchases import router as course_purchases_router
+app.include_router(course_purchases_router, prefix=API_PREFIX)
+
 # tsk-010: оплата родителем по гостевой ссылке (без входа). Публичный контур,
 # защита — сверка начисления с учеником из ссылки + ограничение частоты.
 from app.api.v1.public_parent_payments import router as public_parent_payments_router

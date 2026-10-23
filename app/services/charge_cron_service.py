@@ -73,7 +73,7 @@ from app.core import settings_store
 from app.core.config import Settings
 from app.core.cron_registry import register_interval_job
 from app.db.session import async_session_factory
-from app.services import charge_service, inbox_service
+from app.services import charge_service, course_purchase_service, inbox_service
 
 logger = logging.getLogger("app.charge_cron")
 
@@ -174,6 +174,12 @@ SELECT u.id                                   AS student_id,
    AND NOT EXISTS (
            SELECT 1 FROM student_monthly_charge ch
             WHERE ch.student_id = u.id AND ch.period = :period
+       )
+   -- tsk-1254: курс оплачен целиком — помесячного счёта нет и не должно быть.
+   AND NOT EXISTS (
+           SELECT 1 FROM course_purchase cpu
+            WHERE cpu.student_id = u.id AND cpu.status = 'paid'
+              AND cpu.access_from < CAST(:period AS date) + INTERVAL '1 month'
        )
  ORDER BY u.full_name, u.id
 """
@@ -394,6 +400,19 @@ async def charge_cron_tick(
         "unbilled": 0,
         "notified": 0,
     }
+
+    # tsk-1254: напоминания о конце доступа к курсу — своей сессией и своим
+    # локом: внутри прохода ниже коммиты снимают его лок, а рассылка людям не
+    # должна уйти дважды с двух worker'ов. Рубильник ACCESS_EXPIRY_ENABLED
+    # проверяется внутри; сбой рассылки не роняет денежный проход.
+    try:
+        async with factory() as notice_db:
+            if await _try_lock(notice_db):
+                summary["access_notices"] = await course_purchase_service.send_expiry_notices(
+                    notice_db, today=today
+                )
+    except Exception:
+        logger.error("tsk-1254: напоминания о конце доступа не разосланы", exc_info=True)
 
     async with factory() as db:
         if not await _try_lock(db):

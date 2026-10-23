@@ -44,6 +44,9 @@ _TARIFF_PATCH_COLUMNS = frozenset(
         "is_default",
         "sort_order",
         "is_active",
+        # tsk-1254: разовый тариф.
+        "access_months",
+        "installments_allowed",
     }
 )
 
@@ -63,6 +66,7 @@ __all__ = [
     "list_student_pricing",
     "active_subscription_groups",
     "billing_group_ids",
+    "purchased_group_cutoffs",
     "resolve_attendance_frequency",
     "AttendanceFrequencyResolution",
 ]
@@ -182,7 +186,8 @@ async def billing_group_ids(
     subs = await active_subscription_groups(db, period=period)
     if student_id in subs:
         group_id = subs[student_id]
-        return [int(group_id)] if group_id is not None else []
+        groups = [int(group_id)] if group_id is not None else []
+        return await _drop_purchased(db, student_id=student_id, groups=groups, period=period)
 
     rows = (
         await db.execute(
@@ -198,7 +203,74 @@ async def billing_group_ids(
             {"s": student_id},
         )
     ).all()
-    return [int(r.group_id) for r in rows]
+    return await _drop_purchased(
+        db, student_id=student_id, groups=[int(r.group_id) for r in rows], period=period
+    )
+
+
+# ------------------------------------------------ разовая покупка курса (tsk-1254)
+
+
+#: Оплаченные покупки, чей доступ начался не позже конца месяца. Конец доступа
+#: намеренно НЕ ограничивает выборку: купивший курс целиком после окончания
+#: срока остаётся «только для чтения», а не возвращается в помесячный счёт —
+#: иначе истёкший доступ молча превратился бы в ежемесячный долг.
+_PURCHASES_FOR_PERIOD = """
+SELECT student_id, group_id, min(access_from) AS access_from
+  FROM course_purchase
+ WHERE status = 'paid'
+   AND access_from < CAST(:next_p AS date)
+   AND (CAST(:s AS integer) IS NULL OR student_id = CAST(:s AS integer))
+ GROUP BY student_id, group_id
+"""
+
+
+async def purchased_group_cutoffs(
+    db: AsyncSession, *, period: Optional[date] = None, student_id: Optional[int] = None
+) -> dict[tuple[int, int], Optional[date]]:
+    """Пары «ученик × группа», которые месяц `period` не начисляет помесячно.
+
+    Значение пары:
+
+    * `None` — месяц не начисляется по этой группе вовсе (курс оплачен целиком);
+    * дата — первый день доступа покупки ВНУТРИ этого месяца, когда включена
+      доля месяца перехода (`course_purchase_prorate_first_month`): дни ДО неё
+      начисляются долей, как у ушедшего ученика (`left_on` = накануне).
+
+    Исключение не зависит от рубильника COURSE_PURCHASE_ENABLED: оплаченная
+    покупка — это уже принятые деньги, и выключение продаж не должно выставлять
+    за тот же курс второй, помесячный счёт.
+    """
+    from app.core import settings_store
+
+    start = (period or date.today()).replace(day=1)
+    next_p = (start.replace(day=28) + timedelta(days=4)).replace(day=1)
+    rows = (
+        await db.execute(
+            text(_PURCHASES_FOR_PERIOD), {"next_p": next_p, "s": student_id}
+        )
+    ).all()
+    prorate = settings_store.get_bool("course_purchase_prorate_first_month")
+    result: dict[tuple[int, int], Optional[date]] = {}
+    for r in rows:
+        cutoff: Optional[date] = None
+        if prorate and r.access_from > start:
+            cutoff = r.access_from
+        result[(int(r.student_id), int(r.group_id))] = cutoff
+    return result
+
+
+async def _drop_purchased(
+    db: AsyncSession, *, student_id: int, groups: list[int], period: Optional[date]
+) -> list[int]:
+    """Убрать из групп расчёта те, что оплачены покупкой целиком за этот месяц."""
+    if not groups:
+        return groups
+    cutoffs = await purchased_group_cutoffs(db, period=period, student_id=student_id)
+    return [
+        g for g in groups
+        if not ((student_id, g) in cutoffs and cutoffs[(student_id, g)] is None)
+    ]
 
 
 # ---------------------------------------------------------------- тарифные группы
@@ -227,14 +299,23 @@ async def list_groups(db: AsyncSession) -> list[PricingGroupRead]:
 
 
 async def _load_tariffs(
-    db: AsyncSession, *, only_active: bool = False
+    db: AsyncSession, *, only_active: bool = False, monthly_only: bool = False
 ) -> dict[int, list[TariffRead]]:
+    """Тарифы по группам.
+
+    `monthly_only` (tsk-1254) обязателен везде, где считается МЕСЯЦ: разовый
+    тариф, попавший в подбор, начислялся бы каждый месяц — до tsk-1254 подбор
+    поле `period` не читал вовсе.
+    """
     sql = (
         "SELECT id, group_id, name, price_minor, currency, period, match_kind, "
-        "match_value, is_default, sort_order, is_active FROM pricing_tariff "
+        "match_value, is_default, sort_order, is_active, access_months, "
+        "installments_allowed FROM pricing_tariff WHERE true "
     )
     if only_active:
-        sql += "WHERE is_active "
+        sql += "AND is_active "
+    if monthly_only:
+        sql += "AND period = 'month' "
     sql += "ORDER BY group_id, sort_order, id"
 
     result: dict[int, list[TariffRead]] = {}
@@ -282,14 +363,17 @@ async def delete_group(db: AsyncSession, *, group_id: int) -> bool:
 
 
 async def create_tariff(db: AsyncSession, *, payload: dict) -> int:
+    # tsk-1254: поля разового тарифа необязательны — прежние вызовы их не шлют.
+    payload = {"access_months": None, "installments_allowed": False, **payload}
     tariff_id = (
         await db.execute(
             text(
                 "INSERT INTO pricing_tariff "
                 "(group_id, name, price_minor, currency, period, match_kind, match_value, "
-                " is_default, sort_order) "
+                " is_default, sort_order, access_months, installments_allowed) "
                 "VALUES (:group_id, :name, :price_minor, :currency, :period, :match_kind, "
-                " :match_value, :is_default, :sort_order) RETURNING id"
+                " :match_value, :is_default, :sort_order, :access_months, "
+                " :installments_allowed) RETURNING id"
             ),
             payload,
         )
@@ -413,7 +497,8 @@ async def get_public_course_offer(
                 await db.execute(
                     text(
                         "SELECT name, price_minor, currency, period, match_kind, match_value, "
-                        "is_default, sort_order FROM pricing_tariff "
+                        "is_default, sort_order, access_months, installments_allowed "
+                        "FROM pricing_tariff "
                         "WHERE group_id = :g AND is_active ORDER BY sort_order, id"
                     ),
                     {"g": row.group_id},
@@ -586,7 +671,18 @@ async def list_student_pricing(
                 ).all()
             )
 
-    tariffs = await _load_tariffs(db, only_active=True)
+    # tsk-1254: группа, оплаченная покупкой курса целиком, помесячно не считается.
+    cutoffs = await purchased_group_cutoffs(db, period=period)
+    if cutoffs:
+        rows = [
+            r for r in rows
+            if not (
+                (r.student_id, r.group_id) in cutoffs
+                and cutoffs[(r.student_id, r.group_id)] is None
+            )
+        ]
+
+    tariffs = await _load_tariffs(db, only_active=True, monthly_only=True)
 
     students: dict[int, StudentPricingRead] = {}
     # (student_id, group_id) → курсы этой группы у этого ученика
@@ -856,7 +952,7 @@ async def _infer_weekly_lessons_from_price(
     if not overrides:
         return None
 
-    tariffs_by_group = await _load_tariffs(db, only_active=True)
+    tariffs_by_group = await _load_tariffs(db, only_active=True, monthly_only=True)
     resolved: set[int] = set()
     for override in overrides:
         by_frequency: list[tuple[int, int]] = []
@@ -935,7 +1031,7 @@ async def list_price_schedule_mismatches(db: AsyncSession) -> list[dict]:
     if not overrides:
         return []
 
-    tariffs_by_group = await _load_tariffs(db, only_active=True)
+    tariffs_by_group = await _load_tariffs(db, only_active=True, monthly_only=True)
     result: list[dict] = []
     for student_id in dict.fromkeys(o.student_id for o in overrides):
         resolution = await resolve_attendance_frequency(db, student_id=student_id)

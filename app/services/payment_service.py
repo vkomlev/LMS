@@ -72,7 +72,7 @@ PaymentStatus = Literal["pending", "confirmed", "rejected", "reversed"]
 #: За что заплатили. Список закрыт и продублирован в CHECK таблицы: новая
 #: разовая продажа добавляется сюда И миграцией — чтобы описка не создала класс
 #: денег, который не показывается нигде (tsk-615).
-PaymentPurpose = Literal["monthly", "ai_package"]
+PaymentPurpose = Literal["monthly", "ai_package", "course"]
 
 #: Разовая покупка пакета обращений. Тем же значением помечается платёж в
 #: `metadata` ЮKassa — одна метка на оба конца: по ней и приём уведомления, и
@@ -84,6 +84,8 @@ PURPOSE_AI_PACKAGE = "ai_package"
 PURPOSE_NAMES: dict[str, str] = {
     "monthly": "Обучение за месяц",
     "ai_package": "Пакет обращений к ИИ-наставнику",
+    # tsk-1254: без группы и месяца, как пакет — месячные подсчёты её не видят.
+    "course": "Курс целиком",
 }
 
 

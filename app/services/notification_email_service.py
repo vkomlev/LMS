@@ -169,3 +169,37 @@ async def send_payment_overdue(
     except EmailSendError:
         logger.error("Не удалось отправить напоминание об оплате")
         return False
+
+
+# --- tsk-1254: скоро закончится доступ к курсу -------------------------------
+
+
+async def send_course_access_expiring(
+    *,
+    recipient_email: str,
+    full_name: Optional[str],
+    course_title: str,
+    access_until: date,
+    settings: Settings,
+) -> bool:
+    """Письмо о скором конце доступа к курсу. Best-effort, как остальные письма."""
+    if not email_configured(settings):
+        logger.warning("Почтовый транспорт не настроен — письмо о конце доступа не отправлено")
+        return False
+    greeting = f"Здравствуйте, {full_name}!" if full_name else "Здравствуйте!"
+    url = f"{settings.public_base_url.rstrip('/')}/me/payments"
+    html = (
+        f"<p>{greeting}</p>"
+        f"<p>Доступ к курсу «{course_title}» открыт по "
+        f"<strong>{access_until:%d.%m.%Y}</strong> включительно.</p>"
+        "<p>После этой даты материалы останутся открытыми для чтения, а новые "
+        "ответы на задания приниматься не будут. Чтобы продлить доступ, напишите "
+        "нам или загляните в личный кабинет:</p>"
+        f'<p><a href="{url}">{url}</a></p>'
+    )
+    try:
+        await send_html_email(settings, recipient_email, "Скоро закончится доступ к курсу", html)
+        return True
+    except EmailSendError:
+        logger.error("Не удалось отправить письмо о конце доступа к курсу")
+        return False

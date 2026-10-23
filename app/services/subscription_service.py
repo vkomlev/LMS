@@ -347,7 +347,7 @@ async def purchasable_plans(db: AsyncSession) -> list[dict]:
                 "  FROM subscription_plan p "
                 "  JOIN pricing_group g ON g.id = p.pricing_group_id "
                 "  JOIN pricing_tariff t ON t.group_id = g.id AND t.is_active "
-                "                       AND t.match_kind IS NULL "
+                "                       AND t.match_kind IS NULL AND t.period = 'month' "
                 " WHERE p.is_active AND NOT p.lessons "
                 " ORDER BY t.price_minor, p.sort_order, p.code, t.id"
             )

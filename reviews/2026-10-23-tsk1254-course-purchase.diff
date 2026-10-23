@@ -1,0 +1,2290 @@
+diff --git a/app/api/main.py b/app/api/main.py
+index aa8a53c..73025ed 100644
+--- a/app/api/main.py
++++ b/app/api/main.py
+@@ -551,6 +551,10 @@ app.include_router(marketer_dashboard_router, prefix=API_PREFIX)
+ from app.api.v1.payments_gateway import router as payments_gateway_router
+ app.include_router(payments_gateway_router, prefix=API_PREFIX)
+ 
++# tsk-1254: покупка курса целиком и срок доступа (за рубильником COURSE_PURCHASE_ENABLED).
++from app.api.v1.course_purchases import router as course_purchases_router
++app.include_router(course_purchases_router, prefix=API_PREFIX)
++
+ # tsk-010: оплата родителем по гостевой ссылке (без входа). Публичный контур,
+ # защита — сверка начисления с учеником из ссылки + ограничение частоты.
+ from app.api.v1.public_parent_payments import router as public_parent_payments_router
+diff --git a/app/api/v1/attempts.py b/app/api/v1/attempts.py
+index db28859..bca3bfb 100644
+--- a/app/api/v1/attempts.py
++++ b/app/api/v1/attempts.py
+@@ -321,6 +321,12 @@ async def create_attempt(
+     await payment_access_service.assert_content_allowed(db, payload.user_id)
+     # tsk-673: тариф «Выпускник» закрывает работу в курсе — попытку не начать.
+     await graduation_service.assert_course_work_allowed(db, payload.user_id)
++    # tsk-1254: срок доступа истёк — курс только для чтения.
++    from app.services import course_purchase_service
++
++    await course_purchase_service.assert_access_not_expired(
++        db, student_id=payload.user_id, course_id=payload.root_course_id or payload.course_id
++    )
+     """
+     Создать новую попытку.
+ 
+@@ -525,6 +531,11 @@ async def submit_attempt_answers(
+     from app.services import graduation_service
+ 
+     await graduation_service.assert_course_work_allowed(db, attempt.user_id)
++    from app.services import course_purchase_service
++
++    await course_purchase_service.assert_access_not_expired(
++        db, student_id=attempt.user_id, course_id=attempt.root_course_id or attempt.course_id
++    )
+ 
+     # Валидация попытки: проверка, что попытка не завершена и не отменена
+     if attempt.finished_at is not None:
+diff --git a/app/api/v1/course_purchases.py b/app/api/v1/course_purchases.py
+new file mode 100644
+index 0000000..083acdb
+--- /dev/null
++++ b/app/api/v1/course_purchases.py
+@@ -0,0 +1,289 @@
++"""tsk-1254 — покупка курса целиком: кабинет ученика и экран маркетолога.
++
++Продажа закрыта рубильником COURSE_PURCHASE_ENABLED (выключен по умолчанию):
++без него ни кнопка ученика, ни отметка маркетолога покупку не заведут. Чтение
++(список покупок, сроки доступа) открыто всегда — оно ничего не меняет.
++
++Зачисление оплаты картой — не здесь, а по уведомлению ЮKassa
++(`payments_gateway.yookassa_webhook`, ветка `purpose = course`).
++"""
++
++from __future__ import annotations
++
++import logging
++from datetime import date
++from typing import Literal, Optional
++
++from fastapi import APIRouter, Depends, HTTPException, status
++from pydantic import BaseModel, Field
++from sqlalchemy.ext.asyncio import AsyncSession
++
++from app.api.deps import CurrentUser, get_current_user, require_role
++from app.core.config import Settings
++from app.db.session import get_async_db
++from app.schemas.payment import GatewayPaymentStart
++from app.services import course_purchase_service, yookassa_service
++
++logger = logging.getLogger(__name__)
++settings = Settings()
++
++router = APIRouter(tags=["course_purchases"])
++
++_STAFF_GATE = require_role("marketer", "admin")
++
++PayMethod = Literal["full", "bank_installments"]
++
++
++class CoursePurchaseStartRequest(BaseModel):
++    course_id: int
++    tariff_id: int
++    pay_method: PayMethod = "full"
++
++
++class StaffCoursePurchaseRequest(BaseModel):
++    student_id: int
++    course_id: int
++    tariff_id: int
++    pay_method: PayMethod = "full"
++    #: Сразу отметить оплату (деньги пришли переводом/через банк). Иначе покупка
++    #: ждёт оплаты.
++    mark_paid: bool = True
++    paid_on: Optional[date] = None
++    note: Optional[str] = Field(default=None, max_length=500)
++
++
++class ExtendAccessRequest(BaseModel):
++    student_id: int
++    course_id: int
++    months: int = Field(ge=1, le=120)
++
++
++@router.get("/me/course-purchases", summary="Мои покупки курсов и сроки доступа")
++async def my_course_purchases(
++    db: AsyncSession = Depends(get_async_db),
++    current_user: CurrentUser = Depends(get_current_user),
++) -> dict:
++    return {
++        "sales_enabled": course_purchase_service.sales_enabled(),
++        "items": await course_purchase_service.list_for_student(db, student_id=current_user.id),
++    }
++
++
++@router.post(
++    "/me/course-purchases/gateway",
++    response_model=GatewayPaymentStart,
++    summary="Оплатить курс целиком картой или долями через банк",
++    responses={403: {"description": "Продажа курса целиком выключена"},
++               503: {"description": "Оплата картой выключена"}},
++)
++async def start_course_payment(
++    body: CoursePurchaseStartRequest,
++    db: AsyncSession = Depends(get_async_db),
++    current_user: CurrentUser = Depends(get_current_user),
++) -> GatewayPaymentStart:
++    """Завести покупку и платёж в ЮKassa. Доступ выдаётся по уведомлению.
++
++    Доли через банк — это способ оплаты на странице ЮKassa (подключается в её
++    кабинете): банк платит школе всю сумму сразу, поэтому здесь путь один.
++    """
++    if current_user.is_service:
++        raise HTTPException(status.HTTP_403_FORBIDDEN, "Оплата принимается только от пользователя")
++    if not yookassa_service.is_enabled():
++        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Оплата картой сейчас недоступна")
++    purchase = await course_purchase_service.create_pending(
++        db,
++        student_id=current_user.id,
++        course_id=body.course_id,
++        tariff_id=body.tariff_id,
++        pay_method=body.pay_method,
++        created_by=current_user.id,
++    )
++    try:
++        payment = await yookassa_service.create_payment(
++            amount_minor=purchase["price_minor"],
++            description=f"Курс целиком, доступ {purchase['access_months']} мес.",
++            return_url=f"{settings.public_base_url}/me/payments",
++            metadata={
++                "purpose": course_purchase_service.PURPOSE_COURSE,
++                "student_id": str(current_user.id),
++                "course_purchase_id": str(purchase["id"]),
++            },
++            idempotence_key=f"course-purchase-{purchase['id']}",
++        )
++    except yookassa_service.GatewayDisabledError as exc:
++        await db.rollback()
++        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
++    except yookassa_service.GatewayError as exc:
++        await db.rollback()
++        logger.warning("tsk-1254: не удалось завести платёж за курс: %s", exc)
++        raise HTTPException(
++            status.HTTP_502_BAD_GATEWAY, "Платёжный сервис не ответил, попробуйте позже"
++        ) from exc
++    if payment.confirmation_url is None:
++        await db.rollback()
++        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Платёжный сервис не вернул ссылку")
++    # Покупку фиксируем только когда платёж в шлюзе заведён: иначе в базе
++    # копились бы «ждущие оплаты» покупки, которых не оплатить.
++    await db.commit()
++    return GatewayPaymentStart(
++        payment_id=payment.id,
++        confirmation_url=payment.confirmation_url,
++        amount_minor=payment.amount_minor,
++        test_mode=payment.test,
++    )
++
++
++@router.post(
++    "/marketer/course-purchases",
++    summary="Завести покупку курса за ученика (и отметить оплату)",
++    dependencies=[Depends(_STAFF_GATE)],
++)
++async def staff_create_purchase(
++    body: StaffCoursePurchaseRequest,
++    db: AsyncSession = Depends(get_async_db),
++    current_user: CurrentUser = Depends(_STAFF_GATE),
++) -> dict:
++    paid_on = _check_paid_on(body.paid_on)
++    purchase = await course_purchase_service.create_pending(
++        db,
++        student_id=body.student_id,
++        course_id=body.course_id,
++        tariff_id=body.tariff_id,
++        pay_method=body.pay_method,
++        created_by=_staff_id(current_user),
++        note=body.note,
++    )
++    await db.commit()
++    if body.mark_paid:
++        await course_purchase_service.mark_paid(
++            db,
++            purchase_id=purchase["id"],
++            amount_minor=purchase["price_minor"],
++            paid_on=paid_on,
++            staff_id=_staff_id(current_user),
++        )
++    return {"id": purchase["id"], "paid": body.mark_paid}
++
++
++@router.post(
++    "/marketer/course-purchases/{purchase_id}/mark-paid",
++    summary="Отметить оплату ждущей покупки",
++    dependencies=[Depends(_STAFF_GATE)],
++)
++async def staff_mark_paid(
++    purchase_id: int,
++    paid_on: Optional[date] = None,
++    db: AsyncSession = Depends(get_async_db),
++    current_user: CurrentUser = Depends(_STAFF_GATE),
++) -> dict:
++    if not course_purchase_service.sales_enabled():
++        raise HTTPException(status.HTTP_403_FORBIDDEN, "Покупка курса целиком пока не включена")
++    price = await _price_of(db, purchase_id)
++    done = await course_purchase_service.mark_paid(
++        db, purchase_id=purchase_id, amount_minor=price,
++        paid_on=_check_paid_on(paid_on), staff_id=_staff_id(current_user),
++    )
++    return {"status": "recorded" if done else "already_paid"}
++
++
++@router.get(
++    "/marketer/students/{student_id}/course-purchases",
++    summary="Покупки курсов ученика",
++    dependencies=[Depends(_STAFF_GATE)],
++)
++async def staff_student_purchases(
++    student_id: int, db: AsyncSession = Depends(get_async_db)
++) -> list[dict]:
++    return await course_purchase_service.list_for_student(db, student_id=student_id)
++
++
++@router.post(
++    "/marketer/course-access/extend",
++    summary="Продлить доступ к курсу",
++    dependencies=[Depends(_STAFF_GATE)],
++)
++async def staff_extend_access(
++    body: ExtendAccessRequest, db: AsyncSession = Depends(get_async_db)
++) -> dict:
++    until = await course_purchase_service.extend_access(
++        db, student_id=body.student_id, course_id=body.course_id, months=body.months
++    )
++    if until is None:
++        raise HTTPException(
++            status.HTTP_409_CONFLICT,
++            "Продлевать нечего: ученик не зачислен или доступ бессрочный",
++        )
++    return {"access_until": until.isoformat()}
++
++
++@router.get(
++    "/marketer/course-access/expiring",
++    summary="Доступ кончается в ближайшие дни",
++    dependencies=[Depends(_STAFF_GATE)],
++)
++async def staff_expiring(
++    within_days: int = 30, db: AsyncSession = Depends(get_async_db)
++) -> list[dict]:
++    rows = await course_purchase_service.list_expiring(db, within_days=within_days)
++    # Почту на экран маркетолога не отдаём — она нужна только рассылке.
++    for r in rows:
++        r.pop("email", None)
++    return rows
++
++
++def _staff_id(user: CurrentUser) -> Optional[int]:
++    """Автор отметки: у сервисного ключа учётки нет — пишем пусто, не выдуманный id."""
++    return None if user.is_service else user.id
++
++
++def _check_paid_on(paid_on: Optional[date]) -> date:
++    """Дата оплаты от маркетолога — только текущий месяц и не будущее.
++
++    Задним числом покупка сняла бы с помесячного счёта прошлые, возможно уже
++    оплаченные, месяцы, а пересчитывается только текущий — переплата осталась
++    бы невидимой.
++    """
++    today = date.today()
++    day = paid_on or today
++    if day > today or day < today.replace(day=1):
++        raise HTTPException(
++            status.HTTP_422_UNPROCESSABLE_ENTITY,
++            "Дата оплаты — только в текущем месяце и не позже сегодня",
++        )
++    return day
++
++
++class RefundRequest(BaseModel):
++    note: Optional[str] = Field(default=None, max_length=500)
++
++
++@router.post(
++    "/marketer/course-purchases/{purchase_id}/refund",
++    summary="Отметить возврат за курс (деньги возвращены вручную)",
++    dependencies=[Depends(_STAFF_GATE)],
++)
++async def staff_refund(
++    purchase_id: int,
++    body: RefundRequest,
++    db: AsyncSession = Depends(get_async_db),
++    current_user: CurrentUser = Depends(_STAFF_GATE),
++) -> dict:
++    done = await course_purchase_service.refund(
++        db, purchase_id=purchase_id, staff_id=_staff_id(current_user), note=body.note
++    )
++    if not done:
++        raise HTTPException(status.HTTP_409_CONFLICT, "Покупка не найдена или не оплачена")
++    return {"status": "refunded"}
++
++
++async def _price_of(db: AsyncSession, purchase_id: int) -> int:
++    from sqlalchemy import text
++
++    row = (
++        await db.execute(
++            text("SELECT price_minor FROM course_purchase WHERE id = :id"), {"id": purchase_id}
++        )
++    ).first()
++    if row is None:
++        raise HTTPException(status.HTTP_404_NOT_FOUND, "Покупка не найдена")
++    return int(row.price_minor)
+diff --git a/app/api/v1/learning.py b/app/api/v1/learning.py
+index 80e36d6..c560674 100644
+--- a/app/api/v1/learning.py
++++ b/app/api/v1/learning.py
+@@ -86,6 +86,7 @@ from app.services import attachment_storage
+ from app.services import payment_access_service
+ # tsk-673: тариф «Выпускник» закрывает работу в курсе (сдачу), оставляя чтение.
+ from app.services import graduation_service
++from app.services import course_purchase_service
+ from app.services import lesson_attendance_service
+ # tsk-301: единственная дверь прав подписки — своей проверки здесь быть не должно.
+ from app.services import entitlements_service
+@@ -580,6 +581,9 @@ async def start_or_get_attempt(
+     # Материалы и чтение самого задания при этом остаются открытыми: закрыта
+     # сдача, а не курс (решение оператора 2026-08-25).
+     await graduation_service.assert_course_work_allowed(db, body.student_id)
++    await course_purchase_service.assert_access_not_expired(
++        db, student_id=body.student_id, course_id=body.root_course_id
++    )
+     task = await tasks_service.get_by_id(db, task_id)
+     if task is None or not task.is_active:
+         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Задание не найдено")
+@@ -1566,6 +1570,9 @@ async def submit_review_answer(
+     # «Выпускник» закрывают работу в курсе — по УЧЕНИКУ, не по вызывающему.
+     await payment_access_service.assert_content_allowed(db, body.student_id)
+     await graduation_service.assert_course_work_allowed(db, body.student_id)
++    await course_purchase_service.assert_access_not_expired(
++        db, student_id=body.student_id, course_id=course_id
++    )
+     outcome = await retrieval_service.submit_review(
+         db,
+         student_id=body.student_id,
+@@ -1679,6 +1686,9 @@ async def start_final_check(
+     # тариф «Выпускник» закрывают работу в курсе — по УЧЕНИКУ.
+     await payment_access_service.assert_content_allowed(db, body.student_id)
+     await graduation_service.assert_course_work_allowed(db, body.student_id)
++    await course_purchase_service.assert_access_not_expired(
++        db, student_id=body.student_id, course_id=course_id
++    )
+     run = await final_check_service.start(db, student_id=body.student_id, course_id=course_id)
+     return FinalCheckRun(**await final_check_service.serialize_run(db, run))
+ 
+@@ -1730,6 +1740,9 @@ async def answer_final_check(
+     _assert_own_student(current_user, body.student_id)
+     await payment_access_service.assert_content_allowed(db, body.student_id)
+     await graduation_service.assert_course_work_allowed(db, body.student_id)
++    await course_purchase_service.assert_access_not_expired(
++        db, student_id=body.student_id, course_id=course_id
++    )
+     outcome = await final_check_service.answer(
+         db,
+         student_id=body.student_id,
+diff --git a/app/api/v1/marketer_payments.py b/app/api/v1/marketer_payments.py
+index 5d27e25..211ebdb 100644
+--- a/app/api/v1/marketer_payments.py
++++ b/app/api/v1/marketer_payments.py
+@@ -26,6 +26,7 @@ from app.schemas.payment import (
+     ReconcileUnmatchedPayment,
+ )
+ from app.services import (
++    course_purchase_service,
+     payment_reminder_service,
+     payment_service,
+     subscription_service,
+@@ -378,6 +379,23 @@ async def reconcile(
+             elif outcome:
+                 added += 1
+             continue
++        # tsk-1254: оплата курса целиком — тоже без начисления, по своей покупке.
++        if payment.metadata.get("purpose") == course_purchase_service.PURPOSE_COURSE:
++            purchase_id = str(payment.metadata.get("course_purchase_id") or "")
++            try:
++                if purchase_id.isdigit() and await course_purchase_service.mark_paid(
++                    db,
++                    purchase_id=int(purchase_id),
++                    amount_minor=payment.amount_minor,
++                    paid_on=date_from if date_from == date_to else date.today(),
++                    gateway_payment_id=payment.id,
++                ):
++                    added += 1
++                elif not purchase_id.isdigit():
++                    unmatched.append(_unmatched(payment, "course_purchase_problem"))
++            except course_purchase_service.PurchaseError:
++                unmatched.append(_unmatched(payment, "course_purchase_problem"))
++            continue
+         charge_id = payment.metadata.get("charge_id")
+         if not str(charge_id or "").isdigit():
+             # Номера начисления нет вовсе — искать по нему нечего, и причина
+@@ -444,6 +462,7 @@ _REASON_TEXT: dict[ReconcileReason, str] = {
+     ),
+     "charge_unknown": "В платеже не указано начисление",
+     "package_meta_missing": "В платеже нет ученика или объёма пакета",
++    "course_purchase_problem": "Оплата курса: покупка не найдена или сумма не совпала с ценой",
+ }
+ 
+ 
+diff --git a/app/api/v1/payments_gateway.py b/app/api/v1/payments_gateway.py
+index 39ba0c6..4ca3583 100644
+--- a/app/api/v1/payments_gateway.py
++++ b/app/api/v1/payments_gateway.py
+@@ -21,6 +21,7 @@ from app.core.config import Settings
+ from app.db.session import get_async_db
+ from app.schemas.payment import GatewayPaymentStart, PaymentStartRequest
+ from app.services import (
++    course_purchase_service,
+     entitlements_service,
+     payment_service,
+     subscription_service,
+@@ -349,6 +350,8 @@ async def yookassa_webhook(
+         return await _record_ai_package(db, payment)
+     if payment.metadata.get("purpose") == _PURPOSE_SUBSCRIPTION:
+         return await _record_subscription(db, payment)
++    if payment.metadata.get("purpose") == course_purchase_service.PURPOSE_COURSE:
++        return await _record_course_purchase(db, payment)
+ 
+     charge_id = _as_int(payment.metadata.get("charge_id"))
+     if charge_id is None:
+@@ -377,6 +380,51 @@ async def yookassa_webhook(
+     return {"status": "recorded" if created else "already_recorded"}
+ 
+ 
++async def _record_course_purchase(db: AsyncSession, payment) -> dict:
++    """Зачесть оплату курса целиком (tsk-1254) и открыть срок доступа.
++
++    Как у пакета: сбой зачисления отвечает 5xx, чтобы шлюз повторил доставку —
++    «деньги списаны, доступ не выдан» хуже повтора. Повтор безопасен:
++    `mark_paid` под блокировкой строки видит уже оплаченную покупку.
++
++    Рубильник продажи здесь НЕ проверяется: деньги уже приняты, и выключение
++    продаж между оплатой и уведомлением не должно их потерять.
++    """
++    purchase_id = _as_int(payment.metadata.get("course_purchase_id"))
++    if purchase_id is None:
++        logger.error(
++            "tsk-1254: платёж %s за курс без ссылки на покупку (metadata=%s)",
++            payment.id, payment.metadata,
++        )
++        return {"status": "ignored"}
++    try:
++        done = await course_purchase_service.mark_paid(
++            db,
++            purchase_id=purchase_id,
++            amount_minor=payment.amount_minor,
++            paid_on=date.today(),
++            gateway_payment_id=payment.id,
++        )
++    except course_purchase_service.PurchaseError as exc:
++        # Покупки нет или сумма не та — повторять бессмысленно, нужен человек.
++        logger.error(
++            "tsk-1254: ДЕНЬГИ СПИСАНЫ, ДОСТУП НЕ ВЫДАН — платёж %s, покупка %s: %s",
++            payment.id, purchase_id, exc.detail,
++        )
++        return {"status": "ignored"}
++    except Exception as exc:
++        await db.rollback()
++        logger.error(
++            "tsk-1254: ДЕНЬГИ СПИСАНЫ, ДОСТУП НЕ ВЫДАН — платёж %s, покупка %s: %s",
++            payment.id, purchase_id, exc, exc_info=True,
++        )
++        raise HTTPException(
++            status.HTTP_502_BAD_GATEWAY,
++            "Не удалось зачесть оплату курса, повторите доставку уведомления",
++        ) from exc
++    return {"status": "recorded" if done else "already_recorded"}
++
++
+ async def _record_ai_package(db: AsyncSession, payment) -> dict:
+     """Зачислить оплаченный пакет обращений (пробел П6 контракта).
+ 
+diff --git a/app/core/config.py b/app/core/config.py
+index 5a8000d..0a9cc28 100644
+--- a/app/core/config.py
++++ b/app/core/config.py
+@@ -451,6 +451,17 @@ class Settings:
+         # закрывает эндпоинты, всё остальное продолжает работать как сегодня —
+         # откат без развёртывания, если наставник поведёт себя не так.
+         self.ai_tutor_enabled: bool = os.getenv("AI_TUTOR_ENABLED", "true").lower() in ("true", "1", "yes")
++        # tsk-1254: рубильники разовой покупки курса. Выключены по умолчанию:
++        # без первого курс целиком не продаётся (ни картой, ни отметкой
++        # маркетолога), без второго срок доступа не проверяется и не
++        # напоминается. Уже оплаченная покупка из месячного счёта исключается
++        # всегда — иначе отключение рубильника выставило бы ей второй счёт.
++        self.course_purchase_enabled: bool = os.getenv(
++            "COURSE_PURCHASE_ENABLED", "false"
++        ).lower() in ("true", "1", "yes")
++        self.access_expiry_enabled: bool = os.getenv(
++            "ACCESS_EXPIRY_ENABLED", "false"
++        ).lower() in ("true", "1", "yes")
+         # tsk-1318: зацепка вместо голого «как ты рассуждал?» в первой реплике
+         # `concept` после неверного ответа. Выключено, пока гейт роли не пройдёт
+         # на всей цепочке (12.10 провайдер подменял модели — проверить не вышло).
+diff --git a/app/core/settings_registry.py b/app/core/settings_registry.py
+index 6f11c03..80008da 100644
+--- a/app/core/settings_registry.py
++++ b/app/core/settings_registry.py
+@@ -161,6 +161,20 @@ SETTINGS: Tuple[SettingDef, ...] = (
+         min_value=1,
+         max_value=1000,
+     ),
++    SettingDef(
++        key="course_purchase_prorate_first_month",
++        group=GROUP_MONEY,
++        title="Перевод на покупку курса посреди месяца — доля месяца",
++        description=(
++            "Ученик учился помесячно и купил курс целиком посреди месяца. "
++            "Включено — за дни месяца до покупки начисляется доля по занятиям. "
++            "Выключено — месяц покупки помесячно не начисляется вовсе."
++        ),
++        kind="bool",
++        # Решение оператора 23.10.2026 (tsk-1254): пропорционально.
++        default=True,
++        env_var="COURSE_PURCHASE_PRORATE_FIRST_MONTH",
++    ),
+     SettingDef(
+         key="payment_transfer_details",
+         group=GROUP_MONEY,
+diff --git a/app/db/migrations/versions/2026_10_23_tsk1254_course_purchase.py b/app/db/migrations/versions/2026_10_23_tsk1254_course_purchase.py
+new file mode 100644
+index 0000000..04ff8e7
+--- /dev/null
++++ b/app/db/migrations/versions/2026_10_23_tsk1254_course_purchase.py
+@@ -0,0 +1,219 @@
++"""tsk-1254: разовая покупка курса и срок доступа к курсу.
++
++До сих пор все экземпляры платформы работали на помесячной оплате: зачисление
++не истекало, срок ограничивала только блокировка по долгу. Решение оператора
++23.10.2026: нужна разовая оплата курса целиком (доли — через банк, способами
++ЮKassa: банк платит школе всю сумму сразу, долг ученика перед банком) и срок
++доступа, после которого курс остаётся только для чтения. Механизм общий для
++любых курсов, первым идёт пилот «Дипломат».
++
++Что меняется — только добавляется, ни одна существующая строка не трогается:
++
++* `pricing_tariff.period` получает закрытый список `month | once`. Колонка была
++  свободной строкой, и расчёт месяца её не читал: тариф с другим периодом молча
++  начислялся бы помесячно. На 23.10 у всех 14 тарифов прода `month`, CHECK
++  встаёт без правки данных. Плюс `access_months` (срок доступа разовой покупки)
++  и `installments_allowed` (разрешены ли доли через банк).
++* `course_purchase` — покупка курса: ученик, курс, тарифная группа и цена
++  СНИМКОМ на момент покупки (правка тарифа потом не переписывает чужую сделку),
++  способ, статус, срок доступа.
++* `student_payment` — назначение `course` и ссылка на покупку. Правило tsk-615
++  «не-месячный платёж без группы и месяца» сохраняется, поэтому месячные
++  подсчёты платёж за курс не видят и чужой месячный долг он не гасит.
++* `user_courses.access_until` — последний момент доступа. NULL = бессрочно: все
++  текущие зачисления остаются как были.
++
++Rollback: `alembic downgrade tsk997_learning_ach`. Откат осознанно
++падает, если покупки или платежи за курс уже есть: удалять принятые деньги
++откатом схемы нельзя — сначала выгрузить и решить, куда их деть.
++"""
++from typing import Sequence, Union
++
++import sqlalchemy as sa
++from alembic import op
++
++revision: str = "tsk1254_course_purchase"
++down_revision: Union[str, None] = "tsk997_learning_ach"
++branch_labels: Union[str, Sequence[str], None] = None
++depends_on: Union[str, Sequence[str], None] = None
++
++
++def upgrade() -> None:
++    # --- тариф: разовый период и срок доступа
++    op.create_check_constraint(
++        "ck_pricing_tariff_period", "pricing_tariff", "period IN ('month', 'once')"
++    )
++    op.add_column(
++        "pricing_tariff",
++        sa.Column(
++            "access_months",
++            sa.Integer(),
++            nullable=True,
++            comment="Срок доступа разовой покупки в месяцах (tsk-1254); у месячного тарифа пусто",
++        ),
++    )
++    op.add_column(
++        "pricing_tariff",
++        sa.Column(
++            "installments_allowed",
++            sa.Boolean(),
++            nullable=False,
++            server_default=sa.text("false"),
++            comment="Разрешена ли оплата долями через банк (tsk-1254)",
++        ),
++    )
++    # Разовый тариф без срока продать нельзя: доступ не знал бы, когда кончиться.
++    op.create_check_constraint(
++        "ck_pricing_tariff_once_access",
++        "pricing_tariff",
++        "(period = 'once') = (access_months IS NOT NULL) AND "
++        "(access_months IS NULL OR access_months BETWEEN 1 AND 120)",
++    )
++
++    # Индекс tsk-996 «один действующий вариант без оси на группу» писался под
++    # помесячные тарифы. С разовым он запретил бы ровно нужное: одному курсу —
++    # и «помесячно», и «курс целиком». Сужаем его до месяца, а разовому даём
++    # свой такой же: два разовых в группе задвоили бы цену покупки.
++    op.drop_index("uq_pricing_tariff_single_active", table_name="pricing_tariff")
++    op.create_index(
++        "uq_pricing_tariff_single_active", "pricing_tariff", ["group_id"], unique=True,
++        postgresql_where=sa.text("is_active AND match_kind IS NULL AND period = 'month'"),
++    )
++    op.create_index(
++        "uq_pricing_tariff_single_active_once", "pricing_tariff", ["group_id"], unique=True,
++        postgresql_where=sa.text("is_active AND period = 'once'"),
++    )
++
++    # --- покупка курса
++    op.create_table(
++        "course_purchase",
++        sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
++        sa.Column("student_id", sa.Integer(), nullable=False),
++        sa.Column("course_id", sa.Integer(), nullable=False, comment="Корневой курс покупки"),
++        sa.Column(
++            "group_id", sa.Integer(), nullable=False,
++            comment="Тарифная группа на момент покупки — её месяц больше не начисляется",
++        ),
++        sa.Column("tariff_id", sa.Integer(), nullable=True),
++        sa.Column("price_minor", sa.Integer(), nullable=False, comment="Цена снимком, копейки"),
++        sa.Column("currency", sa.Text(), nullable=False, server_default=sa.text("'RUB'")),
++        sa.Column("access_months", sa.Integer(), nullable=False),
++        sa.Column(
++            "pay_method", sa.Text(), nullable=False, server_default=sa.text("'full'"),
++            comment="full — целиком; bank_installments — доли через банк (деньги школе сразу)",
++        ),
++        sa.Column(
++            "status", sa.Text(), nullable=False, server_default=sa.text("'pending'"),
++            comment="pending — ждёт оплаты; paid — оплачена; cancelled; refunded — возврат вручную",
++        ),
++        sa.Column("access_from", sa.Date(), nullable=True, comment="Первый день доступа (МСК)"),
++        sa.Column("access_until", sa.Date(), nullable=True, comment="Последний день доступа (МСК)"),
++        sa.Column("created_by", sa.Integer(), nullable=True),
++        sa.Column("note", sa.Text(), nullable=True),
++        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
++        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
++        sa.ForeignKeyConstraint(["student_id"], ["users.id"], ondelete="RESTRICT",
++                                name="course_purchase_student_id_fkey"),
++        sa.ForeignKeyConstraint(["course_id"], ["courses.id"], ondelete="RESTRICT",
++                                name="course_purchase_course_id_fkey"),
++        sa.ForeignKeyConstraint(["group_id"], ["pricing_group.id"], ondelete="RESTRICT",
++                                name="course_purchase_group_id_fkey"),
++        sa.ForeignKeyConstraint(["tariff_id"], ["pricing_tariff.id"], ondelete="SET NULL",
++                                name="course_purchase_tariff_id_fkey"),
++        sa.ForeignKeyConstraint(["created_by"], ["users.id"], ondelete="SET NULL",
++                                name="course_purchase_created_by_fkey"),
++        sa.CheckConstraint("price_minor >= 0", name="ck_course_purchase_price"),
++        sa.CheckConstraint("access_months BETWEEN 1 AND 120", name="ck_course_purchase_access_months"),
++        sa.CheckConstraint("pay_method IN ('full', 'bank_installments')", name="ck_course_purchase_pay_method"),
++        sa.CheckConstraint(
++            "status IN ('pending', 'paid', 'cancelled', 'refunded')", name="ck_course_purchase_status"
++        ),
++        # Оплаченная покупка без срока — доступ, который никто не сможет ни
++        # показать, ни закончить.
++        sa.CheckConstraint(
++            "status <> 'paid' OR (access_from IS NOT NULL AND access_until IS NOT NULL "
++            "AND access_until >= access_from)",
++            name="ck_course_purchase_paid_has_access",
++        ),
++        comment="Разовая покупка курса (tsk-1254)",
++    )
++    op.create_index(
++        "ix_course_purchase_student_group_paid",
++        "course_purchase",
++        ["student_id", "group_id"],
++        postgresql_where=sa.text("status = 'paid'"),
++    )
++
++    # --- платёж за курс
++    op.add_column(
++        "student_payment",
++        sa.Column("course_purchase_id", sa.Integer(), nullable=True,
++                  comment="Покупка курса, за которую платёж (tsk-1254)"),
++    )
++    op.create_foreign_key(
++        "student_payment_course_purchase_id_fkey", "student_payment", "course_purchase",
++        ["course_purchase_id"], ["id"], ondelete="RESTRICT",
++    )
++    op.drop_constraint("ck_student_payment_purpose", "student_payment")
++    op.create_check_constraint(
++        "ck_student_payment_purpose", "student_payment",
++        "purpose IN ('monthly', 'ai_package', 'course')",
++    )
++    # Ссылка на покупку есть ровно у платежа за курс — не у месячного и не у пакета.
++    op.create_check_constraint(
++        "ck_student_payment_course_link", "student_payment",
++        "(purpose = 'course') = (course_purchase_id IS NOT NULL)",
++    )
++    op.create_index(
++        "ix_student_payment_course_purchase", "student_payment", ["course_purchase_id"],
++        postgresql_where=sa.text("course_purchase_id IS NOT NULL"),
++    )
++
++    # --- срок доступа зачисления
++    op.add_column(
++        "user_courses",
++        sa.Column("access_until", sa.Date(), nullable=True,
++                  comment="Последний день доступа к курсу (МСК); NULL — бессрочно (tsk-1254)"),
++    )
++
++
++def downgrade() -> None:
++    conn = op.get_bind()
++    purchases, payments, terms = conn.execute(
++        sa.text(
++            "SELECT (SELECT count(*) FROM course_purchase), "
++            "       (SELECT count(*) FROM student_payment WHERE purpose = 'course'), "
++            "       (SELECT count(*) FROM user_courses WHERE access_until IS NOT NULL) "
++            "     + (SELECT count(*) FROM pricing_tariff WHERE period = 'once')"
++        )
++    ).one()
++    if purchases or payments or terms:
++        # Сроки доступа тоже данные: откат молча сделал бы их бессрочными.
++        raise RuntimeError(
++            f"Откат остановлен: покупок курса {purchases}, платежей за курс {payments}, "
++            f"зачислений со сроком доступа и разовых тарифов {terms}. Откат схемы удалил бы принятые "
++            "деньги и сроки. Выгрузите course_purchase, student_payment WHERE "
++            "purpose = 'course' и user_courses WHERE access_until IS NOT NULL и решите, "
++            "куда их деть."
++        )
++    op.drop_column("user_courses", "access_until")
++    op.drop_index("ix_student_payment_course_purchase", table_name="student_payment")
++    op.drop_constraint("ck_student_payment_course_link", "student_payment")
++    op.drop_constraint("ck_student_payment_purpose", "student_payment")
++    op.create_check_constraint(
++        "ck_student_payment_purpose", "student_payment", "purpose IN ('monthly', 'ai_package')"
++    )
++    op.drop_constraint("student_payment_course_purchase_id_fkey", "student_payment", type_="foreignkey")
++    op.drop_column("student_payment", "course_purchase_id")
++    op.drop_index("ix_course_purchase_student_group_paid", table_name="course_purchase")
++    op.drop_table("course_purchase")
++    op.drop_index("uq_pricing_tariff_single_active_once", table_name="pricing_tariff")
++    op.drop_index("uq_pricing_tariff_single_active", table_name="pricing_tariff")
++    op.create_index(
++        "uq_pricing_tariff_single_active", "pricing_tariff", ["group_id"], unique=True,
++        postgresql_where=sa.text("is_active AND match_kind IS NULL"),
++    )
++    op.drop_constraint("ck_pricing_tariff_once_access", "pricing_tariff")
++    op.drop_column("pricing_tariff", "installments_allowed")
++    op.drop_column("pricing_tariff", "access_months")
++    op.drop_constraint("ck_pricing_tariff_period", "pricing_tariff")
+diff --git a/app/schemas/payment.py b/app/schemas/payment.py
+index 125ec99..cccdb72 100644
+--- a/app/schemas/payment.py
++++ b/app/schemas/payment.py
+@@ -17,9 +17,11 @@ PaymentMethod = Literal["manual", "gateway"]
+ PaymentStatus = Literal["pending", "confirmed", "rejected", "reversed"]
+ #: За что платили (tsk-615). `monthly` — месяц обучения, всё остальное —
+ #: разовая покупка, у которой месяца нет.
+-PaymentPurpose = Literal["monthly", "ai_package"]
++PaymentPurpose = Literal["monthly", "ai_package", "course"]
+ #: Почему сверка не смогла учесть успешный платёж шлюза (tsk-616).
+-ReconcileReason = Literal["charge_missing", "charge_unknown", "package_meta_missing"]
++ReconcileReason = Literal[
++    "charge_missing", "charge_unknown", "package_meta_missing", "course_purchase_problem"
++]
+ 
+ 
+ class PaymentRead(BaseModel):
+diff --git a/app/schemas/pricing.py b/app/schemas/pricing.py
+index 8cdd103..c375d3b 100644
+--- a/app/schemas/pricing.py
++++ b/app/schemas/pricing.py
+@@ -27,6 +27,10 @@ PricingStatus = Literal[
+ #: не выводится, догадка не должна выглядеть фактом.
+ FrequencySource = Literal["schedule", "inferred_from_price", "unknown"]
+ 
++#: За какой срок цена тарифа (tsk-1254). `month` — помесячное начисление,
++#: `once` — разовая покупка курса целиком; помесячный расчёт её не видит.
++TariffPeriod = Literal["month", "once"]
++
+ 
+ class TariffRead(BaseModel):
+     model_config = ConfigDict(from_attributes=True)
+@@ -36,12 +40,14 @@ class TariffRead(BaseModel):
+     name: str
+     price_minor: int
+     currency: str
+-    period: str
++    period: TariffPeriod
+     match_kind: Optional[MatchKind]
+     match_value: Optional[str]
+     is_default: bool
+     sort_order: int
+     is_active: bool
++    access_months: Optional[int] = None
++    installments_allowed: bool = False
+ 
+ 
+ class TariffCreateRequest(BaseModel):
+@@ -49,14 +55,22 @@ class TariffCreateRequest(BaseModel):
+     name: str = Field(min_length=1, max_length=200)
+     price_minor: int = Field(ge=0)
+     currency: str = Field(default="RUB", min_length=3, max_length=3)
+-    period: str = Field(default="month", min_length=1, max_length=32)
++    period: TariffPeriod = "month"
+     match_kind: Optional[MatchKind] = None
+     match_value: Optional[str] = Field(default=None, max_length=64)
+     is_default: bool = False
+     sort_order: int = 0
++    #: Срок доступа разовой покупки, месяцев. Обязателен ровно у `once` (CHECK
++    #: таблицы); по умолчанию — год, решение оператора 06.10.2026.
++    access_months: Optional[int] = Field(default=None, ge=1, le=120)
++    installments_allowed: bool = False
+ 
+     @model_validator(mode="after")
+     def _axis_is_all_or_nothing(self) -> "TariffCreateRequest":
++        if self.period == "once" and self.access_months is None:
++            self.access_months = 12
++        if self.period == "month" and (self.access_months is not None or self.installments_allowed):
++            raise ValueError("Срок доступа и доли бывают только у разового тарифа")
+         if (self.match_kind is None) != (self.match_value is None):
+             raise ValueError("match_kind и match_value задаются вместе или не задаются вовсе")
+         if self.match_kind == "attendance_frequency":
+@@ -86,12 +100,14 @@ class TariffUpdateRequest(BaseModel):
+ 
+     name: Optional[str] = Field(default=None, min_length=1, max_length=200)
+     price_minor: Optional[int] = Field(default=None, ge=0)
+-    period: Optional[str] = Field(default=None, min_length=1, max_length=32)
++    period: Optional[TariffPeriod] = None
+     match_kind: Optional[MatchKind] = None
+     match_value: Optional[str] = Field(default=None, max_length=64)
+     is_default: Optional[bool] = None
+     sort_order: Optional[int] = None
+     is_active: Optional[bool] = None
++    access_months: Optional[int] = Field(default=None, ge=1, le=120)
++    installments_allowed: Optional[bool] = None
+ 
+     @model_validator(mode="after")
+     def _axis_is_all_or_nothing(self) -> "TariffUpdateRequest":
+@@ -206,11 +222,13 @@ class PublicTariff(BaseModel):
+     name: str
+     price_minor: int
+     currency: str
+-    period: str
++    period: TariffPeriod
+     match_kind: Optional[MatchKind]
+     match_value: Optional[str]
+     is_default: bool
+     sort_order: int
++    access_months: Optional[int] = None
++    installments_allowed: bool = False
+ 
+ 
+ class PublicCourseOffer(BaseModel):
+diff --git a/app/services/charge_cron_service.py b/app/services/charge_cron_service.py
+index faa4a01..4105a4c 100644
+--- a/app/services/charge_cron_service.py
++++ b/app/services/charge_cron_service.py
+@@ -73,7 +73,7 @@ from app.core import settings_store
+ from app.core.config import Settings
+ from app.core.cron_registry import register_interval_job
+ from app.db.session import async_session_factory
+-from app.services import charge_service, inbox_service
++from app.services import charge_service, course_purchase_service, inbox_service
+ 
+ logger = logging.getLogger("app.charge_cron")
+ 
+@@ -175,6 +175,12 @@ SELECT u.id                                   AS student_id,
+            SELECT 1 FROM student_monthly_charge ch
+             WHERE ch.student_id = u.id AND ch.period = :period
+        )
++   -- tsk-1254: курс оплачен целиком — помесячного счёта нет и не должно быть.
++   AND NOT EXISTS (
++           SELECT 1 FROM course_purchase cpu
++            WHERE cpu.student_id = u.id AND cpu.status = 'paid'
++              AND cpu.access_from < CAST(:period AS date) + INTERVAL '1 month'
++       )
+  ORDER BY u.full_name, u.id
+ """
+ 
+@@ -395,6 +401,19 @@ async def charge_cron_tick(
+         "notified": 0,
+     }
+ 
++    # tsk-1254: напоминания о конце доступа к курсу — своей сессией и своим
++    # локом: внутри прохода ниже коммиты снимают его лок, а рассылка людям не
++    # должна уйти дважды с двух worker'ов. Рубильник ACCESS_EXPIRY_ENABLED
++    # проверяется внутри; сбой рассылки не роняет денежный проход.
++    try:
++        async with factory() as notice_db:
++            if await _try_lock(notice_db):
++                summary["access_notices"] = await course_purchase_service.send_expiry_notices(
++                    notice_db, today=today
++                )
++    except Exception:
++        logger.error("tsk-1254: напоминания о конце доступа не разосланы", exc_info=True)
++
+     async with factory() as db:
+         if not await _try_lock(db):
+             logger.info("tsk-596: тик пропущен — работу делает другой worker")
+diff --git a/app/services/charge_service.py b/app/services/charge_service.py
+index 42ce5fa..3426a81 100644
+--- a/app/services/charge_service.py
++++ b/app/services/charge_service.py
+@@ -689,6 +689,17 @@ async def recalculate_student_group(
+             )
+         return None
+ 
++    if left_on is None:
++        # tsk-1254: купил курс целиком посреди месяца — помесячно оплачиваются
++        # только дни ДО покупки. Тот же счёт, что у ушедшего: день накануне
++        # первого дня доступа — последний оплачиваемый.
++        cutoff = (
++            await pricing_service.purchased_group_cutoffs(
++                db, period=period, student_id=student_id
++            )
++        ).get((student_id, group_id))
++        if cutoff is not None:
++            left_on = cutoff - timedelta(days=1)
+     counts = await lesson_counts_for_month(
+         db, student_id=student_id, period=period, left_on=left_on
+     )
+diff --git a/app/services/course_purchase_service.py b/app/services/course_purchase_service.py
+new file mode 100644
+index 0000000..380e441
+--- /dev/null
++++ b/app/services/course_purchase_service.py
+@@ -0,0 +1,675 @@
++"""tsk-1254 — разовая покупка курса и срок доступа к курсу.
++
++Решения оператора 23.10.2026:
++
++* курс можно купить целиком; доли — только через банк, способами ЮKassa. Для
++  LMS это та же разовая оплата: банк перечисляет школе всю сумму сразу, долг
++  ученика — перед банком. Поэтому графика долей и блокировки по ним здесь нет;
++* после срока доступа курс остаётся только для чтения (как у «Выпускника»):
++  материалы открыты, новые ответы не принимаются. Зачисление не удаляется;
++* механизм общий для любых курсов, первым идёт пилот;
++* цена и срок — в тарифе (`pricing_tariff.period = 'once'`), продление —
++  кнопкой маркетолога, перевод посреди месяца — долей месяца (настройка
++  `course_purchase_prorate_first_month`), возврат — вручную.
++
++**Деньги и месяц не смешиваются.** Платёж за курс пишется в `student_payment`
++с `purpose = 'course'` и без группы и месяца (правило tsk-615), поэтому ни один
++месячный подсчёт его не видит и чужой месячный долг он не гасит. Сама покупка
++исключает свою группу из помесячного счёта (`pricing_service.purchased_group_cutoffs`).
++
++Рубильники (оба выключены по умолчанию): COURSE_PURCHASE_ENABLED — продажа
++(картой и отметкой маркетолога), ACCESS_EXPIRY_ENABLED — проверка срока и
++напоминания о его конце. Уже оплаченная покупка исключается из месячного счёта
++независимо от рубильников.
++"""
++
++from __future__ import annotations
++
++import calendar
++import logging
++from dataclasses import dataclass
++from datetime import date, timedelta
++from typing import Optional
++
++from sqlalchemy import text
++from sqlalchemy.ext.asyncio import AsyncSession
++
++from app.core.config import Settings
++from app.utils.exceptions import DomainError
++
++logger = logging.getLogger(__name__)
++settings = Settings()
++
++__all__ = [
++    "PURPOSE_COURSE",
++    "ACCESS_EXPIRED_CODE",
++    "EXPIRY_NOTICE_KIND",
++    "EXPIRY_NOTICE_DAYS",
++    "PurchaseError",
++    "add_months",
++    "sales_enabled",
++    "expiry_enabled",
++    "create_pending",
++    "mark_paid",
++    "extend_access",
++    "refund",
++    "list_for_student",
++    "list_expiring",
++    "assert_access_not_expired",
++    "send_expiry_notices",
++]
++
++#: Назначение платежа за курс — то же значение, что в CHECK `student_payment`
++#: и в `metadata` ЮKassa (одна метка на весь путь денег, как у пакета ИИ).
++PURPOSE_COURSE = "course"
++
++#: Код отказа «срок доступа к курсу истёк» — по нему кабинет рисует плашку.
++ACCESS_EXPIRED_CODE = "course_access_expired"
++
++#: Вид записи журнала уведомлений о скором конце доступа.
++EXPIRY_NOTICE_KIND = "course_access_expiring"
++
++#: Рубежи напоминаний, дней до конца доступа (решение 23.10: за 30 и за 7).
++EXPIRY_NOTICE_DAYS: tuple[int, ...] = (30, 7)
++
++PAY_METHODS = ("full", "bank_installments")
++
++
++class PurchaseError(DomainError):
++    """Покупку нельзя завести или отметить — причина в `detail`."""
++
++
++def sales_enabled() -> bool:
++    """Продаётся ли курс целиком. Читается на каждом вызове — для тестов и рестарта."""
++    return Settings().course_purchase_enabled
++
++
++def expiry_enabled() -> bool:
++    """Проверяется ли срок доступа."""
++    return Settings().access_expiry_enabled
++
++
++def add_months(day: date, months: int) -> date:
++    """Тот же день через `months` месяцев; 31.01 + 1 → 28/29.02."""
++    month_index = day.month - 1 + months
++    year = day.year + month_index // 12
++    month = month_index % 12 + 1
++    last = calendar.monthrange(year, month)[1]
++    return date(year, month, min(day.day, last))
++
++
++def access_until_for(access_from: date, months: int) -> date:
++    """Последний день доступа: год с 23.10.2026 — по 22.10.2027 включительно."""
++    return add_months(access_from, months) - timedelta(days=1)
++
++
++@dataclass
++class _Offer:
++    group_id: int
++    tariff_id: int
++    price_minor: int
++    currency: str
++    access_months: int
++    installments_allowed: bool
++
++
++async def _offer(db: AsyncSession, *, course_id: int, tariff_id: int) -> _Offer:
++    """Разовый тариф курса: курс платный, тариф его группы, активен, `once`."""
++    row = (
++        await db.execute(
++            text(
++                """
++                SELECT t.id, t.group_id, t.price_minor, t.currency, t.access_months,
++                       t.installments_allowed
++                  FROM course_pricing cp
++                  JOIN pricing_group g ON g.id = cp.group_id AND g.is_active
++                  JOIN pricing_tariff t ON t.group_id = g.id
++                 WHERE cp.course_id = :c AND cp.sale_status = 'paid'
++                   AND t.id = :t AND t.is_active AND t.period = 'once'
++                """
++            ),
++            {"c": course_id, "t": tariff_id},
++        )
++    ).first()
++    if row is None:
++        raise PurchaseError(
++            detail="У курса нет такого разового тарифа — проверьте цену курса у маркетолога",
++            status_code=422,
++        )
++    return _Offer(
++        group_id=int(row.group_id),
++        tariff_id=int(row.id),
++        price_minor=int(row.price_minor),
++        currency=row.currency,
++        access_months=int(row.access_months),
++        installments_allowed=bool(row.installments_allowed),
++    )
++
++
++async def create_pending(
++    db: AsyncSession,
++    *,
++    student_id: int,
++    course_id: int,
++    tariff_id: int,
++    pay_method: str = "full",
++    created_by: Optional[int] = None,
++    note: Optional[str] = None,
++) -> dict:
++    """Завести покупку в статусе «ждёт оплаты». Цена и срок — снимком тарифа.
++
++    Ученик должен быть зачислен на курс: срок доступа хранится на зачислении,
++    и покупка без него не открыла бы ничего. Зачислять здесь же не берёмся —
++    у зачисления свои триггеры и правила графа курсов.
++
++    Не коммитит — коммит за вызывающим (создание платежа в шлюзе идёт следом).
++    """
++    if not sales_enabled():
++        raise PurchaseError(detail="Покупка курса целиком пока не включена", status_code=403)
++    if pay_method not in PAY_METHODS:
++        raise PurchaseError(detail="Неизвестный способ оплаты", status_code=422)
++    offer = await _offer(db, course_id=course_id, tariff_id=tariff_id)
++    if pay_method == "bank_installments" and not offer.installments_allowed:
++        raise PurchaseError(detail="По этому тарифу оплата долями недоступна", status_code=422)
++    enrolled = (
++        await db.execute(
++            text("SELECT 1 FROM user_courses WHERE user_id = :s AND course_id = :c"),
++            {"s": student_id, "c": course_id},
++        )
++    ).first()
++    if enrolled is None:
++        raise PurchaseError(
++            detail="Ученик не зачислен на этот курс — сначала зачислите его",
++            status_code=409,
++        )
++    # Помесячный счёт снимается с тарифной ГРУППЫ целиком. Если в той же группе
++    # у ученика есть другой действующий курс, покупка одного молча сделала бы
++    # бесплатным и второй — такую покупку не заводим, решает маркетолог.
++    sibling = (
++        await db.execute(
++            text(
++                "SELECT c.title FROM user_courses uc "
++                "  JOIN course_pricing cp ON cp.course_id = uc.course_id "
++                "                        AND cp.sale_status = 'paid' AND cp.group_id = :g "
++                "  JOIN courses c ON c.id = uc.course_id "
++                " WHERE uc.user_id = :s AND uc.is_active AND uc.course_id <> :c LIMIT 1"
++            ),
++            {"s": student_id, "g": offer.group_id, "c": course_id},
++        )
++    ).first()
++    if sibling is not None:
++        raise PurchaseError(
++            detail=(
++                f"В той же тарифной группе у ученика есть курс «{sibling.title}» — "
++                "покупка одного курса сняла бы помесячную оплату и за него"
++            ),
++            status_code=409,
++        )
++    # Второй клик по «Оплатить» не заводит вторую покупку: действующая
++    # оплаченная — отказ, ждущая с тем же тарифом — та же самая (и тот же ключ
++    # повтора в шлюзе, то есть тот же платёж ЮKassa).
++    current = (
++        await db.execute(
++            text(
++                "SELECT id, status, tariff_id, pay_method, price_minor, access_months "
++                "  FROM course_purchase "
++                " WHERE student_id = :s AND course_id = :c "
++                "   AND (status = 'pending' OR (status = 'paid' AND access_until >= CURRENT_DATE)) "
++                " ORDER BY (status = 'paid') DESC, id DESC LIMIT 1"
++            ),
++            {"s": student_id, "c": course_id},
++        )
++    ).first()
++    if current is not None and current.status == "paid":
++        raise PurchaseError(detail="Курс уже оплачен, доступ действует", status_code=409)
++    if (
++        current is not None
++        and current.tariff_id == offer.tariff_id
++        and current.pay_method == pay_method
++        and current.price_minor == offer.price_minor
++    ):
++        return {
++            "id": int(current.id),
++            "price_minor": int(current.price_minor),
++            "access_months": int(current.access_months),
++            "pay_method": pay_method,
++        }
++    row = (
++        await db.execute(
++            text(
++                """
++                INSERT INTO course_purchase
++                       (student_id, course_id, group_id, tariff_id, price_minor, currency,
++                        access_months, pay_method, created_by, note)
++                VALUES (:s, :c, :g, :t, :price, :cur, :months, :method, :by, :note)
++                RETURNING id
++                """
++            ),
++            {
++                "s": student_id,
++                "c": course_id,
++                "g": offer.group_id,
++                "t": offer.tariff_id,
++                "price": offer.price_minor,
++                "cur": offer.currency,
++                "months": offer.access_months,
++                "method": pay_method,
++                "by": created_by,
++                "note": note,
++            },
++        )
++    ).first()
++    return {
++        "id": int(row.id),
++        "price_minor": offer.price_minor,
++        "access_months": offer.access_months,
++        "pay_method": pay_method,
++    }
++
++
++async def mark_paid(
++    db: AsyncSession,
++    *,
++    purchase_id: int,
++    amount_minor: int,
++    paid_on: date,
++    gateway_payment_id: Optional[str] = None,
++    staff_id: Optional[int] = None,
++) -> bool:
++    """Зачесть оплату покупки. `True` — зачли сейчас, `False` — уже была оплачена.
++
++    Одной транзакцией: статус покупки, срок доступа, платёж и срок на
++    зачислении. Частичный исход («деньги записаны, доступ не выдан») хуже
++    отказа — поэтому при любой ошибке откат целиком.
++
++    Сумма должна совпасть с ценой-снимком: доли через банк приходят школе
++    всей суммой сразу, а недоплату через шлюз мы не заводим. Расхождение —
++    повод разобраться человеку, а не молча выдать год доступа.
++
++    После коммита пересчитывается текущий месяц ученика: открытая строка
++    помесячного начисления по купленной группе обнуляется или режется долей.
++    """
++    try:
++        row = (
++            await db.execute(
++                text(
++                    "SELECT id, student_id, course_id, group_id, price_minor, access_months, "
++                    "       status "
++                    "  FROM course_purchase WHERE id = :id FOR UPDATE"
++                ),
++                {"id": purchase_id},
++            )
++        ).first()
++        if row is None:
++            raise PurchaseError(detail="Покупка не найдена", status_code=404)
++        if row.status == "paid":
++            await db.rollback()
++            logger.info("tsk-1254: покупка %s уже оплачена — повтор пропущен", purchase_id)
++            # Пересчёт всё равно: прошлый раз он мог упасть после коммита, и
++            # открытая месячная строка по купленной группе держала бы блокировку.
++            from app.services import charge_service
++
++            await charge_service.recalculate_for_student(db, student_id=int(row.student_id))
++            return False
++        if row.status != "pending":
++            raise PurchaseError(
++                detail=f"Покупка в статусе «{row.status}» — оплату не принять",
++                status_code=409,
++            )
++        if amount_minor != row.price_minor:
++            raise PurchaseError(
++                detail=(
++                    f"Сумма {amount_minor} коп. не равна цене покупки "
++                    f"{row.price_minor} коп."
++                ),
++                status_code=422,
++            )
++
++        until = access_until_for(paid_on, int(row.access_months))
++        await db.execute(
++            text(
++                "UPDATE course_purchase SET status = 'paid', access_from = :f, "
++                "       access_until = :u, updated_at = now() WHERE id = :id"
++            ),
++            {"id": purchase_id, "f": paid_on, "u": until},
++        )
++        if gateway_payment_id is not None:
++            await db.execute(
++                text(
++                    """
++                    INSERT INTO student_payment
++                           (student_id, amount_minor, method, gateway, gateway_payment_id,
++                            paid_on, purpose, course_purchase_id, status, reviewed_at,
++                            review_note)
++                    VALUES (:s, :amt, 'gateway', 'yookassa', :txn, :paid_on, 'course', :pid,
++                            'confirmed', now(), 'Оплата курса картой, подтверждена шлюзом')
++                    """
++                ),
++                {
++                    "s": row.student_id,
++                    "amt": amount_minor,
++                    "txn": gateway_payment_id,
++                    "paid_on": paid_on,
++                    "pid": purchase_id,
++                },
++            )
++        else:
++            await db.execute(
++                text(
++                    """
++                    INSERT INTO student_payment
++                           (student_id, amount_minor, method, paid_on, purpose,
++                            course_purchase_id, status, submitted_by, reviewed_by,
++                            reviewed_at, review_note)
++                    VALUES (:s, :amt, 'manual', :paid_on, 'course', :pid,
++                            'confirmed', :by, :by, now(), 'Оплата курса отмечена маркетологом')
++                    """
++                ),
++                {
++                    "s": row.student_id,
++                    "amt": amount_minor,
++                    "paid_on": paid_on,
++                    "pid": purchase_id,
++                    "by": staff_id,
++                },
++            )
++        # Продление поверх действующего срока не укорачивает его: берём больший.
++        await db.execute(
++            text(
++                "UPDATE user_courses SET access_until = GREATEST(COALESCE(access_until, :u), :u) "
++                " WHERE user_id = :s AND course_id = :c"
++            ),
++            {"s": row.student_id, "c": row.course_id, "u": until},
++        )
++        await db.commit()
++    except Exception:
++        await db.rollback()
++        raise
++
++    logger.info(
++        "tsk-1254: покупка %s оплачена — ученик %s, курс %s, доступ %s..%s",
++        purchase_id, row.student_id, row.course_id, paid_on, until,
++    )
++    from app.services import charge_service
++
++    await charge_service.recalculate_for_student(
++        db, student_id=int(row.student_id), period=paid_on
++    )
++    return True
++
++
++async def refund(
++    db: AsyncSession, *, purchase_id: int, staff_id: Optional[int], note: Optional[str]
++) -> bool:
++    """Отметить возврат покупки (деньги возвращены вручную, решение 23.10).
++
++    Покупка → `refunded`: она перестаёт снимать группу с помесячного счёта.
++    Её платёж → `reversed` с пометкой, чтобы выручка не считалась дважды.
++    Доступ закрывается сегодняшним днём (только чтение), а не удаляется.
++    Возвращает False, если покупка не оплачена.
++    """
++    row = (
++        await db.execute(
++            text(
++                "SELECT student_id, course_id, status FROM course_purchase "
++                " WHERE id = :id FOR UPDATE"
++            ),
++            {"id": purchase_id},
++        )
++    ).first()
++    if row is None or row.status != "paid":
++        await db.rollback()
++        return False
++    await db.execute(
++        text(
++            "UPDATE course_purchase SET status = 'refunded', updated_at = now(), "
++            "       note = concat_ws(' | ', note, CAST(:note AS text)) WHERE id = :id"
++        ),
++        {"id": purchase_id, "note": note},
++    )
++    await db.execute(
++        text(
++            "UPDATE student_payment SET status = 'reversed', reviewed_by = :by, "
++            "       reviewed_at = now(), updated_at = now(), "
++            "       review_note = concat_ws(' | ', review_note, 'Возврат за курс') "
++            " WHERE course_purchase_id = :id AND status = 'confirmed'"
++        ),
++        {"id": purchase_id, "by": staff_id},
++    )
++    await db.execute(
++        text(
++            "UPDATE user_courses SET access_until = LEAST(COALESCE(access_until, CURRENT_DATE), "
++            "       CURRENT_DATE) WHERE user_id = :s AND course_id = :c"
++        ),
++        {"s": row.student_id, "c": row.course_id},
++    )
++    await db.commit()
++    logger.info("tsk-1254: покупка %s — возврат отмечен", purchase_id)
++    from app.services import charge_service
++
++    await charge_service.recalculate_for_student(db, student_id=int(row.student_id))
++    return True
++
++
++async def extend_access(
++    db: AsyncSession, *, student_id: int, course_id: int, months: int
++) -> Optional[date]:
++    """Продлить доступ к курсу на `months` месяцев (кнопка маркетолога).
++
++    От большего из «сегодня» и текущего конца: продление истёкшего доступа
++    отсчитывается от сегодня, а не от прошлого. Бессрочный доступ (NULL) не
++    трогается — продлевать его некуда. Возвращает новый срок либо None, если
++    зачисления нет или доступ бессрочный.
++    """
++    if not 1 <= months <= 120:
++        raise PurchaseError(detail="Продлить можно на 1–120 месяцев", status_code=422)
++    row = (
++        await db.execute(
++            text(
++                "SELECT access_until FROM user_courses "
++                " WHERE user_id = :s AND course_id = :c FOR UPDATE"
++            ),
++            {"s": student_id, "c": course_id},
++        )
++    ).first()
++    if row is None or row.access_until is None:
++        await db.rollback()
++        return None
++    # «N месяцев со дня, следующего за концом», с тем же «−1 день», что у
++    # покупки: продление на год срока по 22.10 даёт срок по 22.10 следующего года.
++    start = max(row.access_until, date.today() - timedelta(days=1)) + timedelta(days=1)
++    new_until = access_until_for(start, months)
++    await db.execute(
++        text("UPDATE user_courses SET access_until = :u WHERE user_id = :s AND course_id = :c"),
++        {"s": student_id, "c": course_id, "u": new_until},
++    )
++    await db.commit()
++    logger.info(
++        "tsk-1254: доступ ученика %s к курсу %s продлён до %s", student_id, course_id, new_until
++    )
++    return new_until
++
++
++async def list_for_student(db: AsyncSession, *, student_id: int) -> list[dict]:
++    """Покупки ученика со сроком доступа на зачислении — для кабинета и карточки."""
++    rows = (
++        await db.execute(
++            text(
++                """
++                SELECT cp.id, cp.course_id, c.title AS course_title, cp.price_minor,
++                       cp.currency, cp.access_months, cp.pay_method, cp.status,
++                       cp.access_from, cp.access_until AS purchase_access_until,
++                       uc.access_until, cp.created_at
++                  FROM course_purchase cp
++                  JOIN courses c ON c.id = cp.course_id
++                  LEFT JOIN user_courses uc ON uc.user_id = cp.student_id
++                                           AND uc.course_id = cp.course_id
++                 WHERE cp.student_id = :s
++                 ORDER BY cp.created_at DESC, cp.id DESC
++                """
++            ),
++            {"s": student_id},
++        )
++    ).all()
++    return [dict(r._mapping) for r in rows]
++
++
++async def list_expiring(
++    db: AsyncSession, *, within_days: int = 30, today: Optional[date] = None
++) -> list[dict]:
++    """Зачисления, чей доступ кончается в ближайшие `within_days` дней или уже кончился за месяц."""
++    today = today or date.today()
++    rows = (
++        await db.execute(
++            text(
++                """
++                SELECT uc.user_id AS student_id, u.full_name, u.email, uc.course_id,
++                       c.title AS course_title, uc.access_until
++                  FROM user_courses uc
++                  JOIN users u ON u.id = uc.user_id AND u.is_active
++                  JOIN courses c ON c.id = uc.course_id
++                 WHERE uc.access_until IS NOT NULL
++                   AND uc.access_until BETWEEN CAST(:from_d AS date) AND CAST(:to_d AS date)
++                 ORDER BY uc.access_until, u.full_name
++                """
++            ),
++            {"from_d": today - timedelta(days=30), "to_d": today + timedelta(days=within_days)},
++        )
++    ).all()
++    return [dict(r._mapping) for r in rows]
++
++
++#: Зачисление ученика на курс или любого его предка с истёкшим сроком. Задания
++#: живут в подкурсах, а срок — на корневом зачислении, поэтому идём вверх.
++_EXPIRED_FOR_COURSE = """
++WITH RECURSIVE up AS (
++    SELECT CAST(:c AS integer) AS course_id, 0 AS depth
++    UNION
++    SELECT cp.parent_course_id, up.depth + 1
++      FROM course_parents cp JOIN up ON cp.course_id = up.course_id
++     WHERE up.depth < 20
++)
++SELECT uc.course_id, uc.access_until
++  FROM user_courses uc
++ WHERE uc.user_id = :s
++   AND uc.course_id IN (SELECT course_id FROM up)
++   AND uc.access_until IS NOT NULL
++   AND uc.access_until < CAST(:today AS date)
++   -- Подкурс бывает общим у двух корней: пока хоть одно зачисление на пути
++   -- живо (бессрочно или срок не кончился), сдача открыта.
++   AND NOT EXISTS (
++           SELECT 1 FROM user_courses live
++            WHERE live.user_id = :s AND live.is_active
++              AND live.course_id IN (SELECT course_id FROM up)
++              AND (live.access_until IS NULL OR live.access_until >= CAST(:today AS date))
++       )
++ LIMIT 1
++"""
++
++
++async def assert_access_not_expired(
++    db: AsyncSession, *, student_id: int, course_id: Optional[int]
++) -> None:
++    """Закрыть сдачу ответов, если срок доступа к курсу истёк (только чтение).
++
++    Работает лишь при ACCESS_EXPIRY_ENABLED и известном курсе. Без курса
++    пропускаем: гадать, к какому курсу относится попытка, значило бы закрыть
++    чужой курс того же ученика.
++    """
++    if not expiry_enabled() or course_id is None:
++        return
++    row = (
++        await db.execute(
++            text(_EXPIRED_FOR_COURSE),
++            {"s": student_id, "c": course_id, "today": date.today()},
++        )
++    ).first()
++    if row is None:
++        return
++    logger.info(
++        "tsk-1254: сдача закрыта ученику %s — доступ к курсу %s кончился %s",
++        student_id, row.course_id, row.access_until,
++    )
++    raise DomainError(
++        detail=(
++            f"Срок доступа к курсу закончился {row.access_until:%d.%m.%Y}. Материалы "
++            "остаются открытыми для чтения, новые ответы не принимаются."
++        ),
++        status_code=403,
++        payload={"code": ACCESS_EXPIRED_CODE, "access_until": row.access_until.isoformat()},
++    )
++
++
++async def send_expiry_notices(db: AsyncSession, *, today: Optional[date] = None) -> int:
++    """Напомнить о скором конце доступа: за 30 и за 7 дней, раз на рубеж.
++
++    Кабинет (журнал `notifications`, оттуда — дубль в мессенджеры) и письмо.
++    Рубеж ловится окном «осталось не больше N дней и ещё не напоминали на этом
++    рубеже для этого срока», а не точным днём: пропущенный проход крона иначе
++    терял бы напоминание навсегда. Новый срок после продления — новые рубежи.
++    Возвращает число отправленных напоминаний.
++    """
++    if not expiry_enabled():
++        return 0
++    from app.services import inbox_service, notification_email_service
++
++    today = today or date.today()
++    outbox: list[dict] = []
++    for item in await list_expiring(db, within_days=max(EXPIRY_NOTICE_DAYS), today=today):
++        until: date = item["access_until"]
++        left = (until - today).days
++        if left < 0:
++            continue
++        threshold = min(d for d in EXPIRY_NOTICE_DAYS if d >= left)
++        already = (
++            await db.execute(
++                text(
++                    "SELECT 1 FROM notifications WHERE user_id = :u AND kind = :k "
++                    "   AND payload->>'course_id' = :c AND payload->>'access_until' = :until "
++                    "   AND (payload->>'threshold')::int <= :th LIMIT 1"
++                ),
++                {
++                    "u": item["student_id"],
++                    "k": EXPIRY_NOTICE_KIND,
++                    "c": str(item["course_id"]),
++                    "until": until.isoformat(),
++                    "th": threshold,
++                },
++            )
++        ).first()
++        if already is not None:
++            continue
++        await inbox_service.create_for_user(
++            db,
++            user_id=item["student_id"],
++            kind=EXPIRY_NOTICE_KIND,
++            title="Скоро закончится доступ к курсу",
++            content=(
++                f"Доступ к курсу «{item['course_title']}» открыт по {until:%d.%m.%Y}. "
++                "После этого материалы останутся для чтения, а ответы приниматься не будут."
++            ),
++            payload={
++                "course_id": item["course_id"],
++                "access_until": until.isoformat(),
++                "threshold": threshold,
++            },
++            created_by=None,
++        )
++        outbox.append(item)
++    # Один коммит на проход: вызывающий держит транзакционный advisory-lock,
++    # а коммит посреди цикла снял бы его, и второй worker разослал бы то же.
++    await db.commit()
++    # Письма — после коммита: сбой почты не должен откатывать запись в кабинете.
++    for item in outbox:
++        if item.get("email"):
++            await notification_email_service.send_course_access_expiring(
++                recipient_email=item["email"],
++                full_name=item["full_name"],
++                course_title=item["course_title"],
++                access_until=item["access_until"],
++                settings=settings,
++            )
++    sent = len(outbox)
++    if sent:
++        logger.info("tsk-1254: напоминаний о конце доступа отправлено: %s", sent)
++    return sent
+diff --git a/app/services/notification_email_service.py b/app/services/notification_email_service.py
+index d0cf03a..80143f5 100644
+--- a/app/services/notification_email_service.py
++++ b/app/services/notification_email_service.py
+@@ -169,3 +169,37 @@ async def send_payment_overdue(
+     except EmailSendError:
+         logger.error("Не удалось отправить напоминание об оплате")
+         return False
++
++
++# --- tsk-1254: скоро закончится доступ к курсу -------------------------------
++
++
++async def send_course_access_expiring(
++    *,
++    recipient_email: str,
++    full_name: Optional[str],
++    course_title: str,
++    access_until: date,
++    settings: Settings,
++) -> bool:
++    """Письмо о скором конце доступа к курсу. Best-effort, как остальные письма."""
++    if not email_configured(settings):
++        logger.warning("Почтовый транспорт не настроен — письмо о конце доступа не отправлено")
++        return False
++    greeting = f"Здравствуйте, {full_name}!" if full_name else "Здравствуйте!"
++    url = f"{settings.public_base_url.rstrip('/')}/me/payments"
++    html = (
++        f"<p>{greeting}</p>"
++        f"<p>Доступ к курсу «{course_title}» открыт по "
++        f"<strong>{access_until:%d.%m.%Y}</strong> включительно.</p>"
++        "<p>После этой даты материалы останутся открытыми для чтения, а новые "
++        "ответы на задания приниматься не будут. Чтобы продлить доступ, напишите "
++        "нам или загляните в личный кабинет:</p>"
++        f'<p><a href="{url}">{url}</a></p>'
++    )
++    try:
++        await send_html_email(settings, recipient_email, "Скоро закончится доступ к курсу", html)
++        return True
++    except EmailSendError:
++        logger.error("Не удалось отправить письмо о конце доступа к курсу")
++        return False
+diff --git a/app/services/payment_service.py b/app/services/payment_service.py
+index b9ac583..cdcf62b 100644
+--- a/app/services/payment_service.py
++++ b/app/services/payment_service.py
+@@ -72,7 +72,7 @@ PaymentStatus = Literal["pending", "confirmed", "rejected", "reversed"]
+ #: За что заплатили. Список закрыт и продублирован в CHECK таблицы: новая
+ #: разовая продажа добавляется сюда И миграцией — чтобы описка не создала класс
+ #: денег, который не показывается нигде (tsk-615).
+-PaymentPurpose = Literal["monthly", "ai_package"]
++PaymentPurpose = Literal["monthly", "ai_package", "course"]
+ 
+ #: Разовая покупка пакета обращений. Тем же значением помечается платёж в
+ #: `metadata` ЮKassa — одна метка на оба конца: по ней и приём уведомления, и
+@@ -84,6 +84,8 @@ PURPOSE_AI_PACKAGE = "ai_package"
+ PURPOSE_NAMES: dict[str, str] = {
+     "monthly": "Обучение за месяц",
+     "ai_package": "Пакет обращений к ИИ-наставнику",
++    # tsk-1254: без группы и месяца, как пакет — месячные подсчёты её не видят.
++    "course": "Курс целиком",
+ }
+ 
+ 
+diff --git a/app/services/pricing_service.py b/app/services/pricing_service.py
+index 245be2f..8cb345d 100644
+--- a/app/services/pricing_service.py
++++ b/app/services/pricing_service.py
+@@ -44,6 +44,9 @@ _TARIFF_PATCH_COLUMNS = frozenset(
+         "is_default",
+         "sort_order",
+         "is_active",
++        # tsk-1254: разовый тариф.
++        "access_months",
++        "installments_allowed",
+     }
+ )
+ 
+@@ -63,6 +66,7 @@ __all__ = [
+     "list_student_pricing",
+     "active_subscription_groups",
+     "billing_group_ids",
++    "purchased_group_cutoffs",
+     "resolve_attendance_frequency",
+     "AttendanceFrequencyResolution",
+ ]
+@@ -182,7 +186,8 @@ async def billing_group_ids(
+     subs = await active_subscription_groups(db, period=period)
+     if student_id in subs:
+         group_id = subs[student_id]
+-        return [int(group_id)] if group_id is not None else []
++        groups = [int(group_id)] if group_id is not None else []
++        return await _drop_purchased(db, student_id=student_id, groups=groups, period=period)
+ 
+     rows = (
+         await db.execute(
+@@ -198,7 +203,74 @@ async def billing_group_ids(
+             {"s": student_id},
+         )
+     ).all()
+-    return [int(r.group_id) for r in rows]
++    return await _drop_purchased(
++        db, student_id=student_id, groups=[int(r.group_id) for r in rows], period=period
++    )
++
++
++# ------------------------------------------------ разовая покупка курса (tsk-1254)
++
++
++#: Оплаченные покупки, чей доступ начался не позже конца месяца. Конец доступа
++#: намеренно НЕ ограничивает выборку: купивший курс целиком после окончания
++#: срока остаётся «только для чтения», а не возвращается в помесячный счёт —
++#: иначе истёкший доступ молча превратился бы в ежемесячный долг.
++_PURCHASES_FOR_PERIOD = """
++SELECT student_id, group_id, min(access_from) AS access_from
++  FROM course_purchase
++ WHERE status = 'paid'
++   AND access_from < CAST(:next_p AS date)
++   AND (CAST(:s AS integer) IS NULL OR student_id = CAST(:s AS integer))
++ GROUP BY student_id, group_id
++"""
++
++
++async def purchased_group_cutoffs(
++    db: AsyncSession, *, period: Optional[date] = None, student_id: Optional[int] = None
++) -> dict[tuple[int, int], Optional[date]]:
++    """Пары «ученик × группа», которые месяц `period` не начисляет помесячно.
++
++    Значение пары:
++
++    * `None` — месяц не начисляется по этой группе вовсе (курс оплачен целиком);
++    * дата — первый день доступа покупки ВНУТРИ этого месяца, когда включена
++      доля месяца перехода (`course_purchase_prorate_first_month`): дни ДО неё
++      начисляются долей, как у ушедшего ученика (`left_on` = накануне).
++
++    Исключение не зависит от рубильника COURSE_PURCHASE_ENABLED: оплаченная
++    покупка — это уже принятые деньги, и выключение продаж не должно выставлять
++    за тот же курс второй, помесячный счёт.
++    """
++    from app.core import settings_store
++
++    start = (period or date.today()).replace(day=1)
++    next_p = (start.replace(day=28) + timedelta(days=4)).replace(day=1)
++    rows = (
++        await db.execute(
++            text(_PURCHASES_FOR_PERIOD), {"next_p": next_p, "s": student_id}
++        )
++    ).all()
++    prorate = settings_store.get_bool("course_purchase_prorate_first_month")
++    result: dict[tuple[int, int], Optional[date]] = {}
++    for r in rows:
++        cutoff: Optional[date] = None
++        if prorate and r.access_from > start:
++            cutoff = r.access_from
++        result[(int(r.student_id), int(r.group_id))] = cutoff
++    return result
++
++
++async def _drop_purchased(
++    db: AsyncSession, *, student_id: int, groups: list[int], period: Optional[date]
++) -> list[int]:
++    """Убрать из групп расчёта те, что оплачены покупкой целиком за этот месяц."""
++    if not groups:
++        return groups
++    cutoffs = await purchased_group_cutoffs(db, period=period, student_id=student_id)
++    return [
++        g for g in groups
++        if not ((student_id, g) in cutoffs and cutoffs[(student_id, g)] is None)
++    ]
+ 
+ 
+ # ---------------------------------------------------------------- тарифные группы
+@@ -227,14 +299,23 @@ async def list_groups(db: AsyncSession) -> list[PricingGroupRead]:
+ 
+ 
+ async def _load_tariffs(
+-    db: AsyncSession, *, only_active: bool = False
++    db: AsyncSession, *, only_active: bool = False, monthly_only: bool = False
+ ) -> dict[int, list[TariffRead]]:
++    """Тарифы по группам.
++
++    `monthly_only` (tsk-1254) обязателен везде, где считается МЕСЯЦ: разовый
++    тариф, попавший в подбор, начислялся бы каждый месяц — до tsk-1254 подбор
++    поле `period` не читал вовсе.
++    """
+     sql = (
+         "SELECT id, group_id, name, price_minor, currency, period, match_kind, "
+-        "match_value, is_default, sort_order, is_active FROM pricing_tariff "
++        "match_value, is_default, sort_order, is_active, access_months, "
++        "installments_allowed FROM pricing_tariff WHERE true "
+     )
+     if only_active:
+-        sql += "WHERE is_active "
++        sql += "AND is_active "
++    if monthly_only:
++        sql += "AND period = 'month' "
+     sql += "ORDER BY group_id, sort_order, id"
+ 
+     result: dict[int, list[TariffRead]] = {}
+@@ -282,14 +363,17 @@ async def delete_group(db: AsyncSession, *, group_id: int) -> bool:
+ 
+ 
+ async def create_tariff(db: AsyncSession, *, payload: dict) -> int:
++    # tsk-1254: поля разового тарифа необязательны — прежние вызовы их не шлют.
++    payload = {"access_months": None, "installments_allowed": False, **payload}
+     tariff_id = (
+         await db.execute(
+             text(
+                 "INSERT INTO pricing_tariff "
+                 "(group_id, name, price_minor, currency, period, match_kind, match_value, "
+-                " is_default, sort_order) "
++                " is_default, sort_order, access_months, installments_allowed) "
+                 "VALUES (:group_id, :name, :price_minor, :currency, :period, :match_kind, "
+-                " :match_value, :is_default, :sort_order) RETURNING id"
++                " :match_value, :is_default, :sort_order, :access_months, "
++                " :installments_allowed) RETURNING id"
+             ),
+             payload,
+         )
+@@ -413,7 +497,8 @@ async def get_public_course_offer(
+                 await db.execute(
+                     text(
+                         "SELECT name, price_minor, currency, period, match_kind, match_value, "
+-                        "is_default, sort_order FROM pricing_tariff "
++                        "is_default, sort_order, access_months, installments_allowed "
++                        "FROM pricing_tariff "
+                         "WHERE group_id = :g AND is_active ORDER BY sort_order, id"
+                     ),
+                     {"g": row.group_id},
+@@ -586,7 +671,18 @@ async def list_student_pricing(
+                 ).all()
+             )
+ 
+-    tariffs = await _load_tariffs(db, only_active=True)
++    # tsk-1254: группа, оплаченная покупкой курса целиком, помесячно не считается.
++    cutoffs = await purchased_group_cutoffs(db, period=period)
++    if cutoffs:
++        rows = [
++            r for r in rows
++            if not (
++                (r.student_id, r.group_id) in cutoffs
++                and cutoffs[(r.student_id, r.group_id)] is None
++            )
++        ]
++
++    tariffs = await _load_tariffs(db, only_active=True, monthly_only=True)
+ 
+     students: dict[int, StudentPricingRead] = {}
+     # (student_id, group_id) → курсы этой группы у этого ученика
+@@ -856,7 +952,7 @@ async def _infer_weekly_lessons_from_price(
+     if not overrides:
+         return None
+ 
+-    tariffs_by_group = await _load_tariffs(db, only_active=True)
++    tariffs_by_group = await _load_tariffs(db, only_active=True, monthly_only=True)
+     resolved: set[int] = set()
+     for override in overrides:
+         by_frequency: list[tuple[int, int]] = []
+@@ -935,7 +1031,7 @@ async def list_price_schedule_mismatches(db: AsyncSession) -> list[dict]:
+     if not overrides:
+         return []
+ 
+-    tariffs_by_group = await _load_tariffs(db, only_active=True)
++    tariffs_by_group = await _load_tariffs(db, only_active=True, monthly_only=True)
+     result: list[dict] = []
+     for student_id in dict.fromkeys(o.student_id for o in overrides):
+         resolution = await resolve_attendance_frequency(db, student_id=student_id)
+diff --git a/app/services/subscription_service.py b/app/services/subscription_service.py
+index 97033ac..38965b9 100644
+--- a/app/services/subscription_service.py
++++ b/app/services/subscription_service.py
+@@ -347,7 +347,7 @@ async def purchasable_plans(db: AsyncSession) -> list[dict]:
+                 "  FROM subscription_plan p "
+                 "  JOIN pricing_group g ON g.id = p.pricing_group_id "
+                 "  JOIN pricing_tariff t ON t.group_id = g.id AND t.is_active "
+-                "                       AND t.match_kind IS NULL "
++                "                       AND t.match_kind IS NULL AND t.period = 'month' "
+                 " WHERE p.is_active AND NOT p.lessons "
+                 " ORDER BY t.price_minor, p.sort_order, p.code, t.id"
+             )
+diff --git a/tests/test_tsk1254_course_purchase.py b/tests/test_tsk1254_course_purchase.py
+new file mode 100644
+index 0000000..6cfc66f
+--- /dev/null
++++ b/tests/test_tsk1254_course_purchase.py
+@@ -0,0 +1,371 @@
++"""tsk-1254 — разовая покупка курса не ломает помесячные деньги.
++
++Главные риски задачи — в соседних деньгах, а не в самой покупке:
++
++* разовый тариф не должен попасть в помесячный подбор: до tsk-1254 расчёт поле
++  `period` не читал, и тариф «курс целиком за 50 000» начислялся бы каждый месяц;
++* платёж за курс не должен гасить месячный долг по другой группе;
++* купленная группа выходит из помесячного счёта, а месяц перехода считается
++  долей (настройка `course_purchase_prorate_first_month`);
++* продажа закрыта рубильником, повтор уведомления шлюза не заводит вторые деньги,
++  истёкший срок закрывает сдачу только при включённом ACCESS_EXPIRY_ENABLED.
++"""
++
++from __future__ import annotations
++
++import uuid
++from datetime import date, timedelta
++
++import pytest
++from sqlalchemy import text
++
++from app.core import settings_store
++from app.services import charge_service, course_purchase_service, payment_service, yookassa_service
++from app.services.yookassa_service import GatewayPayment
++from app.utils.exceptions import DomainError
++from tests.test_tsk505_marketer_pricing import _enroll, _new_course, _new_group, _price_course
++from tests.test_tsk511_charges_breaks import MONDAYS, NEXT_PERIOD, PERIOD, _setup
++
++pytestmark = pytest.mark.asyncio
++
++MONTH_MINOR = 550000
++COURSE_MINOR = 4_500_000
++
++
++@pytest.fixture
++def sales_on(monkeypatch):
++    monkeypatch.setenv("COURSE_PURCHASE_ENABLED", "true")
++    return True
++
++
++async def _add_once_tariff(db, group_id: int, *, price: int = COURSE_MINOR, months: int = 12) -> int:
++    tariff_id = (
++        await db.execute(
++            text(
++                "INSERT INTO pricing_tariff (group_id, name, price_minor, period, access_months, "
++                " installments_allowed, sort_order) "
++                "VALUES (:g, 'Курс целиком', :p, 'once', :m, true, 99) RETURNING id"
++            ),
++            {"g": group_id, "p": price, "m": months},
++        )
++    ).scalar_one()
++    await db.commit()
++    return int(tariff_id)
++
++
++async def _charges(db, student_id: int, period: date = PERIOD) -> dict[int, int]:
++    """Итоги месяца по группам (ручная сумма главнее расчётной)."""
++    rows = (
++        await db.execute(
++            text(
++                "SELECT group_id, COALESCE(manual_minor, calculated_minor) AS total "
++                "  FROM student_monthly_charge WHERE student_id = :s AND period = :p"
++            ),
++            {"s": student_id, "p": period},
++        )
++    ).all()
++    return {int(r.group_id): int(r.total) for r in rows}
++
++
++async def _buy(db, env: dict, tariff_id: int, *, paid_on: date) -> int:
++    purchase = await course_purchase_service.create_pending(
++        db, student_id=env["student_id"], course_id=env["course_id"], tariff_id=tariff_id
++    )
++    await db.commit()
++    assert await course_purchase_service.mark_paid(
++        db, purchase_id=purchase["id"], amount_minor=COURSE_MINOR, paid_on=paid_on
++    )
++    return purchase["id"]
++
++
++async def test_monthly_charge_ignores_once_tariff(db):
++    """Месячный расчёт не видит разовые тарифы.
++
++    Группа с двумя вариантами (месяц и «курс целиком») считает месяц по
++    месячному. Группа, где есть ТОЛЬКО разовый тариф, помесячно не начисляется
++    вовсе — а не начисляет 45 000 каждый месяц.
++    """
++    env = await _setup(db, "p1254-mix", price=MONTH_MINOR)
++    await _add_once_tariff(db, env["group_id"])
++    await charge_service.recalculate_for_student(db, student_id=env["student_id"], period=PERIOD)
++    assert await _charges(db, env["student_id"]) == {env["group_id"]: MONTH_MINOR}
++
++    only_once = await _setup(db, "p1254-once", price=MONTH_MINOR)
++    await db.execute(
++        text("UPDATE pricing_tariff SET is_active = false WHERE group_id = :g AND period = 'month'"),
++        {"g": only_once["group_id"]},
++    )
++    await db.commit()
++    await _add_once_tariff(db, only_once["group_id"])
++    await charge_service.recalculate_for_student(
++        db, student_id=only_once["student_id"], period=PERIOD
++    )
++    assert await _charges(db, only_once["student_id"]) == {}, (
++        "разовый тариф начислился помесячно"
++    )
++
++
++async def test_course_payment_does_not_settle_monthly_debt(db, sales_on):
++    """Платёж за курс не гасит месячный долг по другой группе.
++
++    Ученик платит помесячно за группу A и покупает целиком курс группы B.
++    Долг по A остаётся ровно прежним, а платёж за курс лежит без группы и месяца.
++    """
++    env = await _setup(db, "p1254-debt", price=MONTH_MINOR)
++    await charge_service.recalculate_for_student(db, student_id=env["student_id"], period=PERIOD)
++    before = await payment_service.list_student_charges(db, student_id=env["student_id"])
++    due_before = {c["group_id"]: c["due_minor"] for c in before}
++    assert due_before[env["group_id"]] == MONTH_MINOR
++
++    group_b = await _new_group(db, "p1254-b", [("Месяц", 300000, None, None)])
++    course_b = await _new_course(db, "p1254-b")
++    await _price_course(db, course_id=course_b, group_id=group_b)
++    await _enroll(db, student_id=env["student_id"], course_id=course_b)
++    tariff = await _add_once_tariff(db, group_b)
++    await _buy(db, {**env, "course_id": course_b}, tariff, paid_on=PERIOD)
++
++    after = await payment_service.list_student_charges(db, student_id=env["student_id"])
++    due_after = {c["group_id"]: c["due_minor"] for c in after}
++    assert due_after[env["group_id"]] == MONTH_MINOR, "платёж за курс погасил чужой месячный долг"
++    assert group_b not in due_after or due_after[group_b] == 0
++
++    pay = (
++        await db.execute(
++            text(
++                "SELECT purpose, group_id, period, amount_minor FROM student_payment "
++                " WHERE student_id = :s AND purpose = 'course'"
++            ),
++            {"s": env["student_id"]},
++        )
++    ).one()
++    assert (pay.group_id, pay.period, pay.amount_minor) == (None, None, COURSE_MINOR)
++
++
++async def test_purchase_removes_group_from_monthly_billing(db, sales_on):
++    """Купил с первого числа — месяц покупки и следующие помесячно не начисляются."""
++    env = await _setup(db, "p1254-full", price=MONTH_MINOR)
++    await charge_service.recalculate_for_student(db, student_id=env["student_id"], period=PERIOD)
++    assert await _charges(db, env["student_id"]) == {env["group_id"]: MONTH_MINOR}
++    tariff = await _add_once_tariff(db, env["group_id"])
++
++    await _buy(db, env, tariff, paid_on=PERIOD)
++    await charge_service.recalculate_for_student(db, student_id=env["student_id"], period=PERIOD)
++    assert await _charges(db, env["student_id"]) == {}, "открытый месяц покупки не снят"
++    await charge_service.recalculate_month(db, period=NEXT_PERIOD)
++    assert await _charges(db, env["student_id"], NEXT_PERIOD) == {}
++
++    until = (
++        await db.execute(
++            text("SELECT access_until FROM user_courses WHERE user_id = :s AND course_id = :c"),
++            {"s": env["student_id"], "c": env["course_id"]},
++        )
++    ).scalar_one()
++    assert until == course_purchase_service.access_until_for(PERIOD, 12)
++
++
++async def test_midmonth_purchase_bills_share_of_month(db, sales_on, monkeypatch):
++    """Перевод посреди месяца: доля месяца до покупки (по умолчанию) или ничего."""
++    env = await _setup(db, "p1254-half", price=MONTH_MINOR)
++    tariff = await _add_once_tariff(db, env["group_id"])
++    await charge_service.recalculate_for_student(db, student_id=env["student_id"], period=PERIOD)
++    # Покупка в день третьего понедельника: оплачиваются два занятия из четырёх.
++    await _buy(db, env, tariff, paid_on=MONDAYS[2])
++    assert await _charges(db, env["student_id"]) == {env["group_id"]: MONTH_MINOR // 2}
++
++    monkeypatch.setitem(settings_store._cabinet, "course_purchase_prorate_first_month", False)
++    await charge_service.recalculate_for_student(db, student_id=env["student_id"], period=PERIOD)
++    assert await _charges(db, env["student_id"]) == {}
++
++
++async def test_sales_switch_off_by_default(db, monkeypatch):
++    """Без COURSE_PURCHASE_ENABLED покупку не завести."""
++    monkeypatch.delenv("COURSE_PURCHASE_ENABLED", raising=False)
++    env = await _setup(db, "p1254-off", price=MONTH_MINOR)
++    tariff = await _add_once_tariff(db, env["group_id"])
++    with pytest.raises(DomainError) as exc:
++        await course_purchase_service.create_pending(
++            db, student_id=env["student_id"], course_id=env["course_id"], tariff_id=tariff
++        )
++    assert exc.value.status_code == 403
++
++
++async def test_wrong_amount_or_monthly_tariff_rejected(db, sales_on):
++    """Месячный тариф целиком не продаётся; сумма не по цене не открывает доступ."""
++    env = await _setup(db, "p1254-wrong", price=MONTH_MINOR)
++    monthly = (
++        await db.execute(
++            text("SELECT id FROM pricing_tariff WHERE group_id = :g"), {"g": env["group_id"]}
++        )
++    ).scalar_one()
++    with pytest.raises(DomainError):
++        await course_purchase_service.create_pending(
++            db, student_id=env["student_id"], course_id=env["course_id"], tariff_id=monthly
++        )
++    tariff = await _add_once_tariff(db, env["group_id"])
++    purchase = await course_purchase_service.create_pending(
++        db, student_id=env["student_id"], course_id=env["course_id"], tariff_id=tariff
++    )
++    await db.commit()
++    with pytest.raises(DomainError):
++        await course_purchase_service.mark_paid(
++            db, purchase_id=purchase["id"], amount_minor=COURSE_MINOR - 1, paid_on=PERIOD
++        )
++    status_ = (
++        await db.execute(
++            text("SELECT status FROM course_purchase WHERE id = :id"), {"id": purchase["id"]}
++        )
++    ).scalar_one()
++    assert status_ == "pending"
++
++
++async def test_gateway_webhook_is_idempotent(db, client, sales_on, monkeypatch):
++    """Повтор уведомления шлюза не заводит вторые деньги."""
++    monkeypatch.setattr(yookassa_service.settings, "yookassa_shop_id", "1426025")
++    monkeypatch.setattr(yookassa_service.settings, "yookassa_secret_key", "test_secret")
++    monkeypatch.setattr(yookassa_service.settings, "yookassa_allow_live", False)
++    env = await _setup(db, "p1254-hook", price=MONTH_MINOR)
++    tariff = await _add_once_tariff(db, env["group_id"])
++    purchase = await course_purchase_service.create_pending(
++        db, student_id=env["student_id"], course_id=env["course_id"], tariff_id=tariff
++    )
++    await db.commit()
++    txn = f"course-{uuid.uuid4().hex[:12]}"
++
++    async def fake_fetch(payment_id: str) -> GatewayPayment:
++        return GatewayPayment(
++            id=payment_id, status="succeeded", amount_minor=COURSE_MINOR, paid=True,
++            confirmation_url=None, test=True,
++            metadata={
++                "purpose": "course",
++                "student_id": str(env["student_id"]),
++                "course_purchase_id": str(purchase["id"]),
++            },
++        )
++
++    monkeypatch.setattr(yookassa_service, "fetch_payment", fake_fetch)
++    body = {"type": "notification", "event": "payment.succeeded", "object": {"id": txn}}
++    first = await client.post("/api/v1/payments/yookassa/webhook", json=body)
++    second = await client.post("/api/v1/payments/yookassa/webhook", json=body)
++    assert first.json()["status"] == "recorded", first.text
++    assert second.json()["status"] == "already_recorded", second.text
++    count = (
++        await db.execute(
++            text("SELECT count(*) FROM student_payment WHERE course_purchase_id = :p"),
++            {"p": purchase["id"]},
++        )
++    ).scalar_one()
++    assert count == 1
++
++
++async def test_expired_access_closes_answers_only_when_switch_on(db, monkeypatch):
++    """Истёкший срок закрывает сдачу только при ACCESS_EXPIRY_ENABLED."""
++    env = await _setup(db, "p1254-exp", price=MONTH_MINOR)
++    await db.execute(
++        text("UPDATE user_courses SET access_until = :d WHERE user_id = :s AND course_id = :c"),
++        {"d": date.today() - timedelta(days=1), "s": env["student_id"], "c": env["course_id"]},
++    )
++    await db.commit()
++
++    monkeypatch.delenv("ACCESS_EXPIRY_ENABLED", raising=False)
++    await course_purchase_service.assert_access_not_expired(
++        db, student_id=env["student_id"], course_id=env["course_id"]
++    )
++
++    monkeypatch.setenv("ACCESS_EXPIRY_ENABLED", "true")
++    with pytest.raises(DomainError) as exc:
++        await course_purchase_service.assert_access_not_expired(
++            db, student_id=env["student_id"], course_id=env["course_id"]
++        )
++    assert exc.value.payload["code"] == course_purchase_service.ACCESS_EXPIRED_CODE
++
++    # Продление от сегодня открывает сдачу снова.
++    until = await course_purchase_service.extend_access(
++        db, student_id=env["student_id"], course_id=env["course_id"], months=1
++    )
++    assert until is not None and until >= date.today()
++    await course_purchase_service.assert_access_not_expired(
++        db, student_id=env["student_id"], course_id=env["course_id"]
++    )
++
++
++async def test_expiry_notice_once_per_threshold(db, monkeypatch):
++    """Напоминание о конце доступа — один раз на рубеж 30 и 7 дней."""
++    monkeypatch.setenv("ACCESS_EXPIRY_ENABLED", "true")
++    env = await _setup(db, "p1254-note", price=MONTH_MINOR)
++    today = date.today()
++    await db.execute(
++        text("UPDATE user_courses SET access_until = :d WHERE user_id = :s AND course_id = :c"),
++        {"d": today + timedelta(days=20), "s": env["student_id"], "c": env["course_id"]},
++    )
++    await db.commit()
++
++    async def _count() -> int:
++        return (
++            await db.execute(
++                text("SELECT count(*) FROM notifications WHERE user_id = :u AND kind = :k"),
++                {"u": env["student_id"], "k": course_purchase_service.EXPIRY_NOTICE_KIND},
++            )
++        ).scalar_one()
++
++    await course_purchase_service.send_expiry_notices(db, today=today)
++    await course_purchase_service.send_expiry_notices(db, today=today)
++    assert await _count() == 1, "напоминание на рубеже 30 дней ушло дважды"
++    await course_purchase_service.send_expiry_notices(db, today=today + timedelta(days=14))
++    assert await _count() == 2, "рубеж 7 дней не напомнил"
++
++
++async def test_purchase_refused_when_group_has_sibling_course(db, sales_on):
++    """Второй курс той же группы не должен стать бесплатным вместе с купленным."""
++    env = await _setup(db, "p1254-sib", price=MONTH_MINOR)
++    sibling = await _new_course(db, "p1254-sib2")
++    await _price_course(db, course_id=sibling, group_id=env["group_id"])
++    await _enroll(db, student_id=env["student_id"], course_id=sibling)
++    tariff = await _add_once_tariff(db, env["group_id"])
++    with pytest.raises(DomainError) as exc:
++        await course_purchase_service.create_pending(
++            db, student_id=env["student_id"], course_id=env["course_id"], tariff_id=tariff
++        )
++    assert exc.value.status_code == 409
++
++
++async def test_second_click_reuses_pending_and_paid_is_refused(db, sales_on):
++    """Два клика — одна покупка; после оплаты новую завести нельзя."""
++    env = await _setup(db, "p1254-dbl", price=MONTH_MINOR)
++    tariff = await _add_once_tariff(db, env["group_id"])
++    args = dict(student_id=env["student_id"], course_id=env["course_id"], tariff_id=tariff)
++    first = await course_purchase_service.create_pending(db, **args)
++    await db.commit()
++    second = await course_purchase_service.create_pending(db, **args)
++    assert first["id"] == second["id"]
++    await course_purchase_service.mark_paid(
++        db, purchase_id=first["id"], amount_minor=COURSE_MINOR, paid_on=date.today()
++    )
++    with pytest.raises(DomainError) as exc:
++        await course_purchase_service.create_pending(db, **args)
++    assert exc.value.status_code == 409
++
++
++async def test_refund_returns_group_to_monthly_billing(db, sales_on):
++    """Возврат: покупка перестаёт снимать месяц, платёж не считается выручкой."""
++    env = await _setup(db, "p1254-ref", price=MONTH_MINOR)
++    tariff = await _add_once_tariff(db, env["group_id"])
++    purchase_id = await _buy(db, env, tariff, paid_on=PERIOD)
++    await charge_service.recalculate_for_student(db, student_id=env["student_id"], period=PERIOD)
++    assert await _charges(db, env["student_id"]) == {}
++
++    assert await course_purchase_service.refund(db, purchase_id=purchase_id, staff_id=None, note="тест")
++    await charge_service.recalculate_for_student(db, student_id=env["student_id"], period=PERIOD)
++    assert await _charges(db, env["student_id"]) == {env["group_id"]: MONTH_MINOR}
++    status_ = (
++        await db.execute(
++            text("SELECT status FROM student_payment WHERE course_purchase_id = :p"),
++            {"p": purchase_id},
++        )
++    ).scalar_one()
++    assert status_ == "reversed"
++
++
++def test_access_until_and_extension_keep_the_same_boundary():
++    """Год с 23.10 — по 22.10; продление на год — по 22.10 следующего года."""
++    assert course_purchase_service.access_until_for(date(2026, 10, 23), 12) == date(2027, 10, 22)
++    assert course_purchase_service.add_months(date(2026, 1, 31), 1) == date(2026, 2, 28)

@@ -321,6 +321,12 @@ async def create_attempt(
     await payment_access_service.assert_content_allowed(db, payload.user_id)
     # tsk-673: тариф «Выпускник» закрывает работу в курсе — попытку не начать.
     await graduation_service.assert_course_work_allowed(db, payload.user_id)
+    # tsk-1254: срок доступа истёк — курс только для чтения.
+    from app.services import course_purchase_service
+
+    await course_purchase_service.assert_access_not_expired(
+        db, student_id=payload.user_id, course_id=payload.root_course_id or payload.course_id
+    )
     """
     Создать новую попытку.
 
@@ -525,6 +531,11 @@ async def submit_attempt_answers(
     from app.services import graduation_service
 
     await graduation_service.assert_course_work_allowed(db, attempt.user_id)
+    from app.services import course_purchase_service
+
+    await course_purchase_service.assert_access_not_expired(
+        db, student_id=attempt.user_id, course_id=attempt.root_course_id or attempt.course_id
+    )
 
     # Валидация попытки: проверка, что попытка не завершена и не отменена
     if attempt.finished_at is not None:
