@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Optional
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -149,6 +150,14 @@ class WebsiteLeadRequest(PdConsentFields):
         default="",
         max_length=200,
         description="Honeypot — скрытое от человека поле, должно оставаться пустым",
+    )
+    utm_source: Optional[str] = Field(default=None, max_length=300, description="Метка источника (tsk-1407)")
+    utm_medium: Optional[str] = Field(default=None, max_length=300)
+    utm_campaign: Optional[str] = Field(default=None, max_length=300)
+    utm_content: Optional[str] = Field(default=None, max_length=300)
+    utm_term: Optional[str] = Field(default=None, max_length=300)
+    guest_session_id: Optional[UUID] = Field(
+        default=None, description="Гостевая сессия квиза, если посетитель её проходил (tsk-1407)"
     )
 
     @model_validator(mode="after")

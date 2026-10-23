@@ -142,7 +142,9 @@ async def vk_callback(
     await user_block_service.assert_not_blocked(db, user.id)
 
     if body.guest_session_id:
-        await attribute_guest_session(db, body.guest_session_id, user.id)
+        await attribute_guest_session(
+            db, body.guest_session_id, user.id, is_new_user=created,
+        )
 
     access, refresh, _ = await session_service.create_session(db, user.id, ua)
     await log_event(db, "login_vk_oauth", user_id=user.id, ip=ip)

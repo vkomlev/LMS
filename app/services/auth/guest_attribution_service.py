@@ -13,7 +13,8 @@ frontend сохранил `guest_session_id` cookie. Использует SAVEPO
 """
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from typing import Optional, Union
 from uuid import UUID
 
 from sqlalchemy import select, update
@@ -21,8 +22,40 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.guest_attempt import GuestAttempt
 from app.models.guest_session import GuestSession
+from app.models.users import Users
 
 logger = logging.getLogger(__name__)
+
+#: tsk-1407: квиз привязывают к кабинету сразу после регистрации (claim) —
+#: метку сессии считаем источником регистрации, только если учётке не больше суток.
+_SIGNUP_WINDOW = timedelta(days=1)
+
+
+async def _copy_signup_attribution(
+    db: AsyncSession,
+    guest_session_id: Union[str, UUID],
+    user_id: int,
+    attribution: Optional[dict] = None,
+) -> None:
+    """Скопировать метки гостевой сессии в `users.signup_attribution` (tsk-1407).
+
+    Пишет только в пустое поле: первое касание не перезаписывается.
+    """
+    if attribution is None:
+        attribution = (
+            await db.execute(
+                select(GuestSession.attribution).where(GuestSession.id == guest_session_id)
+            )
+        ).scalar_one_or_none()
+    if not attribution:
+        return
+    result = await db.execute(
+        update(Users)
+        .where(Users.id == user_id, Users.signup_attribution.is_(None))
+        .values(signup_attribution={**attribution, "guest_session_id": str(guest_session_id)})
+    )
+    if result.rowcount:
+        logger.info("signup_attribution: user_id=%d session=%s", user_id, guest_session_id)
 
 
 class GuestAttributionConflictError(Exception):
@@ -46,6 +79,8 @@ async def attribute_guest_session(
     db: AsyncSession,
     guest_session_id: str,
     user_id: int,
+    *,
+    is_new_user: bool = False,
 ) -> int:
     """
     Phase Y-1: привязать guest_session и все её попытки к пользователю.
@@ -55,6 +90,9 @@ async def attribute_guest_session(
     Вызывается ИЗ внутри transaction registration handler'а (magic-link
     verify / tg init / vk callback). В Y-5 НЕ применяется савепоинт-
     pattern — outer tx уже даёт atomicity registration+attribution.
+
+    :param is_new_user: пользователь только что создан — метки сессии
+        становятся источником регистрации (tsk-1407).
     """
     now = datetime.now(timezone.utc)
 
@@ -72,6 +110,8 @@ async def attribute_guest_session(
         )
         .values(attributed_user_id=user_id, attributed_at=now)
     )
+    if is_new_user:
+        await _copy_signup_attribution(db, guest_session_id, user_id)
     await db.flush()
     count: int = result.rowcount
     logger.info(
@@ -131,6 +171,9 @@ async def attribute_guest_post_login(
             )
             .values(attributed_user_id=user_id, attributed_at=now)
         )
+        user = await db.get(Users, user_id)
+        if user is not None and user.created_at >= now - _SIGNUP_WINDOW:
+            await _copy_signup_attribution(db, guest_session_id, user_id, gs.attribution)
         await db.flush()
 
     count = int(result.rowcount or 0)

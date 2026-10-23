@@ -52,6 +52,11 @@ class Users(Base):
         Boolean, nullable=False, server_default=text("true"),
         comment="False — учётка деактивирована (обычно после слияния с другой)",
     )
+    # tsk-1407. Метки гостевой сессии на момент регистрации — связь «сайт → оплата».
+    signup_attribution: Mapped[Optional[dict]] = mapped_column(
+        JSONB, nullable=True,
+        comment="Метки первого касания при регистрации (tsk-1407): utm_*, page, ветка квиза",
+    )
     merged_into_user_id: Mapped[Optional[int]] = mapped_column(
         Integer, ForeignKey("users.id"), nullable=True,
         comment="Если учётка слита в другую — id учётки-получателя",

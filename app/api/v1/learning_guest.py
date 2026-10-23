@@ -22,10 +22,12 @@ from app.schemas.learning_guest import (
     GuestAttemptCreateRequest,
     GuestAttemptCreateResponse,
     GuestCourseInfoResponse,
+    GuestSessionCreateRequest,
     GuestSessionCreateResponse,
     GuestTaskResponse,
 )
 from app.services import learning_guest_service
+from app.services.quiz_funnel_service import sanitize_attribution
 from app.services.rate_limit_service import get_redis, is_rate_limited
 from app.utils.exceptions import DomainError
 
@@ -52,9 +54,14 @@ def _client_ip(request: Request) -> str | None:
 async def create_guest_session(
     request: Request,
     response: Response,
+    body: GuestSessionCreateRequest | None = None,
     db: AsyncSession = Depends(get_bare_db),
 ) -> GuestSessionCreateResponse:
-    """Создать анонимную guest-сессию и установить cookie."""
+    """Создать анонимную guest-сессию и установить cookie.
+
+    tsk-1407: метки страницы входа (квиз, диагностика, демо) пишутся в сессию
+    сразу — при регистрации они уйдут в `users.signup_attribution`.
+    """
     ip = _client_ip(request)
     ua = request.headers.get("user-agent")
 
@@ -63,7 +70,8 @@ async def create_guest_session(
         if await is_rate_limited(redis, f"guest_session:{ip}", max_requests=10, window_seconds=3600):
             raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Слишком много запросов")
 
-    session = GuestSession(ip=ip, ua_fingerprint=ua)
+    attribution = sanitize_attribution(body.attribution if body else None)
+    session = GuestSession(ip=ip, ua_fingerprint=ua, attribution=attribution or None)
     db.add(session)
     await db.flush()
     await db.commit()

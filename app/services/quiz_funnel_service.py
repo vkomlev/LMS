@@ -220,10 +220,12 @@ async def start(
     """
     params = engine.valid_params(funnel.spec, params_raw)
     session = await db.get(GuestSession, guest_session_id)
-    if session is not None and not session.attribution:
+    # tsk-1407: сессия может прийти уже с метками страницы входа — дополняем,
+    # первое касание не перезаписываем.
+    if session is not None and not (session.attribution or {}).get("entry_uid"):
         clean = sanitize_attribution({**(attribution_raw or {}), **params})
         clean["entry_uid"] = funnel.course.course_uid or ""
-        session.attribution = clean
+        session.attribution = {**clean, **(session.attribution or {})}
     progress = await _progress(db, guest_session_id, funnel.course.id)
     if progress is None:
         db.add(

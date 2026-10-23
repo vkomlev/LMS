@@ -33148,8 +33148,25 @@
           "learning-guest"
         ],
         "summary": "Create Guest Session",
-        "description": "Создать анонимную guest-сессию и установить cookie.",
+        "description": "Создать анонимную guest-сессию и установить cookie.\n\ntsk-1407: метки страницы входа (квиз, диагностика, демо) пишутся в сессию\nсразу — при регистрации они уйдут в `users.signup_attribution`.",
         "operationId": "create_guest_session_api_v1_learning_guest_session_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/GuestSessionCreateRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
         "responses": {
           "201": {
             "description": "Successful Response",
@@ -33157,6 +33174,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/GuestSessionCreateResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -62424,6 +62451,19 @@
             "title": "Filler Role",
             "description": "Кто заполняет: parent — родитель, adult — взрослый о себе, teen_14_17 — подросток 14–17, under_14 — младше 14 (заявка не принимается)"
           },
+          "page": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page",
+            "description": "Страница, где дано согласие (tsk-1407); нет — берётся заголовок Referer"
+          },
           "external_source": {
             "type": "string",
             "maxLength": 64,
@@ -63546,6 +63586,19 @@
             ],
             "title": "Filler Role",
             "description": "Кто заполняет: parent — родитель, adult — взрослый о себе, teen_14_17 — подросток 14–17, under_14 — младше 14 (заявка не принимается)"
+          },
+          "page": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page",
+            "description": "Страница, где дано согласие (tsk-1407); нет — берётся заголовок Referer"
           },
           "contact": {
             "type": "string",
@@ -64672,6 +64725,26 @@
         ],
         "title": "GuestCourseInfoResponse",
         "description": "Ответ на GET /learning/guest/courses/{course_uid}."
+      },
+      "GuestSessionCreateRequest": {
+        "properties": {
+          "attribution": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attribution",
+            "description": "utm_*, page, referrer из адреса страницы; прочие ключи отбрасываются"
+          }
+        },
+        "type": "object",
+        "title": "GuestSessionCreateRequest",
+        "description": "Тело POST /learning/guest/session (tsk-1407): метки первого касания."
       },
       "GuestSessionCreateResponse": {
         "properties": {
@@ -70000,6 +70073,19 @@
             ],
             "title": "Filler Role",
             "description": "Кто заполняет: parent — родитель, adult — взрослый о себе, teen_14_17 — подросток 14–17, under_14 — младше 14 (заявка не принимается)"
+          },
+          "page": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page",
+            "description": "Страница, где дано согласие (tsk-1407); нет — берётся заголовок Referer"
           },
           "email": {
             "type": "string",
@@ -76629,6 +76715,19 @@
             ],
             "title": "Filler Role",
             "description": "Кто заполняет: parent — родитель, adult — взрослый о себе, teen_14_17 — подросток 14–17, under_14 — младше 14 (заявка не принимается)"
+          },
+          "page": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page",
+            "description": "Страница, где дано согласие (tsk-1407); нет — берётся заголовок Referer"
           },
           "contact": {
             "type": "string",
@@ -89617,6 +89716,19 @@
             "title": "Filler Role",
             "description": "Кто заполняет: parent — родитель, adult — взрослый о себе, teen_14_17 — подросток 14–17, under_14 — младше 14 (заявка не принимается)"
           },
+          "page": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page",
+            "description": "Страница, где дано согласие (tsk-1407); нет — берётся заголовок Referer"
+          },
           "init_data": {
             "type": "string",
             "minLength": 1,
@@ -91259,6 +91371,19 @@
             "title": "Filler Role",
             "description": "Кто заполняет: parent — родитель, adult — взрослый о себе, teen_14_17 — подросток 14–17, under_14 — младше 14 (заявка не принимается)"
           },
+          "page": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page",
+            "description": "Страница, где дано согласие (tsk-1407); нет — берётся заголовок Referer"
+          },
           "code": {
             "type": "string",
             "minLength": 1,
@@ -91386,6 +91511,13 @@
             "title": "Filler Role",
             "description": "Кто заполняет: parent — родитель, adult — взрослый о себе, teen_14_17 — подросток 14–17, under_14 — младше 14 (заявка не принимается)"
           },
+          "page": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Page",
+            "description": "Слаг лендинга-источника на сайте"
+          },
           "full_name": {
             "type": "string",
             "maxLength": 200,
@@ -91400,26 +91532,93 @@
             "title": "Contact",
             "description": "Телефон, Telegram или e-mail"
           },
-          "page": {
-            "type": "string",
-            "maxLength": 200,
-            "minLength": 1,
-            "title": "Page",
-            "description": "Слаг лендинга-источника на сайте"
-          },
           "hp": {
             "type": "string",
             "maxLength": 200,
             "title": "Hp",
             "description": "Honeypot — скрытое от человека поле, должно оставаться пустым",
             "default": ""
+          },
+          "utm_source": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 300
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Utm Source",
+            "description": "Метка источника (tsk-1407)"
+          },
+          "utm_medium": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 300
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Utm Medium"
+          },
+          "utm_campaign": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 300
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Utm Campaign"
+          },
+          "utm_content": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 300
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Utm Content"
+          },
+          "utm_term": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 300
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Utm Term"
+          },
+          "guest_session_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Guest Session Id",
+            "description": "Гостевая сессия квиза, если посетитель её проходил (tsk-1407)"
           }
         },
         "type": "object",
         "required": [
+          "page",
           "full_name",
-          "contact",
-          "page"
+          "contact"
         ],
         "title": "WebsiteLeadRequest",
         "description": "Тело `POST /public/leads` — форма на продающем лендинге сайта (tsk-929).\n\nПубличная форма встаёт ПЕРЕД кнопкой «Написать в Telegram», а не заменяет\nеё (решение оператора 13.09): канал жёстко «Сайт», клиент его не выбирает.\n`page` — какой лендинг прислал заявку (slug WP-страницы); не обязан\nсовпадать с существующим курсом в LMS — часть лендингов ещё без курса."

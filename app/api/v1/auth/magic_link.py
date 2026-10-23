@@ -167,7 +167,9 @@ async def verify_magic_link(
         await pd_consent_service.attach_user(db, link.pd_consent_id, user.id)
 
     if body.guest_session_id:
-        await attribute_guest_session(db, body.guest_session_id, user.id)
+        await attribute_guest_session(
+            db, body.guest_session_id, user.id, is_new_user=created,
+        )
 
     access_token, refresh_token, _ = await session_service.create_session(db, user.id, ua)
     login_details = (

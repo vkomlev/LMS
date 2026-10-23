@@ -26,6 +26,7 @@ from app.core.config import Settings
 from app.db.session import get_async_db
 from app.schemas.lead import WebsiteLeadRequest, WebsiteLeadResponse
 from app.services import lead_service, pd_consent_service
+from app.services.quiz_funnel_service import ATTRIBUTION_KEYS, sanitize_attribution
 from app.services.rate_limit_service import get_redis, is_rate_limited
 
 logger = logging.getLogger(__name__)
@@ -93,6 +94,11 @@ async def submit_website_lead(
         note=None,
         created_by=None,
         commit=False,
+    )
+    # tsk-1407: метка источника — связь заявки с сайта с будущей оплатой.
+    attribution = sanitize_attribution(body.model_dump(include=set(ATTRIBUTION_KEYS)))
+    await lead_service.attach_website_attribution(
+        db, lead_id, attribution, body.guest_session_id,
     )
     if record:
         await pd_consent_service.record_consent(
@@ -165,6 +171,11 @@ _WIDGET_HTML_TEMPLATE = """<!doctype html>
 <script>
 (function () {{
   var PAGE = {page_json};
+  var QS = new URLSearchParams(window.location.search);
+  var UTM = {{}};
+  ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term'].forEach(function (k) {{
+    if (QS.get(k)) UTM[k] = QS.get(k);
+  }});
   var form = document.getElementById('lead-form');
   var status = document.getElementById('status');
   var btn = document.getElementById('submit-btn');
@@ -182,7 +193,12 @@ _WIDGET_HTML_TEMPLATE = """<!doctype html>
         page: PAGE,
         filler_role: document.getElementById('filler_role').value || null,
         consent: document.getElementById('consent').checked,
-        hp: document.getElementById('hp').value
+        hp: document.getElementById('hp').value,
+        utm_source: UTM.utm_source || null,
+        utm_medium: UTM.utm_medium || null,
+        utm_campaign: UTM.utm_campaign || null,
+        utm_content: UTM.utm_content || null,
+        utm_term: UTM.utm_term || null
       }})
     }})
       .then(function (resp) {{

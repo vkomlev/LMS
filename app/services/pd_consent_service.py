@@ -11,6 +11,7 @@ from __future__ import annotations
 import ipaddress
 import logging
 from typing import Optional
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from uuid import UUID
 
 from fastapi import HTTPException, Request, status
@@ -25,6 +26,7 @@ logger = logging.getLogger(__name__)
 _settings = Settings()
 
 _LOCAL_PROXY_HOSTS = frozenset({"127.0.0.1", "::1"})
+_MAX_PAGE_LEN = 500
 
 MSG_UNDER_14 = "Попроси родителя заполнить форму — нужен его контакт и согласие."
 MSG_MINOR_REGISTRATION = (
@@ -70,6 +72,24 @@ def client_ip(request: Request) -> Optional[str]:
     except ValueError:
         logger.info("client_ip: нераспознанный IP %r — без адреса", candidate)
         return None
+
+
+def _referer_page(referer: Optional[str]) -> Optional[str]:
+    """Адрес страницы из Referer без лишнего: только путь и метки `utm_*`.
+
+    Остальную строку запроса не храним — там бывают одноразовые коды входа
+    (`code`, `state` после VK) и токены ссылок.
+    """
+    if not referer:
+        return None
+    try:
+        parts = urlsplit(referer)
+    except ValueError:
+        return None
+    if not parts.scheme or not parts.netloc:
+        return None
+    utm = [(k, v) for k, v in parse_qsl(parts.query) if k.startswith("utm_")]
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(utm), ""))
 
 
 def check_consent(
@@ -125,6 +145,9 @@ async def record_consent(
     """
     if fields.filler_role is None or fields.filler_role == "under_14":
         raise ValueError("record_consent: недопустимая filler_role для записи")
+    # tsk-1407: страница согласия — явная у вызывающего, иначе из тела, иначе Referer.
+    page = page or fields.page or _referer_page(request.headers.get("referer"))
+    page = (page or "").strip()[:_MAX_PAGE_LEN] or None
     row = PdConsent(
         filler_role=fields.filler_role,
         doc_consent_version=_settings.pd_consent_version,

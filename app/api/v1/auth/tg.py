@@ -73,7 +73,9 @@ async def tg_init(
         await pd_consent_service.record_consent(db, request, body, source="tg", user_id=user.id)
 
     if body.guest_session_id:
-        await attribute_guest_session(db, body.guest_session_id, user.id)
+        await attribute_guest_session(
+            db, body.guest_session_id, user.id, is_new_user=created,
+        )
 
     access_token, refresh_token, _ = await session_service.create_session(db, user.id, ua)
     await log_event(db, "login_tg_initdata", user_id=user.id, ip=ip)

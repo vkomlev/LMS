@@ -13,6 +13,15 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.schemas.checking import StudentAnswer
 
 
+class GuestSessionCreateRequest(BaseModel):
+    """Тело POST /learning/guest/session (tsk-1407): метки первого касания."""
+
+    attribution: Optional[dict] = Field(
+        default=None,
+        description="utm_*, page, referrer из адреса страницы; прочие ключи отбрасываются",
+    )
+
+
 class GuestSessionCreateResponse(BaseModel):
     """Ответ на POST /learning/guest/session."""
 

@@ -2,13 +2,15 @@
 from __future__ import annotations
 
 from typing import Optional
+from uuid import UUID
 
-from sqlalchemy import text
+from sqlalchemy import text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.utils.name_search import name_match_sql
 
-from app.models.lead import LEAD_SOURCE_OTHER
+from app.models.guest_session import GuestSession
+from app.models.lead import LEAD_SOURCE_OTHER, Lead
 from app.schemas.lead import (
     ExternalLeadStatus,
     LeadRead,
@@ -405,3 +407,25 @@ async def list_external_leads(
         )
     ).all()
     return [ExternalLeadStatus.model_validate(r, from_attributes=True) for r in rows]
+
+
+async def attach_website_attribution(
+    db: AsyncSession,
+    lead_id: int,
+    attribution: dict,
+    guest_session_id: Optional[UUID],
+) -> None:
+    """Записать метки заявки с сайта в `leads.attribution` (tsk-1407).
+
+    Метки сессии квиза (первое касание) дополняют метки формы, но не
+    перекрывают их. Несуществующая сессия молча отбрасывается — id приходит
+    от посетителя.
+    """
+    session = await db.get(GuestSession, guest_session_id) if guest_session_id else None
+    merged = {**(session.attribution or {}), **attribution} if session else dict(attribution)
+    values: dict = {}
+    if session is not None:
+        merged["guest_session_id"] = str(session.id)
+        values["guest_session_id"] = session.id
+    values["attribution"] = merged or None
+    await db.execute(update(Lead).where(Lead.id == lead_id).values(**values))

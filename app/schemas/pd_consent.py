@@ -23,3 +23,8 @@ class PdConsentFields(BaseModel):
         description="Кто заполняет: parent — родитель, adult — взрослый о себе, "
         "teen_14_17 — подросток 14–17, under_14 — младше 14 (заявка не принимается)",
     )
+    page: Optional[str] = Field(
+        default=None,
+        max_length=500,
+        description="Страница, где дано согласие (tsk-1407); нет — берётся заголовок Referer",
+    )
