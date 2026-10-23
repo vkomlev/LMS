@@ -199,8 +199,12 @@ async def staff_mark_paid(
 )
 async def staff_student_purchases(
     student_id: int, db: AsyncSession = Depends(get_async_db)
-) -> list[dict]:
-    return await course_purchase_service.list_for_student(db, student_id=student_id)
+) -> dict:
+    return {
+        "sales_enabled": course_purchase_service.sales_enabled(),
+        "items": await course_purchase_service.list_for_student(db, student_id=student_id),
+        "offers": await course_purchase_service.list_offers(db, student_id=student_id),
+    }
 
 
 @router.post(
