@@ -47,6 +47,7 @@ from app.services.node_sequence import (
     anchor_of,
     Segment,
     material_seq_key,
+    node_after_children_enabled,
     node_sequence,
     node_sequence_enabled,
     post_order_courses,
@@ -1217,15 +1218,15 @@ class LearningEngineService:
         """
         if after_material_id is not None:
             r = await db.execute(
-                select(Materials.course_id, Materials.order_position).where(
-                    Materials.id == after_material_id
-                )
+                select(
+                    Materials.course_id, Materials.order_position, Materials.placement
+                ).where(Materials.id == after_material_id)
             )
             row = r.fetchone()
             if row is not None:
                 return (
                     int(row[0]), "material", after_material_id,
-                    material_seq_key(row[1], after_material_id, int(row[0])), None,
+                    material_seq_key(row[1], after_material_id, int(row[0]), row[2]), None,
                 )
         if after_task_id is not None:
             # tsk-996 (фаза B): якорь — тем же запросом. Задание с действующим
@@ -1238,6 +1239,7 @@ class LearningEngineService:
                 select(
                     Tasks.course_id, Tasks.order_position, Tasks.host_order_position,
                     anchor_m.id, anchor_m.order_position, anchor_m.course_id,
+                    anchor_m.placement,
                 )
                 .outerjoin(anchor_m, anchor_m.id == Tasks.anchor_material_id)
                 .where(Tasks.id == after_task_id)
@@ -1257,6 +1259,7 @@ class LearningEngineService:
                             anchor_of(
                                 row[3], row[4], int(row[0]), absorbed=True,
                                 anchor_course_id=row[5], host_course_id=host,
+                                anchor_placement=row[6],
                             ),
                         ),
                     )
@@ -1264,7 +1267,10 @@ class LearningEngineService:
                     int(row[0]), "task", after_task_id,
                     task_seq_key(
                         task_key(row[1], after_task_id),
-                        anchor_of(row[3], row[4], int(row[0]), anchor_course_id=row[5]),
+                        anchor_of(
+                            row[3], row[4], int(row[0]),
+                            anchor_course_id=row[5], anchor_placement=row[6],
+                        ),
                     ),
                     host_alt,
                 )
@@ -1582,12 +1588,16 @@ class LearningEngineService:
         # tsk-996: задания узла нужны и голове (якоря), и хвосту — читаются
         # один раз на узел за вызов.
         task_rows_cache: dict[int, List[Tuple[int, TaskKey, Optional[Anchor]]]] = {}
+        # tsk-1403: материалы узла нужны и хвосту, если у узла есть материалы
+        # «после подразделов» — тоже один раз на узел за вызов.
+        material_rows_cache: dict[int, tuple] = {}
         for offset, (cid, segment) in enumerate(steps[start_index:]):
             if cid in absorbed_here:
                 continue
             entries = await self._effective_segment(
                 db, cid, segment, student_id, root_course_id=root_id,
                 task_rows_cache=task_rows_cache,
+                material_rows_cache=material_rows_cache,
             )
             if position is not None and offset == 0:
                 pos_key = position[3]
@@ -1607,6 +1617,7 @@ class LearningEngineService:
         student_id: int,
         root_course_id: Optional[int] = None,
         task_rows_cache: Optional[dict] = None,
+        material_rows_cache: Optional[dict] = None,
     ) -> List[NodeEntry]:
         """Элементы одного шага узла, которые ученик реально видит (tsk-996).
 
@@ -1619,6 +1630,12 @@ class LearningEngineService:
         стоит ровно столько запросов, сколько и прежде. Хвост — задания без
         действующего якоря. `task_rows_cache` — задания узла, уже прочитанные
         в этом вызове (голова и хвост одного узла).
+
+        tsk-1403: материал «после подразделов» (`placement`, при рубильнике
+        `NODE_AFTER_CHILDREN_ENABLED`) стоит в хвосте. Хвост читает материалы
+        только при включённом рубильнике, и только узел с такими материалами
+        их фильтрует; `material_rows_cache` — материалы узла, уже прочитанные
+        головой в этом вызове.
         """
         async def task_rows() -> List[Tuple[int, TaskKey, Optional[Anchor]]]:
             if task_rows_cache is not None and course_id in task_rows_cache:
@@ -1630,15 +1647,38 @@ class LearningEngineService:
                 task_rows_cache[course_id] = rows
             return rows
 
+        async def material_rows() -> tuple:
+            if material_rows_cache is not None and course_id in material_rows_cache:
+                return material_rows_cache[course_id]
+            loaded = await self._node_material_rows(db, course_id)
+            if material_rows_cache is not None:
+                material_rows_cache[course_id] = loaded
+            return loaded
+
+        def placed(rows: List[Tuple[int, Optional[int]]], after_ids: set) -> list:
+            return [
+                (i, op, course_id, "after_children" if i in after_ids else "head")
+                for i, op in rows
+            ]
+
         if segment == HEAD:
-            mats, has_anchors = await self._node_material_rows(db, course_id)
+            mats, has_anchors, after_ids = await material_rows()
             rows = await self._effective_material_rows(
                 db, course_id, student_id, root_course_id=root_course_id, rows=mats
             )
             seq = node_sequence(
-                materials=[(i, op, course_id) for i, op in rows],
+                materials=placed(rows, after_ids),
                 tasks=await task_rows() if has_anchors else (),
             )
+        elif node_after_children_enabled():
+            mats, _has_anchors, after_ids = await material_rows()
+            rows: List[Tuple[int, Optional[int]]] = []
+            if after_ids:
+                rows = await self._effective_material_rows(
+                    db, course_id, student_id, root_course_id=root_course_id,
+                    rows=[r for r in mats if r[0] in after_ids],
+                )
+            seq = node_sequence(materials=placed(rows, after_ids), tasks=await task_rows())
         else:
             seq = node_sequence(tasks=await task_rows())
         return segment_entries(seq, segment)
@@ -1975,6 +2015,7 @@ class LearningEngineService:
             select(
                 Tasks.id, Tasks.order_position, Tasks.host_order_position, Tasks.course_id,
                 anchor_m.id, anchor_m.order_position, anchor_m.course_id,
+                anchor_m.placement,
             )
             .outerjoin(anchor_m, anchor_m.id == Tasks.anchor_material_id)
             .where(
@@ -1997,6 +2038,7 @@ class LearningEngineService:
                 anchor_of(
                     row[4], row[5], int(row[3]), absorbed=is_absorbed,
                     anchor_course_id=row[6], host_course_id=course_id,
+                    anchor_placement=row[7],
                 ),
             ))
         rows.sort(key=lambda x: x[1])
@@ -2004,8 +2046,8 @@ class LearningEngineService:
 
     async def _node_material_rows(
         self, db: AsyncSession, course_id: int
-    ) -> Tuple[List[Tuple[int, Optional[int]]], bool]:
-        """Материалы узла для головы `node_sequence` и признак якорей (tsk-996).
+    ) -> Tuple[List[Tuple[int, Optional[int]]], bool, set]:
+        """Материалы узла для `node_sequence`, признак якорей и after-материалы.
 
         Первый элемент — ровно `_ordered_material_rows` (активные, уровни
         `required`/`skippable`, тот же порядок). Второй — есть ли у узла
@@ -2016,10 +2058,13 @@ class LearningEngineService:
 
         Фаза D: якорь на материал узла ставят и задания его прозрачных
         подкурсов (банки ОГЭ в уроке) — признак учитывает и их.
+
+        Третий элемент (tsk-1403) — id материалов обхода с `placement =
+        'after_children'`; при выключенном рубильнике всегда пуст.
         """
         r = await db.execute(
             text(
-                "SELECT m.id, m.order_position, "
+                "SELECT m.id, m.order_position, m.placement, "
                 "       (m.is_active AND m.requirement_level IN ('required', 'skippable')) "
                 "         AS in_walk, "
                 "       EXISTS (SELECT 1 FROM tasks t "
@@ -2037,12 +2082,16 @@ class LearningEngineService:
         )
         rows: List[Tuple[int, Optional[int]]] = []
         has_anchors = False
-        for mid, op, in_walk, anchored in r.fetchall():
+        after_ids: set = set()
+        after_enabled = node_after_children_enabled()
+        for mid, op, placement, in_walk, anchored in r.fetchall():
             if in_walk:
                 rows.append((int(mid), op))
+                if after_enabled and placement == "after_children":
+                    after_ids.add(int(mid))
             if anchored:
                 has_anchors = True
-        return rows, has_anchors
+        return rows, has_anchors, after_ids
 
     async def _ordered_material_ids(self, db: AsyncSession, course_id: int) -> List[int]:
         """ID материалов курса в порядке обхода (order_position ASC NULLS LAST, id)."""

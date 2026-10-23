@@ -153,6 +153,9 @@ class _Item:
     # tsk-1198: место задания прозрачного подкурса в списке хозяина — ключ
     # группы якоря в голове хозяина (фаза D), как у движка.
     host_order_position: Optional[int] = None
+    # tsk-1403: `materials.placement` — у материала свой, у задания — его
+    # материала-якоря; 'after_children' ставит элемент в хвост узла.
+    placement: Optional[str] = None
 
 
 @dataclass
@@ -280,7 +283,8 @@ SELECT
     am.id AS anchor_material_id,
     am.order_position AS anchor_order_position,
     am.course_id AS anchor_course_id,
-    t.host_order_position
+    t.host_order_position,
+    am.placement
 FROM tasks t
 LEFT JOIN materials am
     ON am.id = t.anchor_material_id
@@ -315,7 +319,8 @@ SELECT
     NULL,
     NULL,
     NULL,
-    NULL
+    NULL,
+    m.placement
 FROM materials m
 LEFT JOIN student_material_progress smp
     ON smp.material_id = m.id AND smp.student_id = :student_id
@@ -598,7 +603,7 @@ async def compute_grace_reasons(
     for (
         kind, item_id, course_id, order_position, created_at, done, done_at,
         anchor_material_id, anchor_order_position, anchor_course_id,
-        host_order_position,
+        host_order_position, placement,
     ) in item_rows:
         node = nodes.get(int(course_id))
         if node is None:
@@ -616,6 +621,7 @@ async def compute_grace_reasons(
                 anchor_order_position=anchor_order_position,
                 anchor_course_id=anchor_course_id,
                 host_order_position=host_order_position,
+                placement=placement,
             )
         )
 
@@ -754,7 +760,7 @@ def _walk_sequence_by_node_sequence(nodes: Dict[int, _Node], root_id: int) -> Li
         if course_id not in by_node:
             by_node[course_id] = node_sequence(
                 materials=[
-                    (i.item_id, i.order_position, i.course_id)
+                    (i.item_id, i.order_position, i.course_id, i.placement)
                     for i in own if i.kind == "material"
                 ],
                 tasks=[
@@ -770,6 +776,7 @@ def _walk_sequence_by_node_sequence(nodes: Dict[int, _Node], root_id: int) -> Li
                             absorbed=i.course_id != course_id,
                             anchor_course_id=i.anchor_course_id,
                             host_course_id=course_id,
+                            anchor_placement=i.placement,
                         ),
                     )
                     for i in own if i.kind == "task"

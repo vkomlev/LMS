@@ -321,6 +321,15 @@ class Settings:
             "NODE_SEQUENCE_ENABLED", "true"
         ).lower() in ("true", "1", "yes")
 
+        # tsk-1403: признак материала «после подразделов узла»
+        # (`materials.placement = 'after_children'`). false (по умолчанию) —
+        # признак игнорируется во всех обходах, порядок прежний. Читается через
+        # `app.services.node_sequence.node_after_children_enabled`; здесь — для
+        # справки и диагностики.
+        self.node_after_children_enabled: bool = os.getenv(
+            "NODE_AFTER_CHILDREN_ENABLED", "false"
+        ).lower() in ("true", "1", "yes")
+
         # tsk-302 этап 3: фоновая оценка кода ученика (чистота + признак
         # ИИ-авторства). Синхронно её делать нельзя — это внешний вызов модели
         # в пользовательском пути приёма ответа; ученик ждать не должен, а к

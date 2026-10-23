@@ -19,7 +19,12 @@ from app.schemas.task_content import QUIZ_TASK_TYPES
 # и «следующий шаг» считали долг одинаково.
 from app.services.content_grace_service import compute_graced_items, done_among
 from app.services.requirement_override_service import reason_payload, resolve_levels
-from app.services.node_sequence import anchor_of, node_sequence, node_sequence_enabled
+from app.services.node_sequence import (
+    anchor_of,
+    in_after_part,
+    node_sequence,
+    node_sequence_enabled,
+)
 from app.services.transparent_subcourse import absorbed_in_tree, task_key
 # Y-3.2 (S3-A4): единая точка правды — учебный движок.
 from app.services.learning_engine_service import PASS_THRESHOLD_RATIO, is_mentor_reviewed
@@ -942,7 +947,8 @@ SELECT
     -- Удалённый материал даёт NULL — задание в конце узла.
     am.id AS anchor_material_id,
     am.order_position AS anchor_order_position,
-    am.course_id AS anchor_course_id
+    am.course_id AS anchor_course_id,
+    am.placement AS anchor_placement
 FROM tasks t
 LEFT JOIN materials am
     ON am.id = t.anchor_material_id
@@ -965,6 +971,7 @@ SELECT
     m.is_active,
     m.requirement_level,
     m.order_position,
+    m.placement,
     -- tsk-684: см. комментарий в _SYLLABUS_TASKS_SQL. Для материалов кабинет
     -- ходил в `GET /courses/{id}/materials` на каждый подкурс ради названия
     -- и типа — обе колонки уже здесь, в этой же строке.
@@ -1196,6 +1203,28 @@ async def _collect_section_meta(
     return result
 
 
+def _with_after_sections(section_meta: list[dict], course_ids: set[int]) -> list[dict]:
+    """Вставить раздел-дубль узла `part: "after"` после его последнего потомка.
+
+    tsk-1403: материалы «после подразделов» ученик видит после подкурсов узла,
+    поэтому программа показывает их отдельным разделом с тем же `course_id` и
+    заголовком узла. `section_meta` — обход в глубину, так что потомки узла —
+    это идущие следом разделы с большей глубиной.
+    """
+    result: list[dict] = []
+    # Стек открытых узлов с after-частью: (depth, дубль раздела).
+    pending: list[tuple[int, dict]] = []
+    for meta in section_meta:
+        while pending and pending[-1][0] >= meta["depth"]:
+            result.append(pending.pop()[1])
+        result.append(meta)
+        if meta["course_id"] in course_ids:
+            pending.append((meta["depth"], {**meta, "part": "after"}))
+    while pending:
+        result.append(pending.pop()[1])
+    return result
+
+
 def _syllabus_material_item(m: dict, graced: Any, reasons: dict) -> dict:
     """Элемент `items[]` программы курса для материала (вынесено, tsk-996)."""
     return {
@@ -1403,6 +1432,7 @@ async def get_syllabus_states(
         tree_ids = [c for c in tree_ids if c not in absorbed]
 
     items: list[dict] = []
+    after_sections: set[int] = set()
     if node_sequence_enabled():
         # tsk-996: порядок элементов раздела — общая `node_sequence` (голова,
         # затем хвост узла; подразделы идут своими секциями, как и прежде).
@@ -1412,7 +1442,8 @@ async def get_syllabus_states(
             tsks = {int(t["task_id"]): t for t in tasks_by_course.get(cid, [])}
             seq = node_sequence(
                 materials=[
-                    (mid, m["order_position"], m["_src_course_id"]) for mid, m in mats.items()
+                    (mid, m["order_position"], m["_src_course_id"], m["placement"])
+                    for mid, m in mats.items()
                 ],
                 tasks=[
                     (
@@ -1426,16 +1457,32 @@ async def get_syllabus_states(
                             t["anchor_material_id"], t["anchor_order_position"],
                             int(t["_src_course_id"]), absorbed=bool(t.get("_absorbed")),
                             anchor_course_id=t["anchor_course_id"], host_course_id=cid,
+                            anchor_placement=t["anchor_placement"],
                         ),
                     )
                     for tid, t in tsks.items()
                 ],
             )
+            # tsk-1403: часть «после подразделов» (материал after_children и
+            # задания с якорем на него) — своим разделом-дублем узла после его
+            # последнего потомка; элементы помечены `part: "after"`. Остальные
+            # элементы поля `part` не несут — ответ без after прежний.
+            after_items: list[dict] = []
             for entry in seq:
                 if entry.kind == "material":
-                    items.append(_syllabus_material_item(mats[entry.item_id], graced, reasons))
+                    item = _syllabus_material_item(mats[entry.item_id], graced, reasons)
                 else:
-                    items.append(_syllabus_task_item(tsks[entry.item_id], graced, reasons))
+                    item = _syllabus_task_item(tsks[entry.item_id], graced, reasons)
+                if in_after_part(entry):
+                    item["part"] = "after"
+                    after_items.append(item)
+                else:
+                    items.append(item)
+            if after_items:
+                items.extend(after_items)
+                after_sections.add(cid)
+        if after_sections:
+            section_meta = _with_after_sections(section_meta, after_sections)
     else:
         for cid in tree_ids:
             for m in materials_by_course.get(cid, []):

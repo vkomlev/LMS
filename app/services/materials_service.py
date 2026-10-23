@@ -29,6 +29,14 @@ MANUALLY_EDITABLE_FIELDS: frozenset[str] = frozenset(
 )
 
 
+#: Служебные поля, которые ручная правка тоже защищает от импорта (tsk-1403):
+#: `placement` импорт и так пишет только при явной передаче, но если методист
+#: разметил материал руками, явная передача из источника его не перебивает.
+#: Отдельно от `MANUALLY_EDITABLE_FIELDS`: тот список общий роутер ставит в
+#: пометку целиком, и правка места пометила бы ручными и текст.
+MANUALLY_PROTECTED_SERVICE_FIELDS: frozenset[str] = frozenset({"placement"})
+
+
 def _manually_edited_fields(existing: Materials) -> frozenset[str]:
     """Поля материала, поправленные вручную и защищённые от перезаписи импортом.
 
@@ -54,7 +62,9 @@ def _manually_edited_fields(existing: Materials) -> frozenset[str]:
             prov,
         )
         return frozenset()
-    return frozenset(f for f in raw_fields if isinstance(f, str)) & MANUALLY_EDITABLE_FIELDS
+    return frozenset(f for f in raw_fields if isinstance(f, str)) & (
+        MANUALLY_EDITABLE_FIELDS | MANUALLY_PROTECTED_SERVICE_FIELDS
+    )
 from app.utils.exceptions import DomainError
 
 logger = logging.getLogger(__name__)
@@ -287,6 +297,12 @@ class MaterialsService(BaseService[Materials]):
             and existing.order_position != item.order_position
         ):
             return False
+        if (
+            "placement" in item.model_fields_set
+            and "placement" not in protected
+            and (existing.placement or "head") != item.placement
+        ):
+            return False
         if "content" in protected:
             return True
         try:
@@ -445,6 +461,8 @@ class MaterialsService(BaseService[Materials]):
                     active_given = "is_active" in item.model_fields_set
                     position_given = "order_position" in item.model_fields_set
                     level_given = "requirement_level" in item.model_fields_set
+                    # tsk-1403: место в узле — по тому же правилу явной передачи.
+                    placement_given = "placement" in item.model_fields_set
                     row_key = (cid, ext)
                     existing = existing_map.get(row_key)
                     if existing:
@@ -454,6 +472,8 @@ class MaterialsService(BaseService[Materials]):
                             payload_data["order_position"] = item.order_position
                         if level_given:
                             payload_data["requirement_level"] = item.requirement_level
+                        if placement_given:
+                            payload_data["placement"] = item.placement
                         # tsk-433: поля, поправленные методистом вручную через
                         # кабинет, импорт не трогает. Иначе правка молча исчезала
                         # бы при ближайшем переиздании из источника, и объяснить
@@ -491,6 +511,7 @@ class MaterialsService(BaseService[Materials]):
                                 "is_active": item.is_active,
                                 "order_position": item.order_position,
                                 "requirement_level": item.requirement_level,
+                                "placement": item.placement,
                             },
                             commit=False,
                         )

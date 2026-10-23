@@ -2,6 +2,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 from sqlalchemy import (
+    CheckConstraint,
     Boolean,
     DateTime,
     Integer,
@@ -37,6 +38,9 @@ class Materials(Base):
         UniqueConstraint(
             "course_id", "external_uid",
             name="uq_materials_course_external_uid",
+        ),
+        CheckConstraint(
+            "placement IN ('head', 'after_children')", name="ck_materials_placement"
         ),
         {"comment": "Учебные материалы"},
     )
@@ -79,6 +83,12 @@ class Materials(Base):
         server_default=text("'required'"),
         nullable=False,
         comment="Content requirement level: skippable, recommended, required",
+    )
+    placement: Mapped[str] = mapped_column(
+        String(16),
+        server_default=text("'head'"),
+        nullable=False,
+        comment="Место в узле (tsk-1403): head — до подразделов, after_children — после",
     )
     external_uid: Mapped[Optional[str]] = mapped_column(
         String(255), nullable=True, comment="Внешний идентификатор для импорта (уникален в паре с course_id)"

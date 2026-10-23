@@ -1,0 +1,1486 @@
+diff --git a/.env.example b/.env.example
+index 0557d49..053eff4 100644
+--- a/.env.example
++++ b/.env.example
+@@ -61,6 +61,8 @@ MATERIAL_CHECKPOINTS_ENABLED=false
+ # tsk-996 (П7, ADR-0008): порядок элементов узла курса через общую node_sequence.
+ # false — прежний обход без выката (откат: смена значения + рестарт).
+ NODE_SEQUENCE_ENABLED=true
++# tsk-1403: материалы узла с placement=after_children — после подкурсов (false = прежний порядок).
++NODE_AFTER_CHILDREN_ENABLED=false
+ 
+ # Список service API-ключей через запятую (без пробелов).
+ # Используют: TG_LMS bots (poller, teacher dialog), ContentBackbone CLI,
+diff --git a/app/api/v1/materials_extra.py b/app/api/v1/materials_extra.py
+index bc49108..2731208 100644
+--- a/app/api/v1/materials_extra.py
++++ b/app/api/v1/materials_extra.py
+@@ -6,7 +6,7 @@ from __future__ import annotations
+ 
+ import logging
+ from collections import defaultdict
+-from typing import Any, Dict, List, Optional
++from typing import Any, Dict, List, Literal, Optional
+ 
+ from datetime import datetime, timezone
+ 
+@@ -26,7 +26,10 @@ from app.services.materials_acl_service import (
+     assert_material_access,
+     assert_material_file_access,
+ )
+-from app.services.materials_service import MANUALLY_EDITABLE_FIELDS
++from app.services.materials_service import (
++    MANUALLY_EDITABLE_FIELDS,
++    MANUALLY_PROTECTED_SERVICE_FIELDS,
++)
+ from app.services.material_checkpoints_service import student_content
+ from app.schemas.material_content import validate_material_content
+ from app.services.courses_acl_service import assert_course_access
+@@ -731,6 +734,8 @@ class MaterialManualPatch(BaseModel):
+     is_active: Optional[bool] = None
+     order_position: Optional[int] = None
+     requirement_level: Optional[str] = None
++    # tsk-1403: место в узле; правка ставит пометку, импорт её не перебивает.
++    placement: Optional[Literal["head", "after_children"]] = None
+ 
+ 
+ @router.patch(
+@@ -786,7 +791,11 @@ async def patch_material_manual(
+     # Пометку ставим только на контентные поля: служебные (активность, порядок,
+     # уровень) импорт и так не трогает без явной передачи (tsk-377/378/407),
+     # защищать их провенансом незачем.
+-    content_fields = sorted(set(changed) & MANUALLY_EDITABLE_FIELDS)
++    # tsk-1403: `placement` — служебное, но размеченное руками место импорт
++    # не должен перебивать даже явной передачей, поэтому оно тоже в пометке.
++    content_fields = sorted(
++        set(changed) & (MANUALLY_EDITABLE_FIELDS | MANUALLY_PROTECTED_SERVICE_FIELDS)
++    )
+     for field, value in changed.items():
+         setattr(material, field, value)
+ 
+diff --git a/app/core/config.py b/app/core/config.py
+index f6a9350..9e787c1 100644
+--- a/app/core/config.py
++++ b/app/core/config.py
+@@ -321,6 +321,15 @@ class Settings:
+             "NODE_SEQUENCE_ENABLED", "true"
+         ).lower() in ("true", "1", "yes")
+ 
++        # tsk-1403: признак материала «после подразделов узла»
++        # (`materials.placement = 'after_children'`). false (по умолчанию) —
++        # признак игнорируется во всех обходах, порядок прежний. Читается через
++        # `app.services.node_sequence.node_after_children_enabled`; здесь — для
++        # справки и диагностики.
++        self.node_after_children_enabled: bool = os.getenv(
++            "NODE_AFTER_CHILDREN_ENABLED", "false"
++        ).lower() in ("true", "1", "yes")
++
+         # tsk-302 этап 3: фоновая оценка кода ученика (чистота + признак
+         # ИИ-авторства). Синхронно её делать нельзя — это внешний вызов модели
+         # в пользовательском пути приёма ответа; ученик ждать не должен, а к
+diff --git a/app/db/migrations/versions/2026_10_23_tsk1403_materials_placement.py b/app/db/migrations/versions/2026_10_23_tsk1403_materials_placement.py
+new file mode 100644
+index 0000000..7f77e6b
+--- /dev/null
++++ b/app/db/migrations/versions/2026_10_23_tsk1403_materials_placement.py
+@@ -0,0 +1,42 @@
++"""tsk-1403: признак материала «после подразделов узла» (вариант В, ОГЭ).
++
++Колонка `materials.placement`: 'head' (по умолчанию, как всегда) или
++'after_children' — материал встаёт в начало хвоста узла, после подкурсов
++(`app/services/node_sequence.py`). Действует только при рубильнике
++`NODE_AFTER_CHILDREN_ENABLED`. Данных не меняет: все строки получают 'head'.
++
++Rollback: `alembic downgrade tsk1398_messenger_link_tg` — колонка удаляется
++(разметка 'after_children' теряется).
++"""
++from typing import Sequence, Union
++
++import sqlalchemy as sa
++from alembic import op
++
++revision: str = "tsk1403_materials_placement"
++down_revision: Union[str, None] = "tsk1398_messenger_link_tg"
++branch_labels: Union[str, Sequence[str], None] = None
++depends_on: Union[str, Sequence[str], None] = None
++
++
++def upgrade() -> None:
++    """Добавить колонку placement с ограничением значений."""
++    op.add_column(
++        "materials",
++        sa.Column(
++            "placement",
++            sa.String(16),
++            server_default=sa.text("'head'"),
++            nullable=False,
++            comment="Место в узле (tsk-1403): head — до подразделов, after_children — после",
++        ),
++    )
++    op.create_check_constraint(
++        "ck_materials_placement", "materials", "placement IN ('head', 'after_children')"
++    )
++
++
++def downgrade() -> None:
++    """Удалить колонку placement."""
++    op.drop_constraint("ck_materials_placement", "materials", type_="check")
++    op.drop_column("materials", "placement")
+diff --git a/app/models/materials.py b/app/models/materials.py
+index c812777..1413588 100644
+--- a/app/models/materials.py
++++ b/app/models/materials.py
+@@ -2,6 +2,7 @@ from __future__ import annotations
+ from datetime import datetime
+ from typing import TYPE_CHECKING, Optional
+ from sqlalchemy import (
++    CheckConstraint,
+     Boolean,
+     DateTime,
+     Integer,
+@@ -38,6 +39,9 @@ class Materials(Base):
+             "course_id", "external_uid",
+             name="uq_materials_course_external_uid",
+         ),
++        CheckConstraint(
++            "placement IN ('head', 'after_children')", name="ck_materials_placement"
++        ),
+         {"comment": "Учебные материалы"},
+     )
+ 
+@@ -80,6 +84,12 @@ class Materials(Base):
+         nullable=False,
+         comment="Content requirement level: skippable, recommended, required",
+     )
++    placement: Mapped[str] = mapped_column(
++        String(16),
++        server_default=text("'head'"),
++        nullable=False,
++        comment="Место в узле (tsk-1403): head — до подразделов, after_children — после",
++    )
+     external_uid: Mapped[Optional[str]] = mapped_column(
+         String(255), nullable=True, comment="Внешний идентификатор для импорта (уникален в паре с course_id)"
+     )
+diff --git a/app/schemas/materials.py b/app/schemas/materials.py
+index 9c579b3..b790d3d 100644
+--- a/app/schemas/materials.py
++++ b/app/schemas/materials.py
+@@ -16,6 +16,10 @@ from app.schemas.content_requirement import RequirementLevel
+ # ---------- CRUD схемы ----------
+ 
+ 
++# tsk-1403: место материала в узле курса (`materials.placement`).
++MaterialPlacement = Literal["head", "after_children"]
++
++
+ class MaterialCreate(BaseModel):
+     """Создание материала. Контент валидируется по полю type."""
+     course_id: int = Field(..., description="ID курса")
+@@ -33,6 +37,7 @@ class MaterialCreate(BaseModel):
+     )
+     is_active: bool = True
+     requirement_level: RequirementLevel = "required"
++    placement: MaterialPlacement = "head"
+     external_uid: Optional[str] = Field(default=None, max_length=255)
+ 
+     @model_validator(mode="after")
+@@ -57,6 +62,13 @@ class MaterialUpdate(BaseModel):
+     order_position: Optional[int] = None
+     is_active: Optional[bool] = None
+     requirement_level: Optional[RequirementLevel] = None
++    placement: Optional[MaterialPlacement] = Field(
++        default=None,
++        description=(
++            "tsk-1403: место материала в узле — head (до подкурсов) или "
++            "after_children (после подкурсов, при рубильнике NODE_AFTER_CHILDREN_ENABLED)"
++        ),
++    )
+     external_uid: Optional[str] = Field(default=None, max_length=255)
+ 
+     @model_validator(mode="after")
+@@ -82,6 +94,7 @@ class MaterialRead(BaseModel):
+     order_position: Optional[int] = None
+     is_active: bool
+     requirement_level: RequirementLevel
++    placement: MaterialPlacement = "head"
+     external_uid: Optional[str] = None
+     created_at: datetime
+     updated_at: datetime
+@@ -226,6 +239,16 @@ class MaterialsBulkUpsertItem(BaseModel):
+         ),
+     )
+ 
++    placement: MaterialPlacement = Field(
++        "head",
++        description=(
++            "tsk-1403: место в узле (head | after_children). Поле не передано: "
++            "при создании `head`, при обновлении НЕ меняется (ContentBackbone "
++            "его не шлёт, разметку делает методист). Передано явно — применяется, "
++            "если методист не правил его вручную (content_provenance)."
++        ),
++    )
++
+     @field_validator("external_uid", mode="before")
+     @classmethod
+     def strip_external_uid(cls, v: Any) -> Any:
+diff --git a/app/schemas/me.py b/app/schemas/me.py
+index ee93880..816c2b9 100644
+--- a/app/schemas/me.py
++++ b/app/schemas/me.py
+@@ -1,9 +1,9 @@
+ """Pydantic схемы для /me эндпоинтов (Phase Y-1 + Y-3 + Y-6.2 + tsk-427)."""
+ from datetime import date, datetime
+-from typing import Literal, Optional, Union
++from typing import Any, Literal, Optional, Union
+ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+ 
+-from pydantic import BaseModel, Field, field_validator
++from pydantic import BaseModel, Field, field_validator, model_serializer
+ 
+ from app.schemas.content_requirement import RequirementReason
+ 
+@@ -490,6 +490,22 @@ class SyllabusTaskItem(BaseModel):
+             "возить условие задачи впустую. Готовую подпись из этих двух полей собирает клиент"
+         ),
+     )
++    # tsk-1403: элемент части узла «после подразделов». Поле есть только у
++    # таких элементов; у остальных его нет в ответе вовсе (прежний контракт).
++    part: Literal["after"] | None = Field(
++        None,
++        description=(
++            "tsk-1403: 'after' — элемент идёт после подкурсов узла и рисуется в "
++            "разделе-дубле узла с part='after'; отсутствует — раздел узла"
++        ),
++    )
++
++    @model_serializer(mode="wrap")
++    def _drop_empty_part(self, handler: Any):  # noqa: ANN202 — без аннотации openapi сохраняет поля
++        data = handler(self)
++        if data.get("part") is None:
++            data.pop("part", None)
++        return data
+ 
+ 
+ class SyllabusMaterialItem(BaseModel):
+@@ -520,6 +536,22 @@ class SyllabusMaterialItem(BaseModel):
+     # кабинет звал `GET /courses/{id}/materials` на каждый подкурс.
+     title: str | None = Field(None, description="Название материала (materials.title)")
+     material_type: str | None = Field(None, description="Тип материала: text | video")
++    # tsk-1403: элемент части узла «после подразделов». Поле есть только у
++    # таких элементов; у остальных его нет в ответе вовсе (прежний контракт).
++    part: Literal["after"] | None = Field(
++        None,
++        description=(
++            "tsk-1403: 'after' — элемент идёт после подкурсов узла и рисуется в "
++            "разделе-дубле узла с part='after'; отсутствует — раздел узла"
++        ),
++    )
++
++    @model_serializer(mode="wrap")
++    def _drop_empty_part(self, handler: Any):  # noqa: ANN202 — без аннотации openapi сохраняет поля
++        data = handler(self)
++        if data.get("part") is None:
++            data.pop("part", None)
++        return data
+ 
+ 
+ SyllabusItem = Union[SyllabusTaskItem, SyllabusMaterialItem]
+@@ -537,6 +569,22 @@ class SyllabusSectionMeta(BaseModel):
+     order_number: int | None = Field(
+         None, description="course_parents.order_number (для отладки/UI sort внутри одного уровня)"
+     )
++    # tsk-1403: раздел-дубль узла для части «после подразделов». Поле есть только у
++    # таких элементов; у остальных его нет в ответе вовсе (прежний контракт).
++    part: Literal["after"] | None = Field(
++        None,
++        description=(
++            "tsk-1403: 'after' — раздел-дубль узла после его последнего "
++            "подкурса; в нём элементы с тем же course_id и part='after'"
++        ),
++    )
++
++    @model_serializer(mode="wrap")
++    def _drop_empty_part(self, handler: Any):  # noqa: ANN202 — без аннотации openapi сохраняет поля
++        data = handler(self)
++        if data.get("part") is None:
++            data.pop("part", None)
++        return data
+ 
+ 
+ class BlockedDependency(BaseModel):
+diff --git a/app/services/content_grace_service.py b/app/services/content_grace_service.py
+index 06553dd..7252a22 100644
+--- a/app/services/content_grace_service.py
++++ b/app/services/content_grace_service.py
+@@ -153,6 +153,9 @@ class _Item:
+     # tsk-1198: место задания прозрачного подкурса в списке хозяина — ключ
+     # группы якоря в голове хозяина (фаза D), как у движка.
+     host_order_position: Optional[int] = None
++    # tsk-1403: `materials.placement` — у материала свой, у задания — его
++    # материала-якоря; 'after_children' ставит элемент в хвост узла.
++    placement: Optional[str] = None
+ 
+ 
+ @dataclass
+@@ -280,7 +283,8 @@ SELECT
+     am.id AS anchor_material_id,
+     am.order_position AS anchor_order_position,
+     am.course_id AS anchor_course_id,
+-    t.host_order_position
++    t.host_order_position,
++    am.placement
+ FROM tasks t
+ LEFT JOIN materials am
+     ON am.id = t.anchor_material_id
+@@ -315,7 +319,8 @@ SELECT
+     NULL,
+     NULL,
+     NULL,
+-    NULL
++    NULL,
++    m.placement
+ FROM materials m
+ LEFT JOIN student_material_progress smp
+     ON smp.material_id = m.id AND smp.student_id = :student_id
+@@ -598,7 +603,7 @@ async def compute_grace_reasons(
+     for (
+         kind, item_id, course_id, order_position, created_at, done, done_at,
+         anchor_material_id, anchor_order_position, anchor_course_id,
+-        host_order_position,
++        host_order_position, placement,
+     ) in item_rows:
+         node = nodes.get(int(course_id))
+         if node is None:
+@@ -616,6 +621,7 @@ async def compute_grace_reasons(
+                 anchor_order_position=anchor_order_position,
+                 anchor_course_id=anchor_course_id,
+                 host_order_position=host_order_position,
++                placement=placement,
+             )
+         )
+ 
+@@ -754,7 +760,7 @@ def _walk_sequence_by_node_sequence(nodes: Dict[int, _Node], root_id: int) -> Li
+         if course_id not in by_node:
+             by_node[course_id] = node_sequence(
+                 materials=[
+-                    (i.item_id, i.order_position, i.course_id)
++                    (i.item_id, i.order_position, i.course_id, i.placement)
+                     for i in own if i.kind == "material"
+                 ],
+                 tasks=[
+@@ -770,6 +776,7 @@ def _walk_sequence_by_node_sequence(nodes: Dict[int, _Node], root_id: int) -> Li
+                             absorbed=i.course_id != course_id,
+                             anchor_course_id=i.anchor_course_id,
+                             host_course_id=course_id,
++                            anchor_placement=i.placement,
+                         ),
+                     )
+                     for i in own if i.kind == "task"
+diff --git a/app/services/learning_engine_service.py b/app/services/learning_engine_service.py
+index f47f3b1..e5e5a00 100644
+--- a/app/services/learning_engine_service.py
++++ b/app/services/learning_engine_service.py
+@@ -47,6 +47,7 @@ from app.services.node_sequence import (
+     anchor_of,
+     Segment,
+     material_seq_key,
++    node_after_children_enabled,
+     node_sequence,
+     node_sequence_enabled,
+     post_order_courses,
+@@ -1217,15 +1218,15 @@ class LearningEngineService:
+         """
+         if after_material_id is not None:
+             r = await db.execute(
+-                select(Materials.course_id, Materials.order_position).where(
+-                    Materials.id == after_material_id
+-                )
++                select(
++                    Materials.course_id, Materials.order_position, Materials.placement
++                ).where(Materials.id == after_material_id)
+             )
+             row = r.fetchone()
+             if row is not None:
+                 return (
+                     int(row[0]), "material", after_material_id,
+-                    material_seq_key(row[1], after_material_id, int(row[0])), None,
++                    material_seq_key(row[1], after_material_id, int(row[0]), row[2]), None,
+                 )
+         if after_task_id is not None:
+             # tsk-996 (фаза B): якорь — тем же запросом. Задание с действующим
+@@ -1238,6 +1239,7 @@ class LearningEngineService:
+                 select(
+                     Tasks.course_id, Tasks.order_position, Tasks.host_order_position,
+                     anchor_m.id, anchor_m.order_position, anchor_m.course_id,
++                    anchor_m.placement,
+                 )
+                 .outerjoin(anchor_m, anchor_m.id == Tasks.anchor_material_id)
+                 .where(Tasks.id == after_task_id)
+@@ -1257,6 +1259,7 @@ class LearningEngineService:
+                             anchor_of(
+                                 row[3], row[4], int(row[0]), absorbed=True,
+                                 anchor_course_id=row[5], host_course_id=host,
++                                anchor_placement=row[6],
+                             ),
+                         ),
+                     )
+@@ -1264,7 +1267,10 @@ class LearningEngineService:
+                     int(row[0]), "task", after_task_id,
+                     task_seq_key(
+                         task_key(row[1], after_task_id),
+-                        anchor_of(row[3], row[4], int(row[0]), anchor_course_id=row[5]),
++                        anchor_of(
++                            row[3], row[4], int(row[0]),
++                            anchor_course_id=row[5], anchor_placement=row[6],
++                        ),
+                     ),
+                     host_alt,
+                 )
+@@ -1582,12 +1588,16 @@ class LearningEngineService:
+         # tsk-996: задания узла нужны и голове (якоря), и хвосту — читаются
+         # один раз на узел за вызов.
+         task_rows_cache: dict[int, List[Tuple[int, TaskKey, Optional[Anchor]]]] = {}
++        # tsk-1403: материалы узла нужны и хвосту, если у узла есть материалы
++        # «после подразделов» — тоже один раз на узел за вызов.
++        material_rows_cache: dict[int, tuple] = {}
+         for offset, (cid, segment) in enumerate(steps[start_index:]):
+             if cid in absorbed_here:
+                 continue
+             entries = await self._effective_segment(
+                 db, cid, segment, student_id, root_course_id=root_id,
+                 task_rows_cache=task_rows_cache,
++                material_rows_cache=material_rows_cache,
+             )
+             if position is not None and offset == 0:
+                 pos_key = position[3]
+@@ -1607,6 +1617,7 @@ class LearningEngineService:
+         student_id: int,
+         root_course_id: Optional[int] = None,
+         task_rows_cache: Optional[dict] = None,
++        material_rows_cache: Optional[dict] = None,
+     ) -> List[NodeEntry]:
+         """Элементы одного шага узла, которые ученик реально видит (tsk-996).
+ 
+@@ -1619,6 +1630,12 @@ class LearningEngineService:
+         стоит ровно столько запросов, сколько и прежде. Хвост — задания без
+         действующего якоря. `task_rows_cache` — задания узла, уже прочитанные
+         в этом вызове (голова и хвост одного узла).
++
++        tsk-1403: материал «после подразделов» (`placement`, при рубильнике
++        `NODE_AFTER_CHILDREN_ENABLED`) стоит в хвосте. Хвост читает материалы
++        только при включённом рубильнике, и только узел с такими материалами
++        их фильтрует; `material_rows_cache` — материалы узла, уже прочитанные
++        головой в этом вызове.
+         """
+         async def task_rows() -> List[Tuple[int, TaskKey, Optional[Anchor]]]:
+             if task_rows_cache is not None and course_id in task_rows_cache:
+@@ -1630,15 +1647,38 @@ class LearningEngineService:
+                 task_rows_cache[course_id] = rows
+             return rows
+ 
++        async def material_rows() -> tuple:
++            if material_rows_cache is not None and course_id in material_rows_cache:
++                return material_rows_cache[course_id]
++            loaded = await self._node_material_rows(db, course_id)
++            if material_rows_cache is not None:
++                material_rows_cache[course_id] = loaded
++            return loaded
++
++        def placed(rows: List[Tuple[int, Optional[int]]], after_ids: set) -> list:
++            return [
++                (i, op, course_id, "after_children" if i in after_ids else "head")
++                for i, op in rows
++            ]
++
+         if segment == HEAD:
+-            mats, has_anchors = await self._node_material_rows(db, course_id)
++            mats, has_anchors, after_ids = await material_rows()
+             rows = await self._effective_material_rows(
+                 db, course_id, student_id, root_course_id=root_course_id, rows=mats
+             )
+             seq = node_sequence(
+-                materials=[(i, op, course_id) for i, op in rows],
++                materials=placed(rows, after_ids),
+                 tasks=await task_rows() if has_anchors else (),
+             )
++        elif node_after_children_enabled():
++            mats, _has_anchors, after_ids = await material_rows()
++            rows: List[Tuple[int, Optional[int]]] = []
++            if after_ids:
++                rows = await self._effective_material_rows(
++                    db, course_id, student_id, root_course_id=root_course_id,
++                    rows=[r for r in mats if r[0] in after_ids],
++                )
++            seq = node_sequence(materials=placed(rows, after_ids), tasks=await task_rows())
+         else:
+             seq = node_sequence(tasks=await task_rows())
+         return segment_entries(seq, segment)
+@@ -1975,6 +2015,7 @@ class LearningEngineService:
+             select(
+                 Tasks.id, Tasks.order_position, Tasks.host_order_position, Tasks.course_id,
+                 anchor_m.id, anchor_m.order_position, anchor_m.course_id,
++                anchor_m.placement,
+             )
+             .outerjoin(anchor_m, anchor_m.id == Tasks.anchor_material_id)
+             .where(
+@@ -1997,6 +2038,7 @@ class LearningEngineService:
+                 anchor_of(
+                     row[4], row[5], int(row[3]), absorbed=is_absorbed,
+                     anchor_course_id=row[6], host_course_id=course_id,
++                    anchor_placement=row[7],
+                 ),
+             ))
+         rows.sort(key=lambda x: x[1])
+@@ -2004,8 +2046,8 @@ class LearningEngineService:
+ 
+     async def _node_material_rows(
+         self, db: AsyncSession, course_id: int
+-    ) -> Tuple[List[Tuple[int, Optional[int]]], bool]:
+-        """Материалы узла для головы `node_sequence` и признак якорей (tsk-996).
++    ) -> Tuple[List[Tuple[int, Optional[int]]], bool, set]:
++        """Материалы узла для `node_sequence`, признак якорей и after-материалы.
+ 
+         Первый элемент — ровно `_ordered_material_rows` (активные, уровни
+         `required`/`skippable`, тот же порядок). Второй — есть ли у узла
+@@ -2016,10 +2058,13 @@ class LearningEngineService:
+ 
+         Фаза D: якорь на материал узла ставят и задания его прозрачных
+         подкурсов (банки ОГЭ в уроке) — признак учитывает и их.
++
++        Третий элемент (tsk-1403) — id материалов обхода с `placement =
++        'after_children'`; при выключенном рубильнике всегда пуст.
+         """
+         r = await db.execute(
+             text(
+-                "SELECT m.id, m.order_position, "
++                "SELECT m.id, m.order_position, m.placement, "
+                 "       (m.is_active AND m.requirement_level IN ('required', 'skippable')) "
+                 "         AS in_walk, "
+                 "       EXISTS (SELECT 1 FROM tasks t "
+@@ -2037,12 +2082,16 @@ class LearningEngineService:
+         )
+         rows: List[Tuple[int, Optional[int]]] = []
+         has_anchors = False
+-        for mid, op, in_walk, anchored in r.fetchall():
++        after_ids: set = set()
++        after_enabled = node_after_children_enabled()
++        for mid, op, placement, in_walk, anchored in r.fetchall():
+             if in_walk:
+                 rows.append((int(mid), op))
++                if after_enabled and placement == "after_children":
++                    after_ids.add(int(mid))
+             if anchored:
+                 has_anchors = True
+-        return rows, has_anchors
++        return rows, has_anchors, after_ids
+ 
+     async def _ordered_material_ids(self, db: AsyncSession, course_id: int) -> List[int]:
+         """ID материалов курса в порядке обхода (order_position ASC NULLS LAST, id)."""
+diff --git a/app/services/manual_progress_service.py b/app/services/manual_progress_service.py
+index ce9fec7..1dc52a0 100644
+--- a/app/services/manual_progress_service.py
++++ b/app/services/manual_progress_service.py
+@@ -411,7 +411,9 @@ async def _tree_task_rows(db: AsyncSession, course_ids: list[int]) -> list[dict[
+                 # или прозрачный хозяин, фаза D); удалённый — NULL.
+                 "       am.id AS anchor_material_id, "
+                 "       am.order_position AS anchor_order_position, "
+-                "       am.course_id AS anchor_course_id "
++                "       am.course_id AS anchor_course_id, "
++                # tsk-1403: материал «после подразделов» уводит задание в хвост.
++                "       am.placement AS anchor_placement "
+                 "FROM tasks t "
+                 "LEFT JOIN materials am ON am.id = t.anchor_material_id "
+                 "WHERE t.course_id = ANY(:course_ids) AND t.is_active = true "
+@@ -429,8 +431,9 @@ async def _tree_material_rows(db: AsyncSession, course_ids: list[int]) -> list[d
+     rows = (
+         await db.execute(
+             text(
+-                # tsk-996: `order_position` — для ключа `node_sequence`.
+-                "SELECT id, course_id, title, order_position FROM materials "
++                # tsk-996: `order_position` — для ключа `node_sequence`;
++                # tsk-1403: `placement` — голова или хвост узла.
++                "SELECT id, course_id, title, order_position, placement FROM materials "
+                 "WHERE course_id = ANY(:course_ids) AND is_active = true "
+                 "  AND requirement_level = ANY(:levels) "
+                 "ORDER BY course_id, order_position ASC NULLS LAST, id"
+@@ -1591,7 +1594,10 @@ async def _progress_items_by_sequence(
+             tsks = by_course_tasks.get(cid, [])
+             seq_cache[cid] = node_sequence(
+                 materials=[
+-                    (int(m["id"]), m["order_position"], int(m.get("_src_course_id", cid)))
++                    (
++                        int(m["id"]), m["order_position"],
++                        int(m.get("_src_course_id", cid)), m.get("placement"),
++                    )
+                     for m in mats
+                 ],
+                 tasks=[
+@@ -1608,6 +1614,7 @@ async def _progress_items_by_sequence(
+                             absorbed=bool(t.get("_absorbed")),
+                             anchor_course_id=t.get("anchor_course_id"),
+                             host_course_id=cid,
++                            anchor_placement=t.get("anchor_placement"),
+                         ),
+                     )
+                     for t in tsks
+diff --git a/app/services/materials_service.py b/app/services/materials_service.py
+index 9081ee6..5fd782d 100644
+--- a/app/services/materials_service.py
++++ b/app/services/materials_service.py
+@@ -29,6 +29,14 @@ MANUALLY_EDITABLE_FIELDS: frozenset[str] = frozenset(
+ )
+ 
+ 
++#: Служебные поля, которые ручная правка тоже защищает от импорта (tsk-1403):
++#: `placement` импорт и так пишет только при явной передаче, но если методист
++#: разметил материал руками, явная передача из источника его не перебивает.
++#: Отдельно от `MANUALLY_EDITABLE_FIELDS`: тот список общий роутер ставит в
++#: пометку целиком, и правка места пометила бы ручными и текст.
++MANUALLY_PROTECTED_SERVICE_FIELDS: frozenset[str] = frozenset({"placement"})
++
++
+ def _manually_edited_fields(existing: Materials) -> frozenset[str]:
+     """Поля материала, поправленные вручную и защищённые от перезаписи импортом.
+ 
+@@ -54,7 +62,9 @@ def _manually_edited_fields(existing: Materials) -> frozenset[str]:
+             prov,
+         )
+         return frozenset()
+-    return frozenset(f for f in raw_fields if isinstance(f, str)) & MANUALLY_EDITABLE_FIELDS
++    return frozenset(f for f in raw_fields if isinstance(f, str)) & (
++        MANUALLY_EDITABLE_FIELDS | MANUALLY_PROTECTED_SERVICE_FIELDS
++    )
+ from app.utils.exceptions import DomainError
+ 
+ logger = logging.getLogger(__name__)
+@@ -287,6 +297,12 @@ class MaterialsService(BaseService[Materials]):
+             and existing.order_position != item.order_position
+         ):
+             return False
++        if (
++            "placement" in item.model_fields_set
++            and "placement" not in protected
++            and (existing.placement or "head") != item.placement
++        ):
++            return False
+         if "content" in protected:
+             return True
+         try:
+@@ -445,6 +461,8 @@ class MaterialsService(BaseService[Materials]):
+                     active_given = "is_active" in item.model_fields_set
+                     position_given = "order_position" in item.model_fields_set
+                     level_given = "requirement_level" in item.model_fields_set
++                    # tsk-1403: место в узле — по тому же правилу явной передачи.
++                    placement_given = "placement" in item.model_fields_set
+                     row_key = (cid, ext)
+                     existing = existing_map.get(row_key)
+                     if existing:
+@@ -454,6 +472,8 @@ class MaterialsService(BaseService[Materials]):
+                             payload_data["order_position"] = item.order_position
+                         if level_given:
+                             payload_data["requirement_level"] = item.requirement_level
++                        if placement_given:
++                            payload_data["placement"] = item.placement
+                         # tsk-433: поля, поправленные методистом вручную через
+                         # кабинет, импорт не трогает. Иначе правка молча исчезала
+                         # бы при ближайшем переиздании из источника, и объяснить
+@@ -491,6 +511,7 @@ class MaterialsService(BaseService[Materials]):
+                                 "is_active": item.is_active,
+                                 "order_position": item.order_position,
+                                 "requirement_level": item.requirement_level,
++                                "placement": item.placement,
+                             },
+                             commit=False,
+                         )
+diff --git a/app/services/me_service.py b/app/services/me_service.py
+index b12cdaa..35e81c2 100644
+--- a/app/services/me_service.py
++++ b/app/services/me_service.py
+@@ -19,7 +19,12 @@ from app.schemas.task_content import QUIZ_TASK_TYPES
+ # и «следующий шаг» считали долг одинаково.
+ from app.services.content_grace_service import compute_graced_items, done_among
+ from app.services.requirement_override_service import reason_payload, resolve_levels
+-from app.services.node_sequence import anchor_of, node_sequence, node_sequence_enabled
++from app.services.node_sequence import (
++    anchor_of,
++    in_after_part,
++    node_sequence,
++    node_sequence_enabled,
++)
+ from app.services.transparent_subcourse import absorbed_in_tree, task_key
+ # Y-3.2 (S3-A4): единая точка правды — учебный движок.
+ from app.services.learning_engine_service import PASS_THRESHOLD_RATIO, is_mentor_reviewed
+@@ -942,7 +947,8 @@ SELECT
+     -- Удалённый материал даёт NULL — задание в конце узла.
+     am.id AS anchor_material_id,
+     am.order_position AS anchor_order_position,
+-    am.course_id AS anchor_course_id
++    am.course_id AS anchor_course_id,
++    am.placement AS anchor_placement
+ FROM tasks t
+ LEFT JOIN materials am
+     ON am.id = t.anchor_material_id
+@@ -965,6 +971,7 @@ SELECT
+     m.is_active,
+     m.requirement_level,
+     m.order_position,
++    m.placement,
+     -- tsk-684: см. комментарий в _SYLLABUS_TASKS_SQL. Для материалов кабинет
+     -- ходил в `GET /courses/{id}/materials` на каждый подкурс ради названия
+     -- и типа — обе колонки уже здесь, в этой же строке.
+@@ -1196,6 +1203,28 @@ async def _collect_section_meta(
+     return result
+ 
+ 
++def _with_after_sections(section_meta: list[dict], course_ids: set[int]) -> list[dict]:
++    """Вставить раздел-дубль узла `part: "after"` после его последнего потомка.
++
++    tsk-1403: материалы «после подразделов» ученик видит после подкурсов узла,
++    поэтому программа показывает их отдельным разделом с тем же `course_id` и
++    заголовком узла. `section_meta` — обход в глубину, так что потомки узла —
++    это идущие следом разделы с большей глубиной.
++    """
++    result: list[dict] = []
++    # Стек открытых узлов с after-частью: (depth, дубль раздела).
++    pending: list[tuple[int, dict]] = []
++    for meta in section_meta:
++        while pending and pending[-1][0] >= meta["depth"]:
++            result.append(pending.pop()[1])
++        result.append(meta)
++        if meta["course_id"] in course_ids:
++            pending.append((meta["depth"], {**meta, "part": "after"}))
++    while pending:
++        result.append(pending.pop()[1])
++    return result
++
++
+ def _syllabus_material_item(m: dict, graced: Any, reasons: dict) -> dict:
+     """Элемент `items[]` программы курса для материала (вынесено, tsk-996)."""
+     return {
+@@ -1403,6 +1432,7 @@ async def get_syllabus_states(
+         tree_ids = [c for c in tree_ids if c not in absorbed]
+ 
+     items: list[dict] = []
++    after_sections: set[int] = set()
+     if node_sequence_enabled():
+         # tsk-996: порядок элементов раздела — общая `node_sequence` (голова,
+         # затем хвост узла; подразделы идут своими секциями, как и прежде).
+@@ -1412,7 +1442,8 @@ async def get_syllabus_states(
+             tsks = {int(t["task_id"]): t for t in tasks_by_course.get(cid, [])}
+             seq = node_sequence(
+                 materials=[
+-                    (mid, m["order_position"], m["_src_course_id"]) for mid, m in mats.items()
++                    (mid, m["order_position"], m["_src_course_id"], m["placement"])
++                    for mid, m in mats.items()
+                 ],
+                 tasks=[
+                     (
+@@ -1426,16 +1457,32 @@ async def get_syllabus_states(
+                             t["anchor_material_id"], t["anchor_order_position"],
+                             int(t["_src_course_id"]), absorbed=bool(t.get("_absorbed")),
+                             anchor_course_id=t["anchor_course_id"], host_course_id=cid,
++                            anchor_placement=t["anchor_placement"],
+                         ),
+                     )
+                     for tid, t in tsks.items()
+                 ],
+             )
++            # tsk-1403: часть «после подразделов» (материал after_children и
++            # задания с якорем на него) — своим разделом-дублем узла после его
++            # последнего потомка; элементы помечены `part: "after"`. Остальные
++            # элементы поля `part` не несут — ответ без after прежний.
++            after_items: list[dict] = []
+             for entry in seq:
+                 if entry.kind == "material":
+-                    items.append(_syllabus_material_item(mats[entry.item_id], graced, reasons))
++                    item = _syllabus_material_item(mats[entry.item_id], graced, reasons)
++                else:
++                    item = _syllabus_task_item(tsks[entry.item_id], graced, reasons)
++                if in_after_part(entry):
++                    item["part"] = "after"
++                    after_items.append(item)
+                 else:
+-                    items.append(_syllabus_task_item(tsks[entry.item_id], graced, reasons))
++                    items.append(item)
++            if after_items:
++                items.extend(after_items)
++                after_sections.add(cid)
++        if after_sections:
++            section_meta = _with_after_sections(section_meta, after_sections)
+     else:
+         for cid in tree_ids:
+             for m in materials_by_course.get(cid, []):
+diff --git a/app/services/node_sequence.py b/app/services/node_sequence.py
+index c0366a0..92c3b61 100644
+--- a/app/services/node_sequence.py
++++ b/app/services/node_sequence.py
+@@ -52,6 +52,14 @@ anchor``). Неактивный или «рекомендуемый» матер
+ (``NODE_SEQUENCE_ENABLED=false``) якоря не читает вовсе: откат рубильником
+ возвращает и прежний порядок.
+ 
++tsk-1403 (вариант В, ОГЭ): материал узла с ``placement='after_children'``
++встаёт в начало хвоста — после подразделов, перед заданиями без якоря;
++задания, заякоренные на него, идут сразу следом (чередование «разбор →
++задача» сохраняется). Ключ такого материала ``(SEG_TAIL, 0, course_id,
++order_key)``, задания без якоря — ``(SEG_TAIL, 1, task_key)``. Шаги обхода
++и курсоры не меняются. Рубильник `NODE_AFTER_CHILDREN_ENABLED` (по
++умолчанию выключен): при false признак не читается и порядок прежний.
++
+ Модуль чистый: ни запросов к БД, ни сессии. Данные узла загружает
+ вызывающий — каждый своим (уже существующим) запросом, поэтому число
+ запросов не меняется.
+@@ -79,6 +87,10 @@ from app.services.transparent_subcourse import TaskKey
+ ItemKind = Literal["material", "task"]
+ Segment = Literal["head", "tail"]
+ 
++Placement = Literal["head", "after_children"]
++PLACEMENT_HEAD: Placement = "head"
++PLACEMENT_AFTER: Placement = "after_children"
++
+ HEAD: Segment = "head"
+ TAIL: Segment = "tail"
+ 
+@@ -93,8 +105,9 @@ Step = Tuple[int, Segment]
+ # Подраздел узла: (child_id, order_number).
+ ChildRow = Tuple[int, Optional[int]]
+ # Действующий якорь задания (tsk-996, фаза B): (material_id, order_position
+-# материала, course_id материала). None — якоря нет или он недействителен.
+-Anchor = Tuple[int, Optional[int], int]
++# материала, course_id материала[, placement материала — только 'after_children',
++# tsk-1403]). None — якоря нет или он недействителен.
++Anchor = Tuple[Any, ...]
+ 
+ 
+ def node_sequence_enabled() -> bool:
+@@ -109,13 +122,31 @@ def node_sequence_enabled() -> bool:
+     return os.getenv("NODE_SEQUENCE_ENABLED", "true").lower() in ("true", "1", "yes")
+ 
+ 
++def node_after_children_enabled() -> bool:
++    """Рубильник `NODE_AFTER_CHILDREN_ENABLED` (tsk-1403, по умолчанию выключен).
++
++    ``false`` — признак ``materials.placement`` игнорируется во всех обходах,
++    порядок байт в байт прежний. Читается из окружения на каждый вызов, как
++    `node_sequence_enabled`.
++    """
++    return os.getenv("NODE_AFTER_CHILDREN_ENABLED", "false").lower() in ("true", "1", "yes")
++
++
++def is_after(placement: Optional[str]) -> bool:
++    """Материал действует как «после подразделов» (признак + рубильник)."""
++    return placement == PLACEMENT_AFTER and node_after_children_enabled()
++
++
+ def order_key(order_position: Optional[int], item_id: int) -> Tuple[int, int, int]:
+     """Паритет с SQL `order_position ASC NULLS LAST, id ASC`."""
+     return (0 if order_position is not None else 1, order_position or 0, item_id)
+ 
+ 
+ def material_seq_key(
+-    order_position: Optional[int], material_id: int, course_id: int
++    order_position: Optional[int],
++    material_id: int,
++    course_id: int,
++    placement: Optional[str] = None,
+ ) -> SeqKey:
+     """Ключ материала в последовательности узла.
+ 
+@@ -125,7 +156,12 @@ def material_seq_key(
+     карточка прогресса показывают в списке хозяина: там они всегда шли
+     группой по курсу (SQL `ORDER BY course_id, order_position, id`), и ключ
+     сохраняет этот порядок.
++
++    ``placement='after_children'`` (tsk-1403, при включённом рубильнике) —
++    материал в начале хвоста узла, перед заданиями без якоря.
+     """
++    if is_after(placement):
++        return (SEG_TAIL, 0, course_id, order_key(order_position, material_id))
+     return (SEG_HEAD, course_id, order_key(order_position, material_id))
+ 
+ 
+@@ -139,9 +175,12 @@ def task_seq_key(key: TaskKey, anchor: Optional[Anchor] = None) -> SeqKey:
+     позже всех; внутри группы задания по ``key``.
+     """
+     if anchor is None:
+-        return (SEG_TAIL, key)
+-    material_id, order_position, course_id = anchor
+-    return material_seq_key(order_position, int(material_id), int(course_id)) + (key,)
++        return (SEG_TAIL, 1, key)
++    material_id, order_position, course_id = anchor[:3]
++    placement = anchor[3] if len(anchor) > 3 else None
++    return material_seq_key(
++        order_position, int(material_id), int(course_id), placement
++    ) + (key,)
+ 
+ 
+ def anchor_of(
+@@ -152,6 +191,7 @@ def anchor_of(
+     absorbed: bool = False,
+     anchor_course_id: Optional[int] = None,
+     host_course_id: Optional[int] = None,
++    anchor_placement: Optional[str] = None,
+ ) -> Optional[Anchor]:
+     """Действующий якорь задания из строки запроса либо None (tsk-996).
+ 
+@@ -168,6 +208,10 @@ def anchor_of(
+     ``LEFT JOIN materials ON id = tasks.anchor_material_id``). ``None`` —
+     вызывающий уже отобрал JOIN-ом только материал курса задания (контракт
+     фазы B). NULL ``anchor_material_id`` — якоря нет или материал удалён.
++
++    ``anchor_placement`` — ``materials.placement`` материала якоря (tsk-1403):
++    у материала «после подразделов» якорь получает четвёртый элемент, и
++    задание встаёт за ним в хвосте узла.
+     """
+     if anchor_material_id is None:
+         return None
+@@ -180,6 +224,8 @@ def anchor_of(
+         node_course = int(task_course_id)
+     if material_course != node_course:
+         return None
++    if is_after(anchor_placement):
++        return (int(anchor_material_id), anchor_order_position, node_course, PLACEMENT_AFTER)
+     return (int(anchor_material_id), anchor_order_position, node_course)
+ 
+ 
+@@ -208,13 +254,14 @@ class NodeEntry:
+ 
+ def node_sequence(
+     *,
+-    materials: Iterable[Tuple[int, Optional[int], int]] = (),
++    materials: Iterable[Tuple[Any, ...]] = (),
+     tasks: Iterable[Tuple[Any, ...]] = (),
+ ) -> List[NodeEntry]:
+     """Элементы одного узла в учебном порядке: ``[(kind, id)]`` с ключами.
+ 
+     Args:
+-        materials: ``(material_id, order_position, course_id)`` материалов узла.
++        materials: ``(material_id, order_position, course_id[, placement])``
++            материалов узла (placement — tsk-1403).
+         tasks: ``(task_id, task_key)`` или ``(task_id, task_key, anchor)``
+             заданий узла (с влитыми заданиями прозрачных подкурсов, если
+             вызывающий их показывает). ``anchor`` — `anchor_of(...)`: задание
+@@ -226,8 +273,11 @@ def node_sequence(
+     элементы с ``segment_of(entry.key) == шаг``.
+     """
+     entries = [
+-        NodeEntry("material", int(mid), material_seq_key(op, int(mid), int(cid)))
+-        for mid, op, cid in materials
++        NodeEntry(
++            "material", int(m[0]),
++            material_seq_key(m[1], int(m[0]), int(m[2]), m[3] if len(m) > 3 else None),
++        )
++        for m in materials
+     ]
+     for row in tasks:
+         anchor = row[2] if len(row) > 2 else None
+@@ -236,6 +286,16 @@ def node_sequence(
+     return entries
+ 
+ 
++def in_after_part(entry: NodeEntry) -> bool:
++    """Элемент из части «после подразделов» (tsk-1403).
++
++    Материал ``after_children`` и задания, заякоренные на него. Задания
++    хвоста без якоря сюда не входят: программа курса показывает их в разделе
++    узла, как и прежде.
++    """
++    return entry.key[0] == SEG_TAIL and entry.key[1] == 0
++
++
+ def segment_entries(entries: Iterable[NodeEntry], segment: Segment) -> List[NodeEntry]:
+     """Элементы последовательности, относящиеся к одному шагу узла."""
+     return [e for e in entries if segment_of(e.key) == segment]
+@@ -319,6 +379,11 @@ __all__ = [
+     "material_seq_key",
+     "node_sequence",
+     "node_sequence_enabled",
++    "node_after_children_enabled",
++    "is_after",
++    "in_after_part",
++    "PLACEMENT_AFTER",
++    "PLACEMENT_HEAD",
+     "order_key",
+     "post_order_courses",
+     "segment_entries",
+diff --git a/app/services/preview_navigation.py b/app/services/preview_navigation.py
+index 67ad332..16a01a2 100644
+--- a/app/services/preview_navigation.py
++++ b/app/services/preview_navigation.py
+@@ -31,6 +31,7 @@ from app.services.node_sequence import (
+     anchor_of,
+     node_sequence,
+     node_sequence_enabled,
++    node_after_children_enabled,
+     segment_entries,
+ )
+ from app.services.transparent_subcourse import task_key, transparent_links
+@@ -124,6 +125,7 @@ async def _ordered_items_by_sequence(
+                     Tasks.id, Tasks.order_position, Tasks.host_order_position,
+                     Tasks.course_id, Tasks.requirement_level,
+                     anchor_m.id, anchor_m.order_position, anchor_m.course_id,
++                    anchor_m.placement,
+                 )
+                 .outerjoin(anchor_m, anchor_m.id == Tasks.anchor_material_id)
+                 .where(Tasks.course_id.in_([cid, *absorbed]), Tasks.is_active.is_(True))
+@@ -143,51 +145,72 @@ async def _ordered_items_by_sequence(
+                 anchor_of(
+                     r[5], r[6], int(r[3]), absorbed=is_absorbed,
+                     anchor_course_id=r[7], host_course_id=cid,
++                    anchor_placement=r[8],
+                 ),
+             ))
+             eligible[("task", int(r[0]))] = r[4] in _WALK_LEVELS
+         task_cache[cid] = (tasks, eligible)
+         return task_cache[cid]
+ 
++    material_cache: dict[int, Tuple[list, dict[Tuple[str, int], bool], bool]] = {}
++
++    async def load_materials(cid: int) -> Tuple[list, dict[Tuple[str, int], bool], bool]:
++        """Материалы узла с placement (tsk-1403), их допуск и признак якорей."""
++        if cid in material_cache:
++            return material_cache[cid]
++        rows = (
++            await db.execute(
++                select(
++                    Materials.id, Materials.order_position, Materials.requirement_level,
++                    Materials.is_active,
++                    # Фаза D: якорь на материал узла ставят и задания
++                    # его прозрачных подкурсов.
++                    exists().where(
++                        Tasks.anchor_material_id == Materials.id,
++                        or_(
++                            Tasks.course_id == Materials.course_id,
++                            exists().where(
++                                t_course_parents.c.course_id == Tasks.course_id,
++                                t_course_parents.c.parent_course_id == Materials.course_id,
++                                t_course_parents.c.is_transparent.is_(True),
++                            ),
++                        ),
++                    ),
++                    Materials.placement,
++                ).where(Materials.course_id == cid)
++            )
++        ).all()
++        materials = []
++        eligible: dict[Tuple[str, int], bool] = {}
++        has_anchors = False
++        for r in rows:
++            has_anchors = has_anchors or bool(r[4])
++            if not r[3]:
++                continue
++            materials.append((int(r[0]), r[1], cid, r[5]))
++            eligible[("material", int(r[0]))] = r[2] in _WALK_LEVELS
++        material_cache[cid] = (materials, eligible, has_anchors)
++        return material_cache[cid]
++
+     for cid, segment in steps:
+         if cid in absorbed_here:
+             continue
+         eligible: dict[Tuple[str, int], bool] = {}
+         if segment == HEAD:
+-            rows = (
+-                await db.execute(
+-                    select(
+-                        Materials.id, Materials.order_position, Materials.requirement_level,
+-                        Materials.is_active,
+-                        # Фаза D: якорь на материал узла ставят и задания
+-                        # его прозрачных подкурсов.
+-                        exists().where(
+-                            Tasks.anchor_material_id == Materials.id,
+-                            or_(
+-                                Tasks.course_id == Materials.course_id,
+-                                exists().where(
+-                                    t_course_parents.c.course_id == Tasks.course_id,
+-                                    t_course_parents.c.parent_course_id == Materials.course_id,
+-                                    t_course_parents.c.is_transparent.is_(True),
+-                                ),
+-                            ),
+-                        ),
+-                    ).where(Materials.course_id == cid)
+-                )
+-            ).all()
+-            materials = []
+-            has_anchors = False
+-            for r in rows:
+-                has_anchors = has_anchors or bool(r[4])
+-                if not r[3]:
+-                    continue
+-                materials.append((int(r[0]), r[1], cid))
+-                eligible[("material", int(r[0]))] = r[2] in _WALK_LEVELS
++            materials, material_eligible, has_anchors = await load_materials(cid)
++            eligible.update(material_eligible)
+             tasks: list = []
+             if has_anchors:
+                 tasks, task_eligible = await load_tasks(cid)
+                 eligible.update(task_eligible)
+             seq = node_sequence(materials=materials, tasks=tasks)
++        elif node_after_children_enabled():
++            # tsk-1403: материалы «после подразделов» стоят в хвосте узла.
++            materials, material_eligible, _has = await load_materials(cid)
++            tasks, task_eligible = await load_tasks(cid)
++            eligible.update(material_eligible)
++            eligible.update(task_eligible)
++            seq = node_sequence(materials=materials, tasks=tasks)
+         else:
+             tasks, eligible = await load_tasks(cid)
+             seq = node_sequence(tasks=tasks)
+diff --git a/tests/test_tsk1403_after_children.py b/tests/test_tsk1403_after_children.py
+new file mode 100644
+index 0000000..1e650ae
+--- /dev/null
++++ b/tests/test_tsk1403_after_children.py
+@@ -0,0 +1,354 @@
++"""tsk-1403: материал узла «после подразделов» (`materials.placement`).
++
++Вариант В для ОГЭ: разборы урока узла должны идти после подкурсов-основ, но
++сами материалы остаются в узле (CB переиздаёт урок одним документом, якоря
++заданий прозрачных подкурсов целы). Материал `after_children` встаёт в начало
++хвоста узла, задания с якорем на него — сразу следом, задания без якоря — после.
++
++Дерево: root(intro, after, rt→after, rt2) → [child(cm, ct)].
++При рубильнике: intro → cm → ct → after → rt → rt2.
++Без рубильника — прежний порядок: intro → after → rt → cm → ct → rt2.
++"""
++from __future__ import annotations
++
++from datetime import datetime, timezone
++
++import pytest
++from sqlalchemy import text
++
++from app.services import me_service
++from app.services.content_grace_service import _Item, _Node, _walk_sequence
++from app.services.learning_engine_service import LearningEngineService
++from app.services.node_sequence import (
++    SEG_TAIL,
++    anchor_of,
++    in_after_part,
++    material_seq_key,
++    node_sequence,
++    task_seq_key,
++)
++from app.services.preview_navigation import _ordered_items
++from app.services.transparent_subcourse import task_key
++from tests.test_tsk261_next_item_position import (
++    _course,
++    _enroll,
++    _link,
++    _material,
++    _student,
++    _task,
++)
++
++AFTER = "after_children"
++
++
++@pytest.fixture
++def flag_on(monkeypatch):
++    monkeypatch.setenv("NODE_AFTER_CHILDREN_ENABLED", "true")
++
++
++@pytest.fixture
++def flag_off(monkeypatch):
++    monkeypatch.delenv("NODE_AFTER_CHILDREN_ENABLED", raising=False)
++
++
++# ─── Ключи последовательности (без БД) ──────────────────────────────────────
++
++
++def _order(materials, tasks):
++    return [(e.kind, e.item_id) for e in node_sequence(materials=materials, tasks=tasks)]
++
++
++def test_flag_off_ignores_placement(flag_off):
++    """Без рубильника признак не влияет ни на ключ, ни на порядок."""
++    assert material_seq_key(1, 10, 5, AFTER) == material_seq_key(1, 10, 5)
++    assert anchor_of(10, 1, 5, anchor_placement=AFTER) == (10, 1, 5)
++    order = _order(
++        [(10, 1, 5), (11, 2, 5, AFTER)],
++        [(20, task_key(1, 20), anchor_of(11, 2, 5, anchor_placement=AFTER)), (21, task_key(2, 21))],
++    )
++    assert order == [("material", 10), ("material", 11), ("task", 20), ("task", 21)]
++
++
++def test_after_material_heads_the_tail(flag_on):
++    """After-материал — в хвосте перед заданиями без якоря, его задания следом."""
++    order = _order(
++        [(10, 1, 5), (11, 2, 5, AFTER), (12, 3, 5, AFTER)],
++        [
++            (21, task_key(1, 21)),
++            (20, task_key(2, 20), anchor_of(12, 3, 5, anchor_placement=AFTER)),
++            (22, task_key(3, 22), anchor_of(11, 2, 5, anchor_placement=AFTER)),
++            (23, task_key(4, 23), anchor_of(10, 1, 5, anchor_placement="head")),
++        ],
++    )
++    assert order == [
++        ("material", 10), ("task", 23),
++        ("material", 11), ("task", 22),
++        ("material", 12), ("task", 20),
++        ("task", 21),
++    ]
++    seq = node_sequence(materials=[(11, 2, 5, AFTER)], tasks=[(21, task_key(1, 21))])
++    assert [in_after_part(e) for e in seq] == [True, False]
++    assert all(e.key[0] == SEG_TAIL for e in seq)
++
++
++def test_inactive_after_material_keeps_anchored_place(flag_on):
++    """Неактивный after-материал вне выдачи, но его задания стоят на его месте."""
++    order = _order(
++        [(10, 1, 5)],
++        [
++            (21, task_key(1, 21)),
++            (20, task_key(2, 20), anchor_of(11, 2, 5, anchor_placement=AFTER)),
++        ],
++    )
++    assert order == [("material", 10), ("task", 20), ("task", 21)]
++    assert task_seq_key(task_key(2, 20), anchor_of(11, 2, 5, anchor_placement=AFTER))[0] == SEG_TAIL
++
++
++def test_absorbed_task_anchor_on_own_subcourse_after_material(flag_on):
++    """Якорь задания прозрачного подкурса на after-материал самого подкурса в
++    списке хозяина не действует — задание в хвосте хозяина без якоря."""
++    assert anchor_of(
++        11, 2, 7, absorbed=True, anchor_course_id=7, host_course_id=5,
++        anchor_placement=AFTER,
++    ) is None
++    # На after-материал хозяина — действует и уводит в хвост хозяина.
++    anchor = anchor_of(
++        11, 2, 7, absorbed=True, anchor_course_id=5, host_course_id=5,
++        anchor_placement=AFTER,
++    )
++    assert anchor == (11, 2, 5, AFTER)
++
++
++def _grace_tree():
++    now = datetime.now(timezone.utc)
++
++    def item(kind, iid, cid, op, **kw):
++        return _Item(kind=kind, item_id=iid, course_id=cid, order_position=op,
++                     created_at=now, done=False, done_at=None, **kw)
++
++    root, child = _Node(), _Node()
++    root.children.append(2)
++    root.child_order.append((1, 2))
++    root.own = [
++        item("material", 10, 1, 1, placement="head"),
++        item("material", 11, 1, 2, placement=AFTER),
++        item("task", 20, 1, 1, anchor_material_id=11, anchor_order_position=2,
++             anchor_course_id=1, placement=AFTER),
++        item("task", 21, 1, 2),
++    ]
++    child.own = [item("material", 30, 2, 1, placement="head"), item("task", 40, 2, 1)]
++    return {1: root, 2: child}
++
++
++def test_grace_walk_flag_off_keeps_old_order(flag_off):
++    """Без рубильника правило «ушёл вперёд» обходит дерево по-старому."""
++    seq = _walk_sequence(_grace_tree(), 1)
++    assert [(i.kind, i.item_id) for i in seq] == [
++        ("material", 10), ("material", 11), ("task", 20),
++        ("material", 30), ("task", 40), ("task", 21),
++    ]
++
++
++def test_grace_walk_follows_after_placement(flag_on):
++    """Правило «ушёл вперёд» обходит дерево в том же порядке, что и движок."""
++    now = datetime.now(timezone.utc)
++
++    def item(kind, iid, cid, op, **kw):
++        return _Item(kind=kind, item_id=iid, course_id=cid, order_position=op,
++                     created_at=now, done=False, done_at=None, **kw)
++
++    root, child = _Node(), _Node()
++    root.children.append(2)
++    root.child_order.append((1, 2))
++    root.own = [
++        item("material", 10, 1, 1, placement="head"),
++        item("material", 11, 1, 2, placement=AFTER),
++        item("task", 20, 1, 1, anchor_material_id=11, anchor_order_position=2,
++             anchor_course_id=1, placement=AFTER),
++        item("task", 21, 1, 2),
++    ]
++    child.own = [item("material", 30, 2, 1, placement="head"), item("task", 40, 2, 1)]
++    seq = _walk_sequence({1: root, 2: child}, 1)
++    assert [(i.kind, i.item_id) for i in seq] == [
++        ("material", 10), ("material", 30), ("task", 40),
++        ("material", 11), ("task", 20), ("task", 21),
++    ]
++
++
++# ─── Движок, программа курса, предпросмотр (БД) ─────────────────────────────
++
++
++@pytest.fixture
++async def tree(db):
++    user_id = await _student(db)
++    root = await _course(db, "tsk1403 узел")
++    child = await _course(db, "tsk1403 основы")
++    await _link(db, course_id=child, parent_course_id=root, order_number=1)
++    intro = await _material(db, course_id=root, order_position=1, title="вступление")
++    after = await _material(db, course_id=root, order_position=2, title="разбор")
++    rt = await _task(db, course_id=root, order_position=1)
++    rt2 = await _task(db, course_id=root, order_position=2)
++    cm = await _material(db, course_id=child, order_position=1, title="теория")
++    ct = await _task(db, course_id=child, order_position=1)
++    await db.execute(text("UPDATE materials SET placement = 'after_children' WHERE id = :m"), {"m": after})
++    await db.execute(
++        text("UPDATE tasks SET anchor_material_id = :m, anchor_source = 'manual' WHERE id = :t"),
++        {"m": after, "t": rt},
++    )
++    await _enroll(db, user_id, root)
++    await db.commit()
++    yield {"user_id": user_id, "root": root, "child": child, "intro": intro,
++           "after": after, "rt": rt, "rt2": rt2, "cm": cm, "ct": ct}
++
++    await db.execute(text("DELETE FROM student_material_progress WHERE student_id=:u"), {"u": user_id})
++    await db.execute(text("DELETE FROM user_courses WHERE user_id=:u"), {"u": user_id})
++    await db.execute(text("DELETE FROM identity_link WHERE user_id=:u"), {"u": user_id})
++    await db.execute(text("DELETE FROM tasks WHERE course_id = ANY(:ids)"), {"ids": [root, child]})
++    await db.execute(text("DELETE FROM materials WHERE course_id = ANY(:ids)"), {"ids": [root, child]})
++    await db.execute(text("DELETE FROM course_parents WHERE parent_course_id=:r"), {"r": root})
++    await db.execute(text("DELETE FROM courses WHERE id = ANY(:ids)"), {"ids": [child, root]})
++    await db.commit()
++
++
++async def _next(db, tree, **pos):
++    res = await LearningEngineService().resolve_next_item(
++        db, tree["user_id"], root_course_id=tree["root"], **pos
++    )
++    return (res.type, res.material_id if res.type == "material" else res.task_id)
++
++
++@pytest.mark.asyncio
++async def test_engine_walk_flag_on(db, tree, flag_on):
++    """Курсор next-item проходит intro → cm → ct → after → rt → rt2."""
++    assert await _next(db, tree, after_material_id=tree["intro"]) == ("material", tree["cm"])
++    assert await _next(db, tree, after_task_id=tree["ct"]) == ("material", tree["after"])
++    assert await _next(db, tree, after_material_id=tree["after"]) == ("task", tree["rt"])
++    assert await _next(db, tree, after_task_id=tree["rt"]) == ("task", tree["rt2"])
++
++
++@pytest.mark.asyncio
++async def test_engine_walk_flag_off(db, tree, flag_off):
++    """Без рубильника прежний порядок: разбор и его задание — до подкурса."""
++    assert await _next(db, tree, after_material_id=tree["intro"]) == ("material", tree["after"])
++    assert await _next(db, tree, after_task_id=tree["rt"]) == ("material", tree["cm"])
++    assert await _next(db, tree, after_task_id=tree["ct"]) == ("task", tree["rt2"])
++
++
++@pytest.mark.asyncio
++async def test_preview_order_flag_on(db, tree, flag_on):
++    """Предпросмотр идёт тем же порядком, что движок."""
++    items = [
++        (kind, iid)
++        async for kind, iid, _ in _ordered_items(db, LearningEngineService(), tree["root"])
++    ]
++    assert items == [
++        ("material", tree["intro"]), ("material", tree["cm"]), ("task", tree["ct"]),
++        ("material", tree["after"]), ("task", tree["rt"]), ("task", tree["rt2"]),
++    ]
++
++
++@pytest.mark.asyncio
++async def test_syllabus_after_section(db, tree, flag_on):
++    """Программа: элементы части after помечены и стоят в разделе-дубле узла."""
++    data = await me_service.get_syllabus_states(
++        db, user_id=tree["user_id"], root_course_id=tree["root"]
++    )
++    sections = [(s["course_id"], s.get("part")) for s in data["sections"]]
++    assert sections == [(tree["root"], None), (tree["child"], None), (tree["root"], "after")]
++    root_items = [
++        (i["kind"], i.get("material_id") or i.get("task_id"), i.get("part"))
++        for i in data["items"] if i["course_id"] == tree["root"]
++    ]
++    assert root_items == [
++        ("material", tree["intro"], None), ("task", tree["rt2"], None),
++        ("material", tree["after"], "after"), ("task", tree["rt"], "after"),
++    ]
++
++
++@pytest.mark.asyncio
++async def test_syllabus_flag_off_has_no_part(db, tree, flag_off):
++    """Без рубильника — ни поля part, ни раздела-дубля."""
++    data = await me_service.get_syllabus_states(
++        db, user_id=tree["user_id"], root_course_id=tree["root"]
++    )
++    assert all("part" not in s for s in data["sections"])
++    assert all("part" not in i for i in data["items"])
++    assert len(data["sections"]) == 2
++
++
++@pytest.mark.asyncio
++async def test_node_without_children(db, flag_on):
++    """Узел без подкурсов: after-материал всё равно после головы, перед хвостом."""
++    user_id = await _student(db)
++    root = await _course(db, "tsk1403 лист")
++    m1 = await _material(db, course_id=root, order_position=1, title="m1")
++    m2 = await _material(db, course_id=root, order_position=2, title="m2")
++    t1 = await _task(db, course_id=root, order_position=1)
++    await db.execute(text("UPDATE materials SET placement = 'after_children' WHERE id = :m"), {"m": m1})
++    await _enroll(db, user_id, root)
++    await db.commit()
++    try:
++        items = [
++            (k, i) async for k, i, _ in _ordered_items(db, LearningEngineService(), root)
++        ]
++        assert items == [("material", m2), ("material", m1), ("task", t1)]
++        res = await LearningEngineService().resolve_next_item(
++            db, user_id, root_course_id=root, after_material_id=m2
++        )
++        assert res.type == "material" and res.material_id == m1
++    finally:
++        await db.execute(text("DELETE FROM user_courses WHERE user_id=:u"), {"u": user_id})
++        await db.execute(text("DELETE FROM identity_link WHERE user_id=:u"), {"u": user_id})
++        await db.execute(text("DELETE FROM tasks WHERE course_id=:c"), {"c": root})
++        await db.execute(text("DELETE FROM materials WHERE course_id=:c"), {"c": root})
++        await db.execute(text("DELETE FROM courses WHERE id=:c"), {"c": root})
++        await db.commit()
++
++
++# ─── Запись поля: bulk-upsert ────────────────────────────────────────────────
++
++
++@pytest.mark.asyncio
++async def test_bulk_upsert_placement_only_when_given(db):
++    """Импорт пишет placement только при явной передаче и не перебивает ручную правку."""
++    from app.services.materials_service import MaterialsService
++
++    course = await _course(db, "tsk1403 импорт")
++    await db.commit()
++    svc = MaterialsService()
++    base = {
++        "course_id": course, "external_uid": "tsk1403:m1", "title": "разбор",
++        "type": "text", "content": {"text": "x"},
++    }
++
++    async def placement() -> str:
++        r = await db.execute(
++            text("SELECT placement FROM materials WHERE course_id=:c AND external_uid='tsk1403:m1'"),
++            {"c": course},
++        )
++        return r.scalar_one()
++
++    try:
++        await svc.bulk_upsert(db, [dict(base)])
++        assert await placement() == "head"
++        res = await svc.bulk_upsert(db, [{**base, "placement": AFTER}])
++        assert res.items[0].status == "updated"
++        assert await placement() == AFTER
++        # Переиздание без поля (так шлёт ContentBackbone) — место не трогает.
++        res = await svc.bulk_upsert(db, [dict(base)])
++        assert res.items[0].status == "unchanged"
++        assert await placement() == AFTER
++        # Ручная правка места защищена и от явной передачи.
++        await db.execute(
++            text("UPDATE materials SET content_provenance = CAST(:p AS jsonb) "
++                 "WHERE course_id=:c"),
++            {"c": course, "p": '{"source": "manual_web", "fields": ["placement"]}'},
++        )
++        await db.commit()
++        res = await svc.bulk_upsert(db, [{**base, "placement": "head"}])
++        assert res.items[0].status == "unchanged"
++        assert await placement() == AFTER
++    finally:
++        await db.execute(text("DELETE FROM materials WHERE course_id=:c"), {"c": course})
++        await db.execute(text("DELETE FROM courses WHERE id=:c"), {"c": course})
++        await db.commit()

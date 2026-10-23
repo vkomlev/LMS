@@ -1,9 +1,9 @@
 """Pydantic схемы для /me эндпоинтов (Phase Y-1 + Y-3 + Y-6.2 + tsk-427)."""
 from datetime import date, datetime
-from typing import Literal, Optional, Union
+from typing import Any, Literal, Optional, Union
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_serializer
 
 from app.schemas.content_requirement import RequirementReason
 
@@ -490,6 +490,22 @@ class SyllabusTaskItem(BaseModel):
             "возить условие задачи впустую. Готовую подпись из этих двух полей собирает клиент"
         ),
     )
+    # tsk-1403: элемент части узла «после подразделов». Поле есть только у
+    # таких элементов; у остальных его нет в ответе вовсе (прежний контракт).
+    part: Literal["after"] | None = Field(
+        None,
+        description=(
+            "tsk-1403: 'after' — элемент идёт после подкурсов узла и рисуется в "
+            "разделе-дубле узла с part='after'; отсутствует — раздел узла"
+        ),
+    )
+
+    @model_serializer(mode="wrap")
+    def _drop_empty_part(self, handler: Any):  # noqa: ANN202 — без аннотации openapi сохраняет поля
+        data = handler(self)
+        if data.get("part") is None:
+            data.pop("part", None)
+        return data
 
 
 class SyllabusMaterialItem(BaseModel):
@@ -520,6 +536,22 @@ class SyllabusMaterialItem(BaseModel):
     # кабинет звал `GET /courses/{id}/materials` на каждый подкурс.
     title: str | None = Field(None, description="Название материала (materials.title)")
     material_type: str | None = Field(None, description="Тип материала: text | video")
+    # tsk-1403: элемент части узла «после подразделов». Поле есть только у
+    # таких элементов; у остальных его нет в ответе вовсе (прежний контракт).
+    part: Literal["after"] | None = Field(
+        None,
+        description=(
+            "tsk-1403: 'after' — элемент идёт после подкурсов узла и рисуется в "
+            "разделе-дубле узла с part='after'; отсутствует — раздел узла"
+        ),
+    )
+
+    @model_serializer(mode="wrap")
+    def _drop_empty_part(self, handler: Any):  # noqa: ANN202 — без аннотации openapi сохраняет поля
+        data = handler(self)
+        if data.get("part") is None:
+            data.pop("part", None)
+        return data
 
 
 SyllabusItem = Union[SyllabusTaskItem, SyllabusMaterialItem]
@@ -537,6 +569,22 @@ class SyllabusSectionMeta(BaseModel):
     order_number: int | None = Field(
         None, description="course_parents.order_number (для отладки/UI sort внутри одного уровня)"
     )
+    # tsk-1403: раздел-дубль узла для части «после подразделов». Поле есть только у
+    # таких элементов; у остальных его нет в ответе вовсе (прежний контракт).
+    part: Literal["after"] | None = Field(
+        None,
+        description=(
+            "tsk-1403: 'after' — раздел-дубль узла после его последнего "
+            "подкурса; в нём элементы с тем же course_id и part='after'"
+        ),
+    )
+
+    @model_serializer(mode="wrap")
+    def _drop_empty_part(self, handler: Any):  # noqa: ANN202 — без аннотации openapi сохраняет поля
+        data = handler(self)
+        if data.get("part") is None:
+            data.pop("part", None)
+        return data
 
 
 class BlockedDependency(BaseModel):

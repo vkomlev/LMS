@@ -31,6 +31,7 @@ from app.services.node_sequence import (
     anchor_of,
     node_sequence,
     node_sequence_enabled,
+    node_after_children_enabled,
     segment_entries,
 )
 from app.services.transparent_subcourse import task_key, transparent_links
@@ -124,6 +125,7 @@ async def _ordered_items_by_sequence(
                     Tasks.id, Tasks.order_position, Tasks.host_order_position,
                     Tasks.course_id, Tasks.requirement_level,
                     anchor_m.id, anchor_m.order_position, anchor_m.course_id,
+                    anchor_m.placement,
                 )
                 .outerjoin(anchor_m, anchor_m.id == Tasks.anchor_material_id)
                 .where(Tasks.course_id.in_([cid, *absorbed]), Tasks.is_active.is_(True))
@@ -143,50 +145,71 @@ async def _ordered_items_by_sequence(
                 anchor_of(
                     r[5], r[6], int(r[3]), absorbed=is_absorbed,
                     anchor_course_id=r[7], host_course_id=cid,
+                    anchor_placement=r[8],
                 ),
             ))
             eligible[("task", int(r[0]))] = r[4] in _WALK_LEVELS
         task_cache[cid] = (tasks, eligible)
         return task_cache[cid]
 
+    material_cache: dict[int, Tuple[list, dict[Tuple[str, int], bool], bool]] = {}
+
+    async def load_materials(cid: int) -> Tuple[list, dict[Tuple[str, int], bool], bool]:
+        """Материалы узла с placement (tsk-1403), их допуск и признак якорей."""
+        if cid in material_cache:
+            return material_cache[cid]
+        rows = (
+            await db.execute(
+                select(
+                    Materials.id, Materials.order_position, Materials.requirement_level,
+                    Materials.is_active,
+                    # Фаза D: якорь на материал узла ставят и задания
+                    # его прозрачных подкурсов.
+                    exists().where(
+                        Tasks.anchor_material_id == Materials.id,
+                        or_(
+                            Tasks.course_id == Materials.course_id,
+                            exists().where(
+                                t_course_parents.c.course_id == Tasks.course_id,
+                                t_course_parents.c.parent_course_id == Materials.course_id,
+                                t_course_parents.c.is_transparent.is_(True),
+                            ),
+                        ),
+                    ),
+                    Materials.placement,
+                ).where(Materials.course_id == cid)
+            )
+        ).all()
+        materials = []
+        eligible: dict[Tuple[str, int], bool] = {}
+        has_anchors = False
+        for r in rows:
+            has_anchors = has_anchors or bool(r[4])
+            if not r[3]:
+                continue
+            materials.append((int(r[0]), r[1], cid, r[5]))
+            eligible[("material", int(r[0]))] = r[2] in _WALK_LEVELS
+        material_cache[cid] = (materials, eligible, has_anchors)
+        return material_cache[cid]
+
     for cid, segment in steps:
         if cid in absorbed_here:
             continue
         eligible: dict[Tuple[str, int], bool] = {}
         if segment == HEAD:
-            rows = (
-                await db.execute(
-                    select(
-                        Materials.id, Materials.order_position, Materials.requirement_level,
-                        Materials.is_active,
-                        # Фаза D: якорь на материал узла ставят и задания
-                        # его прозрачных подкурсов.
-                        exists().where(
-                            Tasks.anchor_material_id == Materials.id,
-                            or_(
-                                Tasks.course_id == Materials.course_id,
-                                exists().where(
-                                    t_course_parents.c.course_id == Tasks.course_id,
-                                    t_course_parents.c.parent_course_id == Materials.course_id,
-                                    t_course_parents.c.is_transparent.is_(True),
-                                ),
-                            ),
-                        ),
-                    ).where(Materials.course_id == cid)
-                )
-            ).all()
-            materials = []
-            has_anchors = False
-            for r in rows:
-                has_anchors = has_anchors or bool(r[4])
-                if not r[3]:
-                    continue
-                materials.append((int(r[0]), r[1], cid))
-                eligible[("material", int(r[0]))] = r[2] in _WALK_LEVELS
+            materials, material_eligible, has_anchors = await load_materials(cid)
+            eligible.update(material_eligible)
             tasks: list = []
             if has_anchors:
                 tasks, task_eligible = await load_tasks(cid)
                 eligible.update(task_eligible)
+            seq = node_sequence(materials=materials, tasks=tasks)
+        elif node_after_children_enabled():
+            # tsk-1403: материалы «после подразделов» стоят в хвосте узла.
+            materials, material_eligible, _has = await load_materials(cid)
+            tasks, task_eligible = await load_tasks(cid)
+            eligible.update(material_eligible)
+            eligible.update(task_eligible)
             seq = node_sequence(materials=materials, tasks=tasks)
         else:
             tasks, eligible = await load_tasks(cid)

@@ -52,6 +52,14 @@ anchor``). Неактивный или «рекомендуемый» матер
 (``NODE_SEQUENCE_ENABLED=false``) якоря не читает вовсе: откат рубильником
 возвращает и прежний порядок.
 
+tsk-1403 (вариант В, ОГЭ): материал узла с ``placement='after_children'``
+встаёт в начало хвоста — после подразделов, перед заданиями без якоря;
+задания, заякоренные на него, идут сразу следом (чередование «разбор →
+задача» сохраняется). Ключ такого материала ``(SEG_TAIL, 0, course_id,
+order_key)``, задания без якоря — ``(SEG_TAIL, 1, task_key)``. Шаги обхода
+и курсоры не меняются. Рубильник `NODE_AFTER_CHILDREN_ENABLED` (по
+умолчанию выключен): при false признак не читается и порядок прежний.
+
 Модуль чистый: ни запросов к БД, ни сессии. Данные узла загружает
 вызывающий — каждый своим (уже существующим) запросом, поэтому число
 запросов не меняется.
@@ -79,6 +87,10 @@ from app.services.transparent_subcourse import TaskKey
 ItemKind = Literal["material", "task"]
 Segment = Literal["head", "tail"]
 
+Placement = Literal["head", "after_children"]
+PLACEMENT_HEAD: Placement = "head"
+PLACEMENT_AFTER: Placement = "after_children"
+
 HEAD: Segment = "head"
 TAIL: Segment = "tail"
 
@@ -93,8 +105,9 @@ Step = Tuple[int, Segment]
 # Подраздел узла: (child_id, order_number).
 ChildRow = Tuple[int, Optional[int]]
 # Действующий якорь задания (tsk-996, фаза B): (material_id, order_position
-# материала, course_id материала). None — якоря нет или он недействителен.
-Anchor = Tuple[int, Optional[int], int]
+# материала, course_id материала[, placement материала — только 'after_children',
+# tsk-1403]). None — якоря нет или он недействителен.
+Anchor = Tuple[Any, ...]
 
 
 def node_sequence_enabled() -> bool:
@@ -109,13 +122,31 @@ def node_sequence_enabled() -> bool:
     return os.getenv("NODE_SEQUENCE_ENABLED", "true").lower() in ("true", "1", "yes")
 
 
+def node_after_children_enabled() -> bool:
+    """Рубильник `NODE_AFTER_CHILDREN_ENABLED` (tsk-1403, по умолчанию выключен).
+
+    ``false`` — признак ``materials.placement`` игнорируется во всех обходах,
+    порядок байт в байт прежний. Читается из окружения на каждый вызов, как
+    `node_sequence_enabled`.
+    """
+    return os.getenv("NODE_AFTER_CHILDREN_ENABLED", "false").lower() in ("true", "1", "yes")
+
+
+def is_after(placement: Optional[str]) -> bool:
+    """Материал действует как «после подразделов» (признак + рубильник)."""
+    return placement == PLACEMENT_AFTER and node_after_children_enabled()
+
+
 def order_key(order_position: Optional[int], item_id: int) -> Tuple[int, int, int]:
     """Паритет с SQL `order_position ASC NULLS LAST, id ASC`."""
     return (0 if order_position is not None else 1, order_position or 0, item_id)
 
 
 def material_seq_key(
-    order_position: Optional[int], material_id: int, course_id: int
+    order_position: Optional[int],
+    material_id: int,
+    course_id: int,
+    placement: Optional[str] = None,
 ) -> SeqKey:
     """Ключ материала в последовательности узла.
 
@@ -125,7 +156,12 @@ def material_seq_key(
     карточка прогресса показывают в списке хозяина: там они всегда шли
     группой по курсу (SQL `ORDER BY course_id, order_position, id`), и ключ
     сохраняет этот порядок.
+
+    ``placement='after_children'`` (tsk-1403, при включённом рубильнике) —
+    материал в начале хвоста узла, перед заданиями без якоря.
     """
+    if is_after(placement):
+        return (SEG_TAIL, 0, course_id, order_key(order_position, material_id))
     return (SEG_HEAD, course_id, order_key(order_position, material_id))
 
 
@@ -139,9 +175,12 @@ def task_seq_key(key: TaskKey, anchor: Optional[Anchor] = None) -> SeqKey:
     позже всех; внутри группы задания по ``key``.
     """
     if anchor is None:
-        return (SEG_TAIL, key)
-    material_id, order_position, course_id = anchor
-    return material_seq_key(order_position, int(material_id), int(course_id)) + (key,)
+        return (SEG_TAIL, 1, key)
+    material_id, order_position, course_id = anchor[:3]
+    placement = anchor[3] if len(anchor) > 3 else None
+    return material_seq_key(
+        order_position, int(material_id), int(course_id), placement
+    ) + (key,)
 
 
 def anchor_of(
@@ -152,6 +191,7 @@ def anchor_of(
     absorbed: bool = False,
     anchor_course_id: Optional[int] = None,
     host_course_id: Optional[int] = None,
+    anchor_placement: Optional[str] = None,
 ) -> Optional[Anchor]:
     """Действующий якорь задания из строки запроса либо None (tsk-996).
 
@@ -168,6 +208,10 @@ def anchor_of(
     ``LEFT JOIN materials ON id = tasks.anchor_material_id``). ``None`` —
     вызывающий уже отобрал JOIN-ом только материал курса задания (контракт
     фазы B). NULL ``anchor_material_id`` — якоря нет или материал удалён.
+
+    ``anchor_placement`` — ``materials.placement`` материала якоря (tsk-1403):
+    у материала «после подразделов» якорь получает четвёртый элемент, и
+    задание встаёт за ним в хвосте узла.
     """
     if anchor_material_id is None:
         return None
@@ -180,6 +224,8 @@ def anchor_of(
         node_course = int(task_course_id)
     if material_course != node_course:
         return None
+    if is_after(anchor_placement):
+        return (int(anchor_material_id), anchor_order_position, node_course, PLACEMENT_AFTER)
     return (int(anchor_material_id), anchor_order_position, node_course)
 
 
@@ -208,13 +254,14 @@ class NodeEntry:
 
 def node_sequence(
     *,
-    materials: Iterable[Tuple[int, Optional[int], int]] = (),
+    materials: Iterable[Tuple[Any, ...]] = (),
     tasks: Iterable[Tuple[Any, ...]] = (),
 ) -> List[NodeEntry]:
     """Элементы одного узла в учебном порядке: ``[(kind, id)]`` с ключами.
 
     Args:
-        materials: ``(material_id, order_position, course_id)`` материалов узла.
+        materials: ``(material_id, order_position, course_id[, placement])``
+            материалов узла (placement — tsk-1403).
         tasks: ``(task_id, task_key)`` или ``(task_id, task_key, anchor)``
             заданий узла (с влитыми заданиями прозрачных подкурсов, если
             вызывающий их показывает). ``anchor`` — `anchor_of(...)`: задание
@@ -226,14 +273,27 @@ def node_sequence(
     элементы с ``segment_of(entry.key) == шаг``.
     """
     entries = [
-        NodeEntry("material", int(mid), material_seq_key(op, int(mid), int(cid)))
-        for mid, op, cid in materials
+        NodeEntry(
+            "material", int(m[0]),
+            material_seq_key(m[1], int(m[0]), int(m[2]), m[3] if len(m) > 3 else None),
+        )
+        for m in materials
     ]
     for row in tasks:
         anchor = row[2] if len(row) > 2 else None
         entries.append(NodeEntry("task", int(row[0]), task_seq_key(row[1], anchor)))
     entries.sort(key=lambda e: e.key)
     return entries
+
+
+def in_after_part(entry: NodeEntry) -> bool:
+    """Элемент из части «после подразделов» (tsk-1403).
+
+    Материал ``after_children`` и задания, заякоренные на него. Задания
+    хвоста без якоря сюда не входят: программа курса показывает их в разделе
+    узла, как и прежде.
+    """
+    return entry.key[0] == SEG_TAIL and entry.key[1] == 0
 
 
 def segment_entries(entries: Iterable[NodeEntry], segment: Segment) -> List[NodeEntry]:
@@ -319,6 +379,11 @@ __all__ = [
     "material_seq_key",
     "node_sequence",
     "node_sequence_enabled",
+    "node_after_children_enabled",
+    "is_after",
+    "in_after_part",
+    "PLACEMENT_AFTER",
+    "PLACEMENT_HEAD",
     "order_key",
     "post_order_courses",
     "segment_entries",

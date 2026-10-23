@@ -411,7 +411,9 @@ async def _tree_task_rows(db: AsyncSession, course_ids: list[int]) -> list[dict[
                 # или прозрачный хозяин, фаза D); удалённый — NULL.
                 "       am.id AS anchor_material_id, "
                 "       am.order_position AS anchor_order_position, "
-                "       am.course_id AS anchor_course_id "
+                "       am.course_id AS anchor_course_id, "
+                # tsk-1403: материал «после подразделов» уводит задание в хвост.
+                "       am.placement AS anchor_placement "
                 "FROM tasks t "
                 "LEFT JOIN materials am ON am.id = t.anchor_material_id "
                 "WHERE t.course_id = ANY(:course_ids) AND t.is_active = true "
@@ -429,8 +431,9 @@ async def _tree_material_rows(db: AsyncSession, course_ids: list[int]) -> list[d
     rows = (
         await db.execute(
             text(
-                # tsk-996: `order_position` — для ключа `node_sequence`.
-                "SELECT id, course_id, title, order_position FROM materials "
+                # tsk-996: `order_position` — для ключа `node_sequence`;
+                # tsk-1403: `placement` — голова или хвост узла.
+                "SELECT id, course_id, title, order_position, placement FROM materials "
                 "WHERE course_id = ANY(:course_ids) AND is_active = true "
                 "  AND requirement_level = ANY(:levels) "
                 "ORDER BY course_id, order_position ASC NULLS LAST, id"
@@ -1591,7 +1594,10 @@ async def _progress_items_by_sequence(
             tsks = by_course_tasks.get(cid, [])
             seq_cache[cid] = node_sequence(
                 materials=[
-                    (int(m["id"]), m["order_position"], int(m.get("_src_course_id", cid)))
+                    (
+                        int(m["id"]), m["order_position"],
+                        int(m.get("_src_course_id", cid)), m.get("placement"),
+                    )
                     for m in mats
                 ],
                 tasks=[
@@ -1608,6 +1614,7 @@ async def _progress_items_by_sequence(
                             absorbed=bool(t.get("_absorbed")),
                             anchor_course_id=t.get("anchor_course_id"),
                             host_course_id=cid,
+                            anchor_placement=t.get("anchor_placement"),
                         ),
                     )
                     for t in tsks

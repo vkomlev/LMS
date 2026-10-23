@@ -16,6 +16,10 @@ from app.schemas.content_requirement import RequirementLevel
 # ---------- CRUD схемы ----------
 
 
+# tsk-1403: место материала в узле курса (`materials.placement`).
+MaterialPlacement = Literal["head", "after_children"]
+
+
 class MaterialCreate(BaseModel):
     """Создание материала. Контент валидируется по полю type."""
     course_id: int = Field(..., description="ID курса")
@@ -33,6 +37,7 @@ class MaterialCreate(BaseModel):
     )
     is_active: bool = True
     requirement_level: RequirementLevel = "required"
+    placement: MaterialPlacement = "head"
     external_uid: Optional[str] = Field(default=None, max_length=255)
 
     @model_validator(mode="after")
@@ -57,6 +62,13 @@ class MaterialUpdate(BaseModel):
     order_position: Optional[int] = None
     is_active: Optional[bool] = None
     requirement_level: Optional[RequirementLevel] = None
+    placement: Optional[MaterialPlacement] = Field(
+        default=None,
+        description=(
+            "tsk-1403: место материала в узле — head (до подкурсов) или "
+            "after_children (после подкурсов, при рубильнике NODE_AFTER_CHILDREN_ENABLED)"
+        ),
+    )
     external_uid: Optional[str] = Field(default=None, max_length=255)
 
     @model_validator(mode="after")
@@ -82,6 +94,7 @@ class MaterialRead(BaseModel):
     order_position: Optional[int] = None
     is_active: bool
     requirement_level: RequirementLevel
+    placement: MaterialPlacement = "head"
     external_uid: Optional[str] = None
     created_at: datetime
     updated_at: datetime
@@ -223,6 +236,16 @@ class MaterialsBulkUpsertItem(BaseModel):
             "`required`, при обновлении уровень НЕ меняется (tsk-377 — иначе "
             "переиздание материала сбрасывало уровень методиста). Передано "
             "явно — применяется в обоих случаях."
+        ),
+    )
+
+    placement: MaterialPlacement = Field(
+        "head",
+        description=(
+            "tsk-1403: место в узле (head | after_children). Поле не передано: "
+            "при создании `head`, при обновлении НЕ меняется (ContentBackbone "
+            "его не шлёт, разметку делает методист). Передано явно — применяется, "
+            "если методист не правил его вручную (content_provenance)."
         ),
     )
 

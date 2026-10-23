@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from datetime import datetime, timezone
 
@@ -26,7 +26,10 @@ from app.services.materials_acl_service import (
     assert_material_access,
     assert_material_file_access,
 )
-from app.services.materials_service import MANUALLY_EDITABLE_FIELDS
+from app.services.materials_service import (
+    MANUALLY_EDITABLE_FIELDS,
+    MANUALLY_PROTECTED_SERVICE_FIELDS,
+)
 from app.services.material_checkpoints_service import student_content
 from app.schemas.material_content import validate_material_content
 from app.services.courses_acl_service import assert_course_access
@@ -731,6 +734,8 @@ class MaterialManualPatch(BaseModel):
     is_active: Optional[bool] = None
     order_position: Optional[int] = None
     requirement_level: Optional[str] = None
+    # tsk-1403: место в узле; правка ставит пометку, импорт её не перебивает.
+    placement: Optional[Literal["head", "after_children"]] = None
 
 
 @router.patch(
@@ -786,7 +791,11 @@ async def patch_material_manual(
     # Пометку ставим только на контентные поля: служебные (активность, порядок,
     # уровень) импорт и так не трогает без явной передачи (tsk-377/378/407),
     # защищать их провенансом незачем.
-    content_fields = sorted(set(changed) & MANUALLY_EDITABLE_FIELDS)
+    # tsk-1403: `placement` — служебное, но размеченное руками место импорт
+    # не должен перебивать даже явной передачей, поэтому оно тоже в пометке.
+    content_fields = sorted(
+        set(changed) & (MANUALLY_EDITABLE_FIELDS | MANUALLY_PROTECTED_SERVICE_FIELDS)
+    )
     for field, value in changed.items():
         setattr(material, field, value)
 

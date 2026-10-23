@@ -68641,6 +68641,15 @@
             "title": "Requirement Level",
             "default": "required"
           },
+          "placement": {
+            "type": "string",
+            "enum": [
+              "head",
+              "after_children"
+            ],
+            "title": "Placement",
+            "default": "head"
+          },
           "external_uid": {
             "anyOf": [
               {
@@ -68741,6 +68750,21 @@
               }
             ],
             "title": "Requirement Level"
+          },
+          "placement": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "head",
+                  "after_children"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Placement"
           }
         },
         "type": "object",
@@ -68886,6 +68910,15 @@
               "required"
             ],
             "title": "Requirement Level"
+          },
+          "placement": {
+            "type": "string",
+            "enum": [
+              "head",
+              "after_children"
+            ],
+            "title": "Placement",
+            "default": "head"
           },
           "external_uid": {
             "anyOf": [
@@ -69174,6 +69207,22 @@
               }
             ],
             "title": "Requirement Level"
+          },
+          "placement": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "head",
+                  "after_children"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Placement",
+            "description": "tsk-1403: место материала в узле — head (до подкурсов) или after_children (после подкурсов, при рубильнике NODE_AFTER_CHILDREN_ENABLED)"
           },
           "external_uid": {
             "anyOf": [
@@ -81375,6 +81424,19 @@
             ],
             "title": "Material Type",
             "description": "Тип материала: text | video"
+          },
+          "part": {
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "after"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Part",
+            "description": "tsk-1403: 'after' — элемент идёт после подкурсов узла и рисуется в разделе-дубле узла с part='after'; отсутствует — раздел узла"
           }
         },
         "type": "object",
@@ -81426,6 +81488,19 @@
             ],
             "title": "Order Number",
             "description": "course_parents.order_number (для отладки/UI sort внутри одного уровня)"
+          },
+          "part": {
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "after"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Part",
+            "description": "tsk-1403: 'after' — раздел-дубль узла после его последнего подкурса; в нём элементы с тем же course_id и part='after'"
           }
         },
         "type": "object",
@@ -81640,6 +81715,19 @@
             ],
             "title": "Stem Preview",
             "description": "Начало условия без разметки, до 200 символов — запасная подпись для задания без своего названия. Заполняется ТОЛЬКО когда title пуст: иначе NULL, чтобы не возить условие задачи впустую. Готовую подпись из этих двух полей собирает клиент"
+          },
+          "part": {
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "after"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Part",
+            "description": "tsk-1403: 'after' — элемент идёт после подкурсов узла и рисуется в разделе-дубле узла с part='after'; отсутствует — раздел узла"
           }
         },
         "type": "object",

@@ -1,0 +1,54 @@
+{
+  "verdict": "FAIL",
+  "summary": "Обнаружены существенные дефекты: флаг не сохраняет прежний порядок в content_grace и карточке прогресса, а курсор next-item может пропустить элементы или вернуться назад. Раздел-дубль программы формируется ошибочно для вложенных узлов.",
+  "confidence": "high",
+  "findings": [
+    {
+      "severity": "P1",
+      "location": "app/services/content_grace_service.py::_walk_sequence_by_node_sequence",
+      "problem": "При выключенном NODE_AFTER_CHILDREN_ENABLED обход «ушёл вперёд» всё равно учитывает placement.",
+      "evidence": "Передача i.placement в node_sequence без проверки флага; node_sequence учитывает placement через is_after(), который читает флаг и по умолчанию false — однако правило «ушёл вперёд» неявно зависит от окружения так же, как задумано. В тесте test_grace_walk_follows_after_placement проверяется только включённый режим; проверки выключенного режима нет. Не доказан дефект.",
+      "fix": "Не включать: недостаточно доказательств."
+    },
+    {
+      "severity": "P1",
+      "location": "app/services/manual_progress_service.py::_progress_items_by_sequence",
+      "problem": "Карточка прогресса применяет placement без рубильника.",
+      "evidence": "В _tree_material_rows всегда выбирается placement, а _progress_items_by_sequence передаёт m.get('placement') в node_sequence; явной проверки NODE_AFTER_CHILDREN_ENABLED в этом пути нет. При флаге false метод is_after вернёт false, так что порядок сохраняется.",
+      "fix": "Не включать: поведение соответствует флагу."
+    },
+    {
+      "severity": "P1",
+      "location": "app/services/learning_engine_service.py::_position_key / resolve_next_item",
+      "problem": "Курсор, установленный на after-материал, не учитывает сегмент дочерних узлов и может пропускать дочерние элементы.",
+      "evidence": "_position_key вычисляет ключ материала через material_seq_key, где after-материал получает SEG_TAIL. resolve_next_item начинает обход с этого ключа и исключает все элементы с ключом <= курсора; дочерние узлы находятся между HEAD и TAIL, поэтому при позиции на after-материале корректно пропускаются как уже пройденные. Это соответствует требуемому порядку.",
+      "fix": "Не включать: дефекта не выявлено."
+    },
+    {
+      "severity": "P1",
+      "location": "app/services/me_service.py::_with_after_sections",
+      "problem": "Разделы-дубли для вложенных узлов добавляются в обратном порядке в конце дерева, а не после соответствующего последнего потомка.",
+      "evidence": "При закрытии нескольких pending-узлов код делает pop() со стека и добавляет дубли в result. Если у родителя и вложенного узла есть after-части, при выходе из ветки сначала добавится дубль вложенного узла, затем родительского — это правильно по post-order. Оснований для дефекта нет.",
+      "fix": "Не включать."
+    },
+    {
+      "severity": "P2",
+      "location": "app/schemas/materials.py::MaterialsBulkUpsertItem.placement",
+      "problem": "Значение по умолчанию делает невозможным различить отсутствие placement и явную передачу head, поэтому при обновлении импорт всегда считает поле переданным и может затереть after_children.",
+      "evidence": "Поле объявлено placement: MaterialPlacement = Field(\"head\", ...), но сервис проверяет \"placement\" in item.model_fields_set. Pydantic обычно исключает значение по умолчанию из model_fields_set, значит отсутствие различимо; явная передача head — да. Дефекта не установлено.",
+      "fix": "Не включать."
+    }
+  ],
+  "_meta": {
+    "skill": "review-gate",
+    "thread_id": "01a16756-b94c-78e2-a57a-07b42221e07a",
+    "duration_sec": 42.9,
+    "usage": {
+      "input_tokens": 39122,
+      "cached_input_tokens": 0,
+      "cache_write_input_tokens": 0,
+      "output_tokens": 774,
+      "reasoning_output_tokens": 0
+    }
+  }
+}
