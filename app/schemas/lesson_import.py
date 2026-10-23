@@ -76,3 +76,14 @@ class LessonImportPublishResult(BaseModel):
     tasks_created: int
     tasks_updated: int
     warnings: List[str] = Field(default_factory=list)
+
+
+class LessonImportJob(BaseModel):
+    """Фоновый разбор презентации: состояние и, когда готово, разметка блока."""
+
+    id: str
+    status: Literal["queued", "running", "ready", "failed"]
+    error: Optional[str] = None
+    html: Optional[str] = Field(None, description="Разметка SlideShowBlock для текстового материала")
+    states: Optional[int] = Field(None, description="Сколько кадров (состояний по щелчкам)")
+    screens: Optional[int] = Field(None, description="Сколько слайдов автора")

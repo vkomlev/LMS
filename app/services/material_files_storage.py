@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import io
 import logging
 import mimetypes
 import os
@@ -188,6 +189,30 @@ async def store_upload(file: UploadFile) -> Tuple[str, int]:
             )
 
     return sha_ext, total
+
+
+async def store_bytes(data: bytes, ext: str, content_type: str) -> str:
+    """Записать готовые байты (кадр презентации, tsk-1255) и вернуть `<sha256hex>.<ext>`.
+
+    То же адресование по содержимому, что у `store_upload`; лимит размера не
+    проверяется — байты собирает сервер, а не присылает клиент.
+
+    Raises:
+        DomainError: 503, если хранилище не приняло файл.
+    """
+    sha_ext = f"{hashlib.sha256(data).hexdigest()}.{ext}"
+    buf = io.BytesIO(data)
+    if s3_enabled():
+        from botocore.exceptions import BotoCoreError, ClientError
+
+        try:
+            await asyncio.to_thread(_put_object_sync, buf, object_key(sha_ext), content_type)
+        except (BotoCoreError, ClientError) as exc:
+            logger.error("tsk-1255: хранилище не приняло файл %r err=%s", sha_ext, exc)
+            raise DomainError("Хранилище файлов недоступно, файл не сохранён", status_code=503) from exc
+    else:
+        await asyncio.to_thread(_write_to_disk, buf, sha_ext)
+    return sha_ext
 
 
 def _disk_path(file_id: str) -> Optional[Path]:

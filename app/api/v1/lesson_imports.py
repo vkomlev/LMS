@@ -5,6 +5,10 @@
    ничего не пишется;
 2. `POST /courses/{course_id}/lesson-imports/publish` — поправленный черновик →
    узлы урока, материалы, задания. Повтор обновляет тот же урок.
+
+Презентация (поставка 2) разбирается в фоне — минуты: `POST …/presentation`
+ставит задачу, `GET …/presentation/{job_id}` отдаёт состояние и, когда готово,
+разметку блока «разбор по шагам» для материала черновика.
 """
 
 from __future__ import annotations
@@ -12,15 +16,16 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Body, Depends, File, Form, Query, UploadFile
+from fastapi import APIRouter, Body, Depends, File, Form, Path, Query, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_async_db, require_role
 from app.auth.current_user import CurrentUser
 from app.core.config import Settings
 from app.models.courses import Courses
-from app.schemas.lesson_import import LessonImportDraft, LessonImportPublishResult
+from app.schemas.lesson_import import LessonImportDraft, LessonImportJob, LessonImportPublishResult
 from app.services.lesson_import.draft import build_draft
+from app.services.lesson_import.jobs import get_job, start_job
 from app.services.lesson_import.publish import publish_draft
 from app.utils.exceptions import DomainError
 
@@ -95,3 +100,53 @@ async def publish_lesson_draft(
 ) -> LessonImportPublishResult:
     """Создать или обновить урок под курсом `course_id` из черновика."""
     return await publish_draft(db, course_id, draft, lesson_order=lesson_order)
+
+
+@router.post(
+    "/courses/{course_id}/lesson-imports/presentation",
+    response_model=LessonImportJob,
+    status_code=202,
+    summary="Поставить разбор презентации (pptx/pdf) в фон",
+)
+async def start_presentation_job(
+    course_id: int,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(_GATE),
+) -> LessonImportJob:
+    """Презентация → кадры по щелчкам анимации. Ответ сразу, результат — опросом."""
+    if await db.get(Courses, course_id) is None:
+        raise DomainError(detail="Курс не найден", status_code=404)
+    name = file.filename or ""
+    if not name.lower().endswith((".pptx", ".pdf")):
+        raise DomainError(detail="Презентация: нужен файл .pptx или .pdf", status_code=422)
+    data = await file.read(settings.lesson_import_max_bytes + 1)
+    if len(data) > settings.lesson_import_max_bytes:
+        raise DomainError(
+            detail=f"Презентация больше {settings.lesson_import_max_bytes // (1024 * 1024)} МБ",
+            status_code=413,
+        )
+    job_id = await start_job(course_id, getattr(current_user, "id", None), data, name)
+    logger.info("lesson_import presentation queued course=%s job=%s size=%s", course_id, job_id, len(data))
+    return LessonImportJob(id=job_id, status="queued")
+
+
+@router.get(
+    "/courses/{course_id}/lesson-imports/presentation/{job_id}",
+    response_model=LessonImportJob,
+    summary="Состояние разбора презентации",
+)
+async def get_presentation_job(
+    course_id: int,
+    job_id: str = Path(..., pattern=r"^[0-9a-f]{32}$"),
+    current_user: CurrentUser = Depends(_GATE),
+) -> LessonImportJob:
+    """queued → running → ready (с разметкой блока) или failed (с причиной)."""
+    state = await get_job(job_id, course_id)
+    if state is None:
+        raise DomainError(detail="Задача разбора не найдена или устарела", status_code=404)
+    result = state.get("result") or {}
+    return LessonImportJob(
+        id=job_id, status=state["status"], error=state.get("error"),
+        html=result.get("html"), states=result.get("states"), screens=result.get("screens"),
+    )
