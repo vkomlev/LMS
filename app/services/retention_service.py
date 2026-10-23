@@ -49,17 +49,16 @@ from typing import Any, Optional
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services import achievements_engine
 from app.services.lesson_window_sql import in_lesson_sql
 from app.services.learning_gaps_service import learning_path_results_filter
 from app.services.teacher_lesson_summary_service import MANUAL_SOURCE
 
 logger = logging.getLogger("app.retention")
 
-#: Типы условий достижения, которые умеет проверять `_is_earned`. Каталог —
-#: данные (строки `achievements`), правила — код. Незнакомый тип не роняет
-#: начисление (см. `_is_earned`), иначе новая строка в каталоге ломала бы cron.
-CONDITION_WEEKLY_STREAK = "weekly_streak"
-CONDITION_ITEMS_TOTAL = "between_lessons_items"
+#: Типы условий удержания — живут в общем движке (tsk-997), здесь реэкспорт.
+CONDITION_WEEKLY_STREAK = achievements_engine.CONDITION_WEEKLY_STREAK
+CONDITION_ITEMS_TOTAL = achievements_engine.CONDITION_ITEMS_TOTAL
 
 #: События между занятиями (дата в МСК + идентификатор элемента) для набора
 #: учеников. Условия — дословно из `_bulk_between_lessons_activity`
@@ -205,52 +204,23 @@ def compute_state(
 
 
 def _is_earned(condition: Any, state: dict[str, Any]) -> bool:
-    """Выполнено ли условие достижения при данном состоянии.
-
-    Незнакомый или битый ``condition`` — это НЕ «достижение получено»: такой
-    строке каталога здесь отвечают `False` и пишут предупреждение в лог. Иначе
-    опечатка в данных раздала бы веху всей школе."""
-    if not isinstance(condition, dict):
-        logger.warning("tsk-032: condition достижения не объект: %r", condition)
-        return False
-    ctype = condition.get("type")
-    if ctype == CONDITION_WEEKLY_STREAK:
-        target = condition.get("weeks")
-        if not isinstance(target, int) or target <= 0:
-            logger.warning("tsk-032: битый weeks в condition: %r", condition)
-            return False
-        # Веха берётся и по ТЕКУЩЕЙ, и по ЛУЧШЕЙ серии: однажды достигнутая
-        # веха не отбирается назад при обрыве серии (у неё уже нет основания,
-        # которое могло бы исчезнуть — см. docstring модуля).
-        return max(state["weekly_streak"], state["best_weekly_streak"]) >= target
-    if ctype == CONDITION_ITEMS_TOTAL:
-        target = condition.get("count")
-        if not isinstance(target, int) or target <= 0:
-            logger.warning("tsk-032: битый count в condition: %r", condition)
-            return False
-        return state["items_total"] >= target
-    logger.warning("tsk-032: неизвестный тип условия достижения: %r", ctype)
-    return False
+    """Выполнено ли условие вехи удержания (tsk-032). Правило — общий движок
+    `achievements_engine` (tsk-997); здесь имя сохранено для вызывающих."""
+    return achievements_engine.is_earned(condition, state)
 
 
 def _progress_of(condition: Any, state: dict[str, Any]) -> tuple[Optional[int], Optional[int]]:
-    """(текущее значение, целевое) для условия — для полосы прогресса в UI.
-    ``(None, None)`` для условий, которые UI показать не умеет."""
-    if not isinstance(condition, dict):
-        return None, None
-    if condition.get("type") == CONDITION_WEEKLY_STREAK:
-        target = condition.get("weeks")
-        if isinstance(target, int) and target > 0:
-            return max(state["weekly_streak"], state["best_weekly_streak"]), target
-    if condition.get("type") == CONDITION_ITEMS_TOTAL:
-        target = condition.get("count")
-        if isinstance(target, int) and target > 0:
-            return state["items_total"], target
-    return None, None
+    """(текущее, целевое) для полосы прогресса — через общий движок (tsk-997)."""
+    return achievements_engine.progress_of(condition, state)
 
 
-async def load_catalog(db: AsyncSession) -> list[dict[str, Any]]:
-    """Каталог достижений (строки `achievements`), порядок — стабильный."""
+async def load_catalog(
+    db: AsyncSession, *, types: Optional[frozenset[str]] = None,
+) -> list[dict[str, Any]]:
+    """Каталог достижений (строки `achievements`), порядок — стабильный.
+
+    ``types`` — оставить только строки с этими типами условия (tsk-997:
+    экран удержания показывает только вехи удержания, учебные — отдельно)."""
     rows = (
         await db.execute(
             text(
@@ -259,7 +229,10 @@ async def load_catalog(db: AsyncSession) -> list[dict[str, Any]]:
             )
         )
     ).mappings().fetchall()
-    return [dict(r) for r in rows]
+    items = [dict(r) for r in rows]
+    if types is None:
+        return items
+    return [i for i in items if achievements_engine.condition_type(i["condition"]) in types]
 
 
 async def load_earned_at(
@@ -292,7 +265,7 @@ async def get_retention(db: AsyncSession, *, student_id: int) -> dict[str, Any]:
     today = await _today_msk(db)
     events = (await load_events(db, student_ids=[student_id]))[student_id]
     state = compute_state(events, today_msk=today)
-    catalog = await load_catalog(db)
+    catalog = await load_catalog(db, types=achievements_engine.RETENTION_TYPES)
     earned_at = await load_earned_at(db, student_ids=[student_id])
 
     achievements: list[dict[str, Any]] = []
@@ -347,11 +320,16 @@ async def get_retention_summary(db: AsyncSession, *, student_id: int) -> dict[st
     events = (await load_events(db, student_ids=[student_id]))[student_id]
     state = compute_state(events, today_msk=today)
     earned = await load_earned_at(db, student_ids=[student_id])
+    # tsk-997: родителю — только вехи удержания, учебные достижения сюда не
+    # подмешиваются (решение этапа 1: родительский экран не расширяем).
+    retention_ids = {
+        int(i["id"]) for i in await load_catalog(db, types=achievements_engine.RETENTION_TYPES)
+    }
     return {
         "weekly_streak": state["weekly_streak"],
         "best_weekly_streak": state["best_weekly_streak"],
         "current_week_active": state["current_week_active"],
-        "achievements_earned": len(earned),
+        "achievements_earned": sum(1 for (_u, aid) in earned if aid in retention_ids),
     }
 
 
@@ -360,7 +338,11 @@ async def award_pending(db: AsyncSession, *, student_ids: list[int]) -> int:
     новых строк `user_achievements`.
 
     Идемпотентно: `ON CONFLICT DO NOTHING` по PK `(user_id, achievement_id)`.
-    Коммит — на вызывающем (тик коммитит один раз за проход)."""
+    Коммит — на вызывающем (тик коммитит один раз за проход).
+
+    tsk-997: тот же проход фиксирует и учебные достижения — к состоянию
+    удержания добавляются факты учёбы (`achievements_engine.load_learning_facts`),
+    правило одно на весь каталог. Второй фоновый тик не заводится."""
     if not student_ids:
         return 0
     catalog = await load_catalog(db)
@@ -369,10 +351,12 @@ async def award_pending(db: AsyncSession, *, student_ids: list[int]) -> int:
     today = await _today_msk(db)
     events_by_student = await load_events(db, student_ids=student_ids)
     already = await load_earned_at(db, student_ids=student_ids)
+    learning = await achievements_engine.load_learning_facts(db, student_ids=student_ids)
 
     inserted = 0
     for student_id in student_ids:
         state = compute_state(events_by_student.get(student_id, []), today_msk=today)
+        state.update(learning.get(student_id) or achievements_engine.empty_learning_facts())
         for item in catalog:
             achievement_id = int(item["id"])
             if (student_id, achievement_id) in already:
@@ -402,6 +386,12 @@ def _progress_json(condition: Any, state: dict[str, Any]) -> str:
     """Снимок состояния на момент выдачи — чтобы потом было видно, ЧЕМ веха
     была закрыта, а не только что она закрыта."""
     current, target = _progress_of(condition, state)
+    ctype = achievements_engine.condition_type(condition)
+    if ctype in achievements_engine.LEARNING_TYPES:
+        return json.dumps(
+            {"source": "tsk-997", "condition_current": current, "condition_target": target},
+            ensure_ascii=False,
+        )
     return json.dumps(
         {
             "source": "tsk-032",

@@ -1,0 +1,991 @@
+diff --git a/app/api/main.py b/app/api/main.py
+index 6e7aa1d..8c129b5 100644
+--- a/app/api/main.py
++++ b/app/api/main.py
+@@ -391,6 +391,8 @@ from app.api.v1.teacher_task_history import router as teacher_task_history_route
+ app.include_router(teacher_task_history_router, prefix=API_PREFIX)
+ from app.api.v1.dependency_locks import router as dependency_locks_router
+ app.include_router(dependency_locks_router, prefix=API_PREFIX)
++from app.api.v1.student_achievements import router as student_achievements_router
++app.include_router(student_achievements_router, prefix=API_PREFIX)  # tsk-997
+ 
+ # tsk-1024: расхождение ручной цены и расписания — сигнал персоналу
+ from app.api.v1.price_schedule_mismatches import router as price_schedule_mismatches_router
+diff --git a/app/api/v1/student_achievements.py b/app/api/v1/student_achievements.py
+new file mode 100644
+index 0000000..ebf0323
+--- /dev/null
++++ b/app/api/v1/student_achievements.py
+@@ -0,0 +1,62 @@
++"""tsk-997: учебные достижения — экран ученика и блок в карточке у преподавателя.
++
++- ``GET /me/achievements`` — ученик видит свои достижения и ближайшие с
++  прогрессом. Рубильник ``ACHIEVEMENTS_STUDENT_UI_ENABLED``.
++- ``GET /teacher/students/{student_id}/achievements`` — преподаватель видит
++  значки своего ученика (только чтение, тот же ACL, что у правки прогресса).
++  Рубильник ``ACHIEVEMENTS_TEACHER_UI_ENABLED``.
++
++Оба рубильника по умолчанию выключены: при выключенном отвечаем
++``enabled: false`` с пустыми списками (не 404 — клиенту не нужно отличать
++«выключено» от «сломано»). Начисление в фоне от рубильников не зависит.
++"""
++from __future__ import annotations
++
++import logging
++
++from fastapi import APIRouter, Depends, Path
++from sqlalchemy.ext.asyncio import AsyncSession
++
++from app.api.deps import get_async_db, get_bare_db, require_authenticated, require_role
++from app.auth.current_user import CurrentUser
++from app.core.config import Settings
++from app.schemas.achievements_student import StudentAchievementsRead
++from app.services import manual_progress_service, student_achievements_service
++
++logger = logging.getLogger("api.student_achievements")
++
++router = APIRouter(tags=["achievements"])
++
++
++@router.get(
++    "/me/achievements",
++    response_model=StudentAchievementsRead,
++    summary="Мои учебные достижения",
++)
++async def get_my_achievements(
++    current_user: CurrentUser = Depends(require_authenticated),
++    db: AsyncSession = Depends(get_async_db),
++) -> StudentAchievementsRead:
++    """Достижения за усилие текущего ученика (без сравнения с другими)."""
++    if not Settings().achievements_student_ui_enabled:
++        return StudentAchievementsRead(enabled=False)
++    data = await student_achievements_service.get_student_achievements(db, student_id=current_user.id)
++    return StudentAchievementsRead(enabled=True, **data)
++
++
++@router.get(
++    "/teacher/students/{student_id}/achievements",
++    response_model=StudentAchievementsRead,
++    summary="Учебные достижения ученика (для преподавателя)",
++)
++async def get_student_achievements(
++    student_id: int = Path(..., ge=1, description="ID ученика"),
++    db: AsyncSession = Depends(get_bare_db),
++    current_user: CurrentUser = Depends(require_role("teacher", "methodist", "admin")),
++) -> StudentAchievementsRead:
++    """Значки ученика в его карточке: сигнал «возвращается к ошибкам»."""
++    if not Settings().achievements_teacher_ui_enabled:
++        return StudentAchievementsRead(enabled=False)
++    await manual_progress_service.ensure_can_edit_progress(db, current_user, student_id)
++    data = await student_achievements_service.get_student_achievements(db, student_id=student_id)
++    return StudentAchievementsRead(enabled=True, **data)
+diff --git a/app/core/config.py b/app/core/config.py
+index 7834fcf..f767485 100644
+--- a/app/core/config.py
++++ b/app/core/config.py
+@@ -771,6 +771,15 @@ class Settings:
+         self.retention_achievements_cron_startup_delay_min: float = float(
+             os.getenv("RETENTION_ACHIEVEMENTS_CRON_STARTUP_DELAY_MIN", "2")
+         )
++        # tsk-997: показ учебных достижений. Оба выключены по умолчанию —
++        # включение решает оператор (замер до/после — tsk-1372). Начисление
++        # в фоновом тике tsk-032 от них не зависит.
++        self.achievements_student_ui_enabled: bool = os.getenv(
++            "ACHIEVEMENTS_STUDENT_UI_ENABLED", "false"
++        ).lower() in ("true", "1", "yes")
++        self.achievements_teacher_ui_enabled: bool = os.getenv(
++            "ACHIEVEMENTS_TEACHER_UI_ENABLED", "false"
++        ).lower() in ("true", "1", "yes")
+         # Интервал APScheduler-тика reminder+no_show (чаще генератора —
+         # десятиминутный порог no_show требует более мелкой гранулярности).
+         self.lesson_attendance_cron_interval_min: int = int(
+diff --git a/app/db/migrations/versions/20261023_120000_tsk997_learning_achievements.py b/app/db/migrations/versions/20261023_120000_tsk997_learning_achievements.py
+new file mode 100644
+index 0000000..26c8fde
+--- /dev/null
++++ b/app/db/migrations/versions/20261023_120000_tsk997_learning_achievements.py
+@@ -0,0 +1,101 @@
++"""tsk-997: каталог учебных достижений «за усилие».
++
++**Данные, а не схема** — как у tsk-032: таблицы есть, миграция кладёт строки
++каталога, правила проверки — в `app/services/achievements_engine.py`.
++
++**Чего здесь нет намеренно.** Ни «с первой попытки», ни скорости, ни места
++среди других: награждаем исправление ошибки, возврат к ней, рефлексию,
++вопрос, закрытый модуль и пройденный срез (похвала за усилие, Дуэк).
++`reward_points = 0`: валюты наград не заводим.
++
++**«Закрыл модуль» — ступенями 1/3/10, а не повтором на каждый модуль.**
++PK `user_achievements` — `(user_id, achievement_id)`: повторная выдача одной
++строки невозможна (см. docstring миграции tsk-032), поэтому повторяемость
++выражена ступенями.
++
++**Откат** удаляет строки каталога, по `ON DELETE CASCADE` уходят и выданные
++записи — правил в коде после отката тоже нет.
++
++Revision ID: tsk997_learning_ach
++Revises: tsk1403_materials_placement
++Create Date: 2026-10-23
++"""
++
++from __future__ import annotations
++
++import json
++from typing import Sequence, Union
++
++from alembic import op
++
++revision: str = "tsk997_learning_ach"
++down_revision: Union[str, None] = "tsk1403_materials_placement"
++branch_labels: Union[str, Sequence[str], None] = None
++depends_on: Union[str, Sequence[str], None] = None
++
++
++#: (name, description, condition, reward_points)
++_CATALOG: list[tuple[str, str, dict, int]] = [
++    ("Довёл до верного",
++     "Ошибся в задании и не бросил — разобрался и сдал верно.",
++     {"type": "fixed_after_error", "count": 1}, 0),
++    ("Довёл до верного: 5 заданий",
++     "Пять заданий, где после ошибки ты дошёл до верного ответа.",
++     {"type": "fixed_after_error", "count": 5}, 0),
++    ("Довёл до верного: 20 заданий",
++     "Двадцать заданий, доведённых до верного ответа после ошибки.",
++     {"type": "fixed_after_error", "count": 20}, 0),
++    ("Вернулся к ошибке",
++     "Через несколько дней снова решил задание, в котором когда-то ошибся.",
++     {"type": "review_passed", "count": 1}, 0),
++    ("Вернулся к ошибкам: 5 заданий",
++     "Пять заданий, к которым ты вернулся на повторении и решил снова.",
++     {"type": "review_passed", "count": 5}, 0),
++    ("Разобрался",
++     "После разбора с преподавателем записал, что понял.",
++     {"type": "reflection_done", "count": 1}, 0),
++    ("Разобрался: 5 раз",
++     "Пять разборов, после которых ты записал, что понял.",
++     {"type": "reflection_done", "count": 5}, 0),
++    ("Спросил, когда застрял",
++     "Попросил помощи, когда задание не получалось. Это нормальный шаг в учёбе.",
++     {"type": "help_asked", "count": 1}, 0),
++    ("Закрыл модуль",
++     "Сдал все обязательные задания модуля.",
++     {"type": "module_completed", "count": 1}, 0),
++    ("Закрыл три модуля",
++     "Три модуля, в которых сданы все обязательные задания.",
++     {"type": "module_completed", "count": 3}, 0),
++    ("Закрыл десять модулей",
++     "Десять модулей, в которых сданы все обязательные задания.",
++     {"type": "module_completed", "count": 10}, 0),
++    ("Прошёл итоговый срез",
++     "Ответил на все задания итогового среза по курсу.",
++     {"type": "final_check_done", "count": 1}, 0),
++]
++
++
++def upgrade() -> None:
++    # ON CONFLICT (name) — миграция идемпотентна: повторный прогон на базе,
++    # где каталог уже есть (напр. после ручного наполнения на dev), не падает
++    # и не двоит строки.
++    for name, description, condition, points in _CATALOG:
++        op.execute(
++            "INSERT INTO achievements (name, description, condition, reward_points, is_recurring) "
++            "VALUES ("
++            f"  {_lit(name)}, {_lit(description)}, "
++            f"  CAST({_lit(json.dumps(condition, ensure_ascii=False))} AS jsonb), "
++            f"  {int(points)}, false"
++            ") ON CONFLICT (name) DO NOTHING"
++        )
++
++
++def downgrade() -> None:
++    names = ", ".join(_lit(name) for name, _d, _c, _p in _CATALOG)
++    op.execute(f"DELETE FROM achievements WHERE name IN ({names})")
++
++
++def _lit(value: str) -> str:
++    """SQL-литерал строки с экранированием одинарных кавычек."""
++    escaped = value.replace("'", "''")
++    return f"'{escaped}'"
+diff --git a/app/schemas/achievements_student.py b/app/schemas/achievements_student.py
+new file mode 100644
+index 0000000..896b2dd
+--- /dev/null
++++ b/app/schemas/achievements_student.py
+@@ -0,0 +1,43 @@
++"""tsk-997: схемы учебных достижений ученика (чтение).
++
++Только свои числа ученика — сравнивать с другими здесь нечем, и это
++закреплено схемой (как у `app/schemas/retention.py`). Баллов нет."""
++from __future__ import annotations
++
++from datetime import datetime
++from typing import Optional
++
++from pydantic import BaseModel
++
++
++class StudentAchievementRead(BaseModel):
++    """Полученное достижение. ``earned_at = None`` — условие уже выполнено,
++    фиксация пройдёт в ближайший фоновый тик."""
++
++    id: int
++    name: str
++    description: Optional[str] = None
++    badge_image_url: Optional[str] = None
++    earned_at: Optional[datetime] = None
++
++
++class StudentAchievementNextRead(BaseModel):
++    """Ближайшее невыполненное достижение своего вида и прогресс «2 из 5»."""
++
++    id: int
++    name: str
++    description: Optional[str] = None
++    badge_image_url: Optional[str] = None
++    current: int
++    target: int
++
++
++class StudentAchievementsRead(BaseModel):
++    """Ответ экрана достижений.
++
++    ``enabled = False`` — показ выключен рубильником: списки пустые, клиент
++    блок не рисует. Начисление в фоне при этом идёт."""
++
++    enabled: bool
++    earned: list[StudentAchievementRead] = []
++    next: list[StudentAchievementNextRead] = []
+diff --git a/app/services/achievements_engine.py b/app/services/achievements_engine.py
+new file mode 100644
+index 0000000..067abe4
+--- /dev/null
++++ b/app/services/achievements_engine.py
+@@ -0,0 +1,232 @@
++"""tsk-997: общий движок условий достижений (`achievements.condition`).
++
++**Каталог — данные, правила — код.** Строка `achievements` несёт
++``condition = {"type": ..., <порог>}``. Движок знает реестр «тип условия →
++откуда берётся число»; порог задаёт строка каталога. Новое достижение того же
++вида — строка в таблице, новый вид — одна запись в `_REGISTRY` и функция
++подсчёта в `load_learning_facts`.
++
++**Незнакомый тип не выдаёт награду.** Битый или неизвестный ``condition`` —
++это `False` и предупреждение в лог, а не исключение: опечатка в каталоге не
++должна ни ронять фоновый тик, ни раздавать веху всей школе.
++
++**Два семейства условий.**
++
++- Удержание (tsk-032): ``weekly_streak``, ``between_lessons_items`` — числа
++  берутся из `retention_service.compute_state`.
++- Учёба за усилие (tsk-997): шесть видов ниже. Похвала за усилие, а не за
++  талант (Дуэк): награждаем исправление ошибки, возврат к ней, рефлексию,
++  вопрос, когда застрял, закрытый модуль и пройденный срез. Не награждаем:
++  «с первой попытки», скорость, место среди других. Сравнения учеников между
++  собой движок не умеет по построению — он считает только числа одного ученика.
++
++**Общие фильтры сдач** (то же правило, что у метрики удержания): попытка не
++отменена, источник не ручная проставка преподавателя, сдача относится к
++учебному пути (`learning_path_results_filter` — без повторов и среза).
++"""
++from __future__ import annotations
++
++import logging
++from typing import Any, Callable, Optional
++
++from sqlalchemy import text
++from sqlalchemy.ext.asyncio import AsyncSession
++
++from app.services.learning_gaps_service import learning_path_results_filter
++from app.services.teacher_lesson_summary_service import MANUAL_SOURCE
++
++logger = logging.getLogger("app.achievements")
++
++# --- удержание (tsk-032) ---
++CONDITION_WEEKLY_STREAK = "weekly_streak"
++CONDITION_ITEMS_TOTAL = "between_lessons_items"
++# --- учёба за усилие (tsk-997) ---
++CONDITION_FIXED_AFTER_ERROR = "fixed_after_error"
++CONDITION_REVIEW_PASSED = "review_passed"
++CONDITION_REFLECTION_DONE = "reflection_done"
++CONDITION_HELP_ASKED = "help_asked"
++CONDITION_MODULE_COMPLETED = "module_completed"
++CONDITION_FINAL_CHECK_DONE = "final_check_done"
++
++#: Тип условия → (имя порога в condition, функция «текущее число по фактам»).
++#: Для серии веха берётся и по текущей, и по лучшей серии: однажды
++#: достигнутая не отбирается при обрыве (tsk-032).
++_REGISTRY: dict[str, tuple[str, Callable[[dict[str, Any]], int]]] = {
++    CONDITION_WEEKLY_STREAK: (
++        "weeks", lambda f: max(f["weekly_streak"], f["best_weekly_streak"]),
++    ),
++    CONDITION_ITEMS_TOTAL: ("count", lambda f: f["items_total"]),
++    CONDITION_FIXED_AFTER_ERROR: ("count", lambda f: f[CONDITION_FIXED_AFTER_ERROR]),
++    CONDITION_REVIEW_PASSED: ("count", lambda f: f[CONDITION_REVIEW_PASSED]),
++    CONDITION_REFLECTION_DONE: ("count", lambda f: f[CONDITION_REFLECTION_DONE]),
++    CONDITION_HELP_ASKED: ("count", lambda f: f[CONDITION_HELP_ASKED]),
++    CONDITION_MODULE_COMPLETED: ("count", lambda f: f[CONDITION_MODULE_COMPLETED]),
++    CONDITION_FINAL_CHECK_DONE: ("count", lambda f: f[CONDITION_FINAL_CHECK_DONE]),
++}
++
++RETENTION_TYPES: frozenset[str] = frozenset({CONDITION_WEEKLY_STREAK, CONDITION_ITEMS_TOTAL})
++LEARNING_TYPES: frozenset[str] = frozenset(_REGISTRY) - RETENTION_TYPES
++
++
++def condition_type(condition: Any) -> Optional[str]:
++    """Тип условия или ``None``, если ``condition`` не объект."""
++    return condition.get("type") if isinstance(condition, dict) else None
++
++
++def _target_and_value(condition: Any, facts: dict[str, Any]) -> tuple[Optional[int], Optional[int]]:
++    """(текущее, целевое) — или ``(None, None)``, если условие не разобрать."""
++    if not isinstance(condition, dict):
++        logger.warning("tsk-997: condition достижения не объект: %r", condition)
++        return None, None
++    ctype = condition.get("type")
++    entry = _REGISTRY.get(ctype)
++    if entry is None:
++        logger.warning("tsk-997: неизвестный тип условия достижения: %r", ctype)
++        return None, None
++    param, getter = entry
++    target = condition.get(param)
++    # bool — подкласс int: {"count": true} не должен читаться как порог 1.
++    if not isinstance(target, int) or isinstance(target, bool) or target <= 0:
++        logger.warning("tsk-997: битый порог %s в condition: %r", param, condition)
++        return None, None
++    try:
++        current = int(getter(facts))
++    except KeyError:
++        # Факты этого семейства не загружены вызывающим — не «получено».
++        return None, None
++    return current, target
++
++
++def is_earned(condition: Any, facts: dict[str, Any]) -> bool:
++    """Выполнено ли условие при данных фактах ученика."""
++    current, target = _target_and_value(condition, facts)
++    return current is not None and target is not None and current >= target
++
++
++def progress_of(condition: Any, facts: dict[str, Any]) -> tuple[Optional[int], Optional[int]]:
++    """(текущее значение, целевое) для полосы прогресса; ``(None, None)`` — не показать."""
++    current, target = _target_and_value(condition, facts)
++    if current is None or target is None:
++        return None, None
++    return current, target
++
++
++def empty_learning_facts() -> dict[str, int]:
++    """Нулевые факты учёбы — для ученика без единой записи."""
++    return {t: 0 for t in LEARNING_TYPES}
++
++
++_RESULT_FILTERS = f"""
++      AND tr.source_system IS DISTINCT FROM :manual_source
++      AND {learning_path_results_filter('tr')}
++"""
++
++#: Разные задания, где была неверная сдача и ПОЗЖЕ — верная.
++_FIXED_SQL = f"""
++SELECT w.user_id, count(DISTINCT w.task_id) AS n
++FROM task_results w
++JOIN attempts wa ON wa.id = w.attempt_id AND wa.cancelled_at IS NULL
++WHERE w.user_id = ANY(:ids) AND w.is_correct = false
++  AND w.source_system IS DISTINCT FROM :manual_source
++  AND {learning_path_results_filter('w')}
++  AND EXISTS (
++      SELECT 1 FROM task_results tr
++      JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
++      WHERE tr.user_id = w.user_id AND tr.task_id = w.task_id
++        AND tr.is_correct = true AND tr.submitted_at > w.submitted_at
++        {_RESULT_FILTERS}
++  )
++GROUP BY w.user_id
++"""
++
++#: Задания, по которым пройден хотя бы один интервальный повтор (tsk-992):
++#: стадия выросла или строка закрыта. Неверный повтор сбрасывает стадию в 0 —
++#: уже выданная веха при этом остаётся (однократная запись).
++_REVIEW_SQL = """
++SELECT student_id AS user_id, count(DISTINCT task_id) AS n
++FROM task_review_schedule
++WHERE student_id = ANY(:ids) AND (interval_stage > 0 OR completed_at IS NOT NULL)
++GROUP BY student_id
++"""
++
++#: Рефлексии после разбора заявки (tsk-999) с непустым текстом.
++_REFLECTION_SQL = """
++SELECT student_id AS user_id, count(*) AS n
++FROM help_requests
++WHERE student_id = ANY(:ids) AND reflection_at IS NOT NULL
++  AND btrim(coalesce(reflection_main, '')) <> ''
++GROUP BY student_id
++"""
++
++#: Заявки помощи, поданные самим учеником (не авто при исчерпании лимита).
++_HELP_SQL = """
++SELECT student_id AS user_id, count(*) AS n
++FROM help_requests
++WHERE student_id = ANY(:ids) AND auto_created = false AND request_type = 'manual_help'
++GROUP BY student_id
++"""
++
++#: Модуль = подкурс (есть родитель) с хотя бы одним активным обязательным
++#: заданием; закрыт, когда по КАЖДОМУ такому заданию есть верная сдача.
++#: Персональные послабления обязательности (requirement_overrides) не
++#: учитываются — правило строже, а не мягче: модуль не засчитается раньше.
++_MODULE_SQL = f"""
++WITH req AS (
++    SELECT t.id AS task_id, t.course_id
++    FROM tasks t
++    WHERE t.is_active = true AND t.requirement_level = 'required'
++      AND EXISTS (SELECT 1 FROM course_parents cp WHERE cp.course_id = t.course_id)
++),
++req_count AS (SELECT course_id, count(*) AS total FROM req GROUP BY course_id),
++done AS (
++    SELECT DISTINCT tr.user_id, req.course_id, req.task_id
++    FROM task_results tr
++    JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
++    JOIN req ON req.task_id = tr.task_id
++    WHERE tr.user_id = ANY(:ids) AND tr.is_correct = true
++      {_RESULT_FILTERS}
++),
++closed AS (
++    SELECT d.user_id, d.course_id
++    FROM done d JOIN req_count rc ON rc.course_id = d.course_id
++    GROUP BY d.user_id, d.course_id, rc.total
++    HAVING count(*) = rc.total
++)
++SELECT user_id, count(*) AS n FROM closed GROUP BY user_id
++"""
++
++#: Пройденные итоговые срезы (tsk-994): отвечено последнее задание.
++_FINAL_SQL = """
++SELECT student_id AS user_id, count(*) AS n
++FROM final_check_runs
++WHERE student_id = ANY(:ids) AND finished_at IS NOT NULL
++GROUP BY student_id
++"""
++
++_FACT_QUERIES: dict[str, str] = {
++    CONDITION_FIXED_AFTER_ERROR: _FIXED_SQL,
++    CONDITION_REVIEW_PASSED: _REVIEW_SQL,
++    CONDITION_REFLECTION_DONE: _REFLECTION_SQL,
++    CONDITION_HELP_ASKED: _HELP_SQL,
++    CONDITION_MODULE_COMPLETED: _MODULE_SQL,
++    CONDITION_FINAL_CHECK_DONE: _FINAL_SQL,
++}
++
++
++async def load_learning_facts(
++    db: AsyncSession, *, student_ids: list[int],
++) -> dict[int, dict[str, int]]:
++    """Факты учёбы для набора учеников: ``{student_id: {тип условия: число}}``.
++
++    Один запрос на вид условия для всего набора — тик проходит по всей школе."""
++    facts = {sid: empty_learning_facts() for sid in student_ids}
++    if not student_ids:
++        return facts
++    params = {"ids": student_ids, "manual_source": MANUAL_SOURCE}
++    for ctype, sql in _FACT_QUERIES.items():
++        rows = (await db.execute(text(sql), params)).mappings().fetchall()
++        for r in rows:
++            sid = int(r["user_id"])
++            if sid in facts:
++                facts[sid][ctype] = int(r["n"])
++    return facts
+diff --git a/app/services/retention_service.py b/app/services/retention_service.py
+index f41fa53..00a0b72 100644
+--- a/app/services/retention_service.py
++++ b/app/services/retention_service.py
+@@ -49,17 +49,16 @@ from typing import Any, Optional
+ from sqlalchemy import text
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
++from app.services import achievements_engine
+ from app.services.lesson_window_sql import in_lesson_sql
+ from app.services.learning_gaps_service import learning_path_results_filter
+ from app.services.teacher_lesson_summary_service import MANUAL_SOURCE
+ 
+ logger = logging.getLogger("app.retention")
+ 
+-#: Типы условий достижения, которые умеет проверять `_is_earned`. Каталог —
+-#: данные (строки `achievements`), правила — код. Незнакомый тип не роняет
+-#: начисление (см. `_is_earned`), иначе новая строка в каталоге ломала бы cron.
+-CONDITION_WEEKLY_STREAK = "weekly_streak"
+-CONDITION_ITEMS_TOTAL = "between_lessons_items"
++#: Типы условий удержания — живут в общем движке (tsk-997), здесь реэкспорт.
++CONDITION_WEEKLY_STREAK = achievements_engine.CONDITION_WEEKLY_STREAK
++CONDITION_ITEMS_TOTAL = achievements_engine.CONDITION_ITEMS_TOTAL
+ 
+ #: События между занятиями (дата в МСК + идентификатор элемента) для набора
+ #: учеников. Условия — дословно из `_bulk_between_lessons_activity`
+@@ -205,52 +204,23 @@ def compute_state(
+ 
+ 
+ def _is_earned(condition: Any, state: dict[str, Any]) -> bool:
+-    """Выполнено ли условие достижения при данном состоянии.
+-
+-    Незнакомый или битый ``condition`` — это НЕ «достижение получено»: такой
+-    строке каталога здесь отвечают `False` и пишут предупреждение в лог. Иначе
+-    опечатка в данных раздала бы веху всей школе."""
+-    if not isinstance(condition, dict):
+-        logger.warning("tsk-032: condition достижения не объект: %r", condition)
+-        return False
+-    ctype = condition.get("type")
+-    if ctype == CONDITION_WEEKLY_STREAK:
+-        target = condition.get("weeks")
+-        if not isinstance(target, int) or target <= 0:
+-            logger.warning("tsk-032: битый weeks в condition: %r", condition)
+-            return False
+-        # Веха берётся и по ТЕКУЩЕЙ, и по ЛУЧШЕЙ серии: однажды достигнутая
+-        # веха не отбирается назад при обрыве серии (у неё уже нет основания,
+-        # которое могло бы исчезнуть — см. docstring модуля).
+-        return max(state["weekly_streak"], state["best_weekly_streak"]) >= target
+-    if ctype == CONDITION_ITEMS_TOTAL:
+-        target = condition.get("count")
+-        if not isinstance(target, int) or target <= 0:
+-            logger.warning("tsk-032: битый count в condition: %r", condition)
+-            return False
+-        return state["items_total"] >= target
+-    logger.warning("tsk-032: неизвестный тип условия достижения: %r", ctype)
+-    return False
++    """Выполнено ли условие вехи удержания (tsk-032). Правило — общий движок
++    `achievements_engine` (tsk-997); здесь имя сохранено для вызывающих."""
++    return achievements_engine.is_earned(condition, state)
+ 
+ 
+ def _progress_of(condition: Any, state: dict[str, Any]) -> tuple[Optional[int], Optional[int]]:
+-    """(текущее значение, целевое) для условия — для полосы прогресса в UI.
+-    ``(None, None)`` для условий, которые UI показать не умеет."""
+-    if not isinstance(condition, dict):
+-        return None, None
+-    if condition.get("type") == CONDITION_WEEKLY_STREAK:
+-        target = condition.get("weeks")
+-        if isinstance(target, int) and target > 0:
+-            return max(state["weekly_streak"], state["best_weekly_streak"]), target
+-    if condition.get("type") == CONDITION_ITEMS_TOTAL:
+-        target = condition.get("count")
+-        if isinstance(target, int) and target > 0:
+-            return state["items_total"], target
+-    return None, None
+-
+-
+-async def load_catalog(db: AsyncSession) -> list[dict[str, Any]]:
+-    """Каталог достижений (строки `achievements`), порядок — стабильный."""
++    """(текущее, целевое) для полосы прогресса — через общий движок (tsk-997)."""
++    return achievements_engine.progress_of(condition, state)
++
++
++async def load_catalog(
++    db: AsyncSession, *, types: Optional[frozenset[str]] = None,
++) -> list[dict[str, Any]]:
++    """Каталог достижений (строки `achievements`), порядок — стабильный.
++
++    ``types`` — оставить только строки с этими типами условия (tsk-997:
++    экран удержания показывает только вехи удержания, учебные — отдельно)."""
+     rows = (
+         await db.execute(
+             text(
+@@ -259,7 +229,10 @@ async def load_catalog(db: AsyncSession) -> list[dict[str, Any]]:
+             )
+         )
+     ).mappings().fetchall()
+-    return [dict(r) for r in rows]
++    items = [dict(r) for r in rows]
++    if types is None:
++        return items
++    return [i for i in items if achievements_engine.condition_type(i["condition"]) in types]
+ 
+ 
+ async def load_earned_at(
+@@ -292,7 +265,7 @@ async def get_retention(db: AsyncSession, *, student_id: int) -> dict[str, Any]:
+     today = await _today_msk(db)
+     events = (await load_events(db, student_ids=[student_id]))[student_id]
+     state = compute_state(events, today_msk=today)
+-    catalog = await load_catalog(db)
++    catalog = await load_catalog(db, types=achievements_engine.RETENTION_TYPES)
+     earned_at = await load_earned_at(db, student_ids=[student_id])
+ 
+     achievements: list[dict[str, Any]] = []
+@@ -347,11 +320,16 @@ async def get_retention_summary(db: AsyncSession, *, student_id: int) -> dict[st
+     events = (await load_events(db, student_ids=[student_id]))[student_id]
+     state = compute_state(events, today_msk=today)
+     earned = await load_earned_at(db, student_ids=[student_id])
++    # tsk-997: родителю — только вехи удержания, учебные достижения сюда не
++    # подмешиваются (решение этапа 1: родительский экран не расширяем).
++    retention_ids = {
++        int(i["id"]) for i in await load_catalog(db, types=achievements_engine.RETENTION_TYPES)
++    }
+     return {
+         "weekly_streak": state["weekly_streak"],
+         "best_weekly_streak": state["best_weekly_streak"],
+         "current_week_active": state["current_week_active"],
+-        "achievements_earned": len(earned),
++        "achievements_earned": sum(1 for (_u, aid) in earned if aid in retention_ids),
+     }
+ 
+ 
+@@ -360,7 +338,11 @@ async def award_pending(db: AsyncSession, *, student_ids: list[int]) -> int:
+     новых строк `user_achievements`.
+ 
+     Идемпотентно: `ON CONFLICT DO NOTHING` по PK `(user_id, achievement_id)`.
+-    Коммит — на вызывающем (тик коммитит один раз за проход)."""
++    Коммит — на вызывающем (тик коммитит один раз за проход).
++
++    tsk-997: тот же проход фиксирует и учебные достижения — к состоянию
++    удержания добавляются факты учёбы (`achievements_engine.load_learning_facts`),
++    правило одно на весь каталог. Второй фоновый тик не заводится."""
+     if not student_ids:
+         return 0
+     catalog = await load_catalog(db)
+@@ -369,10 +351,12 @@ async def award_pending(db: AsyncSession, *, student_ids: list[int]) -> int:
+     today = await _today_msk(db)
+     events_by_student = await load_events(db, student_ids=student_ids)
+     already = await load_earned_at(db, student_ids=student_ids)
++    learning = await achievements_engine.load_learning_facts(db, student_ids=student_ids)
+ 
+     inserted = 0
+     for student_id in student_ids:
+         state = compute_state(events_by_student.get(student_id, []), today_msk=today)
++        state.update(learning.get(student_id) or achievements_engine.empty_learning_facts())
+         for item in catalog:
+             achievement_id = int(item["id"])
+             if (student_id, achievement_id) in already:
+@@ -402,6 +386,12 @@ def _progress_json(condition: Any, state: dict[str, Any]) -> str:
+     """Снимок состояния на момент выдачи — чтобы потом было видно, ЧЕМ веха
+     была закрыта, а не только что она закрыта."""
+     current, target = _progress_of(condition, state)
++    ctype = achievements_engine.condition_type(condition)
++    if ctype in achievements_engine.LEARNING_TYPES:
++        return json.dumps(
++            {"source": "tsk-997", "condition_current": current, "condition_target": target},
++            ensure_ascii=False,
++        )
+     return json.dumps(
+         {
+             "source": "tsk-032",
+diff --git a/app/services/student_achievements_service.py b/app/services/student_achievements_service.py
+new file mode 100644
+index 0000000..16a1da2
+--- /dev/null
++++ b/app/services/student_achievements_service.py
+@@ -0,0 +1,60 @@
++"""tsk-997: учебные достижения ученика для чтения (ученик, преподаватель).
++
++Только учебные достижения (`achievements_engine.LEARNING_TYPES`): вехи
++удержания ученик уже видит в своём блоке (`GET /me/retention`), дублировать
++их здесь — показать одно и то же дважды.
++
++Чтение без побочных эффектов: фиксацию делает фоновый тик
++(`retention_achievements_cron_service`). Выполненное, но ещё не
++зафиксированное достижение видно сразу, с ``earned_at = None`` — тот же
++приём, что в `retention_service.get_retention`.
++
++Наружу — только числа одного ученика. Баллы (`reward_points`) не отдаются:
++у учебных достижений их нет, и валюты наград мы не заводим.
++"""
++from __future__ import annotations
++
++from typing import Any
++
++from sqlalchemy.ext.asyncio import AsyncSession
++
++from app.services import achievements_engine, retention_service
++
++
++async def get_student_achievements(db: AsyncSession, *, student_id: int) -> dict[str, Any]:
++    """Полученные учебные достижения и ближайшее невыполненное по каждому виду.
++
++    «Ближайшее» — с наименьшим порогом среди невыполненных того же вида:
++    «Довёл до верного: 2 из 5», а не все ступени сразу."""
++    catalog = await retention_service.load_catalog(db, types=achievements_engine.LEARNING_TYPES)
++    facts = (await achievements_engine.load_learning_facts(db, student_ids=[student_id]))[student_id]
++    earned_at = await retention_service.load_earned_at(db, student_ids=[student_id])
++
++    earned: list[dict[str, Any]] = []
++    nearest: dict[str, dict[str, Any]] = {}
++    for item in catalog:
++        aid = int(item["id"])
++        fixed_at = earned_at.get((student_id, aid))
++        current, target = achievements_engine.progress_of(item["condition"], facts)
++        base = {
++            "id": aid,
++            "name": item["name"],
++            "description": item["description"],
++            "badge_image_url": item["badge_image_url"],
++        }
++        # Зафиксированное остаётся полученным, даже если основание потом
++        # исчезло (неверный повтор сбросил стадию) — веха однократна.
++        if fixed_at is not None or achievements_engine.is_earned(item["condition"], facts):
++            earned.append({**base, "earned_at": fixed_at})
++            continue
++        if current is None or target is None:
++            continue
++        ctype = achievements_engine.condition_type(item["condition"]) or ""
++        prev = nearest.get(ctype)
++        if prev is None or target < prev["target"]:
++            nearest[ctype] = {**base, "current": current, "target": target}
++
++    return {
++        "earned": earned,
++        "next": sorted(nearest.values(), key=lambda n: (n["target"] - n["current"]) / n["target"]),
++    }
+diff --git a/tests/test_tsk997_achievements.py b/tests/test_tsk997_achievements.py
+new file mode 100644
+index 0000000..5711af6
+--- /dev/null
++++ b/tests/test_tsk997_achievements.py
+@@ -0,0 +1,253 @@
++"""tsk-997: общий движок условий достижений и учебные достижения за усилие.
++
++Слои:
++
++1. Чистый движок (без БД): реестр типов, битые условия не выдают награду.
++2. Факты учёбы на настоящей БД: что считается «довёл до верного», «закрыл
++   модуль», «спросил» — и что НЕ считается (ручная проставка, авто-заявка).
++3. Тик фиксирует учебные достижения, экран удержания ими не засоряется.
++4. Эндпоинты за рубильниками: выключено → ``enabled: false``; включено →
++   свои достижения; преподаватель без связи с учеником → 403.
++"""
++from __future__ import annotations
++
++from datetime import datetime, timedelta, timezone
++
++import pytest
++from sqlalchemy import text
++
++from app.services import achievements_engine as eng
++from app.services import retention_service, student_achievements_service
++from app.services.retention_achievements_cron_service import (
++    retention_achievements_cron_tick,
++)
++from tests.test_tsk032_retention import (
++    _enroll,
++    _new_course,
++    _new_task,
++    _new_user,
++    _submit,
++)
++
++UTC = timezone.utc
++
++
++# ====================== Слой 1: чистый движок ======================
++
++
++def _facts(**kw: int) -> dict[str, int]:
++    f = eng.empty_learning_facts()
++    f.update(kw)
++    return f
++
++
++def test_engine_threshold_and_progress():
++    facts = _facts(fixed_after_error=3)
++    assert eng.is_earned({"type": "fixed_after_error", "count": 1}, facts) is True
++    assert eng.is_earned({"type": "fixed_after_error", "count": 5}, facts) is False
++    assert eng.progress_of({"type": "fixed_after_error", "count": 5}, facts) == (3, 5)
++
++
++def test_engine_broken_conditions_never_award():
++    facts = _facts(help_asked=10)
++    assert eng.is_earned({"type": "help_asked"}, facts) is False
++    assert eng.is_earned({"type": "help_asked", "count": True}, facts) is False
++    assert eng.is_earned({"type": "help_asked", "count": 0}, facts) is False
++    assert eng.is_earned({"type": "leaderboard_top", "count": 1}, facts) is False
++    assert eng.is_earned("не объект", facts) is False
++
++
++def test_engine_missing_family_facts_is_not_earned():
++    """Учебное условие при фактах только удержания — не «получено», не KeyError."""
++    retention_only = {"weekly_streak": 9, "best_weekly_streak": 9, "items_total": 999}
++    assert eng.is_earned({"type": "module_completed", "count": 1}, retention_only) is False
++    assert eng.is_earned({"type": "weekly_streak", "weeks": 3}, retention_only) is True
++
++
++def test_retention_wrappers_still_work():
++    state = {"weekly_streak": 0, "best_weekly_streak": 4, "items_total": 0}
++    assert retention_service._is_earned({"type": "weekly_streak", "weeks": 3}, state) is True
++
++
++# ====================== Слой 2: факты учёбы в БД ======================
++
++
++async def _student_with_course(db, name: str = "s") -> tuple[int, str, int]:
++    sid, token = await _new_user(db, name=name)
++    cid = await _new_course(db, "tsk997 курс")
++    await _enroll(db, student_id=sid, course_id=cid)
++    return sid, token, cid
++
++
++@pytest.mark.asyncio
++async def test_fixed_after_error_counts_only_real_fixes(db):
++    sid, _, cid = await _student_with_course(db)
++    t0 = datetime.now(UTC) - timedelta(days=2)
++    fixed = await _new_task(db, course_id=cid, uid="fixed")
++    first_ok = await _new_task(db, course_id=cid, uid="first-ok")
++    manual = await _new_task(db, course_id=cid, uid="manual")
++    cancelled = await _new_task(db, course_id=cid, uid="cancelled")
++
++    await _submit(db, student_id=sid, task_id=fixed, course_id=cid, submitted_at=t0, is_correct=False)
++    await _submit(db, student_id=sid, task_id=fixed, course_id=cid, submitted_at=t0 + timedelta(hours=1))
++    # Верно с первого раза, а потом ошибся — это не «довёл до верного».
++    await _submit(db, student_id=sid, task_id=first_ok, course_id=cid, submitted_at=t0)
++    await _submit(db, student_id=sid, task_id=first_ok, course_id=cid,
++                  submitted_at=t0 + timedelta(hours=1), is_correct=False)
++    # Верный только ручной проставкой преподавателя — не в счёт.
++    await _submit(db, student_id=sid, task_id=manual, course_id=cid, submitted_at=t0, is_correct=False)
++    await _submit(db, student_id=sid, task_id=manual, course_id=cid,
++                  submitted_at=t0 + timedelta(hours=1), source_system="manual_teacher")
++    # Верная сдача в отменённой попытке — не в счёт.
++    await _submit(db, student_id=sid, task_id=cancelled, course_id=cid, submitted_at=t0, is_correct=False)
++    await _submit(db, student_id=sid, task_id=cancelled, course_id=cid,
++                  submitted_at=t0 + timedelta(hours=1), cancelled=True)
++
++    facts = (await eng.load_learning_facts(db, student_ids=[sid]))[sid]
++    assert facts[eng.CONDITION_FIXED_AFTER_ERROR] == 1
++
++
++@pytest.mark.asyncio
++async def test_module_completed_needs_every_required_task(db):
++    sid, _, root = await _student_with_course(db)
++    module = await _new_course(db, "tsk997 модуль")
++    await db.execute(
++        text("INSERT INTO course_parents (course_id, parent_course_id) VALUES (:c, :p)"),
++        {"c": module, "p": root},
++    )
++    await db.commit()
++    a = await _new_task(db, course_id=module, uid="m-a")
++    b = await _new_task(db, course_id=module, uid="m-b")
++    opt = await _new_task(db, course_id=module, uid="m-opt")
++    await db.execute(text("UPDATE tasks SET requirement_level = 'skippable' WHERE id = :t"), {"t": opt})
++    await db.commit()
++    t0 = datetime.now(UTC) - timedelta(hours=3)
++
++    await _submit(db, student_id=sid, task_id=a, course_id=module, submitted_at=t0)
++    facts = (await eng.load_learning_facts(db, student_ids=[sid]))[sid]
++    assert facts[eng.CONDITION_MODULE_COMPLETED] == 0, "модуль закрыт без всех обязательных"
++
++    await _submit(db, student_id=sid, task_id=b, course_id=module, submitted_at=t0)
++    facts = (await eng.load_learning_facts(db, student_ids=[sid]))[sid]
++    assert facts[eng.CONDITION_MODULE_COMPLETED] == 1, "необязательное задание не должно мешать"
++
++
++@pytest.mark.asyncio
++async def test_help_asked_ignores_auto_created(db):
++    sid, _, cid = await _student_with_course(db)
++    await db.execute(
++        text(
++            "INSERT INTO help_requests (student_id, course_id, request_type, auto_created) "
++            "VALUES (:s, :c, 'blocked_limit', true)"
++        ),
++        {"s": sid, "c": cid},
++    )
++    await db.commit()
++    facts = (await eng.load_learning_facts(db, student_ids=[sid]))[sid]
++    assert facts[eng.CONDITION_HELP_ASKED] == 0
++
++    await db.execute(
++        text("INSERT INTO help_requests (student_id, course_id, message) VALUES (:s, :c, 'не понял')"),
++        {"s": sid, "c": cid},
++    )
++    await db.commit()
++    facts = (await eng.load_learning_facts(db, student_ids=[sid]))[sid]
++    assert facts[eng.CONDITION_HELP_ASKED] == 1
++
++
++# ====================== Слой 3: тик и экран удержания ======================
++
++
++@pytest.mark.asyncio
++async def test_tick_awards_learning_and_retention_screen_stays_clean(db, db_session_factory):
++    sid, _, cid = await _student_with_course(db)
++    task = await _new_task(db, course_id=cid, uid="tick")
++    t0 = datetime.now(UTC) - timedelta(hours=5)
++    await _submit(db, student_id=sid, task_id=task, course_id=cid, submitted_at=t0, is_correct=False)
++    await _submit(db, student_id=sid, task_id=task, course_id=cid, submitted_at=t0 + timedelta(hours=1))
++
++    await retention_achievements_cron_tick(session_factory=db_session_factory)
++    names = set(
++        (
++            await db.execute(
++                text(
++                    "SELECT a.name FROM user_achievements ua JOIN achievements a "
++                    "ON a.id = ua.achievement_id WHERE ua.user_id = :u"
++                ),
++                {"u": sid},
++            )
++        ).scalars()
++    )
++    assert "Довёл до верного" in names
++
++    retention = await retention_service.get_retention(db, student_id=sid)
++    assert all(a["name"] != "Довёл до верного" for a in retention["achievements"])
++    summary = await retention_service.get_retention_summary(db, student_id=sid)
++    assert summary["achievements_earned"] == len(names) - 1, "родителю подмешалось учебное"
++
++    data = await student_achievements_service.get_student_achievements(db, student_id=sid)
++    earned = [e for e in data["earned"] if e["name"] == "Довёл до верного"]
++    assert earned and earned[0]["earned_at"] is not None
++    nxt = {n["name"]: (n["current"], n["target"]) for n in data["next"]}
++    assert nxt.get("Довёл до верного: 5 заданий") == (1, 5)
++    assert "Довёл до верного: 20 заданий" not in nxt, "показываем только ближайшую ступень"
++
++
++# ====================== Слой 4: эндпоинты за рубильниками ======================
++
++
++@pytest.mark.asyncio
++async def test_student_endpoint_off_by_default(db, client, monkeypatch):
++    monkeypatch.delenv("ACHIEVEMENTS_STUDENT_UI_ENABLED", raising=False)
++    _sid, token, _ = await _student_with_course(db)
++    assert (await client.get("/api/v1/me/achievements")).status_code == 401
++    resp = await client.get("/api/v1/me/achievements", headers={"Authorization": f"Bearer {token}"})
++    assert resp.status_code == 200, resp.text
++    assert resp.json() == {"enabled": False, "earned": [], "next": []}
++
++
++@pytest.mark.asyncio
++async def test_student_endpoint_on_shows_own_only(db, client, monkeypatch):
++    monkeypatch.setenv("ACHIEVEMENTS_STUDENT_UI_ENABLED", "true")
++    sid, token, cid = await _student_with_course(db)
++    await db.execute(
++        text("INSERT INTO help_requests (student_id, course_id, message) VALUES (:s, :c, 'помогите')"),
++        {"s": sid, "c": cid},
++    )
++    await db.commit()
++    resp = await client.get("/api/v1/me/achievements", headers={"Authorization": f"Bearer {token}"})
++    body = resp.json()
++    assert body["enabled"] is True
++    assert any(e["name"] == "Спросил, когда застрял" for e in body["earned"])
++    for key in ("rank", "peers", "leaderboard", "reward_points"):
++        assert key not in body
++        assert all(key not in e for e in body["earned"])
++
++
++@pytest.mark.asyncio
++async def test_teacher_endpoint_gate_and_acl(db, client, monkeypatch):
++    sid, _, _ = await _student_with_course(db, name="st")
++    teacher_id, teacher_token = await _new_user(db, name="teacher")
++    role_id = (await db.execute(text("SELECT id FROM roles WHERE name = 'teacher' LIMIT 1"))).scalar()
++    await db.execute(
++        text("INSERT INTO user_roles (user_id, role_id) VALUES (:u, :r)"),
++        {"u": teacher_id, "r": role_id},
++    )
++    await db.commit()
++    url = f"/api/v1/teacher/students/{sid}/achievements"
++    hdr = {"Authorization": f"Bearer {teacher_token}"}
++
++    monkeypatch.delenv("ACHIEVEMENTS_TEACHER_UI_ENABLED", raising=False)
++    assert (await client.get(url, headers=hdr)).json()["enabled"] is False
++
++    monkeypatch.setenv("ACHIEVEMENTS_TEACHER_UI_ENABLED", "true")
++    assert (await client.get(url, headers=hdr)).status_code == 403, "чужой ученик"
++
++    await db.execute(
++        text("INSERT INTO student_teacher_links (student_id, teacher_id) VALUES (:s, :t)"),
++        {"s": sid, "t": teacher_id},
++    )
++    await db.commit()
++    resp = await client.get(url, headers=hdr)
++    assert resp.status_code == 200, resp.text
++    assert resp.json()["enabled"] is True

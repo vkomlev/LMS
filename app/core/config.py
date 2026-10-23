@@ -771,6 +771,15 @@ class Settings:
         self.retention_achievements_cron_startup_delay_min: float = float(
             os.getenv("RETENTION_ACHIEVEMENTS_CRON_STARTUP_DELAY_MIN", "2")
         )
+        # tsk-997: показ учебных достижений. Оба выключены по умолчанию —
+        # включение решает оператор (замер до/после — tsk-1372). Начисление
+        # в фоновом тике tsk-032 от них не зависит.
+        self.achievements_student_ui_enabled: bool = os.getenv(
+            "ACHIEVEMENTS_STUDENT_UI_ENABLED", "false"
+        ).lower() in ("true", "1", "yes")
+        self.achievements_teacher_ui_enabled: bool = os.getenv(
+            "ACHIEVEMENTS_TEACHER_UI_ENABLED", "false"
+        ).lower() in ("true", "1", "yes")
         # Интервал APScheduler-тика reminder+no_show (чаще генератора —
         # десятиминутный порог no_show требует более мелкой гранулярности).
         self.lesson_attendance_cron_interval_min: int = int(
