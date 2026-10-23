@@ -95,8 +95,16 @@ async def main(apply: bool) -> None:
                 "AND placement <> 'after_children'",
                 after_ids,
             )
-            log.info("%s; не размечено после записи: %s", res, check)
-            if check != 0:
+            marked = await conn.fetchval(
+                "SELECT count(*) FROM materials WHERE id = ANY($1::int[]) "
+                "AND placement = 'after_children'",
+                after_ids,
+            )
+            log.info("%s; не размечено после записи: %s; размечено %s из %s",
+                     res, check, marked, len(after_ids))
+            # Сверка с планом: удалённая между чтением и записью строка в
+            # `check` не видна, поэтому считаем и размеченные (ревью Codex).
+            if check != 0 or marked != len(after_ids):
                 raise RuntimeError("проверка не сошлась")
         except Exception:
             await tr.rollback()
