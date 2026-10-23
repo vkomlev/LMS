@@ -5,7 +5,7 @@
 (`app/services/node_sequence.py`). Действует только при рубильнике
 `NODE_AFTER_CHILDREN_ENABLED`. Данных не меняет: все строки получают 'head'.
 
-Rollback: `alembic downgrade tsk1398_messenger_link_tg` — колонка удаляется
+Rollback: `alembic downgrade tsk996_tariff_single_active` — колонка удаляется
 (разметка 'after_children' теряется).
 """
 from typing import Sequence, Union
@@ -14,7 +14,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "tsk1403_materials_placement"
-down_revision: Union[str, None] = "tsk1398_messenger_link_tg"
+down_revision: Union[str, None] = "tsk996_tariff_single_active"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
