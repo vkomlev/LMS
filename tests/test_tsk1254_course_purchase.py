@@ -369,3 +369,20 @@ def test_access_until_and_extension_keep_the_same_boundary():
     """Год с 23.10 — по 22.10; продление на год — по 22.10 следующего года."""
     assert course_purchase_service.access_until_for(date(2026, 10, 23), 12) == date(2027, 10, 22)
     assert course_purchase_service.add_months(date(2026, 1, 31), 1) == date(2026, 2, 28)
+
+
+async def test_offers_listed_for_student_only_when_sales_on(db, client, monkeypatch):
+    """Кабинету нужен tariff_id разового тарифа — он приходит в offers."""
+    from tests.test_tsk010_payments import _login_as
+
+    env = await _setup(db, "p1254-offer", price=MONTH_MINOR)
+    tariff = await _add_once_tariff(db, env["group_id"])
+    _, token = await _login_as(db, env["student_id"])
+    headers = {"Authorization": f"Bearer {token}"}
+    monkeypatch.delenv("COURSE_PURCHASE_ENABLED", raising=False)
+    off = (await client.get("/api/v1/me/course-purchases", headers=headers)).json()
+    assert off["sales_enabled"] is False and off["offers"] == []
+    monkeypatch.setenv("COURSE_PURCHASE_ENABLED", "true")
+    on = (await client.get("/api/v1/me/course-purchases", headers=headers)).json()
+    assert [o["tariff_id"] for o in on["offers"]] == [tariff]
+    assert on["offers"][0]["access_months"] == 12

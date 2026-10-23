@@ -54,6 +54,7 @@ __all__ = [
     "extend_access",
     "refund",
     "list_for_student",
+    "list_offers",
     "list_expiring",
     "assert_access_not_expired",
     "send_expiry_notices",
@@ -488,6 +489,37 @@ async def extend_access(
         "tsk-1254: доступ ученика %s к курсу %s продлён до %s", student_id, course_id, new_until
     )
     return new_until
+
+
+async def list_offers(db: AsyncSession, *, student_id: int) -> list[dict]:
+    """Что ученик может купить целиком: его действующие зачисления на платные
+    курсы, у группы которых есть активный разовый тариф.
+
+    Кабинету нужен `tariff_id` для оплаты, а публичная витрина его не отдаёт.
+    Отказ «соседний курс в группе» сюда не переносим: его скажет сама покупка.
+    """
+    rows = (
+        await db.execute(
+            text(
+                """
+                SELECT uc.course_id, c.title AS course_title, t.id AS tariff_id,
+                       t.name AS tariff_name, t.price_minor, t.currency, t.access_months,
+                       t.installments_allowed, uc.access_until
+                  FROM user_courses uc
+                  JOIN courses c ON c.id = uc.course_id
+                  JOIN course_pricing cp ON cp.course_id = uc.course_id
+                                        AND cp.sale_status = 'paid'
+                  JOIN pricing_group g ON g.id = cp.group_id AND g.is_active
+                  JOIN pricing_tariff t ON t.group_id = g.id AND t.is_active
+                                       AND t.period = 'once'
+                 WHERE uc.user_id = :s AND uc.is_active
+                 ORDER BY c.title, t.sort_order, t.id
+                """
+            ),
+            {"s": student_id},
+        )
+    ).all()
+    return [dict(r._mapping) for r in rows]
 
 
 async def list_for_student(db: AsyncSession, *, student_id: int) -> list[dict]:

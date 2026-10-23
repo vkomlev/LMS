@@ -66,6 +66,12 @@ async def my_course_purchases(
     return {
         "sales_enabled": course_purchase_service.sales_enabled(),
         "items": await course_purchase_service.list_for_student(db, student_id=current_user.id),
+        # Предложения нужны кабинету только когда продажа открыта.
+        "offers": (
+            await course_purchase_service.list_offers(db, student_id=current_user.id)
+            if course_purchase_service.sales_enabled()
+            else []
+        ),
     }
 
 
