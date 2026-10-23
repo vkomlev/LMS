@@ -427,6 +427,12 @@ class Settings:
             os.getenv("MAX_ATTACHMENT_SIZE_BYTES", str(10 * 1024 * 1024))  # 10 MB
         )
 
+        # tsk-1255: файлы урока для импорта (docx автора с картинками) —
+        # свой лимит, общий 10 МБ для них мал. Файл только разбирается в памяти.
+        self.lesson_import_max_bytes: int = int(
+            os.getenv("LESSON_IMPORT_MAX_BYTES", str(25 * 1024 * 1024))
+        )
+
         self.attachment_chunk_size: int = int(
             os.getenv("ATTACHMENT_CHUNK_SIZE", str(1024 * 1024))  # 1 MB
         )

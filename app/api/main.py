@@ -394,6 +394,10 @@ app.include_router(dependency_locks_router, prefix=API_PREFIX)
 from app.api.v1.student_achievements import router as student_achievements_router
 app.include_router(student_achievements_router, prefix=API_PREFIX)  # tsk-997
 
+# tsk-1255: импорт урока из файлов автора (разбор → черновик → публикация)
+from app.api.v1.lesson_imports import router as lesson_imports_router
+app.include_router(lesson_imports_router, prefix=API_PREFIX)
+
 # tsk-1024: расхождение ручной цены и расписания — сигнал персоналу
 from app.api.v1.price_schedule_mismatches import router as price_schedule_mismatches_router
 app.include_router(price_schedule_mismatches_router, prefix=API_PREFIX)

@@ -27589,6 +27589,244 @@
         }
       }
     },
+    "/api/v1/courses/{course_id}/lesson-imports/parse": {
+      "post": {
+        "tags": [
+          "lesson-imports"
+        ],
+        "summary": "Разобрать файлы урока в черновик (без записи в БД)",
+        "description": "Конспект, пре-тест и ДЗ (docx) → черновик с предупреждениями для предпросмотра.",
+        "operationId": "parse_lesson_files_api_v1_courses__course_id__lesson_imports_parse_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "course_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Course Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_parse_lesson_files_api_v1_courses__course_id__lesson_imports_parse_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LessonImportDraft"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/courses/{course_id}/lesson-imports/publish": {
+      "post": {
+        "tags": [
+          "lesson-imports"
+        ],
+        "summary": "Опубликовать черновик урока (идемпотентно по ключам урока)",
+        "description": "Создать или обновить урок под курсом `course_id` из черновика.",
+        "operationId": "publish_lesson_draft_api_v1_courses__course_id__lesson_imports_publish_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "course_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Course Id"
+            }
+          },
+          {
+            "name": "lesson_order",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 1000,
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Место урока в курсе при первом создании",
+              "title": "Lesson Order"
+            },
+            "description": "Место урока в курсе при первом создании"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LessonImportDraft"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LessonImportPublishResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/staff/price-schedule-mismatches": {
       "get": {
         "tags": [
@@ -55335,6 +55573,76 @@
         ],
         "title": "Body_mark_one_as_read_api_v1_messages__message_id__read_post"
       },
+      "Body_parse_lesson_files_api_v1_courses__course_id__lesson_imports_parse_post": {
+        "properties": {
+          "lesson_num": {
+            "type": "integer",
+            "maximum": 999.0,
+            "minimum": 1.0,
+            "title": "Lesson Num"
+          },
+          "lesson_title": {
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Lesson Title"
+          },
+          "video_url": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 2000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Video Url"
+          },
+          "konspekt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "binary"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Konspekt"
+          },
+          "pretest": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "binary"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pretest"
+          },
+          "homework": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "binary"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Homework"
+          }
+        },
+        "type": "object",
+        "required": [
+          "lesson_num",
+          "lesson_title"
+        ],
+        "title": "Body_parse_lesson_files_api_v1_courses__course_id__lesson_imports_parse_post"
+      },
       "Body_submit_payment_api_v1_me_payments_post": {
         "properties": {
           "charge_id": {
@@ -67625,6 +67933,317 @@
           "skipped_at"
         ],
         "title": "LearningSkipResponse"
+      },
+      "LessonImportDraft": {
+        "properties": {
+          "lesson_num": {
+            "type": "integer",
+            "maximum": 999.0,
+            "minimum": 1.0,
+            "title": "Lesson Num"
+          },
+          "lesson_title": {
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Lesson Title"
+          },
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/LessonImportNode"
+            },
+            "type": "array",
+            "maxItems": 4,
+            "title": "Nodes"
+          },
+          "materials": {
+            "items": {
+              "$ref": "#/components/schemas/LessonImportMaterial"
+            },
+            "type": "array",
+            "maxItems": 50,
+            "title": "Materials"
+          },
+          "tasks": {
+            "items": {
+              "$ref": "#/components/schemas/LessonImportTask"
+            },
+            "type": "array",
+            "maxItems": 300,
+            "title": "Tasks"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "lesson_num",
+          "lesson_title"
+        ],
+        "title": "LessonImportDraft",
+        "description": "Черновик урока: результат разбора и тело публикации."
+      },
+      "LessonImportMaterial": {
+        "properties": {
+          "uid": {
+            "type": "string",
+            "pattern": "^[A-Z0-9][A-Z0-9-]{0,39}$",
+            "title": "Uid"
+          },
+          "node": {
+            "type": "string",
+            "enum": [
+              "PRE",
+              "KON",
+              "POST",
+              "HW"
+            ],
+            "title": "Node"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "video",
+              "text"
+            ],
+            "title": "Type"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Title"
+          },
+          "content": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Content"
+          },
+          "order_position": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Order Position"
+          }
+        },
+        "type": "object",
+        "required": [
+          "uid",
+          "node",
+          "type",
+          "title",
+          "content"
+        ],
+        "title": "LessonImportMaterial",
+        "description": "Материал узла: видео или текст (HTML)."
+      },
+      "LessonImportNode": {
+        "properties": {
+          "suffix": {
+            "type": "string",
+            "enum": [
+              "PRE",
+              "KON",
+              "POST",
+              "HW"
+            ],
+            "title": "Suffix"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Title"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 5000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "access_level": {
+            "type": "string",
+            "enum": [
+              "auto_check",
+              "manual_check",
+              "self_guided"
+            ],
+            "title": "Access Level"
+          },
+          "order_number": {
+            "type": "integer",
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Order Number"
+          }
+        },
+        "type": "object",
+        "required": [
+          "suffix",
+          "title",
+          "access_level",
+          "order_number"
+        ],
+        "title": "LessonImportNode",
+        "description": "Узел урока (подкурс)."
+      },
+      "LessonImportPublishResult": {
+        "properties": {
+          "lesson_course_id": {
+            "type": "integer",
+            "title": "Lesson Course Id"
+          },
+          "lesson_course_uid": {
+            "type": "string",
+            "title": "Lesson Course Uid"
+          },
+          "node_ids": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Node Ids"
+          },
+          "materials_created": {
+            "type": "integer",
+            "title": "Materials Created"
+          },
+          "materials_updated": {
+            "type": "integer",
+            "title": "Materials Updated"
+          },
+          "tasks_created": {
+            "type": "integer",
+            "title": "Tasks Created"
+          },
+          "tasks_updated": {
+            "type": "integer",
+            "title": "Tasks Updated"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "lesson_course_id",
+          "lesson_course_uid",
+          "node_ids",
+          "materials_created",
+          "materials_updated",
+          "tasks_created",
+          "tasks_updated"
+        ],
+        "title": "LessonImportPublishResult",
+        "description": "Итог публикации: что создано и где смотреть урок."
+      },
+      "LessonImportTask": {
+        "properties": {
+          "uid": {
+            "type": "string",
+            "pattern": "^[A-Z0-9][A-Z0-9-]{0,39}$",
+            "title": "Uid"
+          },
+          "node": {
+            "type": "string",
+            "enum": [
+              "PRE",
+              "KON",
+              "POST",
+              "HW"
+            ],
+            "title": "Node"
+          },
+          "difficulty_uid": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Difficulty Uid"
+          },
+          "max_score": {
+            "type": "integer",
+            "maximum": 1000.0,
+            "minimum": 0.0,
+            "title": "Max Score"
+          },
+          "requirement_level": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "skippable",
+                  "recommended",
+                  "required"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requirement Level"
+          },
+          "max_attempts": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 100.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Attempts"
+          },
+          "key_confirmed": {
+            "type": "boolean",
+            "title": "Key Confirmed",
+            "description": "Ключ автора проверен методистом в предпросмотре; на запись не влияет",
+            "default": false
+          },
+          "task_content": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Task Content"
+          },
+          "solution_rules": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Solution Rules"
+          }
+        },
+        "type": "object",
+        "required": [
+          "uid",
+          "node",
+          "difficulty_uid",
+          "max_score",
+          "task_content",
+          "solution_rules"
+        ],
+        "title": "LessonImportTask",
+        "description": "Задание узла в формате пакетного импорта заданий."
       },
       "LessonOccurrenceRead": {
         "properties": {

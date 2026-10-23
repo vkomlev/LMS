@@ -1,0 +1,717 @@
+diff --git a/app/api/main.py b/app/api/main.py
+index 8c129b5..73025ed 100644
+--- a/app/api/main.py
++++ b/app/api/main.py
+@@ -394,6 +394,10 @@ app.include_router(dependency_locks_router, prefix=API_PREFIX)
+ from app.api.v1.student_achievements import router as student_achievements_router
+ app.include_router(student_achievements_router, prefix=API_PREFIX)  # tsk-997
+ 
++# tsk-1255: импорт урока из файлов автора (разбор → черновик → публикация)
++from app.api.v1.lesson_imports import router as lesson_imports_router
++app.include_router(lesson_imports_router, prefix=API_PREFIX)
++
+ # tsk-1024: расхождение ручной цены и расписания — сигнал персоналу
+ from app.api.v1.price_schedule_mismatches import router as price_schedule_mismatches_router
+ app.include_router(price_schedule_mismatches_router, prefix=API_PREFIX)
+@@ -547,6 +551,10 @@ app.include_router(marketer_dashboard_router, prefix=API_PREFIX)
+ from app.api.v1.payments_gateway import router as payments_gateway_router
+ app.include_router(payments_gateway_router, prefix=API_PREFIX)
+ 
++# tsk-1254: покупка курса целиком и срок доступа (за рубильником COURSE_PURCHASE_ENABLED).
++from app.api.v1.course_purchases import router as course_purchases_router
++app.include_router(course_purchases_router, prefix=API_PREFIX)
++
+ # tsk-010: оплата родителем по гостевой ссылке (без входа). Публичный контур,
+ # защита — сверка начисления с учеником из ссылки + ограничение частоты.
+ from app.api.v1.public_parent_payments import router as public_parent_payments_router
+diff --git a/app/core/config.py b/app/core/config.py
+index f767485..0a9cc28 100644
+--- a/app/core/config.py
++++ b/app/core/config.py
+@@ -427,6 +427,12 @@ class Settings:
+             os.getenv("MAX_ATTACHMENT_SIZE_BYTES", str(10 * 1024 * 1024))  # 10 MB
+         )
+ 
++        # tsk-1255: файлы урока для импорта (docx автора с картинками) —
++        # свой лимит, общий 10 МБ для них мал. Файл только разбирается в памяти.
++        self.lesson_import_max_bytes: int = int(
++            os.getenv("LESSON_IMPORT_MAX_BYTES", str(25 * 1024 * 1024))
++        )
++
+         self.attachment_chunk_size: int = int(
+             os.getenv("ATTACHMENT_CHUNK_SIZE", str(1024 * 1024))  # 1 MB
+         )
+@@ -445,6 +451,17 @@ class Settings:
+         # закрывает эндпоинты, всё остальное продолжает работать как сегодня —
+         # откат без развёртывания, если наставник поведёт себя не так.
+         self.ai_tutor_enabled: bool = os.getenv("AI_TUTOR_ENABLED", "true").lower() in ("true", "1", "yes")
++        # tsk-1254: рубильники разовой покупки курса. Выключены по умолчанию:
++        # без первого курс целиком не продаётся (ни картой, ни отметкой
++        # маркетолога), без второго срок доступа не проверяется и не
++        # напоминается. Уже оплаченная покупка из месячного счёта исключается
++        # всегда — иначе отключение рубильника выставило бы ей второй счёт.
++        self.course_purchase_enabled: bool = os.getenv(
++            "COURSE_PURCHASE_ENABLED", "false"
++        ).lower() in ("true", "1", "yes")
++        self.access_expiry_enabled: bool = os.getenv(
++            "ACCESS_EXPIRY_ENABLED", "false"
++        ).lower() in ("true", "1", "yes")
+         # tsk-1318: зацепка вместо голого «как ты рассуждал?» в первой реплике
+         # `concept` после неверного ответа. Выключено, пока гейт роли не пройдёт
+         # на всей цепочке (12.10 провайдер подменял модели — проверить не вышло).
+diff --git a/docs/openapi.json b/docs/openapi.json
+index b4dd6e8..b584bc4 100644
+--- a/docs/openapi.json
++++ b/docs/openapi.json
+@@ -53010,6 +53010,244 @@
+           }
+         }
+       }
++    },
++    "/api/v1/courses/{course_id}/lesson-imports/parse": {
++      "post": {
++        "tags": [
++          "lesson-imports"
++        ],
++        "summary": "Разобрать файлы урока в черновик (без записи в БД)",
++        "description": "Конспект, пре-тест и ДЗ (docx) → черновик с предупреждениями для предпросмотра.",
++        "operationId": "parse_lesson_files_api_v1_courses__course_id__lesson_imports_parse_post",
++        "security": [
++          {
++            "APIKeyHeader": []
++          },
++          {
++            "APIKeyQuery": []
++          }
++        ],
++        "parameters": [
++          {
++            "name": "course_id",
++            "in": "path",
++            "required": true,
++            "schema": {
++              "type": "integer",
++              "title": "Course Id"
++            }
++          },
++          {
++            "name": "token",
++            "in": "query",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Token"
++            }
++          },
++          {
++            "name": "authorization",
++            "in": "header",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Authorization"
++            }
++          },
++          {
++            "name": "session",
++            "in": "cookie",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Session"
++            }
++          }
++        ],
++        "requestBody": {
++          "required": true,
++          "content": {
++            "multipart/form-data": {
++              "schema": {
++                "$ref": "#/components/schemas/Body_parse_lesson_files_api_v1_courses__course_id__lesson_imports_parse_post"
++              }
++            }
++          }
++        },
++        "responses": {
++          "200": {
++            "description": "Successful Response",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/LessonImportDraft"
++                }
++              }
++            }
++          },
++          "422": {
++            "description": "Validation Error",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/HTTPValidationError"
++                }
++              }
++            }
++          }
++        }
++      }
++    },
++    "/api/v1/courses/{course_id}/lesson-imports/publish": {
++      "post": {
++        "tags": [
++          "lesson-imports"
++        ],
++        "summary": "Опубликовать черновик урока (идемпотентно по ключам урока)",
++        "description": "Создать или обновить урок под курсом `course_id` из черновика.",
++        "operationId": "publish_lesson_draft_api_v1_courses__course_id__lesson_imports_publish_post",
++        "security": [
++          {
++            "APIKeyHeader": []
++          },
++          {
++            "APIKeyQuery": []
++          }
++        ],
++        "parameters": [
++          {
++            "name": "course_id",
++            "in": "path",
++            "required": true,
++            "schema": {
++              "type": "integer",
++              "title": "Course Id"
++            }
++          },
++          {
++            "name": "lesson_order",
++            "in": "query",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "integer",
++                  "maximum": 1000,
++                  "minimum": 1
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "description": "Место урока в курсе при первом создании",
++              "title": "Lesson Order"
++            },
++            "description": "Место урока в курсе при первом создании"
++          },
++          {
++            "name": "token",
++            "in": "query",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Token"
++            }
++          },
++          {
++            "name": "authorization",
++            "in": "header",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Authorization"
++            }
++          },
++          {
++            "name": "session",
++            "in": "cookie",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Session"
++            }
++          }
++        ],
++        "requestBody": {
++          "required": true,
++          "content": {
++            "application/json": {
++              "schema": {
++                "$ref": "#/components/schemas/LessonImportDraft"
++              }
++            }
++          }
++        },
++        "responses": {
++          "200": {
++            "description": "Successful Response",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/LessonImportPublishResult"
++                }
++              }
++            }
++          },
++          "422": {
++            "description": "Validation Error",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/HTTPValidationError"
++                }
++              }
++            }
++          }
++        }
++      }
+     }
+   },
+   "components": {
+@@ -90092,6 +90330,387 @@
+         ],
+         "title": "GoogleSheetsImportResponse",
+         "description": "Ответ на запрос импорта из Google Sheets.\n\nСодержит детальный отчет об импорте: количество успешно импортированных задач,\nобновленных задач, список ошибок и общее количество обработанных строк.\n\n**Интерпретация результатов:**\n- `imported` - новые задачи, добавленные в БД\n- `updated` - существующие задачи, обновленные по external_uid\n- `errors` - список ошибок для строк, которые не удалось импортировать\n- `total_rows` - общее количество строк данных (без заголовка)\n\n**Успешный импорт:** `errors.length === 0` и `imported + updated === total_rows`"
++      },
++      "LessonImportDraft": {
++        "properties": {
++          "lesson_num": {
++            "type": "integer",
++            "maximum": 999.0,
++            "minimum": 1.0,
++            "title": "Lesson Num"
++          },
++          "lesson_title": {
++            "type": "string",
++            "maxLength": 500,
++            "minLength": 1,
++            "title": "Lesson Title"
++          },
++          "nodes": {
++            "items": {
++              "$ref": "#/components/schemas/LessonImportNode"
++            },
++            "type": "array",
++            "maxItems": 4,
++            "title": "Nodes"
++          },
++          "materials": {
++            "items": {
++              "$ref": "#/components/schemas/LessonImportMaterial"
++            },
++            "type": "array",
++            "maxItems": 50,
++            "title": "Materials"
++          },
++          "tasks": {
++            "items": {
++              "$ref": "#/components/schemas/LessonImportTask"
++            },
++            "type": "array",
++            "maxItems": 300,
++            "title": "Tasks"
++          },
++          "warnings": {
++            "items": {
++              "type": "string"
++            },
++            "type": "array",
++            "title": "Warnings"
++          }
++        },
++        "type": "object",
++        "required": [
++          "lesson_num",
++          "lesson_title"
++        ],
++        "title": "LessonImportDraft",
++        "description": "Черновик урока: результат разбора и тело публикации."
++      },
++      "LessonImportPublishResult": {
++        "properties": {
++          "lesson_course_id": {
++            "type": "integer",
++            "title": "Lesson Course Id"
++          },
++          "lesson_course_uid": {
++            "type": "string",
++            "title": "Lesson Course Uid"
++          },
++          "node_ids": {
++            "additionalProperties": {
++              "type": "integer"
++            },
++            "type": "object",
++            "title": "Node Ids"
++          },
++          "materials_created": {
++            "type": "integer",
++            "title": "Materials Created"
++          },
++          "materials_updated": {
++            "type": "integer",
++            "title": "Materials Updated"
++          },
++          "tasks_created": {
++            "type": "integer",
++            "title": "Tasks Created"
++          },
++          "tasks_updated": {
++            "type": "integer",
++            "title": "Tasks Updated"
++          },
++          "warnings": {
++            "items": {
++              "type": "string"
++            },
++            "type": "array",
++            "title": "Warnings"
++          }
++        },
++        "type": "object",
++        "required": [
++          "lesson_course_id",
++          "lesson_course_uid",
++          "node_ids",
++          "materials_created",
++          "materials_updated",
++          "tasks_created",
++          "tasks_updated"
++        ],
++        "title": "LessonImportPublishResult",
++        "description": "Итог публикации: что создано и где смотреть урок."
++      },
++      "LessonImportNode": {
++        "properties": {
++          "suffix": {
++            "type": "string",
++            "enum": [
++              "PRE",
++              "KON",
++              "POST",
++              "HW"
++            ],
++            "title": "Suffix"
++          },
++          "title": {
++            "type": "string",
++            "maxLength": 500,
++            "minLength": 1,
++            "title": "Title"
++          },
++          "description": {
++            "anyOf": [
++              {
++                "type": "string",
++                "maxLength": 5000
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Description"
++          },
++          "access_level": {
++            "type": "string",
++            "enum": [
++              "auto_check",
++              "manual_check",
++              "self_guided"
++            ],
++            "title": "Access Level"
++          },
++          "order_number": {
++            "type": "integer",
++            "maximum": 100.0,
++            "minimum": 1.0,
++            "title": "Order Number"
++          }
++        },
++        "type": "object",
++        "required": [
++          "suffix",
++          "title",
++          "access_level",
++          "order_number"
++        ],
++        "title": "LessonImportNode",
++        "description": "Узел урока (подкурс)."
++      },
++      "LessonImportMaterial": {
++        "properties": {
++          "uid": {
++            "type": "string",
++            "pattern": "^[A-Z0-9][A-Z0-9-]{0,39}$",
++            "title": "Uid"
++          },
++          "node": {
++            "type": "string",
++            "enum": [
++              "PRE",
++              "KON",
++              "POST",
++              "HW"
++            ],
++            "title": "Node"
++          },
++          "type": {
++            "type": "string",
++            "enum": [
++              "video",
++              "text"
++            ],
++            "title": "Type"
++          },
++          "title": {
++            "type": "string",
++            "maxLength": 500,
++            "minLength": 1,
++            "title": "Title"
++          },
++          "content": {
++            "additionalProperties": true,
++            "type": "object",
++            "title": "Content"
++          },
++          "order_position": {
++            "anyOf": [
++              {
++                "type": "integer",
++                "minimum": 1.0
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Order Position"
++          }
++        },
++        "type": "object",
++        "required": [
++          "uid",
++          "node",
++          "type",
++          "title",
++          "content"
++        ],
++        "title": "LessonImportMaterial",
++        "description": "Материал узла: видео или текст (HTML)."
++      },
++      "Body_parse_lesson_files_api_v1_courses__course_id__lesson_imports_parse_post": {
++        "properties": {
++          "lesson_num": {
++            "type": "integer",
++            "maximum": 999.0,
++            "minimum": 1.0,
++            "title": "Lesson Num"
++          },
++          "lesson_title": {
++            "type": "string",
++            "maxLength": 500,
++            "minLength": 1,
++            "title": "Lesson Title"
++          },
++          "video_url": {
++            "anyOf": [
++              {
++                "type": "string",
++                "maxLength": 2000
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Video Url"
++          },
++          "konspekt": {
++            "anyOf": [
++              {
++                "type": "string",
++                "format": "binary"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Konspekt"
++          },
++          "pretest": {
++            "anyOf": [
++              {
++                "type": "string",
++                "format": "binary"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Pretest"
++          },
++          "homework": {
++            "anyOf": [
++              {
++                "type": "string",
++                "format": "binary"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Homework"
++          }
++        },
++        "type": "object",
++        "required": [
++          "lesson_num",
++          "lesson_title"
++        ],
++        "title": "Body_parse_lesson_files_api_v1_courses__course_id__lesson_imports_parse_post"
++      },
++      "LessonImportTask": {
++        "properties": {
++          "uid": {
++            "type": "string",
++            "pattern": "^[A-Z0-9][A-Z0-9-]{0,39}$",
++            "title": "Uid"
++          },
++          "node": {
++            "type": "string",
++            "enum": [
++              "PRE",
++              "KON",
++              "POST",
++              "HW"
++            ],
++            "title": "Node"
++          },
++          "difficulty_uid": {
++            "type": "string",
++            "maxLength": 100,
++            "minLength": 1,
++            "title": "Difficulty Uid"
++          },
++          "max_score": {
++            "type": "integer",
++            "maximum": 1000.0,
++            "minimum": 0.0,
++            "title": "Max Score"
++          },
++          "requirement_level": {
++            "anyOf": [
++              {
++                "type": "string",
++                "enum": [
++                  "skippable",
++                  "recommended",
++                  "required"
++                ]
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Requirement Level"
++          },
++          "max_attempts": {
++            "anyOf": [
++              {
++                "type": "integer",
++                "maximum": 100.0,
++                "minimum": 1.0
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Max Attempts"
++          },
++          "key_confirmed": {
++            "type": "boolean",
++            "title": "Key Confirmed",
++            "description": "Ключ автора проверен методистом в предпросмотре; на запись не влияет",
++            "default": false
++          },
++          "task_content": {
++            "additionalProperties": true,
++            "type": "object",
++            "title": "Task Content"
++          },
++          "solution_rules": {
++            "additionalProperties": true,
++            "type": "object",
++            "title": "Solution Rules"
++          }
++        },
++        "type": "object",
++        "required": [
++          "uid",
++          "node",
++          "difficulty_uid",
++          "max_score",
++          "task_content",
++          "solution_rules"
++        ],
++        "title": "LessonImportTask",
++        "description": "Задание узла в формате пакетного импорта заданий."
+       }
+     },
+     "securitySchemes": {
+@@ -90107,4 +90726,4 @@
+       }
+     }
+   }
+-}
+\ No newline at end of file
++}
+diff --git a/requirements.txt b/requirements.txt
+index 06d6bcd..9607e86 100644
+--- a/requirements.txt
++++ b/requirements.txt
+@@ -17,6 +17,7 @@ pydantic-settings==2.10.1
+ pydantic_core==2.33.2
+ python-dotenv==1.1.1
+ python-multipart==0.0.20
++python-docx==1.2.0  # tsk-1255: импорт урока из docx
+ sniffio==1.3.1
+ SQLAlchemy==2.0.41
+ alembic>=1.18.0
