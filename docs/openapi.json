@@ -62522,6 +62522,19 @@
               }
             ],
             "title": "Note"
+          },
+          "attribution": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attribution",
+            "description": "Метки источника (tsk-1407): utm_*, page; прочие ключи отбрасываются"
           }
         },
         "type": "object",

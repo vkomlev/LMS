@@ -31,9 +31,18 @@ from app.schemas.lead import (
     ExternalLeadStatusList,
 )
 from app.schemas.schedule_booking import FreeSlotsRead
-from app.services import lead_service, pd_consent_service, schedule_booking_service
+from app.services import (
+    lead_notify_service,
+    lead_service,
+    pd_consent_service,
+    schedule_booking_service,
+)
+from app.services.quiz_funnel_service import sanitize_attribution
 
 router = APIRouter(prefix="/integrations", tags=["integrations_leads"])
+
+#: Канал «Сайт» — заявки бота записи с лендинга идут под ним (tsk-1407).
+_WEBSITE_SOURCE_CODE = "website"
 
 
 async def _service_only(
@@ -93,10 +102,25 @@ async def ingest_lead(
     )
     # tsk-1335: служебный приём — согласие не требуется; пришло — пишем в журнал.
     # Лид уже закоммичен сервисом (идемпотентная склейка), согласие — отдельной записью.
+    dirty = False
     if pd_consent_service.check_consent(body, source="integration", enforce=False):
         await pd_consent_service.record_consent(
             db, request, body, source="integration", lead_id=lead_id,
         )
+        dirty = True
+    # tsk-1407: метки и уведомление — только для нового лида; повтор первое касание не меняет.
+    if created and body.attribution:
+        await lead_service.attach_website_attribution(
+            db, lead_id, sanitize_attribution(body.attribution), None,
+        )
+        dirty = True
+    if created and body.source_code == _WEBSITE_SOURCE_CODE:
+        await lead_notify_service.notify_marketers_new_lead(
+            db, lead_id=lead_id, full_name=body.full_name, contact=body.contact,
+            page=body.page or body.source_detail,
+        )
+        dirty = True
+    if dirty:
         await db.commit()
     return ExternalLeadResponse(lead_id=lead_id, created=created)
 

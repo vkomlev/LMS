@@ -79,6 +79,10 @@ class ExternalLeadCreateRequest(PdConsentFields):
     full_name: Optional[str] = Field(default=None, max_length=300)
     source_detail: Optional[str] = Field(default=None, max_length=500)
     note: Optional[str] = None
+    attribution: Optional[dict] = Field(
+        default=None,
+        description="Метки источника (tsk-1407): utm_*, page; прочие ключи отбрасываются",
+    )
 
     @model_validator(mode="after")
     def _key_is_really_filled(self) -> "ExternalLeadCreateRequest":
