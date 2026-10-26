@@ -1,0 +1,72 @@
+{
+  "id": 272,
+  "task_content": {
+    "code": null,
+    "stem": "Дан фиксированный список `strings = ['apple', 'banana', 'orange', 'grape']`.\nСоздайте новый список, в котором элемент с индексом `i`\nповторён `(i+1)` раз: первый элемент — 1 раз, второй — 2 раза,\nтретий — 3, четвёртый — 4.\n\nВыведите получившийся список через `print`.\n",
+    "tags": null,
+    "type": "SA_COM",
+    "media": null,
+    "title": "Повторение элементов списка по индексам",
+    "prompt": null,
+    "options": null,
+    "has_hints": true,
+    "course_uid": null,
+    "hints_text": [
+      "Пройдитесь по списку с индексом (enumerate) и повторите каждую строку оператором умножения: строка * (номер по порядку)."
+    ],
+    "hints_video": [
+      "https://vk.com/video-53400615_456239839",
+      "https://vk.com/video-53400615_456240310"
+    ],
+    "difficulty_code": null
+  },
+  "course_id": 109,
+  "difficulty_id": 3,
+  "solution_rules": {
+    "max_score": 1,
+    "penalties": {
+      "wrong_answer": 0,
+      "extra_wrong_mc": 0,
+      "missing_answer": 0
+    },
+    "auto_check": true,
+    "text_answer": null,
+    "scoring_mode": "all_or_nothing",
+    "short_answer": {
+      "regex": null,
+      "use_regex": false,
+      "normalization": [
+        "trim",
+        "strip_punctuation",
+        "collapse_spaces"
+      ],
+      "accepted_answers": [
+        {
+          "score": 1,
+          "value": "['apple', 'bananabanana', 'orangeorangeorange', 'grapegrapegrapegrape']"
+        }
+      ]
+    },
+    "partial_rules": [],
+    "correct_options": [],
+    "custom_scoring_config": null,
+    "manual_review_required": false
+  },
+  "external_uid": "wp:task:komlev:spiski-massivy-v-python:20",
+  "max_score": 1,
+  "is_active": true,
+  "requirement_level": "required",
+  "order_position": 34,
+  "anchor_material_id": null,
+  "anchor_source": null,
+  "content_provenance": null,
+  "hints_text": [
+    "Пройдитесь по списку с индексом (enumerate) и повторите каждую строку оператором умножения: строка * (номер по порядку)."
+  ],
+  "hints_video": [
+    "https://vk.com/video-53400615_456239839",
+    "https://vk.com/video-53400615_456240310"
+  ],
+  "has_hints": true,
+  "updated_at": "2026-09-07T18:00:56.744944Z"
+}

@@ -1,0 +1,206 @@
+[
+  {
+    "id": 5640,
+    "replay": [
+      {
+        "result_id": 44389,
+        "was": false,
+        "now": true
+      },
+      {
+        "result_id": 44509,
+        "was": false,
+        "now": true
+      },
+      {
+        "result_id": 90001,
+        "was": false,
+        "now": false
+      },
+      {
+        "result_id": 90002,
+        "was": false,
+        "now": false
+      }
+    ],
+    "payload": {
+      "solution_rules": {
+        "quiz": null,
+        "max_score": 1,
+        "penalties": {
+          "wrong_answer": 0,
+          "extra_wrong_mc": 0,
+          "missing_answer": 0
+        },
+        "auto_check": true,
+        "text_answer": null,
+        "scoring_mode": "all_or_nothing",
+        "short_answer": null,
+        "partial_rules": [],
+        "correct_options": [],
+        "custom_scoring_config": null,
+        "manual_review_required": false,
+        "io_tests": {
+          "tests": [
+            {
+              "stdin": "40\n20\n",
+              "expected_stdout": "2.0\n",
+              "label": "пример"
+            },
+            {
+              "stdin": "30\n12\n",
+              "expected_stdout": "2.5\n",
+              "label": "30/12"
+            },
+            {
+              "stdin": "17\n6\n",
+              "expected_stdout": "2.83\n",
+              "label": "17/6"
+            },
+            {
+              "stdin": "10\n3\n",
+              "expected_stdout": "3.33\n",
+              "label": "10/3"
+            }
+          ],
+          "compare": "numeric"
+        }
+      }
+    }
+  },
+  {
+    "id": 5644,
+    "replay": [
+      {
+        "result_id": 44565,
+        "was": false,
+        "now": false
+      },
+      {
+        "result_id": 44600,
+        "was": false,
+        "now": true
+      },
+      {
+        "result_id": 90003,
+        "was": false,
+        "now": true
+      }
+    ],
+    "payload": {
+      "task_content": {
+        "code": null,
+        "stem": "<p>Исходный код для этого задания:</p><pre><code class=\"language-python\">telemetriya = &quot;temp=25;rpm=1500&quot;\n# 1) chasti = telemetriya.split(&quot;;&quot;)\n# 2) temp = int(chasti[0].split(&quot;=&quot;)[1])\n# 3) rpm = int(chasti[1].split(&quot;=&quot;)[1])\n# 4) print температуры и print оборотов</code></pre>Напиши программу целиком (около 6-7 строк) — парсер телеметрии. Дана строка telemetriya = \"temp=25;rpm=1500\". Разбей её по «;» на части, из каждой части достань число после «=» (через split и int) и выведи двумя строками: температуру и обороты. Используй имена temp и rpm. Вывод — ровно две строки: <code>Температура: 25</code> и <code>Обороты: 1500</code>.",
+        "tags": null,
+        "type": "SA_COM",
+        "media": null,
+        "table": null,
+        "title": "Парсинг телеметрии с температурой и оборотами",
+        "prompt": null,
+        "scales": null,
+        "options": null,
+        "has_hints": true,
+        "course_uid": null,
+        "hints_text": [
+          "Сначала chasti = telemetriya.split(\";\"). Потом temp = int(chasti[0].split(\"=\")[1]) и rpm = int(chasti[1].split(\"=\")[1]). В конце два print."
+        ],
+        "hints_video": [],
+        "difficulty_code": null,
+        "multiline_answer": false
+      },
+      "solution_rules": {
+        "quiz": null,
+        "table": null,
+        "max_score": 1,
+        "penalties": {
+          "wrong_answer": 0,
+          "extra_wrong_mc": 0,
+          "missing_answer": 0
+        },
+        "auto_check": true,
+        "turtle_sim": null,
+        "text_answer": null,
+        "scoring_mode": "all_or_nothing",
+        "short_answer": null,
+        "partial_rules": [],
+        "correct_options": [],
+        "grading_criteria": null,
+        "partial_auto_check": false,
+        "requires_attachment": false,
+        "custom_scoring_config": null,
+        "manual_review_required": false,
+        "io_tests": {
+          "tests": [
+            {
+              "stdin": "",
+              "expected_stdout": "Температура: 25\nОбороты: 1500\n",
+              "label": "строка из условия"
+            }
+          ],
+          "compare": "tokens"
+        }
+      }
+    }
+  },
+  {
+    "id": 272,
+    "replay": [
+      {
+        "result_id": 14227,
+        "was": true,
+        "now": true
+      },
+      {
+        "result_id": 17739,
+        "was": false,
+        "now": true
+      },
+      {
+        "result_id": 17763,
+        "was": false,
+        "now": true
+      },
+      {
+        "result_id": 44181,
+        "was": false,
+        "now": true
+      }
+    ],
+    "payload": {
+      "solution_rules": {
+        "max_score": 1,
+        "penalties": {
+          "wrong_answer": 0,
+          "extra_wrong_mc": 0,
+          "missing_answer": 0
+        },
+        "auto_check": true,
+        "text_answer": null,
+        "scoring_mode": "all_or_nothing",
+        "short_answer": {
+          "regex": null,
+          "use_regex": false,
+          "normalization": [
+            "trim",
+            "strip_punctuation",
+            "collapse_spaces"
+          ],
+          "accepted_answers": [
+            {
+              "score": 1,
+              "value": "['apple', 'bananabanana', 'orangeorangeorange', 'grapegrapegrapegrape']"
+            },
+            {
+              "score": 1,
+              "value": "['apple', 'banana', 'banana', 'orange', 'orange', 'orange', 'grape', 'grape', 'grape', 'grape']"
+            }
+          ]
+        },
+        "partial_rules": [],
+        "correct_options": [],
+        "custom_scoring_config": null,
+        "manual_review_required": false
+      }
+    }
+  }
+]

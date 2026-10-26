@@ -1,0 +1,69 @@
+{
+  "id": 5640,
+  "task_content": {
+    "code": null,
+    "stem": "<p>Исходный код для этого задания:</p><pre><code class=\"language-python\"># напиши программу из 4-5 строк:\n# 1) z_vedomaya = int(input(...))\n# 2) z_veduschaya = int(input(...))\n# 3) посчитать отношение\n# 4) print(round(..., 2))</code></pre>Напиши программу целиком (4-5 строк). Спроси у пользователя два числа зубьев командой input, преврати оба в целые числа через int, посчитай передаточное отношение (ведомая делить на ведущую) и выведи его округлённым до 2 знаков. Используй имена z_vedomaya и z_veduschaya.",
+    "tags": null,
+    "type": "SA_COM",
+    "media": null,
+    "title": "Передаточное отношение шестерён из ввода",
+    "prompt": null,
+    "scales": null,
+    "options": null,
+    "has_hints": true,
+    "course_uid": null,
+    "hints_text": [
+      "z_vedomaya = int(input(\"Ведомая: \")); z_veduschaya = int(input(\"Ведущая: \")); otnoshenie = z_vedomaya / z_veduschaya; print(round(otnoshenie, 2))."
+    ],
+    "hints_video": [],
+    "difficulty_code": null
+  },
+  "course_id": 863,
+  "difficulty_id": 4,
+  "solution_rules": {
+    "quiz": null,
+    "max_score": 1,
+    "penalties": {
+      "wrong_answer": 0,
+      "extra_wrong_mc": 0,
+      "missing_answer": 0
+    },
+    "auto_check": true,
+    "text_answer": null,
+    "scoring_mode": "all_or_nothing",
+    "short_answer": {
+      "regex": null,
+      "use_regex": false,
+      "normalization": [
+        "trim",
+        "strip_punctuation",
+        "collapse_spaces",
+        "code_ast"
+      ],
+      "accepted_answers": [
+        {
+          "score": 1,
+          "value": "z_vedomaya = int(input(\"Ведомая: \"))\nz_veduschaya = int(input(\"Ведущая: \"))\notnoshenie = z_vedomaya / z_veduschaya\nprint(round(otnoshenie, 2))"
+        }
+      ]
+    },
+    "partial_rules": [],
+    "correct_options": [],
+    "custom_scoring_config": null,
+    "manual_review_required": false
+  },
+  "external_uid": "wp:dsm-tema-2-vvod-vychisleniya#q14",
+  "max_score": 1,
+  "is_active": true,
+  "requirement_level": "required",
+  "order_position": 15,
+  "anchor_material_id": null,
+  "anchor_source": null,
+  "content_provenance": null,
+  "hints_text": [
+    "z_vedomaya = int(input(\"Ведомая: \")); z_veduschaya = int(input(\"Ведущая: \")); otnoshenie = z_vedomaya / z_veduschaya; print(round(otnoshenie, 2))."
+  ],
+  "hints_video": [],
+  "has_hints": true,
+  "updated_at": null
+}

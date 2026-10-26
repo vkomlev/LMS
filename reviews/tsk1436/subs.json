@@ -1,0 +1,19 @@
+{
+  "272": [
+    {"id": 14227, "is_correct": true, "answer_json": {"type": "SA_COM", "response": {"value": "['apple', 'bananabanana', 'orangeorangeorange', 'grapegrapegrapegrape']", "comment": "-"}}},
+    {"id": 17739, "is_correct": false, "answer_json": {"type": "SA_COM", "response": {"value": "['apple', 'banana', 'banana', 'orange', 'orange', 'orange', 'grape', 'grape', 'grape', 'grape']", "comment": "result = []"}}},
+    {"id": 17763, "is_correct": false, "answer_json": {"type": "SA_COM", "response": {"value": "====================\n['apple', 'banana banana', 'orange orange orange', 'grape grape grape grape']", "comment": "x"}}},
+    {"id": 44181, "is_correct": false, "answer_json": {"type": "SA_COM", "response": {"value": "[['apple'], ['banana', 'banana'], ['orange', 'orange', 'orange'], ['grape', 'grape', 'grape', 'grape']]", "comment": "x"}}}
+  ],
+  "5640": [
+    {"id": 44389, "is_correct": false, "answer_json": {"type": "SA_COM", "response": {"value": "1.0", "comment": "z_vedomaya = int(input(\"Введи число зубьев ведомой шестерни\"))\nz_veduschaya = int(input(\"Введи число зубьев ведущей шестерни\"))\notnoshenie=z_vedomaya / z_veduschaya\nprint(round(otnoshenie, 2))\n"}}},
+    {"id": 44509, "is_correct": false, "answer_json": {"type": "SA_COM", "response": {"value": "1.0", "comment": "z_vedomaya = int(input(\"Введите число зубьев ведомой шестерни:\"))\nz_veduschaya = int(input(\"Введите число зубьев ведущей шестерни:\"))\ntransmission_ratio = z_vedomaya / z_veduschaya\nprint(round(transmission_ratio, 2))"}}},
+    {"id": 90001, "is_correct": false, "answer_json": {"type": "SA_COM", "response": {"value": "a = int(input())\nb = int(input())\nprint(a // b)", "comment": null}}},
+    {"id": 90002, "is_correct": false, "answer_json": {"type": "SA_COM", "response": {"value": "a = int(input())\nb = int(input())\nprint(round(b / a, 2))", "comment": null}}}
+  ],
+  "5644": [
+    {"id": 44565, "is_correct": false, "answer_json": {"type": "SA_COM", "response": {"value": "telemetriya = \"temp=25;rpm=1500\"\nchasti = telemetriya.split(\";\")\ntemp = int(chasti.split(\"=\"))\nrpm = int(chasti.split(\"=\"))\nprint(f\"Температура: {temp}\")\nprint(f\"Обороты: {rpm}\")", "comment": null}}},
+    {"id": 44600, "is_correct": false, "answer_json": {"type": "SA_COM", "response": {"value": "telemetriya = \"temp=25;rpm=1500\"\nchasti = telemetriya.split(\";\")\ntemp = int(chasti[0].split(\"=\")[1])\nrpm = int(chasti[1].split(\"=\")[1])\nprint(f\"Температура: {temp}\")\nprint(f\"Обороты: {rpm}\")", "comment": null}}},
+    {"id": 90003, "is_correct": false, "answer_json": {"type": "SA_COM", "response": {"value": "telemetriya = \"temp=25;rpm=1500\"\nchasti = telemetriya.split(\";\")\ntemp = int(chasti[0].split(\"=\")[1])\nrpm = int(chasti[1].split(\"=\")[1])\nprint(\"Температура:\", temp)\nprint(\"Обороты:\", rpm)", "comment": null}}}
+  ]
+}
