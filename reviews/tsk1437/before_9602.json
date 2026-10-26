@@ -1,0 +1,76 @@
+{
+  "id": 9602,
+  "task_content": {
+    "code": null,
+    "stem": "<p>Исходный код для этого задания:</p><pre><code class=\"language-python\">// напиши setup() и loop() целиком по описанию выше</code></pre>Напиши программу целиком (setup + loop, около 7 строк). Считывай A0, переводи в диапазон 0..500 (единица — обороты), выводи «Обороты: N» и жди 250 миллисекунд.",
+    "tags": null,
+    "type": "SA_COM",
+    "media": null,
+    "table": null,
+    "title": "Программа вывода оборотов",
+    "prompt": null,
+    "scales": null,
+    "options": null,
+    "has_hints": true,
+    "course_uid": null,
+    "hints_text": [
+      "В setup — только Serial.begin (аналоговый пин настраивать не нужно); в loop — analogRead в переменную, map в другую переменную, Serial.print частями, delay(250)."
+    ],
+    "hints_video": [],
+    "difficulty_code": null,
+    "multiline_answer": false
+  },
+  "course_id": 1407,
+  "difficulty_id": 3,
+  "solution_rules": {
+    "quiz": null,
+    "table": null,
+    "max_score": 1,
+    "penalties": {
+      "wrong_answer": 0,
+      "extra_wrong_mc": 0,
+      "missing_answer": 0
+    },
+    "auto_check": true,
+    "turtle_sim": null,
+    "text_answer": null,
+    "scoring_mode": "all_or_nothing",
+    "short_answer": {
+      "regex": null,
+      "use_regex": false,
+      "normalization": [
+        "trim",
+        "strip_punctuation",
+        "collapse_spaces",
+        "code_ast"
+      ],
+      "accepted_answers": [
+        {
+          "score": 1,
+          "value": "void setup() {\n  Serial.begin(9600);\n}\n\nvoid loop() {\n  int syroe = analogRead(A0);\n  int oboroty = map(syroe, 0, 1023, 0, 500);\n  Serial.print(\"Обороты: \");\n  Serial.println(oboroty);\n  delay(250);\n}"
+        }
+      ]
+    },
+    "partial_rules": [],
+    "correct_options": [],
+    "grading_criteria": null,
+    "partial_auto_check": false,
+    "requires_attachment": false,
+    "custom_scoring_config": null,
+    "manual_review_required": false
+  },
+  "external_uid": "wp:mam-tema-3-analogovyy-vhod#q11",
+  "max_score": 1,
+  "is_active": true,
+  "requirement_level": "required",
+  "order_position": 11,
+  "anchor_material_id": null,
+  "anchor_source": null,
+  "content_provenance": null,
+  "hints_text": [
+    "В setup — только Serial.begin (аналоговый пин настраивать не нужно); в loop — analogRead в переменную, map в другую переменную, Serial.print частями, delay(250)."
+  ],
+  "hints_video": [],
+  "has_hints": true,
+  "updated_at": "2026-09-10T19:51:22.765100Z"
+}

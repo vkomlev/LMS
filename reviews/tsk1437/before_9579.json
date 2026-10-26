@@ -1,0 +1,76 @@
+{
+  "id": 9579,
+  "task_content": {
+    "code": null,
+    "stem": "<p>Исходный код для этого задания:</p><pre><code class=\"language-python\">// напиши setup() и loop() целиком по описанию выше</code></pre>Напиши программу целиком (setup + loop, около 7 строк). Пин 13 — выход. В loop(): включи светодиод и выведи в Serial Monitor строку «Сигнал: ВКЛ», подожди 300 миллисекунд; выключи светодиод и выведи «Сигнал: ВЫКЛ», подожди 900 миллисекунд. Не забудь Serial.begin(9600) в setup().",
+    "tags": null,
+    "type": "SA_COM",
+    "media": null,
+    "table": null,
+    "title": "Мигание светодиода с сообщениями",
+    "prompt": null,
+    "scales": null,
+    "options": null,
+    "has_hints": true,
+    "course_uid": null,
+    "hints_text": [
+      "Собери из уже знакомых команд: pinMode в setup вместе с Serial.begin; в loop чередуй digitalWrite, Serial.println и delay с нужными числами."
+    ],
+    "hints_video": [],
+    "difficulty_code": null,
+    "multiline_answer": false
+  },
+  "course_id": 1405,
+  "difficulty_id": 4,
+  "solution_rules": {
+    "quiz": null,
+    "table": null,
+    "max_score": 1,
+    "penalties": {
+      "wrong_answer": 0,
+      "extra_wrong_mc": 0,
+      "missing_answer": 0
+    },
+    "auto_check": true,
+    "turtle_sim": null,
+    "text_answer": null,
+    "scoring_mode": "all_or_nothing",
+    "short_answer": {
+      "regex": null,
+      "use_regex": false,
+      "normalization": [
+        "trim",
+        "strip_punctuation",
+        "collapse_spaces",
+        "code_ast"
+      ],
+      "accepted_answers": [
+        {
+          "score": 1,
+          "value": "void setup() {\n  pinMode(13, OUTPUT);\n  Serial.begin(9600);\n}\n\nvoid loop() {\n  digitalWrite(13, HIGH);\n  Serial.println(\"Сигнал: ВКЛ\");\n  delay(300);\n  digitalWrite(13, LOW);\n  Serial.println(\"Сигнал: ВЫКЛ\");\n  delay(900);\n}"
+        }
+      ]
+    },
+    "partial_rules": [],
+    "correct_options": [],
+    "grading_criteria": null,
+    "partial_auto_check": false,
+    "requires_attachment": false,
+    "custom_scoring_config": null,
+    "manual_review_required": false
+  },
+  "external_uid": "wp:mam-tema-1-start#q12",
+  "max_score": 1,
+  "is_active": true,
+  "requirement_level": "required",
+  "order_position": 12,
+  "anchor_material_id": null,
+  "anchor_source": null,
+  "content_provenance": null,
+  "hints_text": [
+    "Собери из уже знакомых команд: pinMode в setup вместе с Serial.begin; в loop чередуй digitalWrite, Serial.println и delay с нужными числами."
+  ],
+  "hints_video": [],
+  "has_hints": true,
+  "updated_at": "2026-09-10T19:43:15.183249Z"
+}

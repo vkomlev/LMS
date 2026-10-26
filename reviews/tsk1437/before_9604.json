@@ -1,0 +1,76 @@
+{
+  "id": 9604,
+  "task_content": {
+    "code": null,
+    "stem": "<p>Исходный код для этого задания:</p><pre><code class=\"language-python\">// напиши setup() и loop() целиком; диапазон вывода map — -20..40</code></pre>Напиши программу целиком (около 9 строк). Считывай A0. Переведи значение в диапазон -20..40 (это температура в градусах, диапазон может быть отрицательным). Выведи строку вида «Температура: N C», где N — посчитанное значение. Пауза 300 миллисекунд.",
+    "tags": null,
+    "type": "SA_COM",
+    "media": null,
+    "table": null,
+    "title": "Программа вывода температуры с датчика A0",
+    "prompt": null,
+    "scales": null,
+    "options": null,
+    "has_hints": true,
+    "course_uid": null,
+    "hints_text": [
+      "map умеет работать с отрицательными границами диапазона так же, как с положительными: map(syroe, 0, 1023, -20, 40)."
+    ],
+    "hints_video": [],
+    "difficulty_code": null,
+    "multiline_answer": false
+  },
+  "course_id": 1407,
+  "difficulty_id": 4,
+  "solution_rules": {
+    "quiz": null,
+    "table": null,
+    "max_score": 1,
+    "penalties": {
+      "wrong_answer": 0,
+      "extra_wrong_mc": 0,
+      "missing_answer": 0
+    },
+    "auto_check": true,
+    "turtle_sim": null,
+    "text_answer": null,
+    "scoring_mode": "all_or_nothing",
+    "short_answer": {
+      "regex": null,
+      "use_regex": false,
+      "normalization": [
+        "trim",
+        "strip_punctuation",
+        "collapse_spaces",
+        "code_ast"
+      ],
+      "accepted_answers": [
+        {
+          "score": 1,
+          "value": "void setup() {\n  Serial.begin(9600);\n}\n\nvoid loop() {\n  int syroe = analogRead(A0);\n  int temperatura = map(syroe, 0, 1023, -20, 40);\n  Serial.print(\"Температура: \");\n  Serial.print(temperatura);\n  Serial.println(\" C\");\n  delay(300);\n}"
+        }
+      ]
+    },
+    "partial_rules": [],
+    "correct_options": [],
+    "grading_criteria": null,
+    "partial_auto_check": false,
+    "requires_attachment": false,
+    "custom_scoring_config": null,
+    "manual_review_required": false
+  },
+  "external_uid": "wp:mam-tema-3-analogovyy-vhod#q13",
+  "max_score": 1,
+  "is_active": true,
+  "requirement_level": "required",
+  "order_position": 13,
+  "anchor_material_id": null,
+  "anchor_source": null,
+  "content_provenance": null,
+  "hints_text": [
+    "map умеет работать с отрицательными границами диапазона так же, как с положительными: map(syroe, 0, 1023, -20, 40)."
+  ],
+  "hints_video": [],
+  "has_hints": true,
+  "updated_at": "2026-09-10T19:51:22.789288Z"
+}

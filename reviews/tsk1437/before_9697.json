@@ -1,0 +1,76 @@
+{
+  "id": 9697,
+  "task_content": {
+    "code": null,
+    "stem": "<p>Исходный код для этого задания:</p><pre><code class=\"language-python\">// добавь pinMode(9, OUTPUT) в setup() и блок статуса в loop() датчиковой части занятия 10</code></pre>Мини-проект. В датчиковую часть станции (занятие 10) добавь: pinMode(9, OUTPUT) в setup(), и внутри неблокирующего блока (после расчёта srednyayaTemperatura и svetProcent) — блок определения статуса и управления светодиодом по правилам этого занятия, с выводом статуса в Serial. Принято, если: пин 9 настроен как выход в setup(); статус определяется в правильном порядке (авария проверяется первой); светодиод включается ТОЛЬКО в статусе «Авария»; в Serial печатается строка «Статус: <значение>».",
+    "tags": null,
+    "type": "SA_COM",
+    "media": null,
+    "table": null,
+    "title": "Интеграция статуса и сигнализации в станции",
+    "prompt": null,
+    "scales": null,
+    "options": null,
+    "has_hints": true,
+    "course_uid": null,
+    "hints_text": [
+      "pinMode добавляется одной строкой в setup(); блок статуса — тот же, что ты написал в задании этого занятия про if/else if/else, вставленный после строк с svetProcent."
+    ],
+    "hints_video": [],
+    "difficulty_code": null,
+    "multiline_answer": false
+  },
+  "course_id": 1415,
+  "difficulty_id": 5,
+  "solution_rules": {
+    "quiz": null,
+    "table": null,
+    "max_score": 1,
+    "penalties": {
+      "wrong_answer": 0,
+      "extra_wrong_mc": 0,
+      "missing_answer": 0
+    },
+    "auto_check": true,
+    "turtle_sim": null,
+    "text_answer": null,
+    "scoring_mode": "all_or_nothing",
+    "short_answer": {
+      "regex": null,
+      "use_regex": false,
+      "normalization": [
+        "trim",
+        "strip_punctuation",
+        "collapse_spaces",
+        "code_ast"
+      ],
+      "accepted_answers": [
+        {
+          "score": 1,
+          "value": "// в setup():\npinMode(9, OUTPUT);\n\n// в loop(), после вычисления srednyayaTemperatura и svetProcent:\nString status;\nint pinLed = 9;\nif (srednyayaTemperatura > 35 || srednyayaTemperatura < 0) {\n  status = \"Авария\";\n  digitalWrite(pinLed, HIGH);\n} else if ((srednyayaTemperatura > 28 && srednyayaTemperatura <= 35) || svetProcent < 10) {\n  status = \"Предупреждение\";\n  digitalWrite(pinLed, LOW);\n} else {\n  status = \"Норма\";\n  digitalWrite(pinLed, LOW);\n}\nSerial.print(\"Статус: \");\nSerial.println(status);"
+        }
+      ]
+    },
+    "partial_rules": [],
+    "correct_options": [],
+    "grading_criteria": null,
+    "partial_auto_check": false,
+    "requires_attachment": false,
+    "custom_scoring_config": null,
+    "manual_review_required": false
+  },
+  "external_uid": "wp:mam-tema-11-proekt-chast2#q9",
+  "max_score": 1,
+  "is_active": true,
+  "requirement_level": "required",
+  "order_position": 9,
+  "anchor_material_id": null,
+  "anchor_source": null,
+  "content_provenance": null,
+  "hints_text": [
+    "pinMode добавляется одной строкой в setup(); блок статуса — тот же, что ты написал в задании этого занятия про if/else if/else, вставленный после строк с svetProcent."
+  ],
+  "hints_video": [],
+  "has_hints": true,
+  "updated_at": "2026-09-10T19:48:02.732079Z"
+}

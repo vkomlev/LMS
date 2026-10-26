@@ -1,0 +1,72 @@
+{
+  "id": 9601,
+  "task_content": {
+    "code": null,
+    "stem": "<p>Исходный код для этого задания:</p><pre><code class=\"language-python\">int syroe = analogRead(A0);\n// напиши: map в переменную davlenie и Serial.print строки &quot;Давление: N кПа&quot;</code></pre>Напиши код сам (2 строки). В переменной syroe — аналоговое значение. Переведи его в диапазон 0..200 (представь — это давление в кПа) и выведи строку вида «Давление: 100 кПа» (число подставь из переменной).",
+    "tags": null,
+    "type": "SA_COM",
+    "media": null,
+    "table": null,
+    "title": "Вывод давления через map",
+    "prompt": null,
+    "scales": null,
+    "options": null,
+    "has_hints": true,
+    "course_uid": null,
+    "hints_text": [
+      "Сначала map(syroe, 0, 1023, 0, 200) в переменную, потом Serial.print/Serial.println частями строки, как на прошлом занятии с f-строкой в Python — только здесь через несколько Serial.print подряд."
+    ],
+    "hints_video": [],
+    "difficulty_code": null
+  },
+  "course_id": 1407,
+  "difficulty_id": 3,
+  "solution_rules": {
+    "quiz": null,
+    "table": null,
+    "max_score": 1,
+    "penalties": {
+      "wrong_answer": 0,
+      "extra_wrong_mc": 0,
+      "missing_answer": 0
+    },
+    "auto_check": true,
+    "text_answer": null,
+    "scoring_mode": "all_or_nothing",
+    "short_answer": {
+      "regex": null,
+      "use_regex": false,
+      "normalization": [
+        "trim",
+        "strip_punctuation",
+        "collapse_spaces",
+        "code_ast"
+      ],
+      "accepted_answers": [
+        {
+          "score": 1,
+          "value": "int davlenie = map(syroe, 0, 1023, 0, 200);\nSerial.print(\"Давление: \");\nSerial.print(davlenie);\nSerial.println(\" кПа\");"
+        }
+      ]
+    },
+    "partial_rules": [],
+    "correct_options": [],
+    "requires_attachment": false,
+    "custom_scoring_config": null,
+    "manual_review_required": false
+  },
+  "external_uid": "wp:mam-tema-3-analogovyy-vhod#q10",
+  "max_score": 1,
+  "is_active": true,
+  "requirement_level": "required",
+  "order_position": 10,
+  "anchor_material_id": null,
+  "anchor_source": null,
+  "content_provenance": null,
+  "hints_text": [
+    "Сначала map(syroe, 0, 1023, 0, 200) в переменную, потом Serial.print/Serial.println частями строки, как на прошлом занятии с f-строкой в Python — только здесь через несколько Serial.print подряд."
+  ],
+  "hints_video": [],
+  "has_hints": true,
+  "updated_at": null
+}

@@ -1,0 +1,76 @@
+{
+  "id": 9641,
+  "task_content": {
+    "code": null,
+    "stem": "<p>Исходный код для этого задания:</p><pre><code class=\"language-python\">// напиши #include, DHT dht(...), previousMillis/interval, setup()+loop() по описанию</code></pre>Напиши программу целиком (около 15 строк). Датчик DHT22 на пине 4. Читай температуру и влажность каждые 2000 миллисекунд через millis() (без delay). Перед выводом проверь isnan() для обоих значений сразу (через ||) — если хотя бы одно провалилось, выведи «Ошибка чтения датчика», иначе выведи оба значения по отдельности с подписями.",
+    "tags": null,
+    "type": "SA_COM",
+    "media": null,
+    "table": null,
+    "title": "Чтение DHT22 каждые 2000 миллисекунд",
+    "prompt": null,
+    "scales": null,
+    "options": null,
+    "has_hints": true,
+    "course_uid": null,
+    "hints_text": [
+      "Собери из трёх уже знакомых частей: объявление dht сверху (как в блоке про #include), неблокирующий интервал (занятие про millis), проверка isnan с || (занятие про пороговую логику)."
+    ],
+    "hints_video": [],
+    "difficulty_code": null,
+    "multiline_answer": false
+  },
+  "course_id": 1410,
+  "difficulty_id": 4,
+  "solution_rules": {
+    "quiz": null,
+    "table": null,
+    "max_score": 1,
+    "penalties": {
+      "wrong_answer": 0,
+      "extra_wrong_mc": 0,
+      "missing_answer": 0
+    },
+    "auto_check": true,
+    "turtle_sim": null,
+    "text_answer": null,
+    "scoring_mode": "all_or_nothing",
+    "short_answer": {
+      "regex": null,
+      "use_regex": false,
+      "normalization": [
+        "trim",
+        "strip_punctuation",
+        "collapse_spaces",
+        "code_ast"
+      ],
+      "accepted_answers": [
+        {
+          "score": 1,
+          "value": "#include <DHT.h>\n\n#define PIN_DHT 4\nDHT dht(PIN_DHT, DHT22);\n\nunsigned long previousMillis = 0;\nconst long interval = 2000;\n\nvoid setup() {\n  Serial.begin(9600);\n  dht.begin();\n}\n\nvoid loop() {\n  unsigned long currentMillis = millis();\n  if (currentMillis - previousMillis >= interval) {\n    previousMillis = currentMillis;\n    float temperatura = dht.readTemperature();\n    float vlazhnost = dht.readHumidity();\n    if (isnan(temperatura) || isnan(vlazhnost)) {\n      Serial.println(\"Ошибка чтения датчика\");\n    } else {\n      Serial.print(\"Температура: \");\n      Serial.println(temperatura);\n      Serial.print(\"Влажность: \");\n      Serial.println(vlazhnost);\n    }\n  }\n}"
+        }
+      ]
+    },
+    "partial_rules": [],
+    "correct_options": [],
+    "grading_criteria": null,
+    "partial_auto_check": false,
+    "requires_attachment": false,
+    "custom_scoring_config": null,
+    "manual_review_required": false
+  },
+  "external_uid": "wp:mam-tema-6-dht-datchik#q12",
+  "max_score": 1,
+  "is_active": true,
+  "requirement_level": "required",
+  "order_position": 12,
+  "anchor_material_id": null,
+  "anchor_source": null,
+  "content_provenance": null,
+  "hints_text": [
+    "Собери из трёх уже знакомых частей: объявление dht сверху (как в блоке про #include), неблокирующий интервал (занятие про millis), проверка isnan с || (занятие про пороговую логику)."
+  ],
+  "hints_video": [],
+  "has_hints": true,
+  "updated_at": "2026-09-10T19:56:43.653862Z"
+}

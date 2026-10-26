@@ -1,0 +1,72 @@
+{
+  "id": 9675,
+  "task_content": {
+    "code": null,
+    "stem": "<p>Исходный код для этого задания:</p><pre><code class=\"language-python\">if (currentMillis - previousMillis &gt;= interval) {\n  digitalWrite(13, !digitalRead(13));\n}</code></pre>Напиши код сам. Перепиши строку с if так, чтобы previousMillis обновлялась внутри if — исправь логическую ошибку из предыдущего задания.",
+    "tags": null,
+    "type": "SA_COM",
+    "media": null,
+    "table": null,
+    "title": "Обновление времени внутри условия",
+    "prompt": null,
+    "scales": null,
+    "options": null,
+    "has_hints": true,
+    "course_uid": null,
+    "hints_text": [
+      "Добавь строку previousMillis = currentMillis; внутрь тела if, до или после переключения светодиода."
+    ],
+    "hints_video": [],
+    "difficulty_code": null
+  },
+  "course_id": 1413,
+  "difficulty_id": 3,
+  "solution_rules": {
+    "quiz": null,
+    "table": null,
+    "max_score": 1,
+    "penalties": {
+      "wrong_answer": 0,
+      "extra_wrong_mc": 0,
+      "missing_answer": 0
+    },
+    "auto_check": true,
+    "text_answer": null,
+    "scoring_mode": "all_or_nothing",
+    "short_answer": {
+      "regex": null,
+      "use_regex": false,
+      "normalization": [
+        "trim",
+        "strip_punctuation",
+        "collapse_spaces",
+        "code_ast"
+      ],
+      "accepted_answers": [
+        {
+          "score": 1,
+          "value": "if (currentMillis - previousMillis >= interval) {\n  previousMillis = currentMillis;\n  digitalWrite(13, !digitalRead(13));\n}"
+        }
+      ]
+    },
+    "partial_rules": [],
+    "correct_options": [],
+    "requires_attachment": false,
+    "custom_scoring_config": null,
+    "manual_review_required": false
+  },
+  "external_uid": "wp:mam-tema-9-otladka#q9",
+  "max_score": 1,
+  "is_active": true,
+  "requirement_level": "required",
+  "order_position": 9,
+  "anchor_material_id": null,
+  "anchor_source": null,
+  "content_provenance": null,
+  "hints_text": [
+    "Добавь строку previousMillis = currentMillis; внутрь тела if, до или после переключения светодиода."
+  ],
+  "hints_video": [],
+  "has_hints": true,
+  "updated_at": null
+}

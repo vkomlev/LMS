@@ -1,0 +1,76 @@
+{
+  "id": 9678,
+  "task_content": {
+    "code": null,
+    "stem": "<p>Исходный код для этого задания:</p><pre><code class=\"language-python\">int knopka = digitalRead(2);\nif (knopka = LOW) {\n  Serial.println(&quot;Нажата&quot;);\n}\n\nfloat arr[4] = {1.0, 2.0, 3.0, 4.0};\nfloat summa = 0;\nfor (int i = 0; i &lt;= 4; i = i + 1) {\n  summa = summa + arr[i];\n}</code></pre>Напиши код сам. Перепиши программу целиком (около 8 строк), исправив ДВЕ ошибки сразу: (1) в условии сравнение написано через = вместо ==, (2) цикл переберает массив размером 4 с условием i <= 4 вместо i < 4.",
+    "tags": null,
+    "type": "SA_COM",
+    "media": null,
+    "table": null,
+    "title": "Исправление сравнения и границы цикла",
+    "prompt": null,
+    "scales": null,
+    "options": null,
+    "has_hints": true,
+    "course_uid": null,
+    "hints_text": [
+      "Первая ошибка — замени = на == в сравнении. Вторая — замени <= на < в границе цикла."
+    ],
+    "hints_video": [],
+    "difficulty_code": null,
+    "multiline_answer": false
+  },
+  "course_id": 1413,
+  "difficulty_id": 4,
+  "solution_rules": {
+    "quiz": null,
+    "table": null,
+    "max_score": 1,
+    "penalties": {
+      "wrong_answer": 0,
+      "extra_wrong_mc": 0,
+      "missing_answer": 0
+    },
+    "auto_check": true,
+    "turtle_sim": null,
+    "text_answer": null,
+    "scoring_mode": "all_or_nothing",
+    "short_answer": {
+      "regex": null,
+      "use_regex": false,
+      "normalization": [
+        "trim",
+        "strip_punctuation",
+        "collapse_spaces",
+        "code_ast"
+      ],
+      "accepted_answers": [
+        {
+          "score": 1,
+          "value": "int knopka = digitalRead(2);\nif (knopka == LOW) {\n  Serial.println(\"Нажата\");\n}\n\nfloat arr[4] = {1.0, 2.0, 3.0, 4.0};\nfloat summa = 0;\nfor (int i = 0; i < 4; i = i + 1) {\n  summa = summa + arr[i];\n}"
+        }
+      ]
+    },
+    "partial_rules": [],
+    "correct_options": [],
+    "grading_criteria": null,
+    "partial_auto_check": false,
+    "requires_attachment": false,
+    "custom_scoring_config": null,
+    "manual_review_required": false
+  },
+  "external_uid": "wp:mam-tema-9-otladka#q12",
+  "max_score": 1,
+  "is_active": true,
+  "requirement_level": "required",
+  "order_position": 12,
+  "anchor_material_id": null,
+  "anchor_source": null,
+  "content_provenance": null,
+  "hints_text": [
+    "Первая ошибка — замени = на == в сравнении. Вторая — замени <= на < в границе цикла."
+  ],
+  "hints_video": [],
+  "has_hints": true,
+  "updated_at": "2026-09-10T20:02:18.508190Z"
+}

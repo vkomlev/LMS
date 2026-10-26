@@ -1,0 +1,76 @@
+{
+  "id": 9687,
+  "task_content": {
+    "code": null,
+    "stem": "<p>Исходный код для этого задания:</p><pre><code class=\"language-python\">// напиши функцию minimumMassiva и добавь вызов vyvestiPokazanie в дашборд по описанию выше</code></pre>Мини-проект (часть датчикового ядра). Напиши функцию float minimumMassiva(float arr[], int razmer), которая находит наименьший элемент массива (по образцу maksimumMassiva из занятия про функции), и добавь в дашборд станции вызов vyvestiPokazanie(\"Мин. температура\", minimumMassiva(oknoTemperatury, RAZMER_OKNA), \" C\") сразу после строки со средней температурой. Принято, если: функция minimumMassiva находит именно наименьшее значение массива через цикл (без готовых функций min), и вызов добавлен в дашборд ПОСЛЕ строки «Средняя температура» с указанными аргументами.",
+    "tags": null,
+    "type": "SA_COM",
+    "media": null,
+    "table": null,
+    "title": "Минимальная температура в дашборде",
+    "prompt": null,
+    "scales": null,
+    "options": null,
+    "has_hints": true,
+    "course_uid": null,
+    "hints_text": [
+      "Функция — зеркало maksimumMassiva из занятия 8, только со знаком < вместо > при сравнении; вызов — ещё одна строка vyvestiPokazanie сразу после существующей строки про среднюю температуру."
+    ],
+    "hints_video": [],
+    "difficulty_code": null,
+    "multiline_answer": false
+  },
+  "course_id": 1414,
+  "difficulty_id": 5,
+  "solution_rules": {
+    "quiz": null,
+    "table": null,
+    "max_score": 1,
+    "penalties": {
+      "wrong_answer": 0,
+      "extra_wrong_mc": 0,
+      "missing_answer": 0
+    },
+    "auto_check": true,
+    "turtle_sim": null,
+    "text_answer": null,
+    "scoring_mode": "all_or_nothing",
+    "short_answer": {
+      "regex": null,
+      "use_regex": false,
+      "normalization": [
+        "trim",
+        "strip_punctuation",
+        "collapse_spaces",
+        "code_ast"
+      ],
+      "accepted_answers": [
+        {
+          "score": 1,
+          "value": "float minimumMassiva(float arr[], int razmer) {\n  float minimum = arr[0];\n  for (int i = 1; i < razmer; i = i + 1) {\n    if (arr[i] < minimum) {\n      minimum = arr[i];\n    }\n  }\n  return minimum;\n}\n\n// в дашборде, сразу после vyvestiPokazanie(\"Средняя температура\", ...):\nvyvestiPokazanie(\"Мин. температура\", minimumMassiva(oknoTemperatury, RAZMER_OKNA), \" C\");"
+        }
+      ]
+    },
+    "partial_rules": [],
+    "correct_options": [],
+    "grading_criteria": null,
+    "partial_auto_check": false,
+    "requires_attachment": false,
+    "custom_scoring_config": null,
+    "manual_review_required": false
+  },
+  "external_uid": "wp:mam-tema-10-proekt-chast1#q9",
+  "max_score": 1,
+  "is_active": true,
+  "requirement_level": "required",
+  "order_position": 9,
+  "anchor_material_id": null,
+  "anchor_source": null,
+  "content_provenance": null,
+  "hints_text": [
+    "Функция — зеркало maksimumMassiva из занятия 8, только со знаком < вместо > при сравнении; вызов — ещё одна строка vyvestiPokazanie сразу после существующей строки про среднюю температуру."
+  ],
+  "hints_video": [],
+  "has_hints": true,
+  "updated_at": "2026-09-10T19:46:03.724474Z"
+}

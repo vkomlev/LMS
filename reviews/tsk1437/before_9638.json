@@ -1,0 +1,72 @@
+{
+  "id": 9638,
+  "task_content": {
+    "code": null,
+    "stem": "<p>Исходный код для этого задания:</p><pre><code class=\"language-python\">float temperatura = dht.readTemperature();\n// напиши if/else по описанию выше</code></pre>Напиши код сам (if/else, 5 строк). В переменной temperatura — результат dht.readTemperature(). Если isnan(temperatura) истинно — выведи «Датчик молчит», иначе выведи само значение temperatura.",
+    "tags": null,
+    "type": "SA_COM",
+    "media": null,
+    "table": null,
+    "title": "Проверка NaN и вывод температуры",
+    "prompt": null,
+    "scales": null,
+    "options": null,
+    "has_hints": true,
+    "course_uid": null,
+    "hints_text": [
+      "Шаблон: if (isnan(переменная)) { Serial.println(\"...\"); } else { Serial.println(переменная); }"
+    ],
+    "hints_video": [],
+    "difficulty_code": null
+  },
+  "course_id": 1410,
+  "difficulty_id": 3,
+  "solution_rules": {
+    "quiz": null,
+    "table": null,
+    "max_score": 1,
+    "penalties": {
+      "wrong_answer": 0,
+      "extra_wrong_mc": 0,
+      "missing_answer": 0
+    },
+    "auto_check": true,
+    "text_answer": null,
+    "scoring_mode": "all_or_nothing",
+    "short_answer": {
+      "regex": null,
+      "use_regex": false,
+      "normalization": [
+        "trim",
+        "strip_punctuation",
+        "collapse_spaces",
+        "code_ast"
+      ],
+      "accepted_answers": [
+        {
+          "score": 1,
+          "value": "if (isnan(temperatura)) {\n  Serial.println(\"Датчик молчит\");\n} else {\n  Serial.println(temperatura);\n}"
+        }
+      ]
+    },
+    "partial_rules": [],
+    "correct_options": [],
+    "requires_attachment": false,
+    "custom_scoring_config": null,
+    "manual_review_required": false
+  },
+  "external_uid": "wp:mam-tema-6-dht-datchik#q9",
+  "max_score": 1,
+  "is_active": true,
+  "requirement_level": "required",
+  "order_position": 10,
+  "anchor_material_id": null,
+  "anchor_source": null,
+  "content_provenance": null,
+  "hints_text": [
+    "Шаблон: if (isnan(переменная)) { Serial.println(\"...\"); } else { Serial.println(переменная); }"
+  ],
+  "hints_video": [],
+  "has_hints": true,
+  "updated_at": null
+}

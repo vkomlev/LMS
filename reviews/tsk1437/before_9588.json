@@ -1,0 +1,72 @@
+{
+  "id": 9588,
+  "task_content": {
+    "code": null,
+    "stem": "<p>Исходный код для этого задания:</p><pre><code class=\"language-python\">int knopka = digitalRead(2);\n// напиши if/else по условию выше</code></pre>Напиши код сам (if/else, 5 строк). В переменной knopka уже сохранён результат digitalRead. Если knopka равен LOW — выведи «Тревога», иначе выведи «Тишина».",
+    "tags": null,
+    "type": "SA_COM",
+    "media": null,
+    "table": null,
+    "title": "Условный вывод по кнопке",
+    "prompt": null,
+    "scales": null,
+    "options": null,
+    "has_hints": true,
+    "course_uid": null,
+    "hints_text": [
+      "Шаблон: if (условие) { Serial.println(...); } else { Serial.println(...); }"
+    ],
+    "hints_video": [],
+    "difficulty_code": null
+  },
+  "course_id": 1406,
+  "difficulty_id": 3,
+  "solution_rules": {
+    "quiz": null,
+    "table": null,
+    "max_score": 1,
+    "penalties": {
+      "wrong_answer": 0,
+      "extra_wrong_mc": 0,
+      "missing_answer": 0
+    },
+    "auto_check": true,
+    "text_answer": null,
+    "scoring_mode": "all_or_nothing",
+    "short_answer": {
+      "regex": null,
+      "use_regex": false,
+      "normalization": [
+        "trim",
+        "strip_punctuation",
+        "collapse_spaces",
+        "code_ast"
+      ],
+      "accepted_answers": [
+        {
+          "score": 1,
+          "value": "if (knopka == LOW) {\n  Serial.println(\"Тревога\");\n} else {\n  Serial.println(\"Тишина\");\n}"
+        }
+      ]
+    },
+    "partial_rules": [],
+    "correct_options": [],
+    "requires_attachment": false,
+    "custom_scoring_config": null,
+    "manual_review_required": false
+  },
+  "external_uid": "wp:mam-tema-2-cifrovoy-vhod#q9",
+  "max_score": 1,
+  "is_active": true,
+  "requirement_level": "required",
+  "order_position": 9,
+  "anchor_material_id": null,
+  "anchor_source": null,
+  "content_provenance": null,
+  "hints_text": [
+    "Шаблон: if (условие) { Serial.println(...); } else { Serial.println(...); }"
+  ],
+  "hints_video": [],
+  "has_hints": true,
+  "updated_at": null
+}

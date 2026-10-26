@@ -1,0 +1,76 @@
+{
+  "id": 9666,
+  "task_content": {
+    "code": null,
+    "stem": "<p>Исходный код для этого задания:</p><pre><code class=\"language-python\">// напиши функцию vyvestiPokazanie и три вызова по описанию выше</code></pre>Мини-проект. Напиши функцию void vyvestiPokazanie(String nazvanie, float znachenie, String edinitsa) (как в материале занятия) и вызови её РОВНО три раза для фиксированных значений: «Температура» 24.5 « C», «Влажность» 45.0 « %», «Давление» 101.0 « кПа» — в этом порядке. Принято, если: функция объявлена с этими тремя параметрами и печатает «nazvanie: znachenie edinitsa»; вызовы идут в указанном порядке с указанными значениями; итоговый вывод — три строки дашборда.",
+    "tags": null,
+    "type": "SA_COM",
+    "media": null,
+    "table": null,
+    "title": "Функция вывода показаний дашборда",
+    "prompt": null,
+    "scales": null,
+    "options": null,
+    "has_hints": true,
+    "course_uid": null,
+    "hints_text": [
+      "Функция — как в материале занятия (три Serial.print/println подряд); вызовы — три отдельные строки с готовыми значениями из условия, без переменных."
+    ],
+    "hints_video": [],
+    "difficulty_code": null,
+    "multiline_answer": false
+  },
+  "course_id": 1412,
+  "difficulty_id": 5,
+  "solution_rules": {
+    "quiz": null,
+    "table": null,
+    "max_score": 1,
+    "penalties": {
+      "wrong_answer": 0,
+      "extra_wrong_mc": 0,
+      "missing_answer": 0
+    },
+    "auto_check": true,
+    "turtle_sim": null,
+    "text_answer": null,
+    "scoring_mode": "all_or_nothing",
+    "short_answer": {
+      "regex": null,
+      "use_regex": false,
+      "normalization": [
+        "trim",
+        "strip_punctuation",
+        "collapse_spaces",
+        "code_ast"
+      ],
+      "accepted_answers": [
+        {
+          "score": 1,
+          "value": "void vyvestiPokazanie(String nazvanie, float znachenie, String edinitsa) {\n  Serial.print(nazvanie);\n  Serial.print(\": \");\n  Serial.print(znachenie);\n  Serial.println(edinitsa);\n}\n\nvyvestiPokazanie(\"Температура\", 24.5, \" C\");\nvyvestiPokazanie(\"Влажность\", 45.0, \" %\");\nvyvestiPokazanie(\"Давление\", 101.0, \" кПа\");"
+        }
+      ]
+    },
+    "partial_rules": [],
+    "correct_options": [],
+    "grading_criteria": null,
+    "partial_auto_check": false,
+    "requires_attachment": false,
+    "custom_scoring_config": null,
+    "manual_review_required": false
+  },
+  "external_uid": "wp:mam-tema-8-funkcii-dashboard#q13",
+  "max_score": 1,
+  "is_active": true,
+  "requirement_level": "required",
+  "order_position": 13,
+  "anchor_material_id": null,
+  "anchor_source": null,
+  "content_provenance": null,
+  "hints_text": [
+    "Функция — как в материале занятия (три Serial.print/println подряд); вызовы — три отдельные строки с готовыми значениями из условия, без переменных."
+  ],
+  "hints_video": [],
+  "has_hints": true,
+  "updated_at": "2026-09-10T20:00:24.970500Z"
+}

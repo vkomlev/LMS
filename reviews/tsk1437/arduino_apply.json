@@ -1,0 +1,127 @@
+[
+  {
+    "id": 9578,
+    "course_id": 1405,
+    "manual_review_required": true
+  },
+  {
+    "id": 9579,
+    "course_id": 1405,
+    "manual_review_required": true
+  },
+  {
+    "id": 9588,
+    "course_id": 1406,
+    "manual_review_required": true
+  },
+  {
+    "id": 9589,
+    "course_id": 1406,
+    "manual_review_required": true
+  },
+  {
+    "id": 9591,
+    "course_id": 1406,
+    "manual_review_required": true
+  },
+  {
+    "id": 9601,
+    "course_id": 1407,
+    "manual_review_required": true
+  },
+  {
+    "id": 9602,
+    "course_id": 1407,
+    "manual_review_required": true
+  },
+  {
+    "id": 9604,
+    "course_id": 1407,
+    "manual_review_required": true
+  },
+  {
+    "id": 9614,
+    "course_id": 1408,
+    "manual_review_required": true
+  },
+  {
+    "id": 9617,
+    "course_id": 1408,
+    "manual_review_required": true
+  },
+  {
+    "id": 9626,
+    "course_id": 1409,
+    "manual_review_required": true
+  },
+  {
+    "id": 9629,
+    "course_id": 1409,
+    "manual_review_required": true
+  },
+  {
+    "id": 9638,
+    "course_id": 1410,
+    "manual_review_required": true
+  },
+  {
+    "id": 9641,
+    "course_id": 1410,
+    "manual_review_required": true
+  },
+  {
+    "id": 9652,
+    "course_id": 1411,
+    "manual_review_required": true
+  },
+  {
+    "id": 9653,
+    "course_id": 1411,
+    "manual_review_required": true
+  },
+  {
+    "id": 9662,
+    "course_id": 1412,
+    "manual_review_required": true
+  },
+  {
+    "id": 9665,
+    "course_id": 1412,
+    "manual_review_required": true
+  },
+  {
+    "id": 9666,
+    "course_id": 1412,
+    "manual_review_required": true
+  },
+  {
+    "id": 9675,
+    "course_id": 1413,
+    "manual_review_required": true
+  },
+  {
+    "id": 9678,
+    "course_id": 1413,
+    "manual_review_required": true
+  },
+  {
+    "id": 9687,
+    "course_id": 1414,
+    "manual_review_required": true
+  },
+  {
+    "id": 9696,
+    "course_id": 1415,
+    "manual_review_required": true
+  },
+  {
+    "id": 9697,
+    "course_id": 1415,
+    "manual_review_required": true
+  },
+  {
+    "id": 9698,
+    "course_id": 1415,
+    "manual_review_required": true
+  }
+]

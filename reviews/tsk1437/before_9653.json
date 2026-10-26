@@ -1,0 +1,76 @@
+{
+  "id": 9653,
+  "task_content": {
+    "code": null,
+    "stem": "<p>Исходный код для этого задания:</p><pre><code class=\"language-python\">float okno[5] = {22.0, 23.0, 21.0, 24.0, 22.0};\nfloat novoe_pokazanie = 45.0;\nfloat porog = 5.0;\n// напиши расчёт среднего, сравнение и вывод по описанию выше</code></pre>Мини-проект. Дан массив okno из 5 сохранённых показаний {22.0, 23.0, 21.0, 24.0, 22.0} и новое показание novoe_pokazanie = 45.0, порог porog = 5.0. Напиши код (около 8 строк), который: (1) циклом посчитает среднее по okno, (2) сравнит novoe_pokazanie со средним через fabs(), (3) если разница больше porog — выведет «Выброс», иначе «Норма», (4) выведет и само посчитанное среднее. Принято, если: среднее по этим числам посчитано верно (22.4), разница с novoe_pokazanie сравнена именно с porog через fabs(), и по этим данным программа печатает «Выброс».",
+    "tags": null,
+    "type": "SA_COM",
+    "media": null,
+    "table": null,
+    "title": "Фильтрация нового показания по среднему",
+    "prompt": null,
+    "scales": null,
+    "options": null,
+    "has_hints": true,
+    "course_uid": null,
+    "hints_text": [
+      "Сначала цикл суммирования и деления на 5 (как в блоке «Перебор циклом»), затем if (fabs(novoe_pokazanie - srednee) > porog) с выводом «Выброс»/«Норма» в каждой ветке, и отдельная строка с выводом srednee."
+    ],
+    "hints_video": [],
+    "difficulty_code": null,
+    "multiline_answer": false
+  },
+  "course_id": 1411,
+  "difficulty_id": 5,
+  "solution_rules": {
+    "quiz": null,
+    "table": null,
+    "max_score": 1,
+    "penalties": {
+      "wrong_answer": 0,
+      "extra_wrong_mc": 0,
+      "missing_answer": 0
+    },
+    "auto_check": true,
+    "turtle_sim": null,
+    "text_answer": null,
+    "scoring_mode": "all_or_nothing",
+    "short_answer": {
+      "regex": null,
+      "use_regex": false,
+      "normalization": [
+        "trim",
+        "strip_punctuation",
+        "collapse_spaces",
+        "code_ast"
+      ],
+      "accepted_answers": [
+        {
+          "score": 1,
+          "value": "float summa = 0;\nfor (int i = 0; i < 5; i = i + 1) {\n  summa = summa + okno[i];\n}\nfloat srednee = summa / 5;\n\nif (fabs(novoe_pokazanie - srednee) > porog) {\n  Serial.println(\"Выброс\");\n} else {\n  Serial.println(\"Норма\");\n}\nSerial.println(srednee);"
+        }
+      ]
+    },
+    "partial_rules": [],
+    "correct_options": [],
+    "grading_criteria": null,
+    "partial_auto_check": false,
+    "requires_attachment": false,
+    "custom_scoring_config": null,
+    "manual_review_required": false
+  },
+  "external_uid": "wp:mam-tema-7-massivy-agregaciya#q12",
+  "max_score": 1,
+  "is_active": true,
+  "requirement_level": "required",
+  "order_position": 12,
+  "anchor_material_id": null,
+  "anchor_source": null,
+  "content_provenance": null,
+  "hints_text": [
+    "Сначала цикл суммирования и деления на 5 (как в блоке «Перебор циклом»), затем if (fabs(novoe_pokazanie - srednee) > porog) с выводом «Выброс»/«Норма» в каждой ветке, и отдельная строка с выводом srednee."
+  ],
+  "hints_video": [],
+  "has_hints": true,
+  "updated_at": "2026-09-10T19:58:27.479946Z"
+}

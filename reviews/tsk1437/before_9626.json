@@ -1,0 +1,76 @@
+{
+  "id": 9626,
+  "task_content": {
+    "code": null,
+    "stem": "<p>Исходный код для этого задания:</p><pre><code class=\"language-python\">// объяви previousMillis, interval=400, ledState и напиши setup()+loop()</code></pre>Напиши программу целиком (около 11 строк). Пин 8 — светодиод. Через каждые 400 миллисекунд переключай его состояние (было включено — выключи, и наоборот), используя millis(), без единого delay().",
+    "tags": null,
+    "type": "SA_COM",
+    "media": null,
+    "table": null,
+    "title": "Мигание светодиода через 400 миллисекунд",
+    "prompt": null,
+    "scales": null,
+    "options": null,
+    "has_hints": true,
+    "course_uid": null,
+    "hints_text": [
+      "Собери из паттерна занятия: unsigned long previousMillis=0, const long interval=400, bool ledState=false снаружи; в loop() — currentMillis, сравнение, если сработало — обновить previousMillis, инвертировать ledState, digitalWrite."
+    ],
+    "hints_video": [],
+    "difficulty_code": null,
+    "multiline_answer": false
+  },
+  "course_id": 1409,
+  "difficulty_id": 3,
+  "solution_rules": {
+    "quiz": null,
+    "table": null,
+    "max_score": 1,
+    "penalties": {
+      "wrong_answer": 0,
+      "extra_wrong_mc": 0,
+      "missing_answer": 0
+    },
+    "auto_check": true,
+    "turtle_sim": null,
+    "text_answer": null,
+    "scoring_mode": "all_or_nothing",
+    "short_answer": {
+      "regex": null,
+      "use_regex": false,
+      "normalization": [
+        "trim",
+        "strip_punctuation",
+        "collapse_spaces",
+        "code_ast"
+      ],
+      "accepted_answers": [
+        {
+          "score": 1,
+          "value": "unsigned long previousMillis = 0;\nconst long interval = 400;\nbool ledState = false;\n\nvoid setup() {\n  pinMode(8, OUTPUT);\n}\n\nvoid loop() {\n  unsigned long currentMillis = millis();\n  if (currentMillis - previousMillis >= interval) {\n    previousMillis = currentMillis;\n    ledState = !ledState;\n    digitalWrite(8, ledState);\n  }\n}"
+        }
+      ]
+    },
+    "partial_rules": [],
+    "correct_options": [],
+    "grading_criteria": null,
+    "partial_auto_check": false,
+    "requires_attachment": false,
+    "custom_scoring_config": null,
+    "manual_review_required": false
+  },
+  "external_uid": "wp:mam-tema-5-neblokiruyushee-vremya#q9",
+  "max_score": 1,
+  "is_active": true,
+  "requirement_level": "required",
+  "order_position": 10,
+  "anchor_material_id": null,
+  "anchor_source": null,
+  "content_provenance": null,
+  "hints_text": [
+    "Собери из паттерна занятия: unsigned long previousMillis=0, const long interval=400, bool ledState=false снаружи; в loop() — currentMillis, сравнение, если сработало — обновить previousMillis, инвертировать ledState, digitalWrite."
+  ],
+  "hints_video": [],
+  "has_hints": true,
+  "updated_at": "2026-09-10T19:54:55.170438Z"
+}

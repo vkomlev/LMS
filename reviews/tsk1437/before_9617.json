@@ -1,0 +1,76 @@
+{
+  "id": 9617,
+  "task_content": {
+    "code": null,
+    "stem": "<p>Исходный код для этого задания:</p><pre><code class=\"language-python\">// напиши setup() и loop() целиком по описанию выше</code></pre>Напиши программу целиком (около 12 строк). Пин 9 — светодиод (выход). Считай A0, переведи в диапазон -20..60 (temperatura). Три уровня: выше 40 ИЛИ ниже -10 — включи светодиод и выведи «Авария»; от 25 до 40 (не включая границы) — выключи светодиод и выведи «Предупреждение»; иначе — выключи светодиод и выведи «Норма». Пауза 300 миллисекунд.",
+    "tags": null,
+    "type": "SA_COM",
+    "media": null,
+    "table": null,
+    "title": "Программа аварии и предупреждения по температуре",
+    "prompt": null,
+    "scales": null,
+    "options": null,
+    "has_hints": true,
+    "course_uid": null,
+    "hints_text": [
+      "Первая ветка — составное условие с ||; вторая ветка — обычное сравнение (else if уже гарантирует, что температура не выше 40 и не ниже -10, поэтому достаточно проверить нижнюю границу 25)."
+    ],
+    "hints_video": [],
+    "difficulty_code": null,
+    "multiline_answer": false
+  },
+  "course_id": 1408,
+  "difficulty_id": 4,
+  "solution_rules": {
+    "quiz": null,
+    "table": null,
+    "max_score": 1,
+    "penalties": {
+      "wrong_answer": 0,
+      "extra_wrong_mc": 0,
+      "missing_answer": 0
+    },
+    "auto_check": true,
+    "turtle_sim": null,
+    "text_answer": null,
+    "scoring_mode": "all_or_nothing",
+    "short_answer": {
+      "regex": null,
+      "use_regex": false,
+      "normalization": [
+        "trim",
+        "strip_punctuation",
+        "collapse_spaces",
+        "code_ast"
+      ],
+      "accepted_answers": [
+        {
+          "score": 1,
+          "value": "void setup() {\n  pinMode(9, OUTPUT);\n  Serial.begin(9600);\n}\n\nvoid loop() {\n  int syroe = analogRead(A0);\n  int temperatura = map(syroe, 0, 1023, -20, 60);\n\n  if (temperatura > 40 || temperatura < -10) {\n    digitalWrite(9, HIGH);\n    Serial.println(\"Авария\");\n  } else if (temperatura > 25) {\n    digitalWrite(9, LOW);\n    Serial.println(\"Предупреждение\");\n  } else {\n    digitalWrite(9, LOW);\n    Serial.println(\"Норма\");\n  }\n  delay(300);\n}"
+        }
+      ]
+    },
+    "partial_rules": [],
+    "correct_options": [],
+    "grading_criteria": null,
+    "partial_auto_check": false,
+    "requires_attachment": false,
+    "custom_scoring_config": null,
+    "manual_review_required": false
+  },
+  "external_uid": "wp:mam-tema-4-porogovaya-logika#q13",
+  "max_score": 1,
+  "is_active": true,
+  "requirement_level": "required",
+  "order_position": 13,
+  "anchor_material_id": null,
+  "anchor_source": null,
+  "content_provenance": null,
+  "hints_text": [
+    "Первая ветка — составное условие с ||; вторая ветка — обычное сравнение (else if уже гарантирует, что температура не выше 40 и не ниже -10, поэтому достаточно проверить нижнюю границу 25)."
+  ],
+  "hints_video": [],
+  "has_hints": true,
+  "updated_at": "2026-09-10T19:53:16.786058Z"
+}

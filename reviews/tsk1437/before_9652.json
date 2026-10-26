@@ -1,0 +1,76 @@
+{
+  "id": 9652,
+  "task_content": {
+    "code": null,
+    "stem": "<p>Исходный код для этого задания:</p><pre><code class=\"language-python\">float pokazaniya[5] = {22.0, 23.0, 21.0, 24.0, 22.0};\n// напиши поиск minimum и maksimum циклом</code></pre>Напиши код сам (цикл, около 8 строк). Найди минимум и максимум массива pokazaniya размером 5 без готовых функций min/max — используй первый элемент как стартовое значение обеих переменных.",
+    "tags": null,
+    "type": "SA_COM",
+    "media": null,
+    "table": null,
+    "title": "Поиск минимума и максимума массива",
+    "prompt": null,
+    "scales": null,
+    "options": null,
+    "has_hints": true,
+    "course_uid": null,
+    "hints_text": [
+      "Начни minimum и maksimum со значения pokazaniya[0], затем в цикле от i=1 сравнивай каждый следующий элемент и обновляй при необходимости."
+    ],
+    "hints_video": [],
+    "difficulty_code": null,
+    "multiline_answer": false
+  },
+  "course_id": 1411,
+  "difficulty_id": 4,
+  "solution_rules": {
+    "quiz": null,
+    "table": null,
+    "max_score": 1,
+    "penalties": {
+      "wrong_answer": 0,
+      "extra_wrong_mc": 0,
+      "missing_answer": 0
+    },
+    "auto_check": true,
+    "turtle_sim": null,
+    "text_answer": null,
+    "scoring_mode": "all_or_nothing",
+    "short_answer": {
+      "regex": null,
+      "use_regex": false,
+      "normalization": [
+        "trim",
+        "strip_punctuation",
+        "collapse_spaces",
+        "code_ast"
+      ],
+      "accepted_answers": [
+        {
+          "score": 1,
+          "value": "float minimum = pokazaniya[0];\nfloat maksimum = pokazaniya[0];\nfor (int i = 1; i < 5; i = i + 1) {\n  if (pokazaniya[i] < minimum) {\n    minimum = pokazaniya[i];\n  }\n  if (pokazaniya[i] > maksimum) {\n    maksimum = pokazaniya[i];\n  }\n}"
+        }
+      ]
+    },
+    "partial_rules": [],
+    "correct_options": [],
+    "grading_criteria": null,
+    "partial_auto_check": false,
+    "requires_attachment": false,
+    "custom_scoring_config": null,
+    "manual_review_required": false
+  },
+  "external_uid": "wp:mam-tema-7-massivy-agregaciya#q11",
+  "max_score": 1,
+  "is_active": true,
+  "requirement_level": "required",
+  "order_position": 11,
+  "anchor_material_id": null,
+  "anchor_source": null,
+  "content_provenance": null,
+  "hints_text": [
+    "Начни minimum и maksimum со значения pokazaniya[0], затем в цикле от i=1 сравнивай каждый следующий элемент и обновляй при необходимости."
+  ],
+  "hints_video": [],
+  "has_hints": true,
+  "updated_at": "2026-09-10T19:58:27.466330Z"
+}

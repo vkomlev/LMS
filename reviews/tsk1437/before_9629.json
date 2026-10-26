@@ -1,0 +1,76 @@
+{
+  "id": 9629,
+  "task_content": {
+    "code": null,
+    "stem": "<p>Исходный код для этого задания:</p><pre><code class=\"language-python\">// заведи две независимые пары previousMillis/ledState и два interval, напиши setup()+loop()</code></pre>Напиши программу целиком (около 14 строк). Два независимых процесса без единого delay(): LED на пине 13 переключается каждые 500 мс, LED на пине 12 — каждые 350 мс. У каждого — своя пара previousMillis/ledState.",
+    "tags": null,
+    "type": "SA_COM",
+    "media": null,
+    "table": null,
+    "title": "Два независимых мигания светодиодов",
+    "prompt": null,
+    "scales": null,
+    "options": null,
+    "has_hints": true,
+    "course_uid": null,
+    "hints_text": [
+      "Повтори паттерн одного процесса дважды с разными именами переменных (prevLed1/prevLed2, state1/state2) — оба блока if идут подряд в одном loop(), не мешая друг другу."
+    ],
+    "hints_video": [],
+    "difficulty_code": null,
+    "multiline_answer": false
+  },
+  "course_id": 1409,
+  "difficulty_id": 4,
+  "solution_rules": {
+    "quiz": null,
+    "table": null,
+    "max_score": 1,
+    "penalties": {
+      "wrong_answer": 0,
+      "extra_wrong_mc": 0,
+      "missing_answer": 0
+    },
+    "auto_check": true,
+    "turtle_sim": null,
+    "text_answer": null,
+    "scoring_mode": "all_or_nothing",
+    "short_answer": {
+      "regex": null,
+      "use_regex": false,
+      "normalization": [
+        "trim",
+        "strip_punctuation",
+        "collapse_spaces",
+        "code_ast"
+      ],
+      "accepted_answers": [
+        {
+          "score": 1,
+          "value": "unsigned long prevLed1 = 0;\nunsigned long prevLed2 = 0;\nconst long interval1 = 500;\nconst long interval2 = 350;\nbool state1 = false;\nbool state2 = false;\n\nvoid setup() {\n  pinMode(13, OUTPUT);\n  pinMode(12, OUTPUT);\n}\n\nvoid loop() {\n  unsigned long teper = millis();\n\n  if (teper - prevLed1 >= interval1) {\n    prevLed1 = teper;\n    state1 = !state1;\n    digitalWrite(13, state1);\n  }\n\n  if (teper - prevLed2 >= interval2) {\n    prevLed2 = teper;\n    state2 = !state2;\n    digitalWrite(12, state2);\n  }\n}"
+        }
+      ]
+    },
+    "partial_rules": [],
+    "correct_options": [],
+    "grading_criteria": null,
+    "partial_auto_check": false,
+    "requires_attachment": false,
+    "custom_scoring_config": null,
+    "manual_review_required": false
+  },
+  "external_uid": "wp:mam-tema-5-neblokiruyushee-vremya#q12",
+  "max_score": 1,
+  "is_active": true,
+  "requirement_level": "required",
+  "order_position": 12,
+  "anchor_material_id": null,
+  "anchor_source": null,
+  "content_provenance": null,
+  "hints_text": [
+    "Повтори паттерн одного процесса дважды с разными именами переменных (prevLed1/prevLed2, state1/state2) — оба блока if идут подряд в одном loop(), не мешая друг другу."
+  ],
+  "hints_video": [],
+  "has_hints": true,
+  "updated_at": "2026-09-10T19:54:55.205097Z"
+}

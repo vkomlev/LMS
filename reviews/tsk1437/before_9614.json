@@ -1,0 +1,72 @@
+{
+  "id": 9614,
+  "task_content": {
+    "code": null,
+    "stem": "<p>Исходный код для этого задания:</p><pre><code class=\"language-python\">int urovenj = map(analogRead(A0), 0, 1023, 0, 100);\n// напиши if/else if/else по описанию выше</code></pre>Напиши код сам (if/else if/else, 6 строк). В переменной urovenj — показание (0..100). Если больше 90 — выведи «Перелив»; если больше 70 — выведи «Заполнено»; иначе — выведи «Норма».",
+    "tags": null,
+    "type": "SA_COM",
+    "media": null,
+    "table": null,
+    "title": "Сигнализация уровня заполнения по порогам",
+    "prompt": null,
+    "scales": null,
+    "options": null,
+    "has_hints": true,
+    "course_uid": null,
+    "hints_text": [
+      "Проверяй от самого строгого порога (90) к самому мягкому, иначе более мягкое условие перехватит проверку раньше."
+    ],
+    "hints_video": [],
+    "difficulty_code": null
+  },
+  "course_id": 1408,
+  "difficulty_id": 3,
+  "solution_rules": {
+    "quiz": null,
+    "table": null,
+    "max_score": 1,
+    "penalties": {
+      "wrong_answer": 0,
+      "extra_wrong_mc": 0,
+      "missing_answer": 0
+    },
+    "auto_check": true,
+    "text_answer": null,
+    "scoring_mode": "all_or_nothing",
+    "short_answer": {
+      "regex": null,
+      "use_regex": false,
+      "normalization": [
+        "trim",
+        "strip_punctuation",
+        "collapse_spaces",
+        "code_ast"
+      ],
+      "accepted_answers": [
+        {
+          "score": 1,
+          "value": "if (urovenj > 90) {\n  Serial.println(\"Перелив\");\n} else if (urovenj > 70) {\n  Serial.println(\"Заполнено\");\n} else {\n  Serial.println(\"Норма\");\n}"
+        }
+      ]
+    },
+    "partial_rules": [],
+    "correct_options": [],
+    "requires_attachment": false,
+    "custom_scoring_config": null,
+    "manual_review_required": false
+  },
+  "external_uid": "wp:mam-tema-4-porogovaya-logika#q10",
+  "max_score": 1,
+  "is_active": true,
+  "requirement_level": "required",
+  "order_position": 11,
+  "anchor_material_id": null,
+  "anchor_source": null,
+  "content_provenance": null,
+  "hints_text": [
+    "Проверяй от самого строгого порога (90) к самому мягкому, иначе более мягкое условие перехватит проверку раньше."
+  ],
+  "hints_video": [],
+  "has_hints": true,
+  "updated_at": null
+}

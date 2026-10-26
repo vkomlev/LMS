@@ -1,0 +1,76 @@
+{
+  "id": 9698,
+  "task_content": {
+    "code": null,
+    "stem": "<p>Исходный код для этого задания:</p><pre><code class=\"language-python\">// напиши #include, объекты/переменные, setup() и loop() — соберите ВСЮ станцию по описанию выше</code></pre>Финальный проект. Напиши ПОЛНУЮ программу станции мониторинга с нуля (около 45 строк): библиотека DHT22 (пин 4) + датчик освещённости LDR (A0) + скользящее окно из 5 температур + функции vyvestiPokazanie и sredneeMassiva + неблокирующий интервал 2000 мс + определение статуса (авария/предупреждение/норма) + светодиод на пине 9 + дашборд со всеми значениями и статусом. Принято, если: все части из занятий 6-11 присутствуют и работают вместе (компилируется и логически верна последовательность датчик → окно → среднее → статус → сигнал → дашборд); пороги и их порядок — как в этом занятии; вывод в Serial содержит температуру, среднюю температуру, освещённость и статус.",
+    "tags": null,
+    "type": "SA_COM",
+    "media": null,
+    "table": null,
+    "title": "Полная программа станции с датчиками и дашбордом",
+    "prompt": null,
+    "scales": null,
+    "options": null,
+    "has_hints": true,
+    "course_uid": null,
+    "hints_text": [
+      "Это сборка того, что ты уже написал по частям на занятиях 6, 7, 8, 10 и в этом занятии — собери куски друг за другом в одном файле, ничего принципиально нового придумывать не нужно."
+    ],
+    "hints_video": [],
+    "difficulty_code": null,
+    "multiline_answer": false
+  },
+  "course_id": 1415,
+  "difficulty_id": 5,
+  "solution_rules": {
+    "quiz": null,
+    "table": null,
+    "max_score": 1,
+    "penalties": {
+      "wrong_answer": 0,
+      "extra_wrong_mc": 0,
+      "missing_answer": 0
+    },
+    "auto_check": true,
+    "turtle_sim": null,
+    "text_answer": null,
+    "scoring_mode": "all_or_nothing",
+    "short_answer": {
+      "regex": null,
+      "use_regex": false,
+      "normalization": [
+        "trim",
+        "strip_punctuation",
+        "collapse_spaces",
+        "code_ast"
+      ],
+      "accepted_answers": [
+        {
+          "score": 1,
+          "value": "#include <DHT.h>\n\n#define PIN_DHT 4\nDHT dht(PIN_DHT, DHT22);\nconst int PIN_LDR = A0;\nint pinLed = 9;\n\nconst int RAZMER_OKNA = 5;\nfloat oknoTemperatury[RAZMER_OKNA];\nint indeksOkna = 0;\n\nunsigned long previousMillis = 0;\nconst long interval = 2000;\n\nvoid vyvestiPokazanie(String nazvanie, float znachenie, String edinitsa) {\n  Serial.print(nazvanie);\n  Serial.print(\": \");\n  Serial.print(znachenie);\n  Serial.println(edinitsa);\n}\n\nfloat sredneeMassiva(float arr[], int razmer) {\n  float summa = 0;\n  for (int i = 0; i < razmer; i = i + 1) {\n    summa = summa + arr[i];\n  }\n  return summa / razmer;\n}\n\nvoid setup() {\n  Serial.begin(9600);\n  dht.begin();\n  pinMode(pinLed, OUTPUT);\n  for (int i = 0; i < RAZMER_OKNA; i = i + 1) {\n    oknoTemperatury[i] = 0;\n  }\n}\n\nvoid loop() {\n  unsigned long currentMillis = millis();\n  if (currentMillis - previousMillis >= interval) {\n    previousMillis = currentMillis;\n\n    float temperatura = dht.readTemperature();\n    if (!isnan(temperatura)) {\n      oknoTemperatury[indeksOkna] = temperatura;\n      indeksOkna = (indeksOkna + 1) % RAZMER_OKNA;\n    }\n    float srednyayaTemperatura = sredneeMassiva(oknoTemperatury, RAZMER_OKNA);\n\n    int svetSyroe = analogRead(PIN_LDR);\n    int svetProcent = map(svetSyroe, 0, 1023, 0, 100);\n\n    String status;\n    if (srednyayaTemperatura > 35 || srednyayaTemperatura < 0) {\n      status = \"Авария\";\n      digitalWrite(pinLed, HIGH);\n    } else if ((srednyayaTemperatura > 28 && srednyayaTemperatura <= 35) || svetProcent < 10) {\n      status = \"Предупреждение\";\n      digitalWrite(pinLed, LOW);\n    } else {\n      status = \"Норма\";\n      digitalWrite(pinLed, LOW);\n    }\n\n    vyvestiPokazanie(\"Температура\", temperatura, \" C\");\n    vyvestiPokazanie(\"Средняя температура\", srednyayaTemperatura, \" C\");\n    vyvestiPokazanie(\"Освещённость\", svetProcent, \" %\");\n    Serial.print(\"Статус: \");\n    Serial.println(status);\n    Serial.println(\"----------\");\n  }\n}"
+        }
+      ]
+    },
+    "partial_rules": [],
+    "correct_options": [],
+    "grading_criteria": null,
+    "partial_auto_check": false,
+    "requires_attachment": false,
+    "custom_scoring_config": null,
+    "manual_review_required": false
+  },
+  "external_uid": "wp:mam-tema-11-proekt-chast2#q10",
+  "max_score": 1,
+  "is_active": true,
+  "requirement_level": "required",
+  "order_position": 10,
+  "anchor_material_id": null,
+  "anchor_source": null,
+  "content_provenance": null,
+  "hints_text": [
+    "Это сборка того, что ты уже написал по частям на занятиях 6, 7, 8, 10 и в этом занятии — собери куски друг за другом в одном файле, ничего принципиально нового придумывать не нужно."
+  ],
+  "hints_video": [],
+  "has_hints": true,
+  "updated_at": "2026-09-10T19:48:02.746911Z"
+}
