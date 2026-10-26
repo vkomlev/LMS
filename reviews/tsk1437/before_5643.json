@@ -1,0 +1,76 @@
+{
+  "id": 5643,
+  "task_content": {
+    "code": null,
+    "stem": "<p>Исходный код для этого задания:</p><pre><code class=\"language-python\">izmereniya = [20, 35, 90, 41, 95]\nporog = 80\n# 1) prevysheniy = 0\n# 2) for x in izmereniya: if x &gt; porog: prevysheniy += 1\n# 3) print среднего round(sum/len, 2)\n# 4) print максимума max(...)\n# 5) print числа превышений</code></pre>Проектное задание. Напиши программу целиком (около 9-10 строк) — анализатор лога. Дан список izmereniya = [20, 35, 90, 41, 95] и порог porog = 80. Перебери список и посчитай в prevysheniy, сколько значений строго больше порога. Затем выведи тремя строками: среднее (округли до 2 знаков), максимум и число превышений.",
+    "tags": null,
+    "type": "SA_COM",
+    "media": null,
+    "table": null,
+    "title": "Анализ измерений по порогу",
+    "prompt": null,
+    "scales": null,
+    "options": null,
+    "has_hints": true,
+    "course_uid": null,
+    "hints_text": [
+      "Заведи prevysheniy = 0; в цикле for x in izmereniya проверяй if x > porog и увеличивай prevysheniy; потом print(round(sum(izmereniya)/len(izmereniya), 2)), print(max(izmereniya)), print(prevysheniy)."
+    ],
+    "hints_video": [],
+    "difficulty_code": null,
+    "multiline_answer": false
+  },
+  "course_id": 866,
+  "difficulty_id": 5,
+  "solution_rules": {
+    "quiz": null,
+    "table": null,
+    "max_score": 1,
+    "penalties": {
+      "wrong_answer": 0,
+      "extra_wrong_mc": 0,
+      "missing_answer": 0
+    },
+    "auto_check": true,
+    "turtle_sim": null,
+    "text_answer": null,
+    "scoring_mode": "all_or_nothing",
+    "short_answer": {
+      "regex": null,
+      "use_regex": false,
+      "normalization": [
+        "trim",
+        "strip_punctuation",
+        "collapse_spaces",
+        "code_ast"
+      ],
+      "accepted_answers": [
+        {
+          "score": 1,
+          "value": "izmereniya = [20, 35, 90, 41, 95]\nporog = 80\nprevysheniy = 0\nfor x in izmereniya:\n    if x > porog:\n        prevysheniy = prevysheniy + 1\nprint(round(sum(izmereniya) / len(izmereniya), 2))\nprint(max(izmereniya))\nprint(prevysheniy)"
+        }
+      ]
+    },
+    "partial_rules": [],
+    "correct_options": [],
+    "grading_criteria": null,
+    "partial_auto_check": false,
+    "requires_attachment": false,
+    "custom_scoring_config": null,
+    "manual_review_required": false
+  },
+  "external_uid": "wp:dsm-tema-5-spiski#q13",
+  "max_score": 1,
+  "is_active": true,
+  "requirement_level": "required",
+  "order_position": 13,
+  "anchor_material_id": null,
+  "anchor_source": null,
+  "content_provenance": null,
+  "hints_text": [
+    "Заведи prevysheniy = 0; в цикле for x in izmereniya проверяй if x > porog и увеличивай prevysheniy; потом print(round(sum(izmereniya)/len(izmereniya), 2)), print(max(izmereniya)), print(prevysheniy)."
+  ],
+  "hints_video": [],
+  "has_hints": true,
+  "updated_at": "2026-09-10T19:33:51.166949Z"
+}

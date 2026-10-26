@@ -1,0 +1,366 @@
+[
+  {
+    "id": 5638,
+    "replay": {
+      "reference": true,
+      "subs": [],
+      "controls": [
+        {
+          "name": "без f-строки значения",
+          "now": false
+        }
+      ]
+    },
+    "after_rules": {
+      "quiz": null,
+      "table": null,
+      "io_tests": {
+        "tests": [
+          {
+            "label": "вывод из условия",
+            "stdin": "",
+            "expected_stdout": "Привод М1\nТемпература: 25\n"
+          }
+        ],
+        "compare": "lines",
+        "timeout_sec": 2.0,
+        "float_tolerance": 0.0,
+        "max_output_chars": 20000
+      },
+      "max_score": 1,
+      "penalties": {
+        "wrong_answer": 0,
+        "extra_wrong_mc": 0,
+        "missing_answer": 0
+      },
+      "auto_check": true,
+      "diagnostic": false,
+      "turtle_sim": null,
+      "text_answer": null,
+      "scoring_mode": "all_or_nothing",
+      "short_answer": null,
+      "partial_rules": [],
+      "correct_options": [],
+      "grading_criteria": null,
+      "partial_auto_check": false,
+      "requires_attachment": false,
+      "custom_scoring_config": null,
+      "manual_review_required": false
+    }
+  },
+  {
+    "id": 5641,
+    "replay": {
+      "reference": true,
+      "subs": [
+        {
+          "result_id": 44628,
+          "was": true,
+          "now": true
+        }
+      ],
+      "controls": [
+        {
+          "name": "нестрогий порог",
+          "now": false
+        },
+        {
+          "name": "жёсткий вывод",
+          "now": false
+        }
+      ]
+    },
+    "after_rules": {
+      "quiz": null,
+      "table": null,
+      "io_tests": {
+        "tests": [
+          {
+            "label": "t=95",
+            "stdin": "95\n",
+            "expected_stdout": "АВАРИЯ\n"
+          },
+          {
+            "label": "t=91",
+            "stdin": "91\n",
+            "expected_stdout": "АВАРИЯ\n"
+          },
+          {
+            "label": "t=90",
+            "stdin": "90\n",
+            "expected_stdout": "ВНИМАНИЕ\n"
+          },
+          {
+            "label": "t=80",
+            "stdin": "80\n",
+            "expected_stdout": "ВНИМАНИЕ\n"
+          },
+          {
+            "label": "t=71",
+            "stdin": "71\n",
+            "expected_stdout": "ВНИМАНИЕ\n"
+          },
+          {
+            "label": "t=70",
+            "stdin": "70\n",
+            "expected_stdout": "НОРМА\n"
+          },
+          {
+            "label": "t=25",
+            "stdin": "25\n",
+            "expected_stdout": "НОРМА\n"
+          },
+          {
+            "label": "t=-5",
+            "stdin": "-5\n",
+            "expected_stdout": "НОРМА\n"
+          }
+        ],
+        "compare": "lines",
+        "timeout_sec": 2.0,
+        "float_tolerance": 0.0,
+        "max_output_chars": 20000
+      },
+      "max_score": 1,
+      "penalties": {
+        "wrong_answer": 0,
+        "extra_wrong_mc": 0,
+        "missing_answer": 0
+      },
+      "auto_check": true,
+      "diagnostic": false,
+      "turtle_sim": null,
+      "text_answer": null,
+      "scoring_mode": "all_or_nothing",
+      "short_answer": null,
+      "partial_rules": [],
+      "correct_options": [],
+      "grading_criteria": null,
+      "partial_auto_check": false,
+      "requires_attachment": false,
+      "custom_scoring_config": null,
+      "manual_review_required": false
+    }
+  },
+  {
+    "id": 5642,
+    "replay": {
+      "reference": true,
+      "subs": [],
+      "controls": [
+        {
+          "name": "делит на константу",
+          "now": false
+        },
+        {
+          "name": "подогнан под пример",
+          "now": false
+        }
+      ]
+    },
+    "after_rules": {
+      "quiz": null,
+      "table": null,
+      "io_tests": {
+        "tests": [
+          {
+            "label": "n=3",
+            "stdin": "3\n10\n20\n35\n",
+            "expected_stdout": "65\n21.67\n"
+          },
+          {
+            "label": "n=1",
+            "stdin": "1\n7\n",
+            "expected_stdout": "7\n7.0\n"
+          },
+          {
+            "label": "n=2",
+            "stdin": "2\n1\n2\n",
+            "expected_stdout": "3\n1.5\n"
+          },
+          {
+            "label": "n=4",
+            "stdin": "4\n100\n0\n0\n1\n",
+            "expected_stdout": "101\n25.25\n"
+          }
+        ],
+        "compare": "numeric",
+        "timeout_sec": 2.0,
+        "float_tolerance": 0.0,
+        "max_output_chars": 20000
+      },
+      "max_score": 1,
+      "penalties": {
+        "wrong_answer": 0,
+        "extra_wrong_mc": 0,
+        "missing_answer": 0
+      },
+      "auto_check": true,
+      "diagnostic": false,
+      "turtle_sim": null,
+      "text_answer": null,
+      "scoring_mode": "all_or_nothing",
+      "short_answer": null,
+      "partial_rules": [],
+      "correct_options": [],
+      "grading_criteria": null,
+      "partial_auto_check": false,
+      "requires_attachment": false,
+      "custom_scoring_config": null,
+      "manual_review_required": false
+    }
+  },
+  {
+    "id": 5643,
+    "replay": {
+      "reference": true,
+      "subs": [],
+      "controls": [
+        {
+          "name": "нестрогое превышение",
+          "now": false
+        }
+      ]
+    },
+    "after_rules": {
+      "quiz": null,
+      "table": null,
+      "io_tests": {
+        "tests": [
+          {
+            "label": "список из условия",
+            "stdin": "",
+            "expected_stdout": "56.2\n95\n2\n"
+          }
+        ],
+        "compare": "numeric",
+        "timeout_sec": 2.0,
+        "float_tolerance": 0.0,
+        "max_output_chars": 20000
+      },
+      "max_score": 1,
+      "penalties": {
+        "wrong_answer": 0,
+        "extra_wrong_mc": 0,
+        "missing_answer": 0
+      },
+      "auto_check": true,
+      "diagnostic": false,
+      "turtle_sim": null,
+      "text_answer": null,
+      "scoring_mode": "all_or_nothing",
+      "short_answer": null,
+      "partial_rules": [],
+      "correct_options": [],
+      "grading_criteria": null,
+      "partial_auto_check": false,
+      "requires_attachment": false,
+      "custom_scoring_config": null,
+      "manual_review_required": false
+    }
+  },
+  {
+    "id": 5645,
+    "replay": {
+      "reference": true,
+      "subs": [],
+      "controls": [
+        {
+          "name": "без округления среднего верно, но максимум минимум",
+          "now": false
+        }
+      ]
+    },
+    "after_rules": {
+      "quiz": null,
+      "table": null,
+      "io_tests": {
+        "tests": [
+          {
+            "label": "список из условия",
+            "stdin": "",
+            "expected_stdout": "31.0\n41\n"
+          }
+        ],
+        "compare": "numeric",
+        "timeout_sec": 2.0,
+        "float_tolerance": 0.0,
+        "max_output_chars": 20000
+      },
+      "max_score": 1,
+      "penalties": {
+        "wrong_answer": 0,
+        "extra_wrong_mc": 0,
+        "missing_answer": 0
+      },
+      "auto_check": true,
+      "diagnostic": false,
+      "turtle_sim": null,
+      "text_answer": null,
+      "scoring_mode": "all_or_nothing",
+      "short_answer": null,
+      "partial_rules": [],
+      "correct_options": [],
+      "grading_criteria": null,
+      "partial_auto_check": false,
+      "requires_attachment": false,
+      "custom_scoring_config": null,
+      "manual_review_required": false
+    }
+  },
+  {
+    "id": 5646,
+    "replay": {
+      "reference": true,
+      "subs": [
+        {
+          "result_id": 12079,
+          "was": true,
+          "now": false
+        }
+      ],
+      "controls": [
+        {
+          "name": "ошибка в отступе: счётчик вне if",
+          "now": false
+        }
+      ]
+    },
+    "after_rules": {
+      "quiz": null,
+      "table": null,
+      "io_tests": {
+        "tests": [
+          {
+            "label": "список из условия",
+            "stdin": "",
+            "expected_stdout": "20: норма\n35: норма\n90: АВАРИЯ\n41: норма\n95: АВАРИЯ\n56.2\n95\n2\n"
+          }
+        ],
+        "compare": "lines",
+        "timeout_sec": 2.0,
+        "float_tolerance": 0.0,
+        "max_output_chars": 20000
+      },
+      "max_score": 1,
+      "penalties": {
+        "wrong_answer": 0,
+        "extra_wrong_mc": 0,
+        "missing_answer": 0
+      },
+      "auto_check": true,
+      "diagnostic": false,
+      "turtle_sim": null,
+      "text_answer": null,
+      "scoring_mode": "all_or_nothing",
+      "short_answer": null,
+      "partial_rules": [],
+      "correct_options": [],
+      "grading_criteria": null,
+      "partial_auto_check": false,
+      "requires_attachment": false,
+      "custom_scoring_config": null,
+      "manual_review_required": false
+    }
+  }
+]

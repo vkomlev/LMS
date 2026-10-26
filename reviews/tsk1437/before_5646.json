@@ -1,0 +1,76 @@
+{
+  "id": 5646,
+  "task_content": {
+    "code": null,
+    "stem": "<p>Исходный код для этого задания:</p><pre><code class=\"language-python\"># def srednee(spisok): return round(sum(spisok)/len(spisok), 2)\n# izmereniya = [20, 35, 90, 41, 95]; porog = 80; avariy = 0\n# for x in izmereniya:\n#   if x &gt; porog: print(f&quot;{x}: АВАРИЯ&quot;); avariy += 1\n#   else: print(f&quot;{x}: норма&quot;)\n# print среднего через srednee(izmereniya), print max, print avariy</code></pre>Итоговый проект (auto). Напиши программу целиком (около 12-14 строк) — пульт мониторинга привода. Опиши функцию srednee(spisok), возвращающую среднее, округлённое до 2 знаков. Заведи список izmereniya = [20, 35, 90, 41, 95] и порог porog = 80, счётчик avariy = 0. Перебери список: если значение строго больше порога — выведи строку с этим значением и словом АВАРИЯ и увеличь avariy, иначе выведи значение и слово норма. После цикла выведи среднее (через функцию), максимум и число аварий.",
+    "tags": null,
+    "type": "SA_COM",
+    "media": null,
+    "table": null,
+    "title": "Программа пульта мониторинга привода",
+    "prompt": null,
+    "scales": null,
+    "options": null,
+    "has_hints": true,
+    "course_uid": null,
+    "hints_text": [
+      "Сначала функция srednee с return. Потом список, порог, avariy=0. В цикле for x in izmereniya ветка if x > porog (печать АВАРИЯ + avariy = avariy + 1) и else (печать норма). После цикла три print: srednee(izmereniya), max(izmereniya), avariy."
+    ],
+    "hints_video": [],
+    "difficulty_code": null,
+    "multiline_answer": false
+  },
+  "course_id": 869,
+  "difficulty_id": 5,
+  "solution_rules": {
+    "quiz": null,
+    "table": null,
+    "max_score": 1,
+    "penalties": {
+      "wrong_answer": 0,
+      "extra_wrong_mc": 0,
+      "missing_answer": 0
+    },
+    "auto_check": true,
+    "turtle_sim": null,
+    "text_answer": null,
+    "scoring_mode": "all_or_nothing",
+    "short_answer": {
+      "regex": null,
+      "use_regex": false,
+      "normalization": [
+        "trim",
+        "strip_punctuation",
+        "collapse_spaces",
+        "code_ast"
+      ],
+      "accepted_answers": [
+        {
+          "score": 1,
+          "value": "def srednee(spisok):\n    return round(sum(spisok) / len(spisok), 2)\n\nizmereniya = [20, 35, 90, 41, 95]\nporog = 80\navariy = 0\nfor x in izmereniya:\n    if x > porog:\n        print(f\"{x}: АВАРИЯ\")\n        avariy = avariy + 1\n    else:\n        print(f\"{x}: норма\")\nprint(srednee(izmereniya))\nprint(max(izmereniya))\nprint(avariy)"
+        }
+      ]
+    },
+    "partial_rules": [],
+    "correct_options": [],
+    "grading_criteria": null,
+    "partial_auto_check": false,
+    "requires_attachment": false,
+    "custom_scoring_config": null,
+    "manual_review_required": false
+  },
+  "external_uid": "wp:dsm-tema-8-proekt#q11",
+  "max_score": 1,
+  "is_active": true,
+  "requirement_level": "required",
+  "order_position": 11,
+  "anchor_material_id": null,
+  "anchor_source": null,
+  "content_provenance": null,
+  "hints_text": [
+    "Сначала функция srednee с return. Потом список, порог, avariy=0. В цикле for x in izmereniya ветка if x > porog (печать АВАРИЯ + avariy = avariy + 1) и else (печать норма). После цикла три print: srednee(izmereniya), max(izmereniya), avariy."
+  ],
+  "hints_video": [],
+  "has_hints": true,
+  "updated_at": "2026-09-10T19:41:12.529590Z"
+}

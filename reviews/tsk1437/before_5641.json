@@ -1,0 +1,76 @@
+{
+  "id": 5641,
+  "task_content": {
+    "code": null,
+    "stem": "<p>Исходный код для этого задания:</p><pre><code class=\"language-python\"># напиши программу:\n# temperatura = int(input(...))\n# if temperatura &gt; 90:  -&gt; print(&quot;АВАРИЯ&quot;)\n# elif temperatura &gt; 70: -&gt; print(&quot;ВНИМАНИЕ&quot;)\n# else: -&gt; print(&quot;НОРМА&quot;)</code></pre>Напиши программу целиком (6-7 строк). Спроси температуру командой input и преврати в число. Затем по порогам выведи уровень: если больше 90 — АВАРИЯ, иначе если больше 70 — ВНИМАНИЕ, иначе — НОРМА. Используй переменную temperatura и конструкцию if/elif/else.",
+    "tags": null,
+    "type": "SA_COM",
+    "media": null,
+    "table": null,
+    "title": "Программа проверки температуры",
+    "prompt": null,
+    "scales": null,
+    "options": null,
+    "has_hints": true,
+    "course_uid": null,
+    "hints_text": [
+      "Сначала temperatura = int(input(\"Температура: \")). Потом три ветки if/elif/else, в каждой свой print. Не забудь двоеточия и отступы."
+    ],
+    "hints_video": [],
+    "difficulty_code": null,
+    "multiline_answer": false
+  },
+  "course_id": 864,
+  "difficulty_id": 4,
+  "solution_rules": {
+    "quiz": null,
+    "table": null,
+    "max_score": 1,
+    "penalties": {
+      "wrong_answer": 0,
+      "extra_wrong_mc": 0,
+      "missing_answer": 0
+    },
+    "auto_check": true,
+    "turtle_sim": null,
+    "text_answer": null,
+    "scoring_mode": "all_or_nothing",
+    "short_answer": {
+      "regex": null,
+      "use_regex": false,
+      "normalization": [
+        "trim",
+        "strip_punctuation",
+        "collapse_spaces",
+        "code_ast"
+      ],
+      "accepted_answers": [
+        {
+          "score": 1,
+          "value": "temperatura = int(input(\"Температура: \"))\nif temperatura > 90:\n    print(\"АВАРИЯ\")\nelif temperatura > 70:\n    print(\"ВНИМАНИЕ\")\nelse:\n    print(\"НОРМА\")"
+        }
+      ]
+    },
+    "partial_rules": [],
+    "correct_options": [],
+    "grading_criteria": null,
+    "partial_auto_check": false,
+    "requires_attachment": false,
+    "custom_scoring_config": null,
+    "manual_review_required": false
+  },
+  "external_uid": "wp:dsm-tema-3-vetvlenie#q13",
+  "max_score": 1,
+  "is_active": true,
+  "requirement_level": "required",
+  "order_position": 13,
+  "anchor_material_id": null,
+  "anchor_source": null,
+  "content_provenance": null,
+  "hints_text": [
+    "Сначала temperatura = int(input(\"Температура: \")). Потом три ветки if/elif/else, в каждой свой print. Не забудь двоеточия и отступы."
+  ],
+  "hints_video": [],
+  "has_hints": true,
+  "updated_at": "2026-09-10T19:29:15.678394Z"
+}

@@ -1,0 +1,69 @@
+{
+  "id": 5638,
+  "task_content": {
+    "code": null,
+    "stem": "<p>Исходный код для этого задания:</p><pre><code class=\"language-python\"># напиши программу из 4 строк:\n# 1) ustroystvo = &quot;Привод М1&quot;\n# 2) temperatura = 25\n# 3) print названия устройства\n# 4) print f-строки &quot;Температура: 25&quot; со значением из переменной</code></pre>Напиши программу целиком (4 строки). Заведи переменную ustroystvo со значением \"Привод М1\", переменную temperatura со значением 25, затем выведи на экран название устройства, а следующей строкой — f-строку вида: Температура: 25 (значение возьми из переменной).",
+    "tags": null,
+    "type": "SA_COM",
+    "media": null,
+    "title": "Программа с двумя переменными",
+    "prompt": null,
+    "scales": null,
+    "options": null,
+    "has_hints": true,
+    "course_uid": null,
+    "hints_text": [
+      "Построчно: ustroystvo = \"Привод М1\", потом temperatura = 25, потом print(ustroystvo), потом print(f\"Температура: {temperatura}\")."
+    ],
+    "hints_video": [],
+    "difficulty_code": null
+  },
+  "course_id": 862,
+  "difficulty_id": 3,
+  "solution_rules": {
+    "quiz": null,
+    "max_score": 1,
+    "penalties": {
+      "wrong_answer": 0,
+      "extra_wrong_mc": 0,
+      "missing_answer": 0
+    },
+    "auto_check": true,
+    "text_answer": null,
+    "scoring_mode": "all_or_nothing",
+    "short_answer": {
+      "regex": null,
+      "use_regex": false,
+      "normalization": [
+        "trim",
+        "strip_punctuation",
+        "collapse_spaces",
+        "code_ast"
+      ],
+      "accepted_answers": [
+        {
+          "score": 1,
+          "value": "ustroystvo = \"Привод М1\"\ntemperatura = 25\nprint(ustroystvo)\nprint(f\"Температура: {temperatura}\")"
+        }
+      ]
+    },
+    "partial_rules": [],
+    "correct_options": [],
+    "custom_scoring_config": null,
+    "manual_review_required": false
+  },
+  "external_uid": "wp:dsm-tema-1-vyvod-peremennye#q12",
+  "max_score": 1,
+  "is_active": true,
+  "requirement_level": "required",
+  "order_position": 12,
+  "anchor_material_id": null,
+  "anchor_source": null,
+  "content_provenance": null,
+  "hints_text": [
+    "Построчно: ustroystvo = \"Привод М1\", потом temperatura = 25, потом print(ustroystvo), потом print(f\"Температура: {temperatura}\")."
+  ],
+  "hints_video": [],
+  "has_hints": true,
+  "updated_at": null
+}

@@ -1,0 +1,76 @@
+{
+  "id": 5645,
+  "task_content": {
+    "code": null,
+    "stem": "<p>Исходный код для этого задания:</p><pre><code class=\"language-python\"># def srednee(spisok): return round(sum(spisok)/len(spisok), 2)\n# def maksimum(spisok): return max(spisok)\n# izmereniya = [20, 35, 28, 41]\n# print среднего и print максимума через вызовы функций</code></pre>Проектное задание. Напиши программу целиком (около 9-10 строк). Опиши функцию srednee(spisok), которая возвращает среднее значение списка, округлённое до 2 знаков. Опиши функцию maksimum(spisok), которая возвращает максимум. Затем заведи список izmereniya = [20, 35, 28, 41] и выведи двумя строками результат каждой функции для этого списка.",
+    "tags": null,
+    "type": "SA_COM",
+    "media": null,
+    "table": null,
+    "title": "Среднее и максимум списка",
+    "prompt": null,
+    "scales": null,
+    "options": null,
+    "has_hints": true,
+    "course_uid": null,
+    "hints_text": [
+      "Две функции с return, потом список, потом два print с вызовами: print(srednee(izmereniya)) и print(maksimum(izmereniya))."
+    ],
+    "hints_video": [],
+    "difficulty_code": null,
+    "multiline_answer": false
+  },
+  "course_id": 868,
+  "difficulty_id": 5,
+  "solution_rules": {
+    "quiz": null,
+    "table": null,
+    "max_score": 1,
+    "penalties": {
+      "wrong_answer": 0,
+      "extra_wrong_mc": 0,
+      "missing_answer": 0
+    },
+    "auto_check": true,
+    "turtle_sim": null,
+    "text_answer": null,
+    "scoring_mode": "all_or_nothing",
+    "short_answer": {
+      "regex": null,
+      "use_regex": false,
+      "normalization": [
+        "trim",
+        "strip_punctuation",
+        "collapse_spaces",
+        "code_ast"
+      ],
+      "accepted_answers": [
+        {
+          "score": 1,
+          "value": "def srednee(spisok):\n    return round(sum(spisok) / len(spisok), 2)\n\ndef maksimum(spisok):\n    return max(spisok)\n\nizmereniya = [20, 35, 28, 41]\nprint(srednee(izmereniya))\nprint(maksimum(izmereniya))"
+        }
+      ]
+    },
+    "partial_rules": [],
+    "correct_options": [],
+    "grading_criteria": null,
+    "partial_auto_check": false,
+    "requires_attachment": false,
+    "custom_scoring_config": null,
+    "manual_review_required": false
+  },
+  "external_uid": "wp:dsm-tema-7-funkcii#q13",
+  "max_score": 1,
+  "is_active": true,
+  "requirement_level": "required",
+  "order_position": 13,
+  "anchor_material_id": null,
+  "anchor_source": null,
+  "content_provenance": null,
+  "hints_text": [
+    "Две функции с return, потом список, потом два print с вызовами: print(srednee(izmereniya)) и print(maksimum(izmereniya))."
+  ],
+  "hints_video": [],
+  "has_hints": true,
+  "updated_at": "2026-09-10T19:38:21.788682Z"
+}

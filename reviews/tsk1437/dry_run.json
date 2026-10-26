@@ -1,0 +1,369 @@
+[
+  {
+    "id": 5638,
+    "replay": {
+      "reference": true,
+      "subs": [],
+      "controls": [
+        {
+          "name": "без f-строки значения",
+          "now": false
+        }
+      ]
+    },
+    "payload": {
+      "solution_rules": {
+        "quiz": null,
+        "max_score": 1,
+        "penalties": {
+          "wrong_answer": 0,
+          "extra_wrong_mc": 0,
+          "missing_answer": 0
+        },
+        "auto_check": true,
+        "text_answer": null,
+        "scoring_mode": "all_or_nothing",
+        "short_answer": null,
+        "partial_rules": [],
+        "correct_options": [],
+        "custom_scoring_config": null,
+        "manual_review_required": false,
+        "io_tests": {
+          "tests": [
+            {
+              "stdin": "",
+              "expected_stdout": "Привод М1\nТемпература: 25\n",
+              "label": "вывод из условия"
+            }
+          ],
+          "compare": "lines"
+        }
+      }
+    }
+  },
+  {
+    "id": 5641,
+    "replay": {
+      "reference": true,
+      "subs": [
+        {
+          "result_id": 44628,
+          "was": true,
+          "now": true
+        }
+      ],
+      "controls": [
+        {
+          "name": "нестрогий порог",
+          "now": false
+        },
+        {
+          "name": "жёсткий вывод",
+          "now": false
+        }
+      ]
+    },
+    "payload": {
+      "solution_rules": {
+        "quiz": null,
+        "table": null,
+        "max_score": 1,
+        "penalties": {
+          "wrong_answer": 0,
+          "extra_wrong_mc": 0,
+          "missing_answer": 0
+        },
+        "auto_check": true,
+        "turtle_sim": null,
+        "text_answer": null,
+        "scoring_mode": "all_or_nothing",
+        "short_answer": null,
+        "partial_rules": [],
+        "correct_options": [],
+        "grading_criteria": null,
+        "partial_auto_check": false,
+        "requires_attachment": false,
+        "custom_scoring_config": null,
+        "manual_review_required": false,
+        "io_tests": {
+          "tests": [
+            {
+              "stdin": "95\n",
+              "expected_stdout": "АВАРИЯ\n",
+              "label": "t=95"
+            },
+            {
+              "stdin": "91\n",
+              "expected_stdout": "АВАРИЯ\n",
+              "label": "t=91"
+            },
+            {
+              "stdin": "90\n",
+              "expected_stdout": "ВНИМАНИЕ\n",
+              "label": "t=90"
+            },
+            {
+              "stdin": "80\n",
+              "expected_stdout": "ВНИМАНИЕ\n",
+              "label": "t=80"
+            },
+            {
+              "stdin": "71\n",
+              "expected_stdout": "ВНИМАНИЕ\n",
+              "label": "t=71"
+            },
+            {
+              "stdin": "70\n",
+              "expected_stdout": "НОРМА\n",
+              "label": "t=70"
+            },
+            {
+              "stdin": "25\n",
+              "expected_stdout": "НОРМА\n",
+              "label": "t=25"
+            },
+            {
+              "stdin": "-5\n",
+              "expected_stdout": "НОРМА\n",
+              "label": "t=-5"
+            }
+          ],
+          "compare": "lines"
+        }
+      }
+    }
+  },
+  {
+    "id": 5642,
+    "replay": {
+      "reference": true,
+      "subs": [],
+      "controls": [
+        {
+          "name": "делит на константу",
+          "now": false
+        },
+        {
+          "name": "подогнан под пример",
+          "now": false
+        }
+      ]
+    },
+    "payload": {
+      "solution_rules": {
+        "quiz": null,
+        "table": null,
+        "max_score": 1,
+        "penalties": {
+          "wrong_answer": 0,
+          "extra_wrong_mc": 0,
+          "missing_answer": 0
+        },
+        "auto_check": true,
+        "turtle_sim": null,
+        "text_answer": null,
+        "scoring_mode": "all_or_nothing",
+        "short_answer": null,
+        "partial_rules": [],
+        "correct_options": [],
+        "grading_criteria": null,
+        "partial_auto_check": false,
+        "requires_attachment": false,
+        "custom_scoring_config": null,
+        "manual_review_required": false,
+        "io_tests": {
+          "tests": [
+            {
+              "stdin": "3\n10\n20\n35\n",
+              "expected_stdout": "65\n21.67\n",
+              "label": "n=3"
+            },
+            {
+              "stdin": "1\n7\n",
+              "expected_stdout": "7\n7.0\n",
+              "label": "n=1"
+            },
+            {
+              "stdin": "2\n1\n2\n",
+              "expected_stdout": "3\n1.5\n",
+              "label": "n=2"
+            },
+            {
+              "stdin": "4\n100\n0\n0\n1\n",
+              "expected_stdout": "101\n25.25\n",
+              "label": "n=4"
+            }
+          ],
+          "compare": "numeric"
+        }
+      }
+    }
+  },
+  {
+    "id": 5643,
+    "replay": {
+      "reference": true,
+      "subs": [],
+      "controls": [
+        {
+          "name": "нестрогое превышение",
+          "now": false
+        }
+      ]
+    },
+    "payload": {
+      "solution_rules": {
+        "quiz": null,
+        "table": null,
+        "max_score": 1,
+        "penalties": {
+          "wrong_answer": 0,
+          "extra_wrong_mc": 0,
+          "missing_answer": 0
+        },
+        "auto_check": true,
+        "turtle_sim": null,
+        "text_answer": null,
+        "scoring_mode": "all_or_nothing",
+        "short_answer": null,
+        "partial_rules": [],
+        "correct_options": [],
+        "grading_criteria": null,
+        "partial_auto_check": false,
+        "requires_attachment": false,
+        "custom_scoring_config": null,
+        "manual_review_required": false,
+        "io_tests": {
+          "tests": [
+            {
+              "stdin": "",
+              "expected_stdout": "56.2\n95\n2\n",
+              "label": "список из условия"
+            }
+          ],
+          "compare": "numeric"
+        }
+      }
+    }
+  },
+  {
+    "id": 5645,
+    "replay": {
+      "reference": true,
+      "subs": [],
+      "controls": [
+        {
+          "name": "без округления среднего верно, но максимум минимум",
+          "now": false
+        }
+      ]
+    },
+    "payload": {
+      "solution_rules": {
+        "quiz": null,
+        "table": null,
+        "max_score": 1,
+        "penalties": {
+          "wrong_answer": 0,
+          "extra_wrong_mc": 0,
+          "missing_answer": 0
+        },
+        "auto_check": true,
+        "turtle_sim": null,
+        "text_answer": null,
+        "scoring_mode": "all_or_nothing",
+        "short_answer": null,
+        "partial_rules": [],
+        "correct_options": [],
+        "grading_criteria": null,
+        "partial_auto_check": false,
+        "requires_attachment": false,
+        "custom_scoring_config": null,
+        "manual_review_required": false,
+        "io_tests": {
+          "tests": [
+            {
+              "stdin": "",
+              "expected_stdout": "31.0\n41\n",
+              "label": "список из условия"
+            }
+          ],
+          "compare": "numeric"
+        }
+      }
+    }
+  },
+  {
+    "id": 5646,
+    "replay": {
+      "reference": true,
+      "subs": [
+        {
+          "result_id": 12079,
+          "was": true,
+          "now": false
+        }
+      ],
+      "controls": [
+        {
+          "name": "ошибка в отступе: счётчик вне if",
+          "now": false
+        }
+      ]
+    },
+    "payload": {
+      "task_content": {
+        "code": null,
+        "stem": "<p>Исходный код для этого задания:</p><pre><code class=\"language-python\"># def srednee(spisok): return round(sum(spisok)/len(spisok), 2)\n# izmereniya = [20, 35, 90, 41, 95]; porog = 80; avariy = 0\n# for x in izmereniya:\n#   if x &gt; porog: print(f&quot;{x}: АВАРИЯ&quot;); avariy += 1\n#   else: print(f&quot;{x}: норма&quot;)\n# print среднего через srednee(izmereniya), print max, print avariy</code></pre>Итоговый проект (auto). Напиши программу целиком (около 12-14 строк) — пульт мониторинга привода. Опиши функцию srednee(spisok), возвращающую среднее, округлённое до 2 знаков. Заведи список izmereniya = [20, 35, 90, 41, 95] и порог porog = 80, счётчик avariy = 0. Перебери список: если значение строго больше порога — выведи строку с этим значением и словом АВАРИЯ и увеличь avariy, иначе выведи значение и слово норма. Формат строк — как в комментарии: <code>90: АВАРИЯ</code>, <code>20: норма</code>. После цикла выведи среднее (через функцию), максимум и число аварий.",
+        "tags": null,
+        "type": "SA_COM",
+        "media": null,
+        "table": null,
+        "title": "Программа пульта мониторинга привода",
+        "prompt": null,
+        "scales": null,
+        "options": null,
+        "has_hints": true,
+        "course_uid": null,
+        "hints_text": [
+          "Сначала функция srednee с return. Потом список, порог, avariy=0. В цикле for x in izmereniya ветка if x > porog (печать АВАРИЯ + avariy = avariy + 1) и else (печать норма). После цикла три print: srednee(izmereniya), max(izmereniya), avariy."
+        ],
+        "hints_video": [],
+        "difficulty_code": null,
+        "multiline_answer": false
+      },
+      "solution_rules": {
+        "quiz": null,
+        "table": null,
+        "max_score": 1,
+        "penalties": {
+          "wrong_answer": 0,
+          "extra_wrong_mc": 0,
+          "missing_answer": 0
+        },
+        "auto_check": true,
+        "turtle_sim": null,
+        "text_answer": null,
+        "scoring_mode": "all_or_nothing",
+        "short_answer": null,
+        "partial_rules": [],
+        "correct_options": [],
+        "grading_criteria": null,
+        "partial_auto_check": false,
+        "requires_attachment": false,
+        "custom_scoring_config": null,
+        "manual_review_required": false,
+        "io_tests": {
+          "tests": [
+            {
+              "stdin": "",
+              "expected_stdout": "20: норма\n35: норма\n90: АВАРИЯ\n41: норма\n95: АВАРИЯ\n56.2\n95\n2\n",
+              "label": "список из условия"
+            }
+          ],
+          "compare": "lines"
+        }
+      }
+    }
+  }
+]
