@@ -16,6 +16,7 @@ from app.services.auth.vk_oauth_service import (
     exchange_code,
     fetch_vk_userinfo,
     get_or_create_user_by_vk,
+    resolve_redirect_uri,
 )
 from app.services.auth.cookie import set_refresh_cookie, set_session_cookie
 from app.services.auth.role_assign_service import ensure_student_access_request
@@ -56,8 +57,20 @@ async def vk_callback(
         raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Слишком много запросов")
 
     try:
+        redirect_uri = resolve_redirect_uri(body.redirect_uri, _settings)
+    except ValueError as e:
+        logger.warning("VK callback rejected: %s", e)
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": "redirect_uri_not_allowed",
+                "message": "Вход через ВК с этого адреса не поддерживается.",
+            },
+        )
+
+    try:
         token_data = await exchange_code(
-            body.code, body.code_verifier, body.device_id, _settings
+            body.code, body.code_verifier, body.device_id, _settings, redirect_uri
         )
     except ValueError as e:
         logger.warning("VK code exchange failed: %s", e)

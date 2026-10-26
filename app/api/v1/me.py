@@ -1097,8 +1097,11 @@ async def link_identity_vk(
     await _consume_link_token_for_user(db, body.link_token, "vk", current_user.id, ip)
 
     try:
+        # tsk-1431: VK сверяет адрес обмена с адресом authorize, а привязка
+        # ходит на /me/identity/vk/link своего домена, не на адрес входа.
+        redirect_uri = vk_oauth_service.resolve_redirect_uri(body.redirect_uri, _settings)
         token_data = await vk_oauth_service.exchange_code(
-            body.code, body.code_verifier, body.device_id, _settings
+            body.code, body.code_verifier, body.device_id, _settings, redirect_uri
         )
     except ValueError as e:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, f"VK exchange failed: {e}")

@@ -68230,6 +68230,18 @@
             "type": "string",
             "minLength": 1,
             "title": "Device Id"
+          },
+          "redirect_uri": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 512
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Redirect Uri"
           }
         },
         "type": "object",
@@ -91422,6 +91434,18 @@
               }
             ],
             "title": "Guest Session Id"
+          },
+          "redirect_uri": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 512
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Redirect Uri"
           }
         },
         "type": "object",

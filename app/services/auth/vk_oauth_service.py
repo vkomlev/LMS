@@ -13,6 +13,7 @@ tsk-755 (ADR-0054): совпадение почты из ВК с существ�
 """
 import logging
 from datetime import datetime
+from urllib.parse import urlsplit
 
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -39,7 +40,45 @@ __all__ = [
     "fetch_vk_userinfo",
     "get_or_create_user_by_vk",
     "get_vk_user_id",
+    "resolve_redirect_uri",
 ]
+
+
+_VK_REDIRECT_PATHS = ("/auth/vk/callback", "/me/identity/vk/link")
+
+
+def resolve_redirect_uri(requested: str | None, settings: Settings) -> str:
+    """Выбрать redirect_uri для обмена кода (tsk-1431).
+
+    VK сверяет redirect_uri обмена с тем, что был на authorize. Клиент шлёт
+    адрес своего домена; принимаем его, только если хост из белого списка
+    (или хост `VK_ID_REDIRECT_URI`), путь — один из путей возврата VK, а
+    схема https. Без адреса — прежнее поведение, `VK_ID_REDIRECT_URI`.
+
+    :raises ValueError: адрес не прошёл белый список.
+    """
+    if not requested:
+        return settings.vk_id_redirect_uri
+    parsed = urlsplit(requested)
+    host = (parsed.hostname or "").lower()
+    allowed = set(settings.vk_id_allowed_redirect_hosts)
+    default_host = urlsplit(settings.vk_id_redirect_uri).hostname
+    if default_host:
+        allowed.add(default_host.lower())
+    if (
+        requested == settings.vk_id_redirect_uri
+        or (
+            parsed.scheme == "https"
+            and host in allowed
+            and parsed.port is None
+            and not parsed.username
+            and parsed.path in _VK_REDIRECT_PATHS
+            and not parsed.query
+            and not parsed.fragment
+        )
+    ):
+        return requested
+    raise ValueError(f"redirect_uri not allowed: host={host!r} path={parsed.path!r}")
 
 
 async def exchange_code(
@@ -47,10 +86,14 @@ async def exchange_code(
     code_verifier: str,
     device_id: str,
     settings: Settings,
+    redirect_uri: str | None = None,
 ) -> dict:
     """
     Обменять authorization_code (PKCE) на access+refresh токены VK ID 2.0.
     Возвращает dict с access_token, refresh_token, expires_in, user_id.
+
+    :param redirect_uri: уже проверенный `resolve_redirect_uri` адрес; None —
+        `VK_ID_REDIRECT_URI`.
     """
     async with httpx.AsyncClient(timeout=10) as client:
         resp = await client.post(
@@ -61,7 +104,7 @@ async def exchange_code(
                 "code_verifier": code_verifier,
                 "client_id": settings.vk_id_client_id,
                 "device_id": device_id,
-                "redirect_uri": settings.vk_id_redirect_uri,
+                "redirect_uri": redirect_uri or settings.vk_id_redirect_uri,
             },
         )
     if resp.status_code != 200:

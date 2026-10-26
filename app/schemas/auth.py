@@ -46,6 +46,8 @@ class VkCallbackRequest(PdConsentFields):
     code_verifier: str = Field(..., min_length=1)
     device_id: str = Field(..., min_length=1)
     guest_session_id: str | None = None
+    # tsk-1431: адрес возврата, с которым клиент ходил на authorize (свой домен).
+    redirect_uri: str | None = Field(None, max_length=512)
 
 
 # ── Session / Refresh ────────────────────────────────────────────────────────
@@ -105,6 +107,8 @@ class IdentityLinkVkRequest(BaseModel):
     code: str = Field(..., min_length=1)
     code_verifier: str = Field(..., min_length=1)
     device_id: str = Field(..., min_length=1)
+    # tsk-1431: адрес возврата привязки (свой домен + /me/identity/vk/link).
+    redirect_uri: str | None = Field(None, max_length=512)
 
 
 class IdentityLinkedItem(BaseModel):

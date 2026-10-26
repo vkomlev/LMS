@@ -633,6 +633,17 @@ class Settings:
         self.vk_id_client_id: str = os.getenv("VK_ID_CLIENT_ID", "")
         self.vk_id_client_secret: str = os.getenv("VK_ID_CLIENT_SECRET", "")
         self.vk_id_redirect_uri: str = os.getenv("VK_ID_REDIRECT_URI", "")
+        # tsk-1431: кабинет открывается с нескольких имён (study — обход блокировок
+        # learn у части провайдеров, tsk-561), и VK должен возвращать ученика на то
+        # же имя. Адрес возврата присылает клиент, LMS принимает только эти хосты.
+        self.vk_id_allowed_redirect_hosts: List[str] = [
+            h.strip().lower()
+            for h in os.getenv(
+                "VK_ID_ALLOWED_REDIRECT_HOSTS",
+                "learn.victor-komlev.ru,study.victor-komlev.ru,family.victor-komlev.ru",
+            ).split(",")
+            if h.strip()
+        ]
         self.redis_url: str = os.getenv("REDIS_URL", "redis://localhost:6379/2")
         self.cors_allowed_origins: List[str] = [
             o.strip()
