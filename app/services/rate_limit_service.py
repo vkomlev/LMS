@@ -8,11 +8,23 @@ logger = logging.getLogger(__name__)
 
 _pool: aioredis.Redis | None = None
 
+# tsk-1440: без таймаутов «молча» пропавший узел Valkey вешал каждый запрос
+# с лимитом частоты (вход, обновление сессии) до таймаута ОС — минуты.
+# С ними сбой ловится за секунды и уходит в fail-open/fail-secure ветки.
+SOCKET_CONNECT_TIMEOUT_S = 1.0
+SOCKET_TIMEOUT_S = 2.0
+
 
 def get_redis(redis_url: str) -> aioredis.Redis:
+    """Общий клиент Redis/Valkey процесса с короткими таймаутами сокета."""
     global _pool
     if _pool is None:
-        _pool = aioredis.from_url(redis_url, decode_responses=True)
+        _pool = aioredis.from_url(
+            redis_url,
+            decode_responses=True,
+            socket_connect_timeout=SOCKET_CONNECT_TIMEOUT_S,
+            socket_timeout=SOCKET_TIMEOUT_S,
+        )
     return _pool
 
 
