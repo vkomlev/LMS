@@ -153,7 +153,10 @@ async def test_batch_stub_falls_to_next_model(monkeypatch: pytest.MonkeyPatch, _
         return _batch(STUB if _model_of(request) == "judge-stub" else '{"code_quality": {"score": 8}}')
 
     _mount(monkeypatch, handler)
-    res = await llm_client.complete([LLMMessage(role="user", content="оцени")], purpose="code_review")
+    # Длина запроса — как у настоящего судьи (~2 400 символов): заглушка отдаёт вход
+    # 1 508 токенов, на запрос в 5 символов это раздутый вход (tsk-1376).
+    res = await llm_client.complete([LLMMessage(role="user", content="оцени " * 400)],
+                                    purpose="code_review")
     assert res.model == "judge-ok"
     outcomes = [(e.model, e.outcome) for e in _llm_env]
     assert ("judge-stub", "LLMUpstreamError") in outcomes

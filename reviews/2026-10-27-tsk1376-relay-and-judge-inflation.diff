@@ -1,0 +1,289 @@
+diff --git a/app/services/llm/client.py b/app/services/llm/client.py
+index ea52679..b476d33 100644
+--- a/app/services/llm/client.py
++++ b/app/services/llm/client.py
+@@ -15,7 +15,7 @@ from typing import AsyncIterator, Iterable, Optional, Sequence
+ import httpx
+ 
+ from app.services.llm import anthropic_direct, cooldown, providers, usage
+-from app.services.llm.identity import OpeningSniffer, check_response_id
++from app.services.llm.identity import OpeningSniffer, check_input_tokens, check_response_id
+ from app.services.llm.contracts import (
+     Budget,
+     LLMChunk,
+@@ -344,6 +344,7 @@ async def complete(
+     # «работа взята», после чего следующий тик берёт ту же работу и провайдеру
+     # платят за неё дважды.
+     deadline = time.monotonic() + budget.total_timeout
++    prompt_chars = sum(len(m.content or "") for m in messages)
+ 
+     async with httpx.AsyncClient(timeout=_timeout(budget)) as http:
+         for candidate, cfg in ready:
+@@ -387,6 +388,10 @@ async def complete(
+                     text_out = (choices[0].get("message") or {}).get("content") or ""
+                     _check_content_stub(text_out)
+                     usage_block = payload.get("usage") or {}
++                    # tsk-1376: раздутый вход — подмешанная инструкция; вердикт не
++                    # берём, `LLMIdentityMismatch` ведёт к следующей модели и повтору.
++                    check_input_tokens(candidate, prompt_chars,
++                                       int(usage_block.get("prompt_tokens") or 0))
+                     duration_ms = int((time.monotonic() - started) * 1000)
+ 
+                     await _usage_ok(
+diff --git a/app/services/llm/identity.py b/app/services/llm/identity.py
+index 389f70e..0b98d27 100644
+--- a/app/services/llm/identity.py
++++ b/app/services/llm/identity.py
+@@ -110,6 +110,28 @@ def check_response_id(model: str, response_id: Optional[str]) -> None:
+         )
+ 
+ 
++# Раздутый вход (tsk-1376, разбор 27.10). Маршрутизатор временами подмешивает к
++# запросу свою инструкцию (Codex) — ~4 000 токенов сверху. Неделя 20–27.10: 49
++# вердиктов luna с id `chatcmpl-<24 hex>` и входом 4 854–5 635 при медиане обычных
++# 940; проба 27.10 13:2x — вопрос в ~20 токенов, вход 4 406, самоназвание «Codex».
++# Порог считается от размера своего запроса, а не общей константой: настоящий вход
++# судьи 730–2 977 токенов при ~3 символах на токен (системный промпт 2 372 символа
++# → ~830 токенов). `символы/2` — потолок с запасом в полтора раза, `+1500` — люфт на
++# служебную обвязку; превысить его без подмешанного текста нельзя.
++INFLATION_CHARS_PER_TOKEN = 2
++INFLATION_SLACK_TOKENS = 1500
++
++
++def check_input_tokens(model: str, prompt_chars: int, tokens_in: int) -> None:
++    """Поднять `LLMIdentityMismatch`, если вход больше, чем мог дать наш запрос."""
++    limit = prompt_chars // INFLATION_CHARS_PER_TOKEN + INFLATION_SLACK_TOKENS
++    if tokens_in > limit:
++        raise LLMIdentityMismatch(
++            f"вход {tokens_in} токенов при пороге {limit} ({prompt_chars} символов "
++            f"запроса): под меткой {model} подмешана чужая инструкция"
++        )
++
++
+ def check_opening(model: str, text: str) -> None:
+     """Поднять `LLMIdentityMismatch`, если начало ответа выдаёт чужую модель."""
+     vendor = vendor_of(model)
+diff --git a/deploy/local/anthropic-relay-remote.sh b/deploy/local/anthropic-relay-remote.sh
+new file mode 100644
+index 0000000..1b132aa
+--- /dev/null
++++ b/deploy/local/anthropic-relay-remote.sh
+@@ -0,0 +1,29 @@
++#!/bin/bash
++# tsk-1376: серверная часть пересыльщика. Передаётся в `ssh lms-spw-vds bash -s -- <режим>`,
++# на сервере не хранится.
++#   free  — снять висящий приёмник 127.0.0.1:18443 (sshd старой сессии тоннеля). Вызывается,
++#           когда наш ssh уже завершился: любой оставшийся приёмник — мёртвый, он принимает
++#           соединение и никуда его не ведёт (таймаут 12 c у наставника вместо отказа).
++#   probe — проверка живости: HTTP-ответ пересыльщика через тоннель. Пересыльщик на GET
++#           отвечает 404 сразу; 000 — тоннель или пересыльщик не отвечает.
++set -u
++PORT=18443
++case "${1:-}" in
++  free)
++    pids=$(ss -ltnpH "sport = :$PORT" | grep -o 'pid=[0-9]*' | cut -d= -f2 | sort -u)
++    if [ -z "$pids" ]; then echo "free: порт свободен"; exit 0; fi
++    for p in $pids; do
++      if [ "$(ps -o comm= -p "$p")" = "sshd" ]; then
++        kill "$p" && echo "free: снят приёмник sshd pid=$p"
++      else
++        echo "free: порт держит не sshd (pid=$p), не трогаю"; exit 2
++      fi
++    done
++    ;;
++  probe)
++    curl -s -o /dev/null -m 5 -w '%{http_code}' "http://127.0.0.1:$PORT/" || true
++    ;;
++  *)
++    echo "режим: free | probe"; exit 1
++    ;;
++esac
+diff --git a/deploy/local/anthropic-relay.ps1 b/deploy/local/anthropic-relay.ps1
+index 4b8d78a..3ab3de7 100644
+--- a/deploy/local/anthropic-relay.ps1
++++ b/deploy/local/anthropic-relay.ps1
+@@ -1,28 +1,62 @@
+-﻿# tsk-1376: пересыльщик к API Anthropic и обратный тоннель на lms-spw-vds.
++﻿﻿# tsk-1376: пересыльщик к API Anthropic и обратный тоннель на lms-spw-vds.
+ # Запускается Планировщиком заданий при входе оператора. ПК выключен — третье
+ # (сейчас первое) звено наставника недоступно, LMS переходит к остальным моделям.
++# Перед каждым подключением снимает висящий приёмник порта на сервере (после сна ПК
++# старая сессия sshd держала 18443 час — «remote port forwarding failed»), пока
++# тоннель поднят — раз в минуту проверяет живость насквозь и при двух провалах
++# подряд переподключается.
+ $ErrorActionPreference = "Continue"
+ [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+ $Root = "D:\Work\LMS"
+ $Log = Join-Path $Root "logs\anthropic-relay.log"
++$SshErr = Join-Path $Root "logs\anthropic-relay-ssh.err"
++$Remote = Join-Path $Root "deploy\local\anthropic-relay-remote.sh"
++$Port = 18443
+ function Write-Log($msg) { Add-Content -Path $Log -Value ("{0} {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $msg) -Encoding UTF8 }
+ 
+-# Пересыльщик: один экземпляр на порт 18443.
+-$busy = Get-NetTCPConnection -LocalAddress 127.0.0.1 -LocalPort 18443 -State Listen -ErrorAction SilentlyContinue
+-if (-not $busy) {
+-    Start-Process -FilePath (Join-Path $Root ".venv\Scripts\python.exe") `
+-        -ArgumentList "scripts\anthropic_relay.py", "--port", "18443" `
+-        -WorkingDirectory $Root -WindowStyle Hidden
+-    Write-Log "пересыльщик запущен"
+-} else {
+-    Write-Log "пересыльщик уже слушает 18443"
++# Пересыльщик: один экземпляр на порт; поднимается заново, если процесс умер.
++function Confirm-Relay {
++    $busy = Get-NetTCPConnection -LocalAddress 127.0.0.1 -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
++    if (-not $busy) {
++        Start-Process -FilePath (Join-Path $Root ".venv\Scripts\python.exe") `
++            -ArgumentList "scripts\anthropic_relay.py", "--port", "$Port" `
++            -WorkingDirectory $Root -WindowStyle Hidden
++        Write-Log "пересыльщик запущен"
++    }
+ }
+ 
+-# Тоннель: переподключение при обрыве.
++# Серверная часть (free | probe): скрипт уходит в ssh через stdin, на сервере не хранится.
++function Invoke-Remote($mode) {
++    $script = (Get-Content -Raw -Encoding UTF8 $Remote) -replace "`r", ""
++    $out = $script | & ssh.exe -o BatchMode=yes -o ConnectTimeout=10 lms-spw-vds "bash -s -- $mode" 2>$null
++    return (($out | Out-String).Trim())
++}
++
++Confirm-Relay
+ while ($true) {
++    Write-Log ("сервер: {0}" -f (Invoke-Remote "free"))
+     Write-Log "тоннель: подключаюсь"
+-    & ssh.exe -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 `
+-        -o BatchMode=yes -R 127.0.0.1:18443:127.0.0.1:18443 lms-spw-vds 2>> $Log
+-    Write-Log ("тоннель: оборвался, код {0}; повтор через 30 c" -f $LASTEXITCODE)
++    $ssh = Start-Process -FilePath "ssh.exe" -PassThru -WindowStyle Hidden -RedirectStandardError $SshErr `
++        -ArgumentList "-N", "-o", "ExitOnForwardFailure=yes", "-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=3", `
++            "-o", "BatchMode=yes", "-R", "127.0.0.1:${Port}:127.0.0.1:${Port}", "lms-spw-vds"
++    $null = $ssh.Handle  # без этого PowerShell 5.1 теряет ExitCode завершившегося процесса
++    $fails = 0
++    while (-not $ssh.HasExited) {
++        Start-Sleep -Seconds 60
++        if ($ssh.HasExited) { break }
++        Confirm-Relay
++        $code = Invoke-Remote "probe"
++        if ($code -match '^[1-5]\d\d$') {
++            $fails = 0
++        } else {
++            $fails++
++            Write-Log ("живость: нет ответа через тоннель ({0}), провал {1} из 2" -f $code, $fails)
++            if ($fails -ge 2) { Stop-Process -Id $ssh.Id -Force -ErrorAction SilentlyContinue; break }
++        }
++    }
++    $ssh.WaitForExit()
++    $err = (Get-Content -Raw -Encoding UTF8 $SshErr -ErrorAction SilentlyContinue)
++    if ($err) { Write-Log ("ssh: {0}" -f $err.Trim()) }
++    Write-Log ("тоннель: оборвался, код {0}; повтор через 30 c" -f $ssh.ExitCode)
+     Start-Sleep -Seconds 30
+ }
+diff --git a/docs/ai/ERRORS.md b/docs/ai/ERRORS.md
+index 0f59e1b..ba306a7 100644
+--- a/docs/ai/ERRORS.md
++++ b/docs/ai/ERRORS.md
+@@ -63,6 +63,7 @@
+ | 2026-10-12 | LMS | tsk-1331 code_ast, задание 5641 | верная программа ученика (сдача 44628) получила 0 баллов: подсказка в `input()` отличалась от эталона | `_canon_code` сравнивал все строковые литералы, включая подсказку ввода, которую условие не задаёт | LOGIC | S2 | обращение оператора по скрину | `_canon_code` заменяет аргументы `input(...)` пустой строкой; 44628 зачтена на проде; 4 прочих незачёта по 5640–5642 перепроверены — верно | при новом шаге нормализации кода перебрать его на боевых сдачах, а не только на эталоне | done |
+ | 2026-10-19 (tsk-1376) | LMS | Чек tutor-outcomes 19.10: 22 % ходов без ответа, 5 разговоров без единой реплики (сессии 232/235/240/244/246) | Ученик получал «наставник недоступен» вместо помощи; в сессии и в чеке логов — ни следа | (1) сбои CloseRouter: таймауты 12 c на всех звеньях, 404 у gemini-3.7; (2) повтор tsk-1321: родной `responseId` Gemini (base64url) считался подменой — 10 из 17 отказов недели; (3) `gemini-3.6-flash` подменяется всегда (12/12, `msg_<hex>`, «YandexGPT») и съедала время; (4) сбой хода писался WARNING со словом «таймаут» по-русски и не попадал в `meta` | INTEGRATION | S2 (ученики без помощи) | Прод-БД: llm_usage_event по каждому ходу + проба самоназвания и входных токенов | Правило google принимает base64url (не-hex символ, без чужих префиксов); gemini-3.6 выведена из цепочки; ход без ответа — `logger.error` с исходом каждой модели и `meta.failures` | Чек «молчания» считать по `meta.failed_turns`, а не по пустому `meta`; тревогу «подмена» разводить самоназванием + токенами до правки правила (профилактика tsk-1321 сработала только когда её применили) | FIXED |
+ | 2026-10-19 (tsk-1376, судья) | LMS | Разбор молчания наставника: судья code_review | 304 вердикта по коду учеников за неделю выдали подменённые модели (gemini-3.6 → `msg_<hex>`, gpt-5.6-sol → Claude с 2093 токенами чужой инструкции) | В `client.complete` проверка id стояла внутри ветки `anthropic-direct` — через CloseRouter батч-путь подлинность не проверял, id не журналировал; tsk-1259 проверял только поток наставника | INTEGRATION | S3 (вердикты неизвестной модели у преподавателя) | Прод: 0 `LLMIdentityMismatch` у code_review при 304 ok подмен + проба без потока | Проверка id во всех провайдерах батч-пути, `response_id` в учёте; судья `gemini-3.7-flash, gpt-5.6-luna` | Защиту, введённую для одного пути (поток), проверять на ВСЕХ путях к провайдеру: отказов «0» у звена, которое на пробе подменено, — признак, что проверки там нет | FIXED |
++| 2026-10-27 (tsk-1376, раздутый вход) | LMS | Еженедельный разбор наставника 27.10: судья code_review, наставник | Судья принимал вердикты luna с подмешанной инструкцией Codex (id верного вида, вход ×5); у наставника таймаут 12 c вместо мгновенного отказа — на сервере висел старый приёмник порта 18443 после сна ПК | Проверка подлинности смотрела только id и самоназвание; размер входа — лишь счёт в чеке. Пересыльщик переподключал тоннель, не снимая мёртвый приёмник на сервере, и не проверял живость насквозь | INTEGRATION | S2 (вердикты от чужой инструкции; ход ученика без ответа) | Прод-БД 20–27.10: 49 ok-вердиктов luna `chatcmpl-<24 hex>` вход 4 854–5 635 при медиане 940, `resp_` до 9 774; проба 27.10 13:2x — вход 4 406 на вопрос в ~20 токенов, «Codex»; журнал пересыльщика 23.10 — час «remote port forwarding failed» | `check_input_tokens` в батче: вход > символы/2 + 1500 → `LLMIdentityMismatch` (следующая модель, повтор). Пересыльщик: `free` на сервере перед подключением, проба живости раз в минуту, 2 провала → переподключение | Любой признак подмены, который только считается в чеке, переводить в отбраковку, как только подтверждён пробой; для тоннеля — проверять живость насквозь, а не процесс | FIXED |
+ | 2026-10-20 (tsk-1376, отказ) | LMS | Еженедельный разбор наставника 20.10, сессия 249 | Ученику показан отказ модели как реплика наставника: «Я не могу продолжить разговор в этом формате… противоречат моим базовым принципам» (сообщение 1142) | gpt-5.5 часть времени идёт маршрутом с подмешанной инструкцией Codex (вход ~12 600 токенов против ~2 500); id настоящий, а `_ROLE_REFUSAL` ловил только «не могу принять роль» | INTEGRATION | S2 (ученик без помощи, видит чужой отказ) | Прод-БД: ai_tutor_message 60 дней — 6 отказов из 503 ответов, 1142 прежним стражем не пойман | Страж: «не могу/буду продолжить разговор», «противоречат моим (базовым) принципам», самоназвание Codex; счёт раздутого входа в чеке tutor-outcomes | Новый страж прогонять по всем ответам наставника на проде до выката: 0 ложных срабатываний — условие выката | FIXED |
+ | 2026-10-19 (tsk-1385) | LMS | Вычитка черновиков подсказок (tsk-1220), одобрения 12.10 и 19.10 | 65 из 126 заданий с одобренной подсказкой без `content_provenance` — переиздание курса из CB затёрло бы подсказки | `review(approve)` намеренно не ставил пометку (довод tsk-808 «не замораживать условие»), хотя tsk-760 сделал пометку единственной защитой от переиздания | DATA | S2 (риск потери подсказок у учеников) | Прод-БД: task_hint_drafts × tasks.content_provenance; чек cb-drift | approve ставит `manual_web` на пару полей с `reason=hint-draft:<id>`; 65 заданий догнаны `manual_script`/`tsk-1385` | Любой новый путь записи `task_content` человеком — пометка в том же коммите и тест на неё; исключения (PATCH /tasks/{id}/hints, generic PUT /tasks/{id}) сверить с tsk-760 | FIXED |
+ | 2026-10-19 (tsk-1388) | LMS | PATCH /tasks/{id}/hints, generic PUT /tasks/{id}; задание 55 | Два пути записи `task_content` человеком без `content_provenance` (остаток инвентаря tsk-1385); задание 55 не принимало «0,5» с запятой — 2 ученика получили незачёт верного ответа | Решение tsk-808 «подсказка не замораживает условие»; нормализация без шага для десятичной запятой | DATA | S2 (неверный вердикт ученикам) | Прод-БД: task_results задания 55 | Пометка `manual_web` в обоих путях (решение tsk-808 отменено оператором 19.10), тесты; у 55 добавлены `0,5`/`0,5000`, 2 сдачи зачтены | Новый путь записи — пометка и тест в том же коммите; дробный эталон без `strip_punctuation` — проверять вариант с запятой | FIXED |
+diff --git a/tests/test_tsk1376_judge_inflated_input.py b/tests/test_tsk1376_judge_inflated_input.py
+new file mode 100644
+index 0000000..d9b0083
+--- /dev/null
++++ b/tests/test_tsk1376_judge_inflated_input.py
+@@ -0,0 +1,74 @@
++"""tsk-1376 (разбор 27.10): судья не принимает вердикт с раздутым входом.
++
++Образцы — боевые: неделя 20–27.10 (luna, id `chatcmpl-<24 hex>`, вход 4 854–5 635
++при медиане обычных 940) и проба 27.10 13:2x (вопрос в ~20 токенов, вход 4 406,
++самоназвание «Codex»). Настоящий вход судьи — 730–2 977 токенов.
++"""
++from __future__ import annotations
++
++import json
++
++import httpx
++import pytest
++
++from app.services.llm import client as llm_client
++from app.services.llm.contracts import LLMIdentityMismatch, LLMMessage
++from app.services.llm.identity import check_input_tokens
++from tests.test_tsk572_llm_client import _isolate, _mount  # noqa: F401
++
++JUDGE_PROMPT_CHARS = 2484  # системный промпт судьи + короткий код
++
++
++@pytest.mark.parametrize("chars,tokens", [
++    (JUDGE_PROMPT_CHARS, 830),    # обычный короткий разбор
++    (JUDGE_PROMPT_CHARS, 2044),   # верх обычных у gemini при коротком коде
++    (9000, 2977),                 # максимум недели — длинная программа
++    (60, 29),                     # проба «Кто ты?» без инструкции
++])
++def test_genuine_input_passes(chars: int, tokens: int) -> None:
++    check_input_tokens("openai/gpt-5.6-luna", chars, tokens)
++
++
++@pytest.mark.parametrize("chars,tokens", [
++    (JUDGE_PROMPT_CHARS, 4854),   # минимум hex24 за неделю
++    (JUDGE_PROMPT_CHARS, 5635),   # максимум hex24
++    (9000, 9774),                 # resp_ с самым длинным входом
++    (60, 4406),                   # проба 27.10 — «Codex»
++])
++def test_inflated_input_is_mismatch(chars: int, tokens: int) -> None:
++    with pytest.raises(LLMIdentityMismatch):
++        check_input_tokens("openai/gpt-5.6-luna", chars, tokens)
++
++
++def _reply(model: str, tokens_in: int) -> dict:
++    return {"id": "chatcmpl-1791630205200016881", "model": model,
++            "choices": [{"message": {"content": '{"verdict": "ok"}'}}],
++            "usage": {"prompt_tokens": tokens_in, "completion_tokens": 5}}
++
++
++@pytest.mark.asyncio
++async def test_inflated_verdict_goes_to_next_model(monkeypatch, _isolate) -> None:  # noqa: F811
++    """Первая модель с раздутым входом — вердикт берётся у следующей."""
++    seen: list[str] = []
++
++    def handler(request: httpx.Request) -> httpx.Response:
++        model = json.loads(request.content)["model"]
++        seen.append(model)
++        return httpx.Response(200, json=_reply(model, 5000 if model == "model-a" else 900))
++
++    _mount(monkeypatch, handler)
++    result = await llm_client.complete([LLMMessage(role="user", content="x" * 2400)],
++                                       purpose="code_review")
++    assert seen == ["model-a", "model-b"]
++    assert result.model == "model-b"
++
++
++@pytest.mark.asyncio
++async def test_inflated_everywhere_is_retryable(monkeypatch, _isolate) -> None:  # noqa: F811
++    """Раздуты все — отказ с `retryable`: разбор уйдёт на повтор в следующем тике."""
++    _mount(monkeypatch, lambda r: httpx.Response(
++        200, json=_reply(json.loads(r.content)["model"], 5000)))
++    with pytest.raises(LLMIdentityMismatch) as exc:
++        await llm_client.complete([LLMMessage(role="user", content="x" * 2400)],
++                                  purpose="code_review")
++    assert exc.value.retryable
+diff --git a/tests/test_tsk959_judge_max_tokens.py b/tests/test_tsk959_judge_max_tokens.py
+index 0c7ce81..654c375 100644
+--- a/tests/test_tsk959_judge_max_tokens.py
++++ b/tests/test_tsk959_judge_max_tokens.py
+@@ -153,7 +153,10 @@ async def test_batch_stub_falls_to_next_model(monkeypatch: pytest.MonkeyPatch, _
+         return _batch(STUB if _model_of(request) == "judge-stub" else '{"code_quality": {"score": 8}}')
+ 
+     _mount(monkeypatch, handler)
+-    res = await llm_client.complete([LLMMessage(role="user", content="оцени")], purpose="code_review")
++    # Длина запроса — как у настоящего судьи (~2 400 символов): заглушка отдаёт вход
++    # 1 508 токенов, на запрос в 5 символов это раздутый вход (tsk-1376).
++    res = await llm_client.complete([LLMMessage(role="user", content="оцени " * 400)],
++                                    purpose="code_review")
+     assert res.model == "judge-ok"
+     outcomes = [(e.model, e.outcome) for e in _llm_env]
+     assert ("judge-stub", "LLMUpstreamError") in outcomes

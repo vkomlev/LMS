@@ -110,6 +110,28 @@ def check_response_id(model: str, response_id: Optional[str]) -> None:
         )
 
 
+# Раздутый вход (tsk-1376, разбор 27.10). Маршрутизатор временами подмешивает к
+# запросу свою инструкцию (Codex) — ~4 000 токенов сверху. Неделя 20–27.10: 49
+# вердиктов luna с id `chatcmpl-<24 hex>` и входом 4 854–5 635 при медиане обычных
+# 940; проба 27.10 13:2x — вопрос в ~20 токенов, вход 4 406, самоназвание «Codex».
+# Порог считается от размера своего запроса, а не общей константой: настоящий вход
+# судьи 730–2 977 токенов при ~3 символах на токен (системный промпт 2 372 символа
+# → ~830 токенов). `символы/2` — потолок с запасом в полтора раза, `+1500` — люфт на
+# служебную обвязку; превысить его без подмешанного текста нельзя.
+INFLATION_CHARS_PER_TOKEN = 2
+INFLATION_SLACK_TOKENS = 1500
+
+
+def check_input_tokens(model: str, prompt_chars: int, tokens_in: int) -> None:
+    """Поднять `LLMIdentityMismatch`, если вход больше, чем мог дать наш запрос."""
+    limit = prompt_chars // INFLATION_CHARS_PER_TOKEN + INFLATION_SLACK_TOKENS
+    if tokens_in > limit:
+        raise LLMIdentityMismatch(
+            f"вход {tokens_in} токенов при пороге {limit} ({prompt_chars} символов "
+            f"запроса): под меткой {model} подмешана чужая инструкция"
+        )
+
+
 def check_opening(model: str, text: str) -> None:
     """Поднять `LLMIdentityMismatch`, если начало ответа выдаёт чужую модель."""
     vendor = vendor_of(model)

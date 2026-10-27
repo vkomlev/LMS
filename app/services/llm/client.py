@@ -15,7 +15,7 @@ from typing import AsyncIterator, Iterable, Optional, Sequence
 import httpx
 
 from app.services.llm import anthropic_direct, cooldown, providers, usage
-from app.services.llm.identity import OpeningSniffer, check_response_id
+from app.services.llm.identity import OpeningSniffer, check_input_tokens, check_response_id
 from app.services.llm.contracts import (
     Budget,
     LLMChunk,
@@ -344,6 +344,7 @@ async def complete(
     # «работа взята», после чего следующий тик берёт ту же работу и провайдеру
     # платят за неё дважды.
     deadline = time.monotonic() + budget.total_timeout
+    prompt_chars = sum(len(m.content or "") for m in messages)
 
     async with httpx.AsyncClient(timeout=_timeout(budget)) as http:
         for candidate, cfg in ready:
@@ -387,6 +388,10 @@ async def complete(
                     text_out = (choices[0].get("message") or {}).get("content") or ""
                     _check_content_stub(text_out)
                     usage_block = payload.get("usage") or {}
+                    # tsk-1376: раздутый вход — подмешанная инструкция; вердикт не
+                    # берём, `LLMIdentityMismatch` ведёт к следующей модели и повтору.
+                    check_input_tokens(candidate, prompt_chars,
+                                       int(usage_block.get("prompt_tokens") or 0))
                     duration_ms = int((time.monotonic() - started) * 1000)
 
                     await _usage_ok(
