@@ -1,0 +1,86 @@
+diff --git a/app/services/llm/identity.py b/app/services/llm/identity.py
+index 0b98d27..ee9ce65 100644
+--- a/app/services/llm/identity.py
++++ b/app/services/llm/identity.py
+@@ -37,7 +37,11 @@ from app.services.llm.contracts import LLMIdentityMismatch
+ SNIFF_CHARS = 200
+ 
+ _ID_RULES: dict[str, re.Pattern[str]] = {
+-    "anthropic": re.compile(r"^msg_"),
++    # Настоящий id — `msg_01<base62>` (27.10, tsk-1376: все 435 ok-ответов Anthropic за
++    # 30 дней, прямой API и маршрутизатор). Подмена приходит как `msg_<32 hex>`: под
++    # `claude-sonnet-5` так ответил «Kiro» со входом 9 585–14 758 токенов, под
++    # `claude-opus-5` — 2 ответа на стенде; прежнее `^msg_` их пропускало.
++    "anthropic": re.compile(r"^msg_01[A-Za-z0-9]{20,}$"),
+     # У OpenAI после `chatcmpl-` нет дефисов; у Google там uuid с дефисами —
+     # иначе подмена gpt на gemini проходила бы проверку.
+     "openai": re.compile(r"^(?:resp_|chatcmpl-[A-Za-z0-9]+$)"),
+diff --git a/tests/test_tsk1259_anthropic_direct.py b/tests/test_tsk1259_anthropic_direct.py
+index 68163df..2486546 100644
+--- a/tests/test_tsk1259_anthropic_direct.py
++++ b/tests/test_tsk1259_anthropic_direct.py
+@@ -59,7 +59,7 @@ def _sse(*events: dict) -> bytes:
+     ).encode()
+ 
+ 
+-def _direct_stream(text: str, msg_id: str = "msg_01abc") -> bytes:
++def _direct_stream(text: str, msg_id: str = "msg_011CgF59nivbtwhShZHoaZZD") -> bytes:
+     return _sse(
+         {"type": "message_start",
+          "message": {"id": msg_id, "usage": {"input_tokens": 12, "output_tokens": 1}}},
+@@ -161,7 +161,7 @@ async def test_batch_parse_and_haiku_thinking_off(monkeypatch):
+     def handler(request: httpx.Request) -> httpx.Response:
+         captured["body"] = json.loads(request.content)
+         return httpx.Response(200, json={
+-            "id": "msg_02", "type": "message", "stop_reason": "end_turn",
++            "id": "msg_011CgSqvPkjZkfSpLxM8YVnz", "type": "message", "stop_reason": "end_turn",
+             "content": [{"type": "text", "text": "{\"ok\": true}"}],
+             "usage": {"input_tokens": 30, "cache_read_input_tokens": 5, "output_tokens": 4},
+         })
+@@ -215,4 +215,4 @@ def test_refusal_and_error_event_become_errors():
+     assert "error" in anthropic_direct.normalize_event(
+         {"type": "message_delta", "delta": {"stop_reason": "refusal"}, "usage": {}})
+     assert "error" in anthropic_direct.normalize_message(
+-        {"id": "msg_1", "stop_reason": "refusal", "content": []})
++        {"id": "msg_011CgEBn0PjyL59D0Mq0VkgV", "stop_reason": "refusal", "content": []})
+diff --git a/tests/test_tsk1259_llm_identity.py b/tests/test_tsk1259_llm_identity.py
+index 27bb993..5a3ca89 100644
+--- a/tests/test_tsk1259_llm_identity.py
++++ b/tests/test_tsk1259_llm_identity.py
+@@ -30,7 +30,7 @@ MSG_1015 = (
+ 
+ 
+ @pytest.mark.parametrize("model,rid", [
+-    ("anthropic/claude-sonnet-4.6", "msg_PtihgbEr6QZF1sVgGBz1ahmw"),
++    ("anthropic/claude-sonnet-4.6", "msg_011CgEByKg2x2YhdneDLImEA"),
+     ("openai/gpt-5.5", "chatcmpl-1791630205200016881"),
+     ("openai/gpt-5.6-sol", "resp_04f7634e3a6c0fda016aca1c6ab34c8190a"),
+     ("google/gemini-3.7-flash", "chatcmpl-d292757b-a8d8-4555-9584-a1d2eea"),
+@@ -51,6 +51,9 @@ def test_genuine_ids_pass(model: str, rid: str | None) -> None:
+     ("anthropic/claude-sonnet-4.6", "chatcmpl-1791630205200016881"),  # OpenAI
+     ("google/gemini-3.7-flash", "msg_PtihgbEr6QZF1sVgGBz1ahmw"),      # Anthropic
+     ("google/gemini-3.7-flash", "chatcmpl-1791630205200016881"),      # OpenAI: цифры без букв
++    # tsk-1376 (27.10): «Kiro» под sonnet-5 и подмена под opus-5 — msg_<32 hex>.
++    ("anthropic/claude-sonnet-5", "msg_1ab45485c60e4f8ba03aaf50"),
++    ("anthropic/claude-opus-5", "msg_3d9ea214367044f98c6217892c7a6e5b"),
+ ])
+ def test_foreign_ids_are_mismatch(model: str, rid: str) -> None:
+     with pytest.raises(LLMIdentityMismatch):
+@@ -130,7 +133,7 @@ async def test_substituted_id_falls_to_next_model(monkeypatch) -> None:
+     seen: list[str] = []
+     _mount(monkeypatch, _handler(seen, {
+         "openai/gpt-5.5": ("d208ce38-9bba-9f2a-9e20-23fedfbeccd5", MSG_1015),
+-        "anthropic/claude-sonnet-4.6": ("msg_abc", "Ответ настоящей модели."),
++        "anthropic/claude-sonnet-4.6": ("msg_011CgEByKg2x2YhdneDLImEA", "Ответ настоящей модели."),
+     }))
+     monkeypatch.setenv("LLM_TUTOR_MODELS", "openai/gpt-5.5,anthropic/claude-sonnet-4.6")
+     chunks = [c async for c in llm_client.stream(MSGS, purpose="tutor")]
+@@ -146,7 +149,7 @@ async def test_substituted_self_intro_never_reaches_student(monkeypatch) -> None
+     seen: list[str] = []
+     _mount(monkeypatch, _handler(seen, {
+         "openai/gpt-5.5": ("chatcmpl-1791630205200016881", MSG_1017),
+-        "anthropic/claude-sonnet-4.6": ("msg_abc", "Ответ настоящей модели."),
++        "anthropic/claude-sonnet-4.6": ("msg_011CgEByKg2x2YhdneDLImEA", "Ответ настоящей модели."),
+     }))
+     monkeypatch.setenv("LLM_TUTOR_MODELS", "openai/gpt-5.5,anthropic/claude-sonnet-4.6")
+     chunks = [c async for c in llm_client.stream(MSGS, purpose="tutor")]

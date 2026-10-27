@@ -37,7 +37,11 @@ from app.services.llm.contracts import LLMIdentityMismatch
 SNIFF_CHARS = 200
 
 _ID_RULES: dict[str, re.Pattern[str]] = {
-    "anthropic": re.compile(r"^msg_"),
+    # Настоящий id — `msg_01<base62>` (27.10, tsk-1376: все 435 ok-ответов Anthropic за
+    # 30 дней, прямой API и маршрутизатор). Подмена приходит как `msg_<32 hex>`: под
+    # `claude-sonnet-5` так ответил «Kiro» со входом 9 585–14 758 токенов, под
+    # `claude-opus-5` — 2 ответа на стенде; прежнее `^msg_` их пропускало.
+    "anthropic": re.compile(r"^msg_01[A-Za-z0-9]{20,}$"),
     # У OpenAI после `chatcmpl-` нет дефисов; у Google там uuid с дефисами —
     # иначе подмена gpt на gemini проходила бы проверку.
     "openai": re.compile(r"^(?:resp_|chatcmpl-[A-Za-z0-9]+$)"),

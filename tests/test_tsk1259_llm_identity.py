@@ -30,7 +30,7 @@ MSG_1015 = (
 
 
 @pytest.mark.parametrize("model,rid", [
-    ("anthropic/claude-sonnet-4.6", "msg_PtihgbEr6QZF1sVgGBz1ahmw"),
+    ("anthropic/claude-sonnet-4.6", "msg_011CgEByKg2x2YhdneDLImEA"),
     ("openai/gpt-5.5", "chatcmpl-1791630205200016881"),
     ("openai/gpt-5.6-sol", "resp_04f7634e3a6c0fda016aca1c6ab34c8190a"),
     ("google/gemini-3.7-flash", "chatcmpl-d292757b-a8d8-4555-9584-a1d2eea"),
@@ -51,6 +51,9 @@ def test_genuine_ids_pass(model: str, rid: str | None) -> None:
     ("anthropic/claude-sonnet-4.6", "chatcmpl-1791630205200016881"),  # OpenAI
     ("google/gemini-3.7-flash", "msg_PtihgbEr6QZF1sVgGBz1ahmw"),      # Anthropic
     ("google/gemini-3.7-flash", "chatcmpl-1791630205200016881"),      # OpenAI: цифры без букв
+    # tsk-1376 (27.10): «Kiro» под sonnet-5 и подмена под opus-5 — msg_<32 hex>.
+    ("anthropic/claude-sonnet-5", "msg_1ab45485c60e4f8ba03aaf50"),
+    ("anthropic/claude-opus-5", "msg_3d9ea214367044f98c6217892c7a6e5b"),
 ])
 def test_foreign_ids_are_mismatch(model: str, rid: str) -> None:
     with pytest.raises(LLMIdentityMismatch):
@@ -130,7 +133,7 @@ async def test_substituted_id_falls_to_next_model(monkeypatch) -> None:
     seen: list[str] = []
     _mount(monkeypatch, _handler(seen, {
         "openai/gpt-5.5": ("d208ce38-9bba-9f2a-9e20-23fedfbeccd5", MSG_1015),
-        "anthropic/claude-sonnet-4.6": ("msg_abc", "Ответ настоящей модели."),
+        "anthropic/claude-sonnet-4.6": ("msg_011CgEByKg2x2YhdneDLImEA", "Ответ настоящей модели."),
     }))
     monkeypatch.setenv("LLM_TUTOR_MODELS", "openai/gpt-5.5,anthropic/claude-sonnet-4.6")
     chunks = [c async for c in llm_client.stream(MSGS, purpose="tutor")]
@@ -146,7 +149,7 @@ async def test_substituted_self_intro_never_reaches_student(monkeypatch) -> None
     seen: list[str] = []
     _mount(monkeypatch, _handler(seen, {
         "openai/gpt-5.5": ("chatcmpl-1791630205200016881", MSG_1017),
-        "anthropic/claude-sonnet-4.6": ("msg_abc", "Ответ настоящей модели."),
+        "anthropic/claude-sonnet-4.6": ("msg_011CgEByKg2x2YhdneDLImEA", "Ответ настоящей модели."),
     }))
     monkeypatch.setenv("LLM_TUTOR_MODELS", "openai/gpt-5.5,anthropic/claude-sonnet-4.6")
     chunks = [c async for c in llm_client.stream(MSGS, purpose="tutor")]

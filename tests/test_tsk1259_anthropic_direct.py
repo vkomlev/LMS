@@ -59,7 +59,7 @@ def _sse(*events: dict) -> bytes:
     ).encode()
 
 
-def _direct_stream(text: str, msg_id: str = "msg_01abc") -> bytes:
+def _direct_stream(text: str, msg_id: str = "msg_011CgF59nivbtwhShZHoaZZD") -> bytes:
     return _sse(
         {"type": "message_start",
          "message": {"id": msg_id, "usage": {"input_tokens": 12, "output_tokens": 1}}},
@@ -161,7 +161,7 @@ async def test_batch_parse_and_haiku_thinking_off(monkeypatch):
     def handler(request: httpx.Request) -> httpx.Response:
         captured["body"] = json.loads(request.content)
         return httpx.Response(200, json={
-            "id": "msg_02", "type": "message", "stop_reason": "end_turn",
+            "id": "msg_011CgSqvPkjZkfSpLxM8YVnz", "type": "message", "stop_reason": "end_turn",
             "content": [{"type": "text", "text": "{\"ok\": true}"}],
             "usage": {"input_tokens": 30, "cache_read_input_tokens": 5, "output_tokens": 4},
         })
@@ -215,4 +215,4 @@ def test_refusal_and_error_event_become_errors():
     assert "error" in anthropic_direct.normalize_event(
         {"type": "message_delta", "delta": {"stop_reason": "refusal"}, "usage": {}})
     assert "error" in anthropic_direct.normalize_message(
-        {"id": "msg_1", "stop_reason": "refusal", "content": []})
+        {"id": "msg_011CgEBn0PjyL59D0Mq0VkgV", "stop_reason": "refusal", "content": []})
