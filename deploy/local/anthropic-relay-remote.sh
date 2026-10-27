@@ -11,12 +11,14 @@ PORT=18443
 case "${1:-}" in
   free)
     pids=$(ss -ltnpH "sport = :$PORT" | grep -o 'pid=[0-9]*' | cut -d= -f2 | sort -u)
-    if [ -z "$pids" ]; then echo "free: порт свободен"; exit 0; fi
+    # Вывод латиницей: скрытый запуск на ПК читает stdout ssh не в UTF-8,
+    # русский текст строк журнала собирает anthropic-relay.ps1.
+    if [ -z "$pids" ]; then echo "none"; exit 0; fi
     for p in $pids; do
       if [ "$(ps -o comm= -p "$p")" = "sshd" ]; then
-        kill "$p" && echo "free: снят приёмник sshd pid=$p"
+        kill "$p" && echo "killed $p"
       else
-        echo "free: порт держит не sshd (pid=$p), не трогаю"; exit 2
+        echo "foreign $p"; exit 2
       fi
     done
     ;;

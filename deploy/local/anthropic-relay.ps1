@@ -34,7 +34,13 @@ function Invoke-Remote($mode) {
 
 Confirm-Relay
 while ($true) {
-    Write-Log ("сервер: {0}" -f (Invoke-Remote "free"))
+    $freed = Invoke-Remote "free"
+    switch -Regex ($freed) {
+        '^none$'      { Write-Log "сервер: порт свободен"; break }
+        '^killed'     { Write-Log ("сервер: снят висящий приёмник ({0})" -f $freed); break }
+        '^foreign'    { Write-Log ("сервер: порт держит не sshd ({0}), не трогаю" -f $freed); break }
+        default       { Write-Log ("сервер: снять приёмник не удалось ({0})" -f $freed) }
+    }
     Write-Log "тоннель: подключаюсь"
     $ssh = Start-Process -FilePath "ssh.exe" -PassThru -WindowStyle Hidden -RedirectStandardError $SshErr `
         -ArgumentList "-N", "-o", "ExitOnForwardFailure=yes", "-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=3", `
