@@ -114,7 +114,10 @@ def run_drift_audit(uid_prefix: Optional[str]) -> tuple[dict[str, Any], str]:
 
     with tempfile.TemporaryDirectory() as tmp:
         report_path = Path(tmp) / "drift.json"
-        cmd = [str(python), "-m", "monolith", "lms-drift-audit", "--out", str(report_path)]
+        # --refresh-stale-snapshots (tsk-1439): переизданный курс со старым снимком
+        # давал ложные «правки без пометки» — 99 штук 26.10.
+        cmd = [str(python), "-m", "monolith", "lms-drift-audit", "--refresh-stale-snapshots",
+               "--out", str(report_path)]
         if uid_prefix:
             cmd += ["--uid-prefix", uid_prefix]
         env = dict(os.environ)
