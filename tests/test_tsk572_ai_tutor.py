@@ -724,6 +724,9 @@ def test_concept_opening_forbids_naming_the_term_and_binary_choice():
     flat = " ".join(build_opening_user_message(view, "ответ", "concept").split())
     assert "НЕ называй его и однокоренные слова" in flat
     assert "Не предлагай выбор из двух вариантов" in flat
+    # стенд 27.10 (haiku): «с нуля или с единицы?» сразу после «счёт идёт с единицы»
+    assert "варианты через «или»" in flat
+    assert "не пересказывай, что там сказано" in flat
 
 
 def test_concept_foothold_is_off_by_default(monkeypatch):
