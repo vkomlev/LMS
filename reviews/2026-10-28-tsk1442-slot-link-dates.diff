@@ -1,0 +1,448 @@
+diff --git a/app/db/migrations/versions/2026_10_28_tsk1442_slot_student_dates.py b/app/db/migrations/versions/2026_10_28_tsk1442_slot_student_dates.py
+new file mode 100644
+index 0000000..3ba0d6b
+--- /dev/null
++++ b/app/db/migrations/versions/2026_10_28_tsk1442_slot_student_dates.py
+@@ -0,0 +1,81 @@
++"""Даты действия у привязки ученика к слоту (tsk-1442).
++
++Revision ID: tsk1442_slot_student_dates
++Revises: tsk1407_signup_attribution
++Create Date: 2026-10-28
++
++Смена расписания выключала старую привязку целиком, и расчёт месяца строился
++по новому слоту с его первого дня — прошедшие дни старого слота становились
++«пропавшими» занятиями (ученик 4623: 600 ₽ вместо 3000 за октябрь).
++
++* ``active_from`` / ``active_until`` — даты привязки по МСК, включительно.
++  Существующим строкам — NULL: для действующих это «как у слота», для снятых
++  без даты — «в расчёт не входит», ровно как было. Суммы остальных учеников
++  поэтому не меняются.
++* Уникальность пары «слот + ученик» — только среди действующих: закрытый
++  период остаётся отдельной строкой истории.
++* Данные: перевод 4623 со слота 33 на слот 36 от 28.10 — старая привязка
++  действует по 27.10, новая с 28.10. Условие по трём полям: на базе, где этих
++  строк нет (dev, тесты), правка ничего не трогает.
++
++Откат: снять колонки и вернуть полную уникальность. Если после выката у пары
++появилась вторая строка, откат упадёт на уникальности — сначала удалить
++закрытые строки-дубли.
++"""
++from typing import Sequence, Union
++
++import sqlalchemy as sa
++from alembic import op
++
++revision: str = "tsk1442_slot_student_dates"
++down_revision: Union[str, None] = "tsk1407_signup_attribution"
++branch_labels: Union[str, Sequence[str], None] = None
++depends_on: Union[str, Sequence[str], None] = None
++
++
++def upgrade() -> None:
++    """Добавить даты привязки, сузить уникальность до действующих, починить 4623."""
++    op.add_column(
++        "lesson_slot_student",
++        sa.Column(
++            "active_from", sa.Date(), nullable=True,
++            comment="Первый день привязки (МСК); NULL — с начала, как у слота",
++        ),
++    )
++    op.add_column(
++        "lesson_slot_student",
++        sa.Column(
++            "active_until", sa.Date(), nullable=True,
++            comment="Последний день привязки (МСК); NULL — открыта",
++        ),
++    )
++    op.drop_constraint(
++        "uq_lesson_slot_student_slot_student", "lesson_slot_student", type_="unique"
++    )
++    op.create_index(
++        "uq_lesson_slot_student_active",
++        "lesson_slot_student",
++        ["slot_id", "student_id"],
++        unique=True,
++        postgresql_where=sa.text("is_active"),
++    )
++    op.execute(
++        "UPDATE lesson_slot_student SET active_until = DATE '2026-10-27' "
++        " WHERE id = 231 AND student_id = 4623 AND slot_id = 33 AND NOT is_active"
++    )
++    op.execute(
++        "UPDATE lesson_slot_student SET active_from = DATE '2026-10-28' "
++        " WHERE id = 332 AND student_id = 4623 AND slot_id = 36 AND is_active"
++    )
++
++
++def downgrade() -> None:
++    """Вернуть полную уникальность пары и снять даты."""
++    op.drop_index("uq_lesson_slot_student_active", table_name="lesson_slot_student")
++    op.create_unique_constraint(
++        "uq_lesson_slot_student_slot_student",
++        "lesson_slot_student",
++        ["slot_id", "student_id"],
++    )
++    op.drop_column("lesson_slot_student", "active_until")
++    op.drop_column("lesson_slot_student", "active_from")
+diff --git a/app/models/lesson_slot_student.py b/app/models/lesson_slot_student.py
+index 991ded3..9e02e80 100644
+--- a/app/models/lesson_slot_student.py
++++ b/app/models/lesson_slot_student.py
+@@ -1,15 +1,16 @@
+ from __future__ import annotations
+ 
+-from datetime import datetime
++from datetime import date, datetime
+ from typing import Optional
+ 
+ from sqlalchemy import (
+     Boolean,
++    Date,
+     DateTime,
+     ForeignKeyConstraint,
++    Index,
+     Integer,
+     PrimaryKeyConstraint,
+-    UniqueConstraint,
+     text,
+ )
+ from sqlalchemy.orm import Mapped, mapped_column
+@@ -22,6 +23,13 @@ class LessonSlotStudent(Base):
+     Участник закреплённого группового слота (tsk-435, Календарь LMS).
+     M2M ``lesson_slot`` ↔ ``users``. ``is_active=false`` — мягкое удаление
+     (сохраняет историю occurrence, куда участник уже был добавлен).
++
++    tsk-1442: у привязки свои даты действия (``active_from``/``active_until``,
++    по МСК, включительно). Даты слота — это даты СЕТКИ, а не ученика: перевод
++    28.10 на слот, заведённый 31.08, переписывал расчёту весь октябрь. Снятие
++    закрывает привязку вчерашним днём, и расчёт месяца берёт для каждого дня
++    ту привязку, что действовала в этот день. Поэтому строк на пару «слот +
++    ученик» может быть несколько; уникальна только действующая.
+     """
+ 
+     __tablename__ = "lesson_slot_student"
+@@ -39,7 +47,13 @@ class LessonSlotStudent(Base):
+             name="lesson_slot_student_added_by_fkey",
+         ),
+         PrimaryKeyConstraint("id", name="lesson_slot_student_pkey"),
+-        UniqueConstraint("slot_id", "student_id", name="uq_lesson_slot_student_slot_student"),
++        Index(
++            "uq_lesson_slot_student_active",
++            "slot_id",
++            "student_id",
++            unique=True,
++            postgresql_where=text("is_active"),
++        ),
+         {"comment": "Участники закреплённого группового слота (tsk-435)"},
+     )
+ 
+@@ -52,6 +66,12 @@ class LessonSlotStudent(Base):
+         server_default=text("true"),
+         comment="Мягкое удаление участника из слота — сохраняет историю occurrence",
+     )
++    active_from: Mapped[Optional[date]] = mapped_column(
++        Date, comment="Первый день привязки (МСК); NULL — с начала, как у слота"
++    )
++    active_until: Mapped[Optional[date]] = mapped_column(
++        Date, comment="Последний день привязки (МСК); NULL — открыта"
++    )
+     added_by: Mapped[Optional[int]] = mapped_column(Integer)
+     created_at: Mapped[datetime] = mapped_column(
+         DateTime(timezone=True),
+diff --git a/app/repos/lesson_calendar_repository.py b/app/repos/lesson_calendar_repository.py
+index 7e5c10e..a2e1e32 100644
+--- a/app/repos/lesson_calendar_repository.py
++++ b/app/repos/lesson_calendar_repository.py
+@@ -230,11 +230,19 @@ class LessonSlotStudentRepository:
+     async def get(
+         self, db: AsyncSession, *, slot_id: int, student_id: int
+     ) -> Optional[LessonSlotStudent]:
++        """Действующая привязка, а без неё — самая свежая закрытая.
++
++        tsk-1442: строк на пару может быть несколько (закрытые периоды
++        остаются историей для расчёта денег), уникальна только действующая.
++        """
+         res = await db.execute(
+-            select(LessonSlotStudent).where(
++            select(LessonSlotStudent)
++            .where(
+                 LessonSlotStudent.slot_id == slot_id,
+                 LessonSlotStudent.student_id == student_id,
+             )
++            .order_by(LessonSlotStudent.is_active.desc(), LessonSlotStudent.id.desc())
++            .limit(1)
+         )
+         return res.scalar_one_or_none()
+ 
+diff --git a/app/services/charge_service.py b/app/services/charge_service.py
+index 3426a81..dc21609 100644
+--- a/app/services/charge_service.py
++++ b/app/services/charge_service.py
+@@ -256,11 +256,24 @@ async def lesson_counts_for_period(
+                     -- заведённый 31 августа под осеннюю сетку, считался
+                     -- действовавшим и весь август: смена расписания переписывала
+                     -- прошлое каждый раз, когда её применяли.
+-                    SELECT ls.weekday, ls.active_from, ls.active_until
++                    --
++                    -- tsk-1442: и даты самой привязки. Перевод 28.10 с четверга
++                    -- на субботу выключал старую привязку целиком, а новая
++                    -- жила с первого дня СЛОТА (31.08): октябрь считался по
++                    -- субботам, и четыре прошедшие субботы ушли в «пропавшие»
++                    -- (600 ₽ вместо 3000). Закрытая привязка (с датой конца)
++                    -- остаётся в расчёте по свой последний день; снятая без
++                    -- даты — нет, как и раньше.
++                    SELECT ls.weekday,
++                           ls.active_from,
++                           lss.active_from AS link_from,
++                           -- least() пропускает NULL: открытое с любой стороны
++                           -- не ограничивает другую.
++                           least(ls.active_until, lss.active_until) AS active_until
+                       FROM lesson_slot_student lss
+                       JOIN lesson_slot ls ON ls.id = lss.slot_id
+                      WHERE lss.student_id = :student_id
+-                       AND lss.is_active
++                       AND (lss.is_active OR lss.active_until IS NOT NULL)
+                        AND ls.is_active
+                 ),
+                 joined AS (
+@@ -385,6 +398,14 @@ async def lesson_counts_for_period(
+                                  OR days.day <= slots.active_until)
+                   CROSS JOIN joined
+                   CROSS JOIN gone
++                  -- tsk-1442: начало привязки срезает только дни ПОСЛЕ прихода
++                  -- в школу. Дни до прихода обязаны остаться в знаменателе:
++                  -- доля новичка — это `not_started` от полного месяца, и
++                  -- обрезав их, мы выставили бы пришедшему 15-го полную цену.
++                  WHERE slots.link_from IS NULL
++                     OR days.day >= slots.link_from
++                     OR (joined.started_on IS NOT NULL
++                         AND days.day < joined.started_on)
+                 """
+             ),
+             {
+diff --git a/app/services/lesson_calendar_service.py b/app/services/lesson_calendar_service.py
+index c3242bd..83c3364 100644
+--- a/app/services/lesson_calendar_service.py
++++ b/app/services/lesson_calendar_service.py
+@@ -553,13 +553,13 @@ async def _attach_student_to_slot(
+         db, student_id, action="добавление в слот расписания"
+     )
+ 
+-    if existing is not None:
+-        existing.is_active = True
+-        row = existing
+-    else:
+-        row = await _slot_student_repo.create(
+-            db, slot_id=slot_id, student_id=student_id, added_by=added_by,
+-        )
++    # tsk-1442: всегда новая строка, а не оживление снятой. Снятая хранит
++    # закрытый период — оживив её, мы стёрли бы прошлое, и расчёт денег снова
++    # увидел бы «пропавшие» занятия между уходом и возвращением.
++    row = await _slot_student_repo.create(
++        db, slot_id=slot_id, student_id=student_id, added_by=added_by,
++        active_from=school_today(),
++    )
+     await db.flush()
+ 
+     future_occurrences = await _occurrence_repo.list_for_slot(
+@@ -576,6 +576,12 @@ async def _attach_student_to_slot(
+     return row
+ 
+ 
++def school_today() -> date:
++    """Сегодня по Москве: даты привязки (tsk-1442) живут в поясе школы, как и
++    расчёт денег, который их читает."""
++    return datetime.now(ZoneInfo("Europe/Moscow")).date()
++
++
+ async def _detach_student_from_slot(
+     db: AsyncSession, slot_id: int, student_id: int
+ ) -> LessonSlotStudent:
+@@ -598,6 +604,10 @@ async def _detach_student_from_slot(
+             status_code=404,
+         )
+     row.is_active = False
++    # tsk-1442: закрыть, а не просто выключить. Выключенная без даты привязка
++    # пропадала из расчёта целиком, и месяц считался по новому слоту с его
++    # первого дня — вместе с прошедшими днями, когда ученик ходил в старый.
++    row.active_until = school_today() - timedelta(days=1)
+ 
+     future_occurrences = await _occurrence_repo.list_for_slot(
+         db, slot_id, from_dt=datetime.now(timezone.utc),
+diff --git a/tests/test_tsk1442_slot_change_mid_month.py b/tests/test_tsk1442_slot_change_mid_month.py
+new file mode 100644
+index 0000000..567f9e8
+--- /dev/null
++++ b/tests/test_tsk1442_slot_change_mid_month.py
+@@ -0,0 +1,170 @@
++"""tsk-1442 — смена дня занятий в середине месяца не даёт ложных «пропавших».
++
++Прод 28.10: ученика 4623 перевели с четверга (слот 33) на субботу (слот 36).
++Старую привязку выключили целиком, новая жила с первого дня СЛОТА (31.08), и
++октябрь посчитался по субботам: четыре прошедшие субботы без занятий ушли в
++вычет, вышло 600 ₽ вместо 3000.
++
++Проверяем денежные инварианты и то, что снятие со слота закрывает привязку
++датой, а не стирает её.
++"""
++
++from __future__ import annotations
++
++from datetime import date, timedelta
++
++import pytest
++from sqlalchemy import text
++
++from app.services import charge_service, lesson_calendar_service
++from tests.test_tsk756_past_month_not_rewritten import (
++    BEFORE_PAST,
++    PAST,
++    PAST_LAST_DAY,
++    _occurrence,
++    _setup,
++    _slot,
++)
++
++pytestmark = pytest.mark.asyncio
++
++_PAST_DAYS = [PAST + timedelta(days=i) for i in range((PAST_LAST_DAY - PAST).days + 1)]
++#: День смены — вторник второй недели: до него в месяце есть понедельники
++#: старого слота, после — среды нового.
++CHANGE = next(d for d in _PAST_DAYS if d.weekday() == 1 and d.day > 7)
++OLD_DAYS = [d for d in _PAST_DAYS if d.weekday() == 0 and d < CHANGE]
++NEW_DAYS = [d for d in _PAST_DAYS if d.weekday() == 2 and d >= CHANGE]
++
++
++async def _close_link(db, *, slot_id: int, student_id: int, last_day: date) -> None:
++    """Привязка, закрытая так, как её теперь закрывает снятие со слота."""
++    await db.execute(
++        text(
++            "UPDATE lesson_slot_student SET is_active = false, active_until = :d "
++            " WHERE slot_id = :s AND student_id = :u"
++        ),
++        {"s": slot_id, "u": student_id, "d": last_day},
++    )
++    await db.commit()
++
++
++async def _open_from(db, *, slot_id: int, student_id: int, first_day: date) -> None:
++    await db.execute(
++        text(
++            "UPDATE lesson_slot_student SET active_from = :d, "
++            "       created_at = CAST(:d AS date) + TIME '12:00' "
++            " WHERE slot_id = :s AND student_id = :u"
++        ),
++        {"s": slot_id, "u": student_id, "d": first_day},
++    )
++    await db.commit()
++
++
++async def test_day_change_mid_month_has_no_false_missing(db):
++    """Ходил по понедельникам, с середины месяца — по средам. Вычетов нет.
++
++    Ровно случай 4623: оба слота заведены задолго до месяца, ученик ходил на
++    каждое занятие своего расписания.
++    """
++    env = await _setup(db, "swap")
++    sid, tid = env["student_id"], env["teacher_id"]
++    old_slot = await _slot(db, student_id=sid, teacher_id=tid, weekday=0, active_from=BEFORE_PAST)
++    new_slot = await _slot(db, student_id=sid, teacher_id=tid, weekday=2, active_from=BEFORE_PAST)
++    await _close_link(db, slot_id=old_slot, student_id=sid, last_day=CHANGE - timedelta(days=1))
++    await _open_from(db, slot_id=new_slot, student_id=sid, first_day=CHANGE)
++    for day in OLD_DAYS:
++        await _occurrence(db, slot_id=old_slot, teacher_id=tid, student_id=sid, day=day)
++    for day in NEW_DAYS:
++        await _occurrence(db, slot_id=new_slot, teacher_id=tid, student_id=sid, day=day)
++
++    counts = await charge_service.lesson_counts_for_month(db, student_id=sid, period=PAST)
++    assert counts.expected == len(OLD_DAYS) + len(NEW_DAYS)
++    assert counts.missing == 0, "занятия были в каждый день расписания"
++    assert counts.not_started == 0
++    assert counts.billable == counts.expected
++
++
++async def test_link_without_dates_still_drops_out(db):
++    """Снятая без даты привязка в расчёт не входит — как до tsk-1442.
++
++    На проде таких 151 строка: дат им миграция не ставит, и суммы их учеников
++    меняться не должны.
++    """
++    env = await _setup(db, "legacy")
++    sid, tid = env["student_id"], env["teacher_id"]
++    slot_id = await _slot(db, student_id=sid, teacher_id=tid, weekday=0, active_from=BEFORE_PAST)
++    await db.execute(
++        text("UPDATE lesson_slot_student SET is_active = false WHERE slot_id = :s"),
++        {"s": slot_id},
++    )
++    await db.commit()
++    counts = await charge_service.lesson_counts_for_month(db, student_id=sid, period=PAST)
++    assert counts.expected == 0
++
++
++async def test_newcomer_mid_month_still_pays_a_share(db):
++    """Начало привязки не срезает дни до прихода: новичок платит долю.
++
++    Знаменатель доли — полный месяц. Обрежь мы его датой привязки, пришедший
++    в середине месяца заплатил бы как за весь.
++    """
++    env = await _setup(db, "newbie")
++    sid, tid = env["student_id"], env["teacher_id"]
++    slot_id = await _slot(db, student_id=sid, teacher_id=tid, weekday=2, active_from=BEFORE_PAST)
++    await _open_from(db, slot_id=slot_id, student_id=sid, first_day=CHANGE)
++    for day in NEW_DAYS:
++        await _occurrence(db, slot_id=slot_id, teacher_id=tid, student_id=sid, day=day)
++
++    counts = await charge_service.lesson_counts_for_month(db, student_id=sid, period=PAST)
++    all_wednesdays = [d for d in _PAST_DAYS if d.weekday() == 2]
++    assert counts.expected == len(all_wednesdays)
++    assert counts.not_started == len(all_wednesdays) - len(NEW_DAYS)
++    assert counts.billable == len(NEW_DAYS)
++
++
++async def test_transfer_closes_old_link_and_keeps_history(db):
++    """Перевод закрывает старую привязку вчерашним днём, новая — с сегодня.
++
++    И обратный перевод заводит новую строку, а не оживляет закрытую: иначе
++    период между уходом и возвращением снова стал бы «пропавшими» занятиями.
++    """
++    env = await _setup(db, "transfer")
++    sid, tid = env["student_id"], env["teacher_id"]
++    a = await _slot(db, student_id=sid, teacher_id=tid, weekday=0)
++    b = int(
++        (
++            await db.execute(
++                text(
++                    "INSERT INTO lesson_slot (teacher_id, weekday, start_time, "
++                    " duration_minutes, timezone, is_active) "
++                    "VALUES (:t, 2, '10:00', 60, 'Europe/Moscow', true) RETURNING id"
++                ),
++                {"t": tid},
++            )
++        ).scalar()
++    )
++    await db.commit()
++
++    today = lesson_calendar_service.school_today()
++    await lesson_calendar_service.transfer_slot_participant(
++        db, source_slot_id=a, target_slot_id=b, student_id=sid, added_by=None
++    )
++    await lesson_calendar_service.transfer_slot_participant(
++        db, source_slot_id=b, target_slot_id=a, student_id=sid, added_by=None
++    )
++
++    rows = (
++        await db.execute(
++            text(
++                "SELECT slot_id, is_active, active_from, active_until "
++                "  FROM lesson_slot_student WHERE student_id = :u ORDER BY id"
++            ),
++            {"u": sid},
++        )
++    ).all()
++    yesterday = today - timedelta(days=1)
++    assert [(r.slot_id, r.is_active, r.active_from, r.active_until) for r in rows] == [
++        (a, False, None, yesterday),
++        (b, False, today, yesterday),
++        (a, True, today, None),
++    ]

@@ -553,13 +553,13 @@ async def _attach_student_to_slot(
         db, student_id, action="добавление в слот расписания"
     )
 
-    if existing is not None:
-        existing.is_active = True
-        row = existing
-    else:
-        row = await _slot_student_repo.create(
-            db, slot_id=slot_id, student_id=student_id, added_by=added_by,
-        )
+    # tsk-1442: всегда новая строка, а не оживление снятой. Снятая хранит
+    # закрытый период — оживив её, мы стёрли бы прошлое, и расчёт денег снова
+    # увидел бы «пропавшие» занятия между уходом и возвращением.
+    row = await _slot_student_repo.create(
+        db, slot_id=slot_id, student_id=student_id, added_by=added_by,
+        active_from=school_today(),
+    )
     await db.flush()
 
     future_occurrences = await _occurrence_repo.list_for_slot(
@@ -574,6 +574,12 @@ async def _attach_student_to_slot(
                 db, occurrence_id=occurrence.id, student_id=student_id, status="scheduled",
             )
     return row
+
+
+def school_today() -> date:
+    """Сегодня по Москве: даты привязки (tsk-1442) живут в поясе школы, как и
+    расчёт денег, который их читает."""
+    return datetime.now(ZoneInfo("Europe/Moscow")).date()
 
 
 async def _detach_student_from_slot(
@@ -598,6 +604,10 @@ async def _detach_student_from_slot(
             status_code=404,
         )
     row.is_active = False
+    # tsk-1442: закрыть, а не просто выключить. Выключенная без даты привязка
+    # пропадала из расчёта целиком, и месяц считался по новому слоту с его
+    # первого дня — вместе с прошедшими днями, когда ученик ходил в старый.
+    row.active_until = school_today() - timedelta(days=1)
 
     future_occurrences = await _occurrence_repo.list_for_slot(
         db, slot_id, from_dt=datetime.now(timezone.utc),

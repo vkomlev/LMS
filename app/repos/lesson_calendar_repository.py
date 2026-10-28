@@ -230,11 +230,19 @@ class LessonSlotStudentRepository:
     async def get(
         self, db: AsyncSession, *, slot_id: int, student_id: int
     ) -> Optional[LessonSlotStudent]:
+        """Действующая привязка, а без неё — самая свежая закрытая.
+
+        tsk-1442: строк на пару может быть несколько (закрытые периоды
+        остаются историей для расчёта денег), уникальна только действующая.
+        """
         res = await db.execute(
-            select(LessonSlotStudent).where(
+            select(LessonSlotStudent)
+            .where(
                 LessonSlotStudent.slot_id == slot_id,
                 LessonSlotStudent.student_id == student_id,
             )
+            .order_by(LessonSlotStudent.is_active.desc(), LessonSlotStudent.id.desc())
+            .limit(1)
         )
         return res.scalar_one_or_none()
 

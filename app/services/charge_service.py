@@ -256,11 +256,24 @@ async def lesson_counts_for_period(
                     -- заведённый 31 августа под осеннюю сетку, считался
                     -- действовавшим и весь август: смена расписания переписывала
                     -- прошлое каждый раз, когда её применяли.
-                    SELECT ls.weekday, ls.active_from, ls.active_until
+                    --
+                    -- tsk-1442: и даты самой привязки. Перевод 28.10 с четверга
+                    -- на субботу выключал старую привязку целиком, а новая
+                    -- жила с первого дня СЛОТА (31.08): октябрь считался по
+                    -- субботам, и четыре прошедшие субботы ушли в «пропавшие»
+                    -- (600 ₽ вместо 3000). Закрытая привязка (с датой конца)
+                    -- остаётся в расчёте по свой последний день; снятая без
+                    -- даты — нет, как и раньше.
+                    SELECT ls.weekday,
+                           ls.active_from,
+                           lss.active_from AS link_from,
+                           -- least() пропускает NULL: открытое с любой стороны
+                           -- не ограничивает другую.
+                           least(ls.active_until, lss.active_until) AS active_until
                       FROM lesson_slot_student lss
                       JOIN lesson_slot ls ON ls.id = lss.slot_id
                      WHERE lss.student_id = :student_id
-                       AND lss.is_active
+                       AND (lss.is_active OR lss.active_until IS NOT NULL)
                        AND ls.is_active
                 ),
                 joined AS (
@@ -385,6 +398,14 @@ async def lesson_counts_for_period(
                                  OR days.day <= slots.active_until)
                   CROSS JOIN joined
                   CROSS JOIN gone
+                  -- tsk-1442: начало привязки срезает только дни ПОСЛЕ прихода
+                  -- в школу. Дни до прихода обязаны остаться в знаменателе:
+                  -- доля новичка — это `not_started` от полного месяца, и
+                  -- обрезав их, мы выставили бы пришедшему 15-го полную цену.
+                  WHERE slots.link_from IS NULL
+                     OR days.day >= slots.link_from
+                     OR (joined.started_on IS NOT NULL
+                         AND days.day < joined.started_on)
                 """
             ),
             {
