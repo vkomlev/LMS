@@ -48,6 +48,8 @@ docs/*
 !docs/qa-poligon/**
 !docs/curriculum/
 !docs/curriculum/**
+!docs/research/
+!docs/research/**
 .cursor/*
 !.cursor/rules/
 

@@ -1,0 +1,2169 @@
+diff --git a/.gitignore b/.gitignore
+index 2422a97..168a0f0 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -48,6 +48,8 @@ docs/*
+ !docs/qa-poligon/**
+ !docs/curriculum/
+ !docs/curriculum/**
++!docs/research/
++!docs/research/**
+ .cursor/*
+ !.cursor/rules/
+ 
+diff --git a/docs/research/2026-10-28-tsk1247-trainers/mechanics-board.md b/docs/research/2026-10-28-tsk1247-trainers/mechanics-board.md
+new file mode 100644
+index 0000000..b57bf51
+--- /dev/null
++++ b/docs/research/2026-10-28-tsk1247-trainers/mechanics-board.md
+@@ -0,0 +1,83 @@
++# Доска механик тренажёров (tsk-1247)
++
++Дата: 2026-10-28. Источники — в `sources-A-references.md` и `sources-B-ai-resistance.md`. Это сниппеты поисковой выдачи, страницы не открывались (см. `report.md`, «Ограничение исследования»).
++
++Как читать:
++- **Учит** — насколько механика помогает понять тему.
++- **Цепляет** — насколько она удерживает и вызывает желание продолжать.
++- **Против ИИ** — насколько списывание через внешний ИИ становится бессмысленным или невыгодным. «Да» не ставим нигде: в практике без надзора невозможного для ИИ формата нет (`report.md` §B).
++- **Цена** — трудоёмкость для нас.
++- **Пилот** — где механика используется: К1 «Ты — интерпретатор», К2 «Цикл-машина», К3 «Линейка срезов».
++
++## 1. Обратная связь
++
++| Механика | Откуда | Учит | Цепляет | Против ИИ | Цена | Пилот |
++|---|---|---|---|---|---|---|
++| Обратная связь через состояние модели: изменилась память, напечаталась настоящая ошибка Python | PhET (неявные опоры), Python Tutor | высоко | высоко | — | низкая | К1, К2, К3 |
++| Разбор именно этой ошибки: каждый неверный ответ связан с кодом ошибки и объяснением | Учи.ру («уточняющий вопрос»), `options[].explanation` в LMS | высоко | высоко | снижает мотив | средняя (тексты методиста) | К1, К2, К3 |
++| «Живая» ошибка без штрафа: ввёл 12.5 → `ValueError`, «так ведёт себя Python» | tsk-1246 §5 | высоко | средне | — | низкая | К1 |
++| Кнопка «разобранный пример» после N неудачных попыток | Sololearn; критика Khanmigo | средне | снижает отвал | — | низкая | К1–К3 (после пилота) |
++| Ошибка не наказывается: нет «жизней», нет снятия уровня | Khan Academy; противопример — «жизни» Duolingo | средне | высоко | снижает мотив | нулевая | все |
++
++## 2. Действие ученика
++
++| Механика | Откуда | Учит | Цепляет | Против ИИ | Цена | Пилот |
++|---|---|---|---|---|---|---|
++| Предсказание перед каждым шагом («что сделает строка?», «что в `i`?») | Brilliant, PRIMM (предскажи → запусти → исследуй → измени → создай), Trace-and-Predict, Lead-and-Reveal | **высоко** | средне | частично (цена шага) | низкая | К1, К2 |
++| Симуляция консоли: курсор мигает, ученик сам печатает ввод, программа продолжает | tsk-1246 §5 | высоко | высоко | частично (своё состояние) | низкая | К1 |
++| Клик по слову ставит или снимает кавычки, затем «Запустить» | tsk-1246 §5 | высоко | средне | нет (ИИ видит экран) | низкая | К1 |
++| Таблица трассировки: заполнить значения по виткам | Python Tutor + PRIMM | высоко | средне | частично | низкая | К2 |
++| Задачи Парсонса с отступами и дистракторами на типичные ошибки | Parsons & Haden 2006, Ericson, Runestone | высоко (быстрее при сопоставимом приросте) | средне | нет против агента, частично против чата | средняя (нужно перетаскивание) | К2 |
++| Адаптивный Парсонс: после N ошибок убрать дистракторы, подсказать отступ | Ericson, Runestone | высоко | снижает отвал | — | средняя | К2 (после пилота) |
++| Правка чужого кода одной строкой («почини») | PRIMM Modify, Kazemitabaar 2023 | высоко | средне | частично | низкая | К1 (вариант Б), К2 |
++| Клик по месту ошибки в коде | tsk-1246 §5 | средне | средне | нет | низкая | К2 |
++| Прямая манипуляция моделью: тянешь скобки по линейке, и срез пересчитывается | PhET Build an Atom | высоко | **высоко** | нет | средняя | К3 |
++| Свободное исследование 1–2 минуты до заданий | PhET | средне | высоко | — | низкая | К3 |
++| Блоки ↔ Python рядом | Blockly, Scratch | для младших | высоко | — | средняя | не в пилоте |
++
++## 3. Против списывания (честно)
++
++| Механика | Откуда | Против ИИ | Комментарий | Пилот |
++|---|---|---|---|---|
++| Ответ — промежуточное состояние, а не итоговый код | вывод из Codewars/LeetCode как противопримера (94–96% решает LLM) | частично | Сдавать «код из чата» некуда | все |
++| Микрошаги по 5–15 с, низкая ставка | Kapoor/Denny 2025 (мотив — застревание и срок) | частично | Поход в чат дороже, чем подумать. Замерить по `ms` | все |
++| Шаг опирается на ввод самого ученика | — | частично | Каждый раз новый контекст для чата | К1 |
++| Случайные параметры и зерно | — | **нет** против ИИ | Против обмена ответами. Даёт повторную тренировку и «вызов другу» | все |
++| Код картинкой | — | **нет** | GPT-4V решил 96,7% Парсонса картинками. Вредит доступности. **Не делать** | — |
++| Слежка за вкладкой и вставкой | — | **нет** | Обходится телефоном, подрывает доверие. **Не делать** | — |
++| Сигналы поведения для помощи (ответы наугад, долгая пауза) → предложить подсказку или наставника | — | — | Помогаем, а не ловим | после пилота |
++| Итог «умеет ли сам» — на живом занятии или в контрольной без ИИ | Сидней, «две полосы» | да (под надзором) | Вне тренажёра | — |
++
++## 4. Мотивация и возврат
++
++| Механика | Откуда | Учит | Цепляет | Цена | Пилот |
++|---|---|---|---|---|---|
++| Персонаж-маскот с реакцией (радуется, грустит, думает) | Учи.ру, Алгоритмика | — | средне (дети) | низкая (SVG) | К1 |
++| Звёзды за уровень (3 — без ошибок) | Учи.ру, игры | — | средне | низкая | К1 |
++| Карта ошибок ученику и преподавателю | Учи.ру (кабинет учителя) | **высоко** (метакогниция) | средне | низкая | К1 |
++| Уровни владения темой и смешанные повторения | Khan Academy | высоко | средне | средняя | после пилота |
++| Мягкие серии с «заморозкой» | Duolingo | — | высоко (удержание) | средняя | после пилота |
++| Альтернативные решения после успеха | CheckiO | средне | средне | низкая | К2 |
++
++Оговорка: по мета-анализу 2024 года эффект геймификации на внутреннюю мотивацию небольшой (g = 0,26, малый эффект); авторы связывают это с тем, что очки мало дают ощущения компетентности и выбора. Поэтому основа — «у меня получается» и выбор, очки — дополнение.
++
++## 5. Распространение
++
++| Механика | Откуда | Аудитория | Цена | Пилот |
++|---|---|---|---|---|
++| Кнопка «Встроить» (iframe, без cookie и входа) | PhET, Python Tutor, LearningApps | учителя | средняя (маршрут + CSP) | К1 |
++| Карточка результата без спойлера | Wordle | ученики | низкая | К1 |
++| Ссылка-вызов с тем же вариантом (зерно в URL) | — | ученики | низкая | К1 (есть в прототипе) |
++| «Выдать классу» по коду и дашборд | Wordwall, Desmos, GeoGebra, Kahoot | учителя | высокая | после пилота |
++| Сертификат ученику и благодарность учителю за класс | Hour of Code, Учи.ру | родители, учителя | средняя | сезонная акция |
++| «Задача дня» | Wordle | ученики | средняя | К3 |
++| Посадочная страница «один тренажёр — один запрос» | PhET (одна тема), SEO | все | низкая | все |
++| Дубль мини-тренажёра на Stepik | Stepik в топе выдачи | ученики | низкая | по желанию |
++
++## 6. Что не берём и почему
++
++- **Pyodide / Skulpt, «запусти любой код».** Это место для вставки кода из ChatGPT, мегабайты загрузки, а решение координатора — сценарии заданы заранее.
++- **Игровой мир (CodeCombat).** Дорого и плохо ложится на темы ОГЭ/ЕГЭ.
++- **«Жизни» и штрафы.** Ошибка — главный учебный сигнал.
++- **Соревновательные рейтинги на скорость.** Не подходят новичкам.
++- **Общий конструктор тренажёров заранее** — до замера первого.
+diff --git a/docs/research/2026-10-28-tsk1247-trainers/prototype.html b/docs/research/2026-10-28-tsk1247-trainers/prototype.html
+new file mode 100644
+index 0000000..c351617
+--- /dev/null
++++ b/docs/research/2026-10-28-tsk1247-trainers/prototype.html
+@@ -0,0 +1,690 @@
++<!doctype html>
++<html lang="ru">
++<head>
++<meta charset="utf-8">
++<meta name="viewport" content="width=device-width, initial-scale=1">
++<title>Ты — интерпретатор</title>
++<meta name="description" content="Прототип тренажёра tsk-1247: кавычки, input и цикл while пошагово. Без сервера, без регистрации.">
++<style>
++:root {
++  --bg: #f6f7fb; --card: #ffffff; --ink: #1d2433; --muted: #5d6680; --line: #dfe3ee;
++  --accent: #3b5bdb; --accent-ink: #ffffff; --ok: #1f8a4c; --ok-bg: #e6f6ec; --bad: #c92a2a; --bad-bg: #fdecec;
++  --warn-bg: #fff6dd; --hl: #fff3b0; --console: #14161c; --console-ink: #d7e2ff; --console-dim: #8b95b3;
++  --chip-str: #e7f0ff; --chip-str-ink: #1c4fb8; --chip-int: #ecf8e9; --chip-int-ink: #2b7a1f;
++  --mascot: #4aa96c; --mascot-dark: #2d7a4a;
++}
++@media (prefers-color-scheme: dark) {
++  :root:not([data-theme="light"]) {
++    --bg: #11141b; --card: #1a1f2a; --ink: #e6e9f2; --muted: #9aa3bd; --line: #2c3342;
++    --accent: #7b93ff; --accent-ink: #0d1020; --ok: #5fd08c; --ok-bg: #16301f; --bad: #ff8a8a; --bad-bg: #3a1c1f;
++    --warn-bg: #3a3218; --hl: #4a4220; --console: #0a0b0f; --chip-str: #1d2b48; --chip-str-ink: #a9c3ff;
++    --chip-int: #1c3320; --chip-int-ink: #9fe39a;
++  }
++}
++:root[data-theme="dark"] {
++  --bg: #11141b; --card: #1a1f2a; --ink: #e6e9f2; --muted: #9aa3bd; --line: #2c3342;
++  --accent: #7b93ff; --accent-ink: #0d1020; --ok: #5fd08c; --ok-bg: #16301f; --bad: #ff8a8a; --bad-bg: #3a1c1f;
++  --warn-bg: #3a3218; --hl: #4a4220; --console: #0a0b0f; --chip-str: #1d2b48; --chip-str-ink: #a9c3ff;
++  --chip-int: #1c3320; --chip-int-ink: #9fe39a;
++}
++* { box-sizing: border-box; }
++body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
++.wrap { max-width: 1040px; margin: 0 auto; padding: 16px; }
++header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
++h1 { font-size: 22px; margin: 0; }
++.sub { color: var(--muted); font-size: 14px; }
++.levels { display: flex; gap: 6px; }
++.lv { padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line); font-size: 13px; color: var(--muted); background: var(--card); }
++.lv.cur { border-color: var(--accent); color: var(--accent); font-weight: 600; }
++.lv.done { color: var(--ok); border-color: var(--ok); }
++.stars { font-size: 15px; color: var(--muted); }
++.grid { display: grid; grid-template-columns: 1.2fr 1fr; gap: 12px; }
++@media (max-width: 760px) { .grid { grid-template-columns: 1fr; } }
++.card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px; min-width: 0; }
++.card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 8px; }
++.code { font: 15px/1.6 ui-monospace, "Cascadia Code", Consolas, monospace; overflow-x: auto; }
++.ln { display: flex; gap: 8px; padding: 1px 6px; border-radius: 6px; white-space: pre; }
++.ln .no { color: var(--muted); width: 1.6em; text-align: right; flex: none; user-select: none; }
++.ln .arrow { width: 1em; flex: none; color: var(--accent); }
++.ln.cur { background: var(--hl); }
++.tok { border-radius: 4px; }
++.tok.q { cursor: pointer; padding: 0 2px; border-bottom: 2px dashed var(--accent); }
++.tok.q:hover, .tok.q:focus { background: var(--chip-str); outline: none; }
++.mem table { width: 100%; border-collapse: collapse; font-size: 15px; }
++.mem td, .mem th { padding: 6px 4px; border-bottom: 1px solid var(--line); text-align: left; }
++.mem th { font-size: 12px; color: var(--muted); font-weight: 500; }
++.mem .val { font-family: ui-monospace, Consolas, monospace; }
++.mem .empty { color: var(--muted); font-size: 14px; }
++.chip { font-size: 12px; padding: 1px 7px; border-radius: 999px; }
++.chip.str { background: var(--chip-str); color: var(--chip-str-ink); }
++.chip.int { background: var(--chip-int); color: var(--chip-int-ink); }
++.flash { animation: flash 0.9s ease; }
++@keyframes flash { 0% { background: var(--hl); } 100% { background: transparent; } }
++.console { background: var(--console); color: var(--console-ink); border-radius: 10px; padding: 10px 12px; font: 15px/1.5 ui-monospace, Consolas, monospace; min-height: 96px; margin-top: 12px; overflow-x: auto; white-space: pre-wrap; word-break: break-word; }
++.console .dim { color: var(--console-dim); }
++.console .err { color: #ff9b9b; }
++.console input { background: transparent; border: none; color: #fff; font: inherit; outline: none; width: 12ch; caret-color: #fff; }
++.cursor { display: inline-block; width: 9px; height: 1.1em; background: #fff; vertical-align: text-bottom; animation: blink 1s steps(1) infinite; }
++@keyframes blink { 50% { opacity: 0; } }
++.coach { display: flex; gap: 12px; align-items: flex-start; margin-top: 12px; }
++.mascot { flex: none; width: 64px; height: 64px; }
++.mascot.happy { animation: hop .5s ease; }
++.mascot.sad { animation: shake .45s ease; }
++@keyframes hop { 30% { transform: translateY(-10px); } 60% { transform: translateY(0); } }
++@keyframes shake { 20%, 60% { transform: translateX(-5px); } 40%, 80% { transform: translateX(5px); } }
++.bubble { flex: 1; min-width: 0; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
++.bubble.ok { background: var(--ok-bg); border-color: var(--ok); }
++.bubble.bad { background: var(--bad-bg); border-color: var(--bad); }
++.bubble .q { font-weight: 600; margin-bottom: 8px; }
++.opts { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
++button { font: inherit; cursor: pointer; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--ink); padding: 8px 12px; text-align: left; }
++button:hover:not(:disabled) { border-color: var(--accent); }
++button:disabled { opacity: .45; cursor: default; }
++button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); text-align: center; font-weight: 600; }
++.row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; align-items: center; }
++input.ans { font: 15px ui-monospace, Consolas, monospace; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); color: var(--ink); min-width: 0; flex: 1 1 180px; }
++.why { margin-top: 8px; font-size: 15px; }
++.target { font-family: ui-monospace, Consolas, monospace; background: var(--warn-bg); padding: 2px 6px; border-radius: 6px; }
++.finish { text-align: center; }
++.share { margin: 12px auto; max-width: 420px; border: 2px solid var(--accent); border-radius: 14px; padding: 16px; }
++.share .big { font-size: 28px; font-weight: 700; }
++.mistakes { text-align: left; margin: 8px auto; max-width: 420px; font-size: 15px; }
++textarea.embed { width: 100%; font: 13px ui-monospace, Consolas, monospace; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--ink); padding: 8px; }
++details { margin-top: 16px; }
++details pre { font-size: 12px; max-height: 240px; overflow: auto; background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 8px; }
++.note { font-size: 13px; color: var(--muted); margin-top: 12px; }
++.theme { font-size: 13px; padding: 4px 10px; }
++</style>
++</head>
++<body>
++<div class="wrap">
++  <header>
++    <div>
++      <h1>Ты — интерпретатор</h1>
++      <div class="sub">Тренажёр по Python: проживи программу шаг за шагом вместо компьютера</div>
++    </div>
++    <div class="row" style="margin:0">
++      <div class="levels" id="levels"></div>
++      <div class="stars" id="stars"></div>
++      <button class="theme" id="themeBtn" type="button" title="Сменить тему">Тема</button>
++    </div>
++  </header>
++
++  <div id="main"></div>
++
++  <details id="evDetails">
++    <summary>Что тренажёр отправил бы в LMS (демо, данные никуда не уходят)</summary>
++    <pre id="events"></pre>
++  </details>
++  <p class="note">Прототип tsk-1247 · один HTML-файл без сервера · сценарии и подборка значений меняются при каждом запуске (зерно <span id="seedOut"></span>).</p>
++</div>
++
++<script>
++"use strict";
++/* ---------- случайность с зерном: «вызов другу» повторяет тот же вариант ---------- */
++const params = new URLSearchParams(location.search);
++const seedParam = params.get("seed");
++const SEED = seedParam !== null && /^\d+$/.test(seedParam) ? Number(seedParam) : Math.floor(Math.random() * 1e6);
++document.getElementById("seedOut").textContent = SEED;
++function mulberry32(a) { return function () { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
++const rng = mulberry32(SEED);
++const pick = (arr) => arr[Math.floor(rng() * arr.length)];
++const randint = (a, b) => a + Math.floor(rng() * (b - a + 1));
++
++/* ---------- журнал событий (то, что ушло бы в learning_events) ---------- */
++const events = [];
++let stepStarted = performance.now();
++function logEvent(e) {
++  const now = performance.now();
++  events.push(Object.assign({ t: new Date().toISOString(), ms: Math.round(now - stepStarted) }, e));
++  document.getElementById("events").textContent = JSON.stringify(events, null, 1);
++}
++
++/* ---------- общий счёт ---------- */
++const MISC = {
++  quotes: "Кавычки: текст или имя",
++  input_prompt: "input: подсказка ≠ ответ",
++  input_wait: "input ждёт человека",
++  types: "Типы: input даёт текст",
++  print_args: "print: пробел между аргументами",
++  loop_order: "Цикл: порядок строк",
++  assign_eq: "= (положить) и == (сравнить)",
++  loop_cond: "Цикл: условие и границы",
++  loop_after: "Цикл: что после цикла",
++};
++const mistakes = {}; // misconception → count
++const levelMistakes = [0, 0, 0];
++let levelIdx = 0;
++const startTime = Date.now();
++function addMistake(code) { mistakes[code] = (mistakes[code] || 0) + 1; levelMistakes[levelIdx]++; }
++const starsFor = (m) => (m === 0 ? 3 : m <= 2 ? 2 : 1);
++
++/* ---------- маскот (SVG) ---------- */
++function mascotSVG(mood) {
++  const mouth = mood === "sad" ? "M22 44 Q32 36 42 44" : mood === "think" ? "M23 42 L41 42" : "M22 40 Q32 50 42 40";
++  return `<svg class="mascot ${mood}" viewBox="0 0 64 64" aria-hidden="true">
++    <ellipse cx="32" cy="36" rx="26" ry="22" fill="var(--mascot)"/>
++    <ellipse cx="32" cy="42" rx="17" ry="11" fill="#bfe8cd" opacity=".55"/>
++    <circle cx="22" cy="28" r="7" fill="#fff"/><circle cx="42" cy="28" r="7" fill="#fff"/>
++    <circle cx="${mood === "think" ? 25 : 23}" cy="29" r="3.2" fill="#1d2433"/><circle cx="${mood === "think" ? 45 : 43}" cy="29" r="3.2" fill="#1d2433"/>
++    <path d="${mouth}" stroke="var(--mascot-dark)" stroke-width="3" fill="none" stroke-linecap="round"/>
++    <path d="M32 58 q4 5 0 6 q-4-1 0-6" fill="#e05a5a"/>
++  </svg>`;
++}
++
++/* ---------- утилиты отрисовки ---------- */
++const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
++const norm = (s) => String(s).trim().replace(/\s+/g, " ");
++function typeChip(t) { return t === "int" ? '<span class="chip int">int · число</span>' : '<span class="chip str">str · текст</span>'; }
++function showVal(v) { return v.t === "str" ? `'${esc(v.v)}'` : esc(v.v); }
++
++function renderHeader() {
++  const names = ["1 · Кавычки", "2 · Программа ждёт", "3 · Цикл"];
++  document.getElementById("levels").innerHTML = names
++    .map((n, i) => `<span class="lv ${i < levelIdx ? "done" : i === levelIdx ? "cur" : ""}">${n}</span>`).join("");
++  const got = levelMistakes.slice(0, levelIdx).reduce((s, m) => s + starsFor(m), 0);
++  document.getElementById("stars").textContent = `★ ${got}`;
++}
++
++/* =====================================================================
++   УРОВЕНЬ 1. Кавычки. Ученик кликает по словам, чтобы поставить/снять
++   кавычки, и запускает программу. Значения подбираются случайно.
++   ===================================================================== */
++function quoteItems() {
++  const name = pick(["Оля", "Тимур", "Вика", "Артём", "Дана"]);
++  const city = pick(["Казань", "Пермь", "Омск", "Тула"]);
++  const age = randint(11, 17);
++  return [
++    { // имя в переменной
++      intro: `Сделай так, чтобы программа напечатала: <span class="target">Привет ${esc(name)}</span>`,
++      lines: [[{ v: "name" }, { s: " = " }, { q: name }], [{ s: "print(" }, { q: "Привет" }, { s: ", " }, { q: "name" }, { s: ")" }]],
++      target: `Привет ${name}`,
++    },
++    { // ловушка: нужно напечатать само слово city
++      intro: `А теперь напечатай само <b>слово</b> <span class="target">city</span> — не город`,
++      lines: [[{ v: "city" }, { s: " = " }, { q: city }], [{ s: "print(" }, { q: "city" }, { s: ")" }]],
++      target: "city",
++    },
++    { // число: кавычки не нужны, но и не ломают вывод
++      intro: `Нужно: <span class="target">Мне ${age}</span>`,
++      lines: [[{ v: "age" }, { s: " = " }, { q: String(age) }], [{ s: "print(" }, { q: "Мне" }, { s: ", " }, { q: "age" }, { s: ")" }]],
++      target: `Мне ${age}`,
++    },
++  ];
++}
++
++/* Мини-вычислитель ровно для этих двух форм строк: `имя = значение` и `print(арг, ...)`.
++   Это не интерпретатор Python — он знает только то, что задано в сценарии. */
++function runQuoteProgram(lines, quoted) {
++  const vars = {};
++  const out = [];
++  function evalTok(tok, key) {
++    const text = tok.q;
++    if (quoted.has(key)) return { ok: true, v: { v: text, t: "str" } };
++    if (/^\d+$/.test(text)) return { ok: true, v: { v: Number(text), t: "int" } };
++    if (text in vars) return { ok: true, v: vars[text] };
++    return { ok: false, err: `NameError: name '${text}' is not defined`, name: text };
++  }
++  for (let li = 0; li < lines.length; li++) {
++    const line = lines[li];
++    if (line[0].v) { // присваивание
++      const r = evalTok(line[2], `${li}:2`);
++      if (!r.ok) return { out, err: r.err, errName: r.name, line: li };
++      vars[line[0].v] = r.v;
++    } else { // print
++      const parts = [];
++      for (let ti = 0; ti < line.length; ti++) {
++        if (!line[ti].q) continue;
++        const r = evalTok(line[ti], `${li}:${ti}`);
++        if (!r.ok) return { out, err: r.err, errName: r.name, line: li };
++        parts.push(String(r.v.v));
++      }
++      out.push(parts.join(" "));
++    }
++  }
++  return { out, vars };
++}
++
++function level1() {
++  const items = quoteItems();
++  let k = 0;
++  let quoted = new Set();
++  let solved = false;
++  function codeHTML(item) {
++    return item.lines.map((line, li) => {
++      const toks = line.map((t, ti) => {
++        if (t.s) return esc(t.s);
++        if (t.v) return esc(t.v);
++        const key = `${li}:${ti}`;
++        const on = quoted.has(key);
++        return `<span class="tok q" tabindex="0" role="button" data-key="${key}" aria-label="поставить или снять кавычки">${on ? '"' : ""}${esc(t.q)}${on ? '"' : ""}</span>`;
++      }).join("");
++      return `<div class="ln"><span class="no">${li + 1}</span><span class="arrow"></span><span>${toks}</span></div>`;
++    }).join("");
++  }
++  function draw(feedback) {
++    const item = items[k];
++    const fb = feedback || { cls: "", mood: "happy", html: `${item.intro}<div class="why">Нажимай на подчёркнутые слова — кавычки появятся или исчезнут. Потом жми «Запустить».</div>` };
++    document.getElementById("main").innerHTML = `
++      <div class="grid">
++        <div class="card"><h2>Код · задание ${k + 1} из ${items.length}</h2><div class="code" id="code">${codeHTML(item)}</div>
++          <div class="console" id="console"><span class="dim">&gt;&gt;&gt; здесь появится вывод</span></div></div>
++        <div>
++          <div class="coach">${mascotSVG(fb.mood)}<div class="bubble ${fb.cls}">${fb.html}
++            <div class="row">${solved ? '<button class="primary" id="next">Дальше →</button>' : '<button class="primary" id="run">▶ Запустить</button>'}</div></div></div>
++        </div>
++      </div>`;
++    document.querySelectorAll(".tok.q").forEach((el) => {
++      const toggle = () => { if (solved) return; const key = el.dataset.key; quoted.has(key) ? quoted.delete(key) : quoted.add(key); draw(); };
++      el.addEventListener("click", toggle);
++      el.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } });
++    });
++    const run = document.getElementById("run");
++    if (run) run.onclick = () => check();
++    const next = document.getElementById("next");
++    if (next) next.onclick = () => { k++; quoted = new Set(); solved = false; stepStarted = performance.now(); if (k < items.length) draw(); else finishLevel(); };
++  }
++  function consoleShow(res) {
++    const c = document.getElementById("console");
++    let h = res.out.map((o) => esc(o)).join("<br>");
++    if (res.err) h += (h ? "<br>" : "") + `<span class="err">Traceback (most recent call last):<br>  File "main.py", line ${res.line + 1}, in &lt;module&gt;<br>${esc(res.err)}</span>`;
++    c.innerHTML = h || '<span class="dim">(ничего не напечатано)</span>';
++  }
++  function check() {
++    const item = items[k];
++    const res = runQuoteProgram(item.lines, quoted);
++    const got = res.out.join("\n");
++    const ok = !res.err && norm(got) === norm(item.target);
++    let html, misc = null;
++    if (ok) {
++      solved = true;
++      html = "<b>Работает!</b> ";
++      const ageTok = k === 2 && quoted.has("0:2");
++      if (ageTok) html += `Заметь: вывод тот же, но в <code>age</code> теперь лежит <b>текст</b> "${esc(item.lines[0][2].q)}", а не число. Прибавить к нему 1 уже не выйдет — числам кавычки не нужны.`;
++      else if (k === 1) html += "Без кавычек <code>city</code> — это имя ящика, где лежит город. В кавычках — просто буквы c-i-t-y.";
++      else html += "В кавычках — текст как есть. Без кавычек — имя переменной, Python достаёт из неё значение.";
++    } else if (res.err) {
++      misc = "quotes";
++      html = `<b>Python не знает имени <code>${esc(res.errName)}</code>.</b> Без кавычек слово — это имя переменной, а такой переменной никто не создавал. Если нужен сам текст — возьми его в кавычки.`;
++    } else {
++      misc = "quotes";
++      const wanted = norm(item.target), shown = norm(got);
++      html = `<b>Напечаталось <span class="target">${esc(shown)}</span>, а нужно <span class="target">${esc(wanted)}</span>.</b> `;
++      const quotedVarInPrint = item.lines[1].some((t, ti) => t.q && t.q === item.lines[0][0].v && quoted.has(`1:${ti}`));
++      html += quotedVarInPrint && k !== 1
++        ? `Ты взял имя переменной в кавычки — и Python напечатал само слово, а не то, что лежит в переменной.`
++        : `Посмотри на каждое слово в <code>print</code>: это текст как есть или имя ящика с данными?`;
++    }
++    if (misc) addMistake(misc);
++    logEvent({ level: 1, item: k + 1, kind: "quotes_run", ok, misconception: misc, quoted: [...quoted] });
++    consoleShow(res);
++    // перерисовываем только пузырь, консоль оставляем
++    const bubbleHost = document.querySelector(".coach");
++    bubbleHost.outerHTML = `<div class="coach">${mascotSVG(ok ? "happy" : "sad")}<div class="bubble ${ok ? "ok" : "bad"}">${html}
++      <div class="row">${ok ? '<button class="primary" id="next">Дальше →</button>' : '<button class="primary" id="run">▶ Запустить ещё раз</button>'}</div></div></div>`;
++    if (ok) {
++      document.getElementById("next").onclick = () => { k++; quoted = new Set(); solved = false; stepStarted = performance.now(); if (k < items.length) draw(); else finishLevel(); };
++      document.querySelectorAll(".tok.q").forEach((el) => el.replaceWith(Object.assign(document.createElement("span"), { textContent: el.textContent })));
++    } else {
++      document.getElementById("run").onclick = () => check();
++    }
++  }
++  draw();
++}
++
++/* =====================================================================
++   УРОВНИ 2–3. Пошаговый движок: код + память + консоль + вопрос перед
++   каждым шагом. Сценарий — список шагов; шаг описан данными и короткими
++   функциями-диагнозами (какую ошибку выдаёт этот неверный ответ).
++   ===================================================================== */
++function stepper(scn) {
++  const st = { vars: {}, order: [], console: [], waiting: null, flash: null };
++  let i = 0;
++  let locked = false;
++  const steps = scn.steps;
++
++  /* Варианты ответа перемешиваются один раз на шаг: верный не стоит всегда на одном месте. */
++  const optCache = new Map();
++  function stepOpts(step) {
++    if (!optCache.has(step.id)) {
++      const raw = typeof step.opts === "function" ? step.opts(st) : step.opts;
++      const arr = raw.slice();
++      for (let j = arr.length - 1; j > 0; j--) { const r = Math.floor(rng() * (j + 1)); [arr[j], arr[r]] = [arr[r], arr[j]]; }
++      optCache.set(step.id, arr);
++    }
++    return optCache.get(step.id);
++  }
++  function setVar(name, v, t) { if (!(name in st.vars)) st.order.push(name); st.vars[name] = { v, t }; st.flash = name; }
++  const api = { st, setVar, print: (s) => st.console.push({ s }), err: (s) => st.console.push({ s, err: true }) };
++
++  function draw(fb) {
++    const step = steps[i];
++    const line = typeof step.line === "function" ? step.line(st) : step.line;
++    const codeHTML = scn.code.map((l, li) => `<div class="ln ${li + 1 === line ? "cur" : ""}"><span class="no">${li + 1}</span><span class="arrow">${li + 1 === line ? "➜" : ""}</span><span>${esc(l)}</span></div>`).join("");
++    const memHTML = st.order.length
++      ? `<table><tr><th>имя</th><th>значение</th><th>тип</th></tr>${st.order.map((n) => `<tr class="${st.flash === n ? "flash" : ""}"><td class="val">${esc(n)}</td><td class="val">${showVal(st.vars[n])}</td><td>${typeChip(st.vars[n].t)}</td></tr>`).join("")}</table>`
++      : '<div class="empty">Пока пусто: переменные появятся, когда программа их создаст.</div>';
++    let con = st.console.map((c) => (c.err ? `<span class="err">${esc(c.s)}</span>` : esc(c.s))).join("<br>");
++    if (st.waiting !== null) con += (con ? "<br>" : "") + `${esc(st.waiting)}<input id="conIn" autocomplete="off" aria-label="ввод в консоль"><span class="cursor"></span>`;
++    st.flash = null;
++
++    const q = typeof step.q === "function" ? step.q(st) : step.q;
++    let body = `<div class="q">${q}</div>`;
++    if (fb) body += `<div class="why">${fb.html}</div>`;
++    if (fb && fb.ok) body += `<div class="row"><button class="primary" id="next">${i + 1 < steps.length ? "Дальше →" : "Завершить уровень →"}</button></div>`;
++    else if (step.kind === "choice") {
++      const opts = stepOpts(step);
++      body += `<div class="opts">${opts.map((o, oi) => `<button data-oi="${oi}" ${fb && fb.tried && fb.tried.has(oi) ? "disabled" : ""}>${o.t}</button>`).join("")}</div>`;
++    } else if (step.kind === "value") {
++      body += `<div class="row"><input class="ans" id="ans" autocomplete="off" placeholder="${esc(step.ph || "твой ответ")}"><button class="primary" id="go">Проверить</button></div>`;
++    }
++    document.getElementById("main").innerHTML = `
++      <div class="grid">
++        <div class="card"><h2>${esc(scn.title)}</h2><div class="code">${codeHTML}</div>
++          <div class="console" aria-live="polite">${con || '<span class="dim">консоль пуста</span>'}</div></div>
++        <div>
++          <div class="card mem"><h2>Память программы</h2>${memHTML}</div>
++          <div class="coach">${mascotSVG(fb ? (fb.ok ? "happy" : fb.neutral ? "think" : "sad") : "think")}<div class="bubble ${fb ? (fb.ok ? "ok" : fb.neutral ? "" : "bad") : ""}">${body}</div></div>
++        </div>
++      </div>`;
++    const next = document.getElementById("next");
++    if (next) { next.onclick = advance; next.focus(); }
++    document.querySelectorAll("[data-oi]").forEach((b) => (b.onclick = () => answerChoice(Number(b.dataset.oi), fb)));
++    const go = document.getElementById("go");
++    if (go) {
++      const ans = document.getElementById("ans");
++      go.onclick = () => answerValue(ans.value);
++      ans.addEventListener("keydown", (e) => { if (e.key === "Enter") answerValue(ans.value); });
++      ans.focus();
++    }
++    const conIn = document.getElementById("conIn");
++    if (conIn && step.kind === "console") {
++      conIn.focus();
++      conIn.addEventListener("keydown", (e) => { if (e.key === "Enter") answerConsole(conIn.value); });
++    }
++  }
++  function good(html) { draw({ ok: true, html }); }
++  function answerChoice(oi, prevFb) {
++    if (locked) return;
++    const step = steps[i];
++    const o = stepOpts(step)[oi];
++    const tried = prevFb && prevFb.tried ? prevFb.tried : new Set();
++    logEvent({ level: levelIdx + 1, step: step.id, kind: "choice", answer: o.t.replace(/<[^>]+>/g, ""), ok: !!o.ok, misconception: o.ok ? null : o.m || null });
++    if (o.ok) { if (step.after) step.after(api, o); good(o.why || "Верно!"); return; }
++    addMistake(o.m || step.m);
++    tried.add(oi);
++    draw({ ok: false, html: o.why, tried });
++  }
++  function answerValue(raw) {
++    const step = steps[i];
++    const res = step.check(norm(raw), st);
++    logEvent({ level: levelIdx + 1, step: step.id, kind: "value", answer: raw, ok: res.ok, misconception: res.ok ? null : res.m || step.m || null });
++    if (res.ok) { if (step.after) step.after(api, raw); good(res.why || "Верно!"); return; }
++    addMistake(res.m || step.m);
++    draw({ ok: false, html: res.why });
++  }
++  function answerConsole(raw) {
++    const step = steps[i];
++    const res = step.check(raw.trim(), st);
++    logEvent({ level: levelIdx + 1, step: step.id, kind: "console", answer: raw, ok: res.ok, misconception: res.ok ? null : res.m || null });
++    if (res.ok) { st.console.push({ s: st.waiting + raw.trim() }); st.waiting = null; if (step.after) step.after(api, raw.trim()); good(res.why); return; }
++    if (res.crash) { // программа упала по-настоящему (так сделал бы Python): показываем и запускаем строку заново
++      st.console.push({ s: st.waiting + raw.trim() });
++      res.crash.forEach((s) => api.err(s));
++      st.console.push({ s: "— настоящий Python начал бы программу сначала; в тренажёре продолжаем с этой строки —" });
++    }
++    if (res.m) addMistake(res.m);
++    draw({ ok: false, neutral: !res.m, html: res.why });
++  }
++  function advance() {
++    i++;
++    stepStarted = performance.now();
++    if (i >= steps.length) { finishLevel(); return; }
++    if (steps[i].before) steps[i].before(api);
++    draw();
++  }
++  if (steps[0].before) steps[0].before(api);
++  draw();
++}
++
++/* ---------- сценарий уровня 2: input / int / типы; вариант выбирается случайно ---------- */
++function scenarioInput() {
++  const withInt = rng() < 0.5;
++  const code = [
++    'name = input("Как тебя зовут? ")',
++    withInt ? 'age = int(input("Сколько тебе лет? "))' : 'age = input("Сколько тебе лет? ")',
++    'print("Привет,", name)',
++    'print("Через год тебе", age + 1)',
++  ];
++  const steps = [
++    { id: "l1_predict", line: 1, kind: "choice", m: "input_prompt",
++      q: "Что сделает строка 1, когда программа до неё дойдёт?",
++      opts: [
++        { t: "Сохранит в <code>name</code> текст «Как тебя зовут?»", m: "input_prompt", why: "В скобках у <code>input</code> — <b>подсказка для человека</b>, а не ответ. Ответ человек напечатает сам — он и попадёт в <code>name</code>." },
++        { t: "Спросит и сразу перейдёт к строке 2", m: "input_wait", why: "<code>input</code> <b>останавливает</b> программу, пока человек не нажмёт Enter. Это не зависание — программа ждёт тебя." },
++        { t: "Напишет «Как тебя зовут?» и остановится — будет ждать ответа", ok: true, why: "Точно. Смотри в консоль: курсор мигает — программа ждёт." },
++      ],
++      after: (api) => { api.st.waiting = "Как тебя зовут? "; },
++    },
++    { id: "l1_type", line: 1, kind: "console",
++      q: "Теперь ты — пользователь. Напечатай в консоли своё имя (можно выдуманное) и нажми Enter.",
++      check: (v) => {
++        if (!v) return { ok: false, why: "Программа всё ещё ждёт: напечатай имя прямо в чёрной консоли и нажми Enter." };
++        if (/^["'].*["']$/.test(v)) return { ok: false, m: "quotes", why: "Пользователь кавычки не печатает — это пишут только в коде. <code>input</code> сам сделает из ответа текст. Напечатай имя без кавычек." };
++        return { ok: true, why: `Программа проснулась и положила то, что ты напечатал, в <code>name</code>. Загляни в «Память».` };
++      },
++      after: (api, v) => api.setVar("name", v, "str"),
++    },
++    { id: "l1_typeof", line: 1, kind: "choice", m: "types",
++      q: "Какого типа значение лежит в <code>name</code>?",
++      opts: [
++        { t: "str — текст", ok: true, why: "Да. <code>input</code> <b>всегда</b> отдаёт текст — даже если напечатать цифры." },
++        { t: "Зависит от того, что напечатали: цифры станут числом", m: "types", why: "Нет — <code>input</code> всегда отдаёт текст. Напечатаешь 123 — получишь строку '123'. Чтобы получилось число, нужен <code>int()</code>." },
++        { t: "int — число", m: "types", why: "<code>input</code> всегда отдаёт текст — что бы ни напечатал человек. Числом значение становится только через <code>int()</code>." },
++      ],
++    },
++    { id: "l2_type", line: 2, kind: "console",
++      before: (api) => { api.st.waiting = "Сколько тебе лет? "; },
++      q: "Строка 2 снова ждёт. Напечатай возраст и нажми Enter. (Если любопытно — попробуй сначала 12.5 и посмотри, что будет.)",
++      check: (v) => {
++        if (!v) return { ok: false, why: "Напечатай число в консоли и нажми Enter." };
++        if (withInt && !/^-?\d+$/.test(v)) {
++          return { ok: false, crash: ["Traceback (most recent call last):", '  File "main.py", line 2, in <module>', `ValueError: invalid literal for int() with base 10: '${v}'`],
++            why: `Вот что сделал бы настоящий Python: <code>int()</code> умеет превращать в целое только текст из цифр. «${esc(v)}» — не целое, поэтому <b>ValueError</b>. Это не твоя ошибка — так ведёт себя программа. Напечатай целое число.` };
++        }
++        if (!withInt && !/^-?\d+$/.test(v)) return { ok: false, why: "Здесь программа примет любой текст, но для следующего шага нужен возраст целым числом. Напечатай, например, 14." };
++        return { ok: true, why: "Принято. Что теперь лежит в <code>age</code>? Сначала подумай, потом жми «Дальше»." };
++      },
++      after: (api, v) => { api.st.pendingAge = withInt ? String(Number(v)) : v; },
++    },
++    { id: "l2_typeof", line: 2, kind: "choice", m: "types",
++      q: (st) => `Ты напечатал ${esc(st.pendingAge)}. Что окажется в <code>age</code>?`,
++      opts: (st) => {
++        const v = st.pendingAge;
++        const asStr = { t: `'${esc(v)}' — текст (str)`, ok: !withInt, m: "types",
++          why: withInt ? `Без <code>int()</code> было бы так. Но в строке 2 есть <code>int(...)</code> — он превращает текст '${esc(v)}' в число ${esc(v)}.` : `Верно: <code>int()</code> в этой программе нет, значит возраст так и остался текстом '${esc(v)}'.` };
++        const asInt = { t: `${esc(v)} — число (int)`, ok: withInt, m: "types",
++          why: withInt ? "Верно: <code>input</code> дал текст, а <code>int()</code> превратил его в число." : `Посмотри на строку 2: <code>int()</code> там нет. А <code>input</code> всегда отдаёт текст — значит, в <code>age</code> лежит '${esc(v)}'.` };
++        const asPrompt = { t: `'Сколько тебе лет? ${esc(v)}'`, m: "input_prompt", why: "Подсказка в скобках только показывается человеку и в переменную не попадает. В <code>age</code> — только то, что напечатал человек." };
++        return [asPrompt, asInt, asStr];
++      },
++      after: (api) => api.setVar("age", withInt ? Number(api.st.pendingAge) : api.st.pendingAge, withInt ? "int" : "str"),
++    },
++    { id: "l3_output", line: 3, kind: "value", ph: "что появится в консоли",
++      q: "Что именно напечатает строка 3? Набери так, как будет в консоли.",
++      check: (v, st) => {
++        const name = st.vars.name.v;
++        const want = `Привет, ${name}`;
++        if (v === want) return { ok: true, why: "Точно. <code>print</code> печатает аргументы через пробел — поэтому между запятой и именем пробел." };
++        if (v.toLowerCase() === "привет, name") return { ok: false, m: "quotes", why: "<code>name</code> без кавычек — это имя переменной. Python достанет из неё значение, а не напечатает слово name." };
++        if (v === `Привет,${name}`) return { ok: false, m: "print_args", why: "Почти! Но <code>print</code> сам ставит <b>пробел</b> между аргументами." };
++        if (/["']/.test(v)) return { ok: false, m: "quotes", why: "В консоли кавычек не будет: они только показывают Python, где текст в коде." };
++        return { ok: false, m: "print_args", why: `В <code>print</code> два аргумента: текст "Привет," и значение из <code>name</code>. Загляни в «Память» — что там лежит?` };
++      },
++      after: (api) => api.print(`Привет, ${api.st.vars.name.v}`),
++    },
++  ];
++  if (withInt) {
++    steps.push({ id: "l4_output", line: 4, kind: "value", ph: "что появится в консоли",
++      q: "И последняя строка: что напечатает строка 4?",
++      check: (v, st) => {
++        const a = st.vars.age.v;
++        if (v === `Через год тебе ${a + 1}`) return { ok: true, why: "Да! <code>age</code> — число, значит <code>+</code> складывает." };
++        if (v === `Через год тебе ${a}1`) return { ok: false, m: "types", why: `Склеилось бы, если бы <code>age</code> был текстом. Но благодаря <code>int()</code> в строке 2 там число ${a} — и <code>+</code> складывает.` };
++        if (/age/.test(v)) return { ok: false, m: "quotes", why: "<code>age + 1</code> стоит без кавычек — Python посчитает выражение, а не напечатает его буквами." };
++        return { ok: false, m: "types", why: "Посмотри в «Память»: что в <code>age</code> и какого оно типа? Что сделает <code>+ 1</code>?" };
++      },
++      after: (api) => api.print(`Через год тебе ${api.st.vars.age.v + 1}`),
++    });
++  } else {
++    steps.push({ id: "l4_predict", line: 4, kind: "choice", m: "types",
++      q: "Что произойдёт на строке 4?",
++      opts: (st) => {
++        const a = st.vars.age.v;
++        return [
++          { t: `Напечатает «Через год тебе ${Number(a) + 1}»`, m: "types", why: `Так было бы, если бы в <code>age</code> лежало число. Но там текст '${esc(a)}' (смотри тип в «Памяти»).` },
++          { t: `Напечатает «Через год тебе ${esc(a)}1»`, m: "types", why: "Склеить текст с текстом можно, но здесь к тексту прибавляют <b>число</b> 1. Python так не умеет." },
++          { t: "Программа упадёт с ошибкой", ok: true, why: "Именно: <b>TypeError</b> — текст и число не складываются. Смотри консоль." },
++        ];
++      },
++      after: (api) => { api.err("Traceback (most recent call last):"); api.err('  File "main.py", line 4, in <module>'); api.err('TypeError: can only concatenate str (not "int") to str'); },
++    });
++    steps.push({ id: "l4_fix", line: 2, kind: "choice", m: "types",
++      q: "Почини программу одной правкой. Какую строку 2 поставить?",
++      opts: [
++        { t: '<code>age = input(int("Сколько тебе лет? "))</code>', m: "types", why: "<code>int()</code> здесь пытается превратить в число саму подсказку — а это не цифры. Превращать надо <b>ответ</b> человека." },
++        { t: '<code>age = int(input("Сколько тебе лет? "))</code>', ok: true, why: "Верно: сначала <code>input</code> получает текст, потом <code>int()</code> делает из него число. Теперь <code>age + 1</code> сложится." },
++        { t: '<code>age = \'input("Сколько тебе лет? ")\'</code>', m: "quotes", why: "В кавычках всё это станет просто текстом — <code>input</code> даже не вызовется, а в <code>age</code> ляжет строка из букв." },
++      ],
++    });
++  }
++  return { title: withInt ? "Код · вариант А" : "Код · вариант Б", code, steps };
++}
++
++/* ---------- сценарий уровня 3: while с накоплением суммы; границы случайные ---------- */
++function scenarioLoop() {
++  const i0 = pick([1, 2]);
++  const n = i0 + randint(2, 3); // 3–4 витка
++  const code = [`n = ${n}`, "s = 0", `i = ${i0}`, "while i <= n:", "    s = s + i", "    i = i + 1", "print(s)"];
++  const steps = [];
++  steps.push({ id: "init", line: 3, kind: "choice", m: "loop_order",
++    before: (api) => { api.setVar("n", n, "int"); api.setVar("s", 0, "int"); },
++    q: `Строки 1 и 2 уже выполнены (смотри «Память»). Что сделает строка 3?`,
++    opts: [
++      { t: `Создаст переменную <code>i</code> со значением ${i0}`, ok: true, why: "Да. Теперь у программы три переменные." },
++      { t: `Проверит, равно ли <code>i</code> числу ${i0}`, m: "assign_eq", why: "Один знак <code>=</code> — это <b>присваивание</b>: положить значение в ящик. Сравнение пишется двумя: <code>==</code>." },
++    ],
++    after: (api) => api.setVar("i", i0, "int"),
++  });
++  let s = 0;
++  for (let i = i0; ; i++) {
++    const cond = i <= n;
++    const iNow = i, sNow = s;
++    steps.push({ id: `cond_i${iNow}`, line: 4, kind: "choice", m: "loop_cond",
++      q: `Проверка условия: <code>i &lt;= n</code>. Сейчас <code>i</code> = ${iNow}, <code>n</code> = ${n}. Условие верно?`,
++      opts: [
++        { t: "Да — заходим внутрь цикла", ok: cond, m: "loop_cond", why: cond ? `${iNow} &lt;= ${n} — верно, значит выполняем строки 5 и 6.` : `${iNow} &lt;= ${n} — <b>неверно</b>: ${iNow} больше ${n}. Цикл заканчивается.` },
++        { t: "Нет — цикл заканчивается", ok: !cond, m: "loop_cond", why: !cond ? `Верно: ${iNow} больше ${n}, программа идёт к строке 7.` : (iNow === n ? `<code>&lt;=</code> значит «меньше <b>или равно</b>». ${iNow} равно ${n} — условие верно.` : `${iNow} меньше ${n} — условие верно, цикл продолжается.`) },
++      ],
++    });
++    if (!cond) break;
++    const sNew = sNow + iNow;
++    steps.push({ id: `s_i${iNow}`, line: 5, kind: "value", ph: "новое значение s", m: "loop_order",
++      q: `Строка 5: <code>s = s + i</code>. Каким станет <code>s</code>?`,
++      check: (v) => {
++        const x = Number(v);
++        if (v === "" || Number.isNaN(x)) return { ok: false, why: "Введи число." };
++        if (x === sNew) return { ok: true, why: `${sNow} + ${iNow} = ${sNew}. Старое значение <code>s</code> заменилось новым.` };
++        if (x === sNow + iNow + 1) return { ok: false, m: "loop_order", why: `Похоже, ты взял <code>i</code> уже увеличенным. Но строка 6 ещё не выполнялась — сейчас <code>i</code> = ${iNow}. Строки идут строго сверху вниз.` };
++        if (x === iNow) return { ok: false, m: "loop_order", why: `<code>s = s + i</code> — к <b>старому</b> s (${sNow}) прибавляем i, а не просто кладём i.` };
++        return { ok: false, m: "loop_order", why: `Подставь значения из «Памяти»: s = ${sNow}, i = ${iNow}. Сколько будет s + i?` };
++      },
++      after: (api) => api.setVar("s", sNew, "int"),
++    });
++    steps.push({ id: `i_i${iNow}`, line: 6, kind: "value", ph: "новое значение i", m: "loop_order",
++      q: `Строка 6: <code>i = i + 1</code>. Каким станет <code>i</code>?`,
++      check: (v) => {
++        const x = Number(v);
++        if (v === "" || Number.isNaN(x)) return { ok: false, why: "Введи число." };
++        if (x === iNow + 1) return { ok: true, why: `Да, ${iNow + 1}. Теперь программа вернётся к строке 4 — к проверке условия.` };
++        if (x === iNow) return { ok: false, m: "loop_order", why: "Эта строка как раз меняет <code>i</code>: берёт старое значение и прибавляет 1." };
++        return { ok: false, m: "loop_order", why: `Старое i = ${iNow}. Прибавь 1.` };
++      },
++      after: (api) => api.setVar("i", iNow + 1, "int"),
++    });
++    s = sNew;
++  }
++  const total = s;
++  steps.push({ id: "out", line: 7, kind: "value", ph: "что напечатает программа", m: "loop_after",
++    q: "Строка 7 стоит без отступа — она после цикла. Что напечатает программа?",
++    check: (v) => {
++      const lines = v.split(/[\s,]+/).filter(Boolean);
++      if (Number(v) === total) return { ok: true, why: `Да: ${total}. <code>print</code> без отступа выполняется <b>один раз</b>, после цикла.` };
++      if (lines.length > 1) return { ok: false, m: "loop_after", why: "<code>print(s)</code> не внутри цикла (нет отступа) — он выполнится один раз, когда цикл уже закончится." };
++      return { ok: false, m: "loop_after", why: "Посмотри в «Память»: что лежит в <code>s</code> сейчас, когда цикл закончился?" };
++    },
++    after: (api) => api.print(String(total)),
++  });
++  return { title: `Код · цикл while (n = ${n})`, code, steps };
++}
++
++/* ---------- переходы между уровнями и финал ---------- */
++function finishLevel() {
++  logEvent({ level: levelIdx + 1, kind: "level_done", mistakes: levelMistakes[levelIdx], stars: starsFor(levelMistakes[levelIdx]) });
++  levelIdx++;
++  renderHeader();
++  stepStarted = performance.now();
++  if (levelIdx === 1) stepper(scenarioInput());
++  else if (levelIdx === 2) stepper(scenarioLoop());
++  else finish();
++}
++
++function finish() {
++  const stars = levelMistakes.reduce((s, m) => s + starsFor(m), 0);
++  const mins = Math.max(1, Math.round((Date.now() - startTime) / 60000));
++  const list = Object.keys(mistakes).sort((a, b) => mistakes[b] - mistakes[a]);
++  const challenge = `${location.origin === "null" ? "" : location.origin}${location.pathname}?seed=${SEED}`;
++  const embed = `<iframe src="https://learn.victor-komlev.ru/embed/trainer/interpreter?seed=${SEED}" width="100%" height="640" style="border:0" loading="lazy" title="Тренажёр «Ты — интерпретатор»"></iframe>`;
++  document.getElementById("main").innerHTML = `
++    <div class="card finish">
++      ${mascotSVG("happy")}
++      <h2 style="font-size:18px;text-transform:none;color:var(--ink)">Ты прожил три программы вместо компьютера</h2>
++      <div class="share">
++        <div class="big">★ ${stars} из 9</div>
++        <div>«Ты — интерпретатор» · ${mins} мин · ошибок: ${levelMistakes.reduce((a, b) => a + b, 0)}</div>
++        <div class="sub">Карточку можно отправить другу: у него будет тот же вариант задач</div>
++      </div>
++      <div class="mistakes"><b>Где ты споткнулся:</b><br>${list.length ? list.map((c) => `• ${MISC[c]} — ${mistakes[c]}`).join("<br>") : "Нигде — чисто!"}
++        ${list.length ? `<div class="sub" style="margin-top:6px">Это и есть твоя «карта ошибок». В кабинете её увидел бы преподаватель — и следующий тренажёр начался бы с этой темы.</div>` : ""}</div>
++      <div class="row" style="justify-content:center">
++        <button class="primary" id="copyCh">Вызвать друга (скопировать ссылку)</button>
++        <button id="again">Пройти другой вариант</button>
++      </div>
++      <div class="row" style="justify-content:center"><a href="#" onclick="return false" class="sub">Записаться на пробное занятие (в прототипе не работает)</a></div>
++      <details style="text-align:left"><summary>Учителю: вставить тренажёр на свой сайт</summary>
++        <p class="sub">Код вставки (адрес — пример будущего, сейчас не работает):</p>
++        <textarea class="embed" rows="3" readonly>${esc(embed)}</textarea></details>
++    </div>`;
++  document.getElementById("copyCh").onclick = async (e) => {
++    const text = `Я прошёл тренажёр «Ты — интерпретатор» на ★${stars} из 9. Повторишь? ${challenge}`;
++    try { await navigator.clipboard.writeText(text); e.target.textContent = "Скопировано ✓"; }
++    catch { e.target.textContent = "Скопируй вручную: " + challenge; }
++    logEvent({ kind: "share_click" });
++  };
++  document.getElementById("again").onclick = () => { location.href = location.pathname + "?seed=" + Math.floor(Math.random() * 1e6); };
++  logEvent({ kind: "trainer_done", stars, minutes: mins, mistakes });
++}
++
++/* ---------- тема ---------- */
++document.getElementById("themeBtn").onclick = () => {
++  const r = document.documentElement;
++  const dark = r.dataset.theme ? r.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
++  r.dataset.theme = dark ? "light" : "dark";
++};
++
++renderHeader();
++logEvent({ kind: "trainer_start", seed: SEED, referrer: document.referrer || null });
++level1();
++</script>
++</body>
++</html>
+diff --git a/docs/research/2026-10-28-tsk1247-trainers/report.md b/docs/research/2026-10-28-tsk1247-trainers/report.md
+new file mode 100644
+index 0000000..2da2936
+--- /dev/null
++++ b/docs/research/2026-10-28-tsk1247-trainers/report.md
+@@ -0,0 +1,355 @@
++# tsk-1247. Движок интерактивных тренажёров: исследование
++
++Дата: 2026-10-28. Статус: исследование. Код продукта не менялся.
++Рядом лежат:
++- `mechanics-board.md` — доска механик;
++- `prototype.html` — кликабельный прототип, открывается двойным щелчком, сервер не нужен;
++- `sources-A-references.md`, `sources-B-ai-resistance.md`, `sources-C-virality.md` — полные выписки по источникам со ссылками.
++
++---
++
++## 0. Коротко
++
++1. **Сделать формат, который внешний ИИ «не может» решить, не получится, и не нужно это обещать.** Современные модели читают скриншоты кода: GPT-4V решил 96,7% задач Парсонса (расставить перемешанные строки программы по порядку), поданных картинками. Они трассируют короткие программы, то есть мысленно выполняют их строку за строкой: около 82% на тесте CRUXEval (800 коротких функций на Python). Агентный браузер Comet (сам кликает по страницам) проходит квизы в LMS; про Atlas данные противоречивые — в одном тесте он отказался. Тренажёр решается и ИИ.
++2. **Зато можно сделать так, чтобы списывать было невыгодно: честный путь короче и интереснее.** Для этого единица работы — мелкий шаг на 5–15 секунд: «что сейчас лежит в `i`?», «условие верно?», «что появится в консоли?». Каждый шаг опирается на то, что ученик сам сделал шагом раньше: напечатал своё имя или свой возраст. Ставка у шага низкая, а реакция на ошибку мгновенная и точная. Скопировать экран в чат на каждом шаге дольше, чем подумать, а сдавать «готовый код» здесь просто некуда.
++3. **Ученики списывают не из хитрости, а когда застряли и горит срок.** На 885 студентах кнопкой «показать решение» хоть раз воспользовалась половина, и чаще всего это делали слабые перед дедлайном. Поэтому тренажёр работает на снятие застревания, а наш ИИ-наставник подхватывает там, где тренажёр не помог. Проверку «умеет ли сам» оставляем живому занятию и контрольной: это «защищённая полоса» по модели Сиднейского университета.
++4. **Пилот — концепт 1 «Ты — интерпретатор»: кавычки, `input`/`print`/`int`, ожидание ввода.** Он закрывает ровно те механики из tsk-1246, которых нет в LMS. Его узел 106 общий для четырёх курсов, и база для сравнения «до/после» уже снята. Его движок (код + память + консоль + вопрос перед шагом) без переделки ведёт к концепту 2 «Цикл-машина». Циклы — курс №1 по провалам (бриф tsk-572).
++5. **Строить в SPW.** У нас уже есть: гостевой контур без регистрации (`is_public_demo`, cookie `guest_session`), лид-магниты с общей воронкой (`lead_magnet_service`), встраивание `/embed/*`, журнал `learning_events`. Не хватает отдельного маршрута тренажёра, открытого для встраивания на любые сайты, без cookie. Код на сервере не выполняем: сценарии заданы заранее (решение координатора от 05.10).
++6. **Вирусность держится на учителе, а не на ученике.** Под каждым тренажёром нужны три кнопки: «Поделиться», «Встроить на сайт», «Выдать классу». К ним — карточка результата без спойлера и ссылка-вызов с тем же вариантом задач. Контакты собираем только у взрослых: родителей и учителей.
++7. **Трудоёмкость пилота** — примерно 2–2,5 недели одного разработчика плюс 2–3 дня методиста (§D.5).
++
++**Ограничение исследования.** Сетевая политика этой сессии не пустила ни к одной странице-источнику: и WebFetch, и curl получили отказ шлюза (403 / ENOTFOUND). Все факты из внешних источников взяты из сниппетов поисковой выдачи (WebSearch) и так и помечены в файлах `sources-*.md`. Ссылки реальные и найдены поиском 2026-10-28, но статьи целиком не прочитаны. Прежде чем цитировать цифры наружу, например в маркетинге, их нужно сверить с оригиналом (§F, вопрос 9). Выводы для решений внутри школы на эту оговорку опираются слабо: они держатся на нескольких независимых источниках.
++
++---
++
++## Данные из нашего кода и курсов (на чём стоят выводы)
++
++| Факт | Откуда |
++|---|---|
++| Узел 106 «Первая программа» общий для 4 курсов (88, 1454, 1670, 1679). Первая попытка: №17 — 77%, №10 — 78%, №23 — 80%. Около 85 учеников. Ошибки из «карты ошибок» видны на занятиях до отправки, сами отправки их почти не ловят | `create-courses/courses/python-dotrenirovka-pervaya-programma/plan/plan-vstraivaniya.md` §1–2 |
++| Механики, которых нет в LMS (вход для tsk-1247): расстановка кавычек, консоль с ожиданием ввода, пошаговый прогон с панелью переменных, кликабельная зона, сортировка карточек, клик по месту ошибки, «живая» ошибка при вводе 2.5 в `int(input())` | там же, §5 |
++| Провалы сосредоточены в нескольких курсах: Циклы 37, Жадные алгоритмы 33, Строки 26, Числа 23. На 527 неверных ответов приходится около 24 обращений за помощью: ученик молчит. 10,4% проваленных с первой попытки заданий ученик так и не добивает | `docs/briefs/tsk-572-ai-tutor-and-mini-course-contour.md`, `docs/NORTH_STAR.md` §4 |
++| Типы заданий LMS: SC, MC, SA, SA_COM, TBL_COM, TA (+SC_Qw/MC_Qw). Пошагового или интерактивного типа нет | `app/schemas/task_content.py:8`, `docs/ai/glossary.md` |
++| ИИ-наставник появляется после неверного ответа и принципиально не даёт готового решения | `docs/qa/onboarding-full-dump.json` (материал онбординга про помощь) |
++| Проверка «напиши программу» прогоном тестов уже выполняет код ученика на сервере: subprocess-песочница `turtle_sandbox`, на проде 2 vCPU | `app/services/checking_service.py:903+`, `app/services/turtle_sandbox/executor.py` |
++
++---
++
++## A. Референсы и механики
++
++Подробно, с источниками, — в `sources-A-references.md`. Сводка — в `mechanics-board.md`. Здесь главное по каждому.
++
++| Референс | Ключевые механики | Что переносим на Python | Что не переносим |
++|---|---|---|---|
++| **Учи.ру** | Адаптация плана по скорости и правильности. При ошибке задаёт уточняющий вопрос, при успехе хвалит и даёт следующее. Кабинет учителя с ошибками каждого ученика. Курс Python для детей 6–11 лет рассчитан на то, чтобы проходить его **без взрослого**, и построен на «честном программировании»: ребёнок сам пишет и отлаживает код, перетаскивания нет. Дипломы на олимпиадах, благодарность учителю за класс | Разбор ошибки встроен в само задание. Карта ошибок для преподавателя. Ребёнок проходит без взрослого | Масштаб контент-команды (8 человек на курс). Детская подача 6–8 лет не подходит взрослым новичкам. **Персонажи и награды в заданиях по программированию источниками не подтверждены**, как и то, что там работает разбор ошибок |
++| **PhET** | «Неявные опоры»: подсказывает сама модель (ограничения, мгновенная реакция), а не инструкция. Свободное исследование. Кнопка Embed (iframe), лицензия CC BY 4.0, HTML5 с доступностью. Более 250 млн запусков за 2024 год (Impact Report) | Обратная связь — это **состояние модели** (память, консоль), а не только «верно/неверно». Одно понятие на один интерактив. Встраивание и открытая лицензия | Непрерывная физика и ползунки к дискретному выполнению программы подходят слабо |
++| **«Дипломат»** (атом в уроке химии) | Сама модель атома в поиске не найдена. Похожая — PhET Build an Atom: собрал атом из частиц — заряд и масса пересчитались мгновенно | Механика «собери — модель сразу пересчиталась»: ученик правит строку, и консоль с памятью меняются | — (нужна ссылка от оператора, §F, вопрос 10). Курс «Дипломата» есть у нас в `create-courses/courses/himiya-diplomat` (пилот-экземпляр), но модели атома в нём нет |
++| **Brilliant** | Сначала попробуй, потом объяснение. Урок раскрывается слоями по мере действий. Ошибка — возможность. Уроки по 10–15 минут. Отдельный интерактив под каждую идею | «Предскажи → посмотри» на каждом шаге. Короткие сессии | Уникальный интерактив на каждый экран — дорого. Нужен набор переиспользуемых виджетов |
++| **CodeCombat** | Настоящий код двигает героя в игровом мире. Панель учителя | Видно, как строка становится действием: хорошо для циклов | Игровой мир дорог в разработке. Отзывы ругают подсказки, перегруженные текстом |
++| **CheckiO** | Острова-темы. После решения открываются чужие решения | «Как ещё можно» после успеха — дёшево | Для полного новичка порог входа высокий |
++| **Scratch / Blockly** | Принцип «низкий порог, высокий потолок, широкие стены». Blockly генерирует Python из блоков. С ноября 2025 года им занимается Raspberry Pi Foundation, лицензия Apache 2.0 | «Широкие стены»: один навык в разных сюжетах. Блоки как ступень для младших | На ОГЭ/ЕГЭ пишут текст, а блоки синтаксис не тренируют |
++| **Задачи Парсонса** | Перемешанные строки нужно расставить по порядку. Решаются заметно быстрее, чем написание кода, при сопоставимом приросте знаний (Ericson). Адаптивные версии решают верно почти вдвое чаще. Дистракторы (лишние строки-ловушки) у юных новичков снижают успех на 26% | **Высокий приоритет**: в Python отступ — это синтаксис. Дистракторы бьют в типичные ошибки (`=`/`==`, `range(1, n)`, `input` без `int`). Адаптация: после N ошибок убрать дистракторы | Сильным быстро становится скучно — нужна лестница Парсонс → с пропусками → с нуля |
++| **Python Tutor** | Пошаговое выполнение вперёд и назад: стек, объекты. Встраивание iframe. Более 20 млн пользователей, по данным автора | Главный образец «памяти программы». Ученик сначала **предсказывает** состояние, потом видит правду | Сам по себе пассивен: задачи и проверки в нём нет |
++| **Khan Academy / Khanmigo** | Уровни владения навыком, смешанные проверки. Ошибка на практике уровень не снижает. ИИ-тьютор не даёт ответ | Шкала владения по темам. Ошибка не наказывается | Жалоба на тьютор, который только задаёт наводящие вопросы («сократический»): застрявшему нужен разобранный пример. Значит, наставнику нужен «пример после N попыток» |
++| **Codewars / LeetCode** (противопример) | Засчитывают только по выводу: «все тесты зелёные» | — | Задачи для новичков с проверкой по выводу LLM решают на 94–96% (Kiesler & Schiffner, 2023). Ядро тренажёра на этом строить нельзя |
++| **Exercism / Codecademy / Sololearn** | Менторы. Мгновенный запуск. «Показать решение» после попыток | Кнопка «разобранный пример» после N попыток, чтобы ученик не бросал | Установка CLI — барьер |
++| **Duolingo** | Серии с «заморозкой», цель-обязательство. Ставка на серию: +14% удержания на 7-й день | Мягкие серии для регулярной практики | «Жизни» наказывают за ошибку, а у нас ошибка — главный сигнал |
++| **Яндекс Учебник** | Тренажёры Python с автопроверкой кода (по докладу учителя); отдельно — курс повышения квалификации учителей по ФГОС | — | Проверка по коду и выводу (см. Codewars) |
++| **Stepik** | Больше 20 типов шагов, включая «сортировку» и «сопоставление». Проверка значений переменных. Стабильно в топе выдачи | Тип «сортировка» — готовый Парсонс без отступов. Дешёвая витрина в выдаче | Нет визуализации и неявных опор |
++| **Алгоритмика** | Сюжетные миссии, максимум визуальности для младших | Минимум текста для детей | Модель «своя платформа + преподаватель» — это продукт, а не набор тренажёров |
++| **Кодики** | Школа: Scratch → Python. **Собственных интерактивных тренажёров в выдаче не найдено** | — | — |
++
++**Что делает тренажёр цепляющим** (синтез, подробнее в `mechanics-board.md`):
++1. Обратную связь даёт сама модель — изменилась память, напечаталась ошибка. Это заметнее, чем зелёная галочка.
++2. Сначала ученик предсказывает, потом видит, что получилось.
++3. Разбор именно этой ошибки, а не «неверно, попробуйте ещё».
++4. Мелкие шаги, видимый прогресс, ощущение «у меня получается». По мета-анализу 2024 года (35 исследований) эффект геймификации на внутреннюю мотивацию небольшой: g = 0,26 (g — стандартная мера силы эффекта; 0,2 — малый, 0,5 — средний). Авторы объясняют это тем, что элементы игры мало дают ощущения компетентности и свободы выбора. Вывод для нас: очки — приправа, а основа — «у меня получается» и выбор.
++5. Без регистрации и встраиваемо.
++
++---
++
++## B. Устойчивость к ИИ-генерации
++
++Полностью, с 37 находками и таблицей из 18 приёмов, — в `sources-B-ai-resistance.md`.
++
++### B.1 Что известно
++
++- **Без ограничений ИИ вредит учёбе, с ограничениями — не вредит.** Bastani и др. (PNAS, 2025), около 1000 школьников, математика. С обычным ChatGPT на практике было +48%, а на экзамене без ИИ — **на 17% хуже** контроля. С «тьютором», который не выдаёт ответ, экзамен на уровне контроля. Вывод: важен дизайн инструмента. Наш наставник по этим данным правильный, но он «не вредит», а не «учит лучше».
++- **Разрыв растёт у отстающих.** Prather и др.: сильным ИИ помогает, а у слабых прежние метакогнитивные трудности (умение замечать, что не понимаешь, и планировать решение) сохранились и местами усилились. Kazemitabaar (CHI 2023): выиграли в основном те, у кого исходные баллы были выше. Это ровно наша целевая группа.
++- **Причины списывания — застревание и сроки** (Kapoor, Denny и др., 2025, 885 студентов).
++- **Делегировать код ИИ — хуже, чем спрашивать его о понятиях.** Anthropic, 2026, рандомизированный эксперимент (RCT) на 52 разработчиках: 50% против 67% на тесте без ИИ. Высокие баллы получили те, кто задавал концептуальные вопросы и сам чинил ошибки.
++- **Обучающие режимы вендоров** (ChatGPT Study mode, Claude Learning mode) ученик выключает сам, так что защитой они не являются.
++
++### B.2 Классификация приёмов, честно
++
++| Приём | Мешает списывать через ИИ? | Почему |
++|---|---|---|
++| Код картинкой или скриншотом | **Нет** | Мультимодальные модели читают картинку: GPT-4V решил 96,7% задач Парсонса картинками. Заодно хуже доступность |
++| «Только мышкой», без текстового поля (перетаскивание, клики) | **Нет** против агентов, **частично** против копипаста | Агентные браузеры видят страницу и кликают. Переносить вручную каждый шаг из чата утомительно, но возможно |
++| Случайные параметры (свои числа и имена у каждого) | **Нет** против ИИ | Защищают от обмена ответами между учениками, не от модели. Полезны для повторной тренировки |
++| Слежка за вкладкой и фокусом | **Нет** | Обходится телефоном. Даёт ложные срабатывания и говорит ученику «тебе не доверяют» — противоречит цели |
++| Блок вставки, анализ нажатий | **Частично** | Ответ можно перепечатать, тайминги подделать. Как сдерживание работает (Hart, 2023). Полезнее как сигнал «застрял» |
++| Детекторы ИИ-кода | **Нет** | Работают плохо (проект Warwick, около 5000 образцов) |
++| Предсказание состояния перед каждым шагом + микрошаги | **Частично**, но лучше остальных | Модель решит, но при шаге в 10 секунд и низкой ставке поход в чат дороже, чем подумать. Педагогически сильнее всего (PRIMM — «предскажи → запусти → исследуй → измени → создай»; Trace-and-Predict и Lead-and-Reveal — «сначала скажи, что будет, потом увидишь») |
++| Шаг опирается на то, что ученик **сам ввёл раньше** (имя, возраст, свой вариант) | **Частично** | Каждый раз приходится переносить в чат новый контекст. Состояние у каждого своё |
++| «Объясни своими словами» письменно | **Нет** | Объяснение ИИ пишет легко. Ценность в обучении, а не в защите |
++| Правка чужого кода, связанного с прошлыми шагами | **Частично** | Работает связка «увидел → сам изменил» (Kazemitabaar, 2023) |
++| Устная защита, живое кодирование на занятии | **Да** (под надзором) | «Защищённая полоса». Дорого по времени преподавателя |
++| Свой наставник без выдачи решений | **Частично** | Не мешает открыть ChatGPT, но снимает главную причину — застревание |
++
++### B.3 Наш подход: не «поймать», а сделать честный путь выгоднее
++
++1. **Ответ — промежуточное состояние, а не итоговый код.** Тренажёр не спрашивает «напиши программу». Он спрашивает, что будет в памяти и в консоли прямо сейчас. Сдавать «правильный код из чата» некуда.
++2. **Шаг на 5–15 секунд и мгновенная реакция.** Скопировать экран, вставить в чат, дождаться ответа и перенести его — около 30 секунд и больше на каждый шаг, в 2–5 раз дольше, чем подумать самому. Это наша оценка, а не измерение: на пилоте её надо замерить по `ms` в событиях.
++3. **Ошибка ничего не стоит, а её разбор ценен.** Нет «жизней» и штрафов, неверный ответ сразу объясняется. Подглядывать ни к чему: ошибиться и тут же понять выгоднее.
++4. **Своё состояние.** Ученик сам печатает имя и возраст, а дальше программа идёт с этими значениями. Вариант (с `int()` или без) выпадает случайно.
++5. **Проверка «умеет ли сам» — отдельно.** Тренажёр — открытая полоса. Итог темы проверяют на живом занятии или в контрольной без ИИ. Модель Сиднея: всё, что идёт без надзора, считается открытой полосой.
++6. **Сигналы поведения — для помощи, а не для обвинения.** Например, три ответа подряд за 2 секунды (наугад) или долгая пауза (застрял). В этот момент предлагаем подсказку или наставника. Ученика не подозреваем.
++
++**Чего не обещаем.** Агентный браузер пройдёт тренажёр сам. Это осознанно принятый риск: ставка у тренажёра нулевая, а «пройденный» тренажёр без понимания ничего не даёт на занятии и на контрольной.
++
++### B.4 Тренажёр и ИИ-наставник
++
++| | Тренажёр | ИИ-наставник |
++|---|---|---|
++| Когда | До задания и вместо застревания | После неверного ответа в задании |
++| Что знает | Какую именно ошибку сделал ученик (код ошибки, например `types`, `quotes`, `loop_order`) | Диалог и само задание |
++| Сила | Мгновенно, без чата, на типичных ошибках | Нетипичные ошибки, «почему», разговор |
++| Связка | Карта ошибок тренажёра передаётся в контекст наставника: «у ученика 3 ошибки *input даёт текст*». Наставник начинает с неё, а не с нуля | Если в задании узла 106 ученик снова ошибается тем же способом, наставник предлагает вернуться в нужный уровень тренажёра — ссылкой, а не текстом |
++
++Это закрывает пробел, отмеченный в брифе tsk-572: 527 провалов и около 24 обращений. Тренажёр сам «заговаривает» в момент ошибки, и ученику не нужно решаться на «позвать».
++
++---
++
++## C. Вирусность и лидогенерация
++
++Полностью — в `sources-C-virality.md`.
++
++### C.1 Что расходится само и почему
++
++| Пример | Механизм | Нам |
++|---|---|---|
++| PhET (250 млн запусков за 2024 год) | Кнопка «Встроить», без регистрации, одна тема на одну симуляцию, открытая лицензия | Тренажёр = одно понятие, кнопка «Встроить» под ним |
++| Python Tutor | Встраивается в чужие учебники («тысячи курсов» — по словам самого сайта) | Прямой аналог «симулятора цикла». **Русского встраиваемого аналога с привязкой к ОГЭ/ЕГЭ в выдаче не видно** |
++| LearningApps, Wordwall | Учителя РФ привыкли вставлять iframe. У Wordwall ученикам не нужен вход, кнопки «Поделиться», «Задание классу», «Встроить» | Те же три кнопки |
++| GeoGebra Classroom, Desmos, Kahoot | Код класса, ученики входят без аккаунта, у учителя живой дашборд | «Выдать классу» — учитель приводит 25–30 учеников |
++| Wordle | Карточка результата без спойлера, одна задача на всех в день | «Задача дня» с карточкой для чатов классов во VK и Telegram |
++| Hour of Code, олимпиады Учи.ру | Сертификат ученику; у Учи.ру благодарность учителю за класс от 10 учеников (правило найдено в инструкции к олимпиаде по английскому; для программирования не проверено) | Сезонная «Неделя Python» с грамотами |
++| «Решу ОГЭ», Поляков, Навигатор на Госуслугах | Банки задач | **Не конкурировать банком.** Наша ниша — интерактивное объяснение механики: как выполняется программа из задания №N |
++
++### C.2 Аудитории
++
++- **Ученики** — карточка результата, вызов другу с тем же вариантом (зерно в ссылке; в прототипе работает), задача дня.
++- **Родители** — сертификат или «карта ошибок» ребёнка с понятным текстом: «вот что ребёнок понял, вот где споткнулся» и предложение пробного занятия. Контакт оставляет родитель, отдельным согласием.
++- **Учителя информатики** — главный канал. Нужны код вставки, режим «выдать классу» с результатами и бесплатная некоммерческая лицензия. Бренд и ссылка на школу внутри iframe.
++
++### C.3 SEO
++
++Цифр Wordstat в открытых источниках нет: их нужно снять оператору, около 10 минут (§F, вопрос 8). Доля Яндекса — 69,3% по его отчётности за 2025 год. В выдаче по «тренажёр python», «ЕГЭ информатика тренажёр» в основном Stepik и статьи. Выдача снималась поиском из США, так что это только ориентир. Предложение: **одна посадочная страница на один тренажёр под один запрос** («Симулятор цикла while онлайн», «input и int в Python — тренажёр»). Текст-объяснение и тренажёр — на одной странице сайта, а в iframe тот же тренажёр из SPW.
++
++### C.4 Что мерить
++
++Воронка: **показ → старт → финиш → поделился → пришёл по ссылке друга → переход на сайт → заявка (учитель / родитель) → оплата**.
++Ключевые отношения:
++- старт/показ — вовлечение;
++- финиш/старт — качество тренажёра;
++- поделился/финиш — вирусность карточки;
++- K-фактор = стартовавшие по ссылке-вызову / все стартовавшие;
++- заявки на 1000 стартов;
++- **новые сайты, встроившие тренажёр, за неделю** — канал учителей.
++
++Атрибуция встроек: из iframe браузер отдаёт только домен родителя. Этого хватает, чтобы понять, какая школа встроила. Вендорский бенчмарк квизов (около 40% от старта до заявки, Interact) к детскому тренажёру без регистрации неприменим: свой ориентир снимаем за первые 4–6 недель.
++
++---
++
++## D. Техника
++
++### D.1 Что уже есть (проверено по коду 2026-10-28)
++
++| Нужно тренажёру | Что есть | Где |
++|---|---|---|
++| Гость без регистрации | Cookie `guest_session` (30 дней). Демо-курсы `is_public_demo` с лимитом `demo_task_limit`. После входа попытки переносятся в учётку (`POST /me/attribute-guest`) | `app/api/v1/learning_guest.py`, `app/services/learning_guest_service.py`, SPW `components/guest/GuestTaskFlow.tsx` |
++| Лид-магнит и заявка | Квиз подбора, ЕГЭ-диагностика, квиз-воронка (tsk-053, tsk-1139). Общая часть «контакт + источник» | `app/services/lead_magnet_service.py`, `guest_quiz.py`, `guest_diagnostic.py`, `guest_funnel.py`; SPW `app/(public)/quiz`, `app/(public)/diagnostic` |
++| Встраивание | `/embed/courses/{uid}/task/{ext}` — **только показ** SC/SA/MC, без ввода. Токен страница выписывает себе сама (tsk-709). `frame-ancestors` разрешает **только victor-komlev.ru** | SPW `app/embed/...`, `next.config.ts:126-145`, LMS `app/api/v1/embed_api.py` |
++| Запись событий | `learning_events` (student_id, event_type, payload): `hint_open`, `task_opened`, `help_requested` и др. Только для вошедших | `app/services/learning_events_service.py` |
++| Разбор ошибки в SC/MC | `options[].explanation` показывается после ответа | SPW `components/task/TaskResult.tsx:35-95` |
++| Наставник | После неверного ответа, без решений | `app/api/v1/ai_tutor.py`, SPW `components/task/AiTutorPanel.tsx` |
++| Выполнение кода | Есть на сервере (песочница для io_tests). **Тренажёру не нужно** | `app/services/turtle_sandbox/` |
++| Перетаскивание, анимация | Библиотек в SPW нет; есть CodeMirror (Python), recharts, tw-animate-css | SPW `package.json` |
++
++### D.2 Варианты
++
++| Вариант | Суть | Плюсы | Минусы | Оценка |
++|---|---|---|---|---|
++| **1. Компоненты в SPW + публичный маршрут + встраивание** | `/t/[slug]` для учеников и гостей. `/embed/trainer/[slug]` без cookie, с `frame-ancestors *` (часть заголовка CSP — политики безопасности, — которая решает, каким сайтам можно вставлять страницу к себе). Сценарии лежат в репозитории SPW как JSON | Один код для кабинета, сайта и чужих сайтов. Стек и деплой уже есть. Гостевой контур готов | Нужен отдельный CSP для маршрута тренажёра (сейчас встраивание закрыто под WP) | **Рекомендую** |
++| 2. Новый тип задания в LMS (`TRN`) | Тренажёр как задание узла, результат — попытка | Встаёт в курс, в «следующее задание», в отчёты | Миграция, контракт, правки TG_LMS и проверки. Для пилота это и есть «общий конструктор заранее», против которого координатор | Позже, после замера |
++| 3. Плагин или блок WordPress | Тренажёр живёт на сайте (как `control_question` в тренажёре КАИ) | SEO прямо на странице | Нет связи с учёткой и прогрессом. Второй стек | Нет; на WP — только iframe |
++
++### D.3 Библиотеки: что нужно, а что нет
++
++- **Перетаскивание.** Для пилота (концепт 1) не нужно: клик по слову, ввод в консоль, выбор варианта. Для Парсонса (концепт 2) нужна библиотека с поддержкой касаний и клавиатуры, например `@dnd-kit`. Вес и лицензию сверить при выборе: здесь не проверялось.
++- **Анимации.** Хватает CSS (подсветка строки, «вспышка» изменившейся переменной, маскот), как в прототипе. Тяжёлую библиотеку анимаций не брать.
++- **Canvas / WebGL.** Не нужны: всё — текст, таблицы и SVG. Обычная разметка лучше для доступности и экранных чтецов (опыт PhET).
++- **Pyodide / Skulpt (Python в браузере).** **Для пилота не нужны и вредны.** (1) Координатор решил: без настоящего выполнения, сценарии заданы заранее. (2) Поле «напиши и запусти что угодно» — ровно то место, куда вставляют код из ChatGPT. (3) Ответы на каждый шаг известны заранее, поэтому разбор ошибок можно написать руками и точно, а настоящий интерпретатор этого не даёт. (4) Pyodide — это мегабайты загрузки (точный вес не сверялся), плохо для встройки и телефонов. Где пригодится позже: финальная «песочница» после тренажёра (написать своё). Это отдельное решение вне tsk-1247: свободное выполнение кода противоречит рамке координатора, а серверная проверка io_tests уже закрывает «напиши программу» в обычных заданиях.
++
++### D.4 Формат сценария (данные, а не код)
++
++Сценарий — JSON. Движок — один компонент. Методист пишет только JSON.
++
++```json
++{
++  "slug": "interpreter-input",
++  "title": "Ты — интерпретатор: input и int",
++  "params": { "variant": { "oneOf": ["int", "noint"] } },
++  "code": {
++    "int":   ["name = input(\"Как тебя зовут? \")", "age = int(input(\"Сколько тебе лет? \"))", "print(\"Привет,\", name)", "print(\"Через год тебе\", age + 1)"],
++    "noint": ["name = input(\"Как тебя зовут? \")", "age = input(\"Сколько тебе лет? \")", "print(\"Привет,\", name)", "print(\"Через год тебе\", age + 1)"]
++  },
++  "steps": [
++    { "id": "l1_predict", "line": 1, "kind": "choice",
++      "q": "Что сделает строка 1?",
++      "options": [
++        { "text": "Сохранит в name текст «Как тебя зовут?»", "misconception": "input_prompt", "why": "В скобках — подсказка, а не ответ…" },
++        { "text": "Напишет вопрос и остановится — ждёт ответа", "correct": true }
++      ],
++      "effect": { "console_wait": "Как тебя зовут? " } },
++    { "id": "l1_type", "line": 1, "kind": "console", "store": { "var": "name", "type": "str" },
++      "reject": [ { "match": "^[\"'].*[\"']$", "misconception": "quotes", "why": "Пользователь кавычки не печатает…" } ] },
++    { "id": "l3_output", "line": 3, "kind": "value",
++      "expect": "Привет, {name}",
++      "diagnose": [
++        { "equals": "Привет, name", "misconception": "quotes", "why": "name без кавычек — имя переменной…" },
++        { "equals": "Привет,{name}", "misconception": "print_args", "why": "print ставит пробел между аргументами" }
++      ] }
++  ],
++  "misconceptions": { "quotes": "Кавычки: текст или имя", "input_prompt": "input: подсказка ≠ ответ", "types": "input даёт текст" }
++}
++```
++
++Шаблоны вроде `{name}` и `{age+1}` подставляются из памяти сценария. Для циклов шаги трассировки **генерируются заранее** из параметров (n, начальное i) по описанию в сценарии. Код ученика не выполняется. Так устроен `scenarioLoop()` в прототипе.
++
++### D.5 Запись прогресса в LMS
++
++- **Вошедший ученик:** события в `learning_events`: `trainer_start`, `trainer_step` (шаг, верно/нет, код ошибки, мс), `trainer_done` (звёзды, карта ошибок). Одна новая ручка `POST /api/v1/trainers/{slug}/events` (пакетом в конце уровня). Это cross-project: обновить `contracts/lms-api.md` и CHANGELOG в ContentBackbone.
++- **Гость:** те же события с `guest_session_id` по образцу квиза и диагностики. После входа — перенос через `attribute-guest`.
++- **Встройка на чужом сайте:** на сервер ничего не пишем, кроме обезличенных счётчиков (показ, старт, финиш, домен родителя). Cookie нет. Сохранение — кнопкой «Открыть на victor-komlev.ru».
++- **Преподавателю:** карта ошибок ученика (код ошибки → сколько раз) рядом с заданиями узла 106. Наставнику — то же в контексте.
++- **Трудоёмкость пилота (концепт 1):**
++
++| Работа | Оценка |
++|---|---|
++| Движок шагов в SPW (перенос логики прототипа на React + типы + тесты) | 4–5 дней |
++| Публичный маршрут, встраивание, CSP, карточка и вызов, кнопки «Поделиться»/«Встроить» | 2 дня |
++| LMS: ручка событий (вошедший + гость), тесты, контракт | 2–3 дня |
++| Карта ошибок у преподавателя (простой список) + передача наставнику | 1–2 дня |
++| Метрика и цели воронки | 0,5 дня |
++| Методист: финальные тексты разборов, 2–3 варианта сценария, проверка на 3–5 учениках | 2–3 дня |
++| Живая проверка и выкатка | 1 день |
++| **Итого** | **около 2–2,5 недель разработчика + 2–3 дня методиста** |
++
++---
++
++## E. Пилот: три концепта
++
++Выбор по данным:
++- **input/print/кавычки** — tsk-1246: узел 106 общий для 4 курсов, база замера готова;
++- **циклы** — курс №1 по провалам (37);
++- **строки** — №3 (26), плюс это основа заданий ОГЭ/ЕГЭ.
++
++### Концепт 1. «Ты — интерпретатор» (кавычки, input, int, ожидание ввода) — **прототип в `prototype.html`**
++
++**Раскадровка.** Экран: слева код с подсвеченной текущей строкой и чёрная консоль, справа «Память программы» (имя / значение / тип) и маскот с вопросом.
++
++| Уровень | Что делает ученик | Типичная ошибка → реакция |
++|---|---|---|
++| 1. Кавычки (3 мини-задачи) | Кликает по словам, ставит и снимает кавычки, жмёт «Запустить», чтобы получить нужный вывод. Имена, города и возраст случайные | Кавычек нет у текста → в консоли `NameError: name 'Оля' is not defined`, маскот: «без кавычек слово — имя переменной». Имя переменной в кавычках → в консоли само слово `name`: «Python напечатал слово, а не содержимое». Ловушка «напечатай само слово city» не даёт выучить правило «всегда ставь кавычки». Число в кавычках → вывод тот же, но объяснение: «теперь это текст, прибавить 1 нельзя» |
++| 2. Программа ждёт | Перед строкой 1 выбирает, что произойдёт. Сам печатает имя в консоль, когда мигает курсор. Отвечает, какого типа значение. Печатает возраст. Предсказывает вывод строк 3 и 4. Вариант кода случайный: с `int()` или без | «Сохранит в name текст вопроса» → разбор «в скобках подсказка». «Спросит и пойдёт дальше» → «input останавливает программу, это не зависание». Ввёл имя в кавычках → «пользователь кавычки не печатает». Ввёл 12.5 при `int()` → настоящий `ValueError` в консоли, без штрафа: «так ведёт себя Python». Предсказал `Привет,Оля` → «print ставит пробел». Предсказал `141` при `int()` → «склеилось бы без int». В варианте без `int()` — `TypeError` и **починка**: выбрать верную строку 2 (правка кода) |
++| 3. Цикл (мостик к концепту 2) | Шаг за шагом: условие верно? новое `s`? новое `i`? вывод? Границы `n` и `i` случайные | Взял `i` уже увеличенным → «строка 6 ещё не выполнялась». Положил в `s` только `i` → «к старому s прибавляем». При `i == n` ответил «условие неверно» → «`<=` — меньше или равно». Вывел несколько чисел → «print без отступа — один раз после цикла» |
++| Финал | Звёзды, время, **карта ошибок**, «Вызвать друга» (тот же вариант по зерну), «Встроить» (код iframe), «Записаться на пробное» | — |
++
++**Почему списывать невыгодно.**
++- Ответов «на сдачу» нет. Шагов около 20, каждый на 5–15 секунд и опирается на введённое самим учеником (имя, возраст, вариант кода).
++- Ошибка бесплатна и объясняется сразу.
++- Честный путь быстрее похода в чат. Технически модель может ответить на каждый шаг: мы это не скрываем.
++
++**Вирусность.** Ученикам — карточка «★ 7 из 9» и вызов другу. Учителю — вставка на урок про `input` (в 8 классе тема «Организация ввода и вывода», это наш узел 984). Посадочная страница под запрос «input python тренажёр».
++
++**Как мерить.**
++1. Основная метрика — первая попытка по заданиям №10, 13, 17, 19, 23 узла 106 у прошедших тренажёр против базы (77–95%). Это метрика tsk-1246. Выборка около 85 учеников, поэтому смотрим сдвиг, а не проценты в лоб.
++2. Доля, дошедшая до финала; среднее время шага; частота каждой ошибки на первом и последнем уровне — падает ли.
++3. Обращения к наставнику по заданиям 106 у прошедших.
++
++### Концепт 2. «Цикл-машина» (while / for / range)
++
++**Раскадровка.**
++- Тот же экран плюс «таблица трассировки»: строки — витки цикла, столбцы — переменные. Ученик заполняет ячейки по шагам; в прототипе — уровень 3.
++- Режим «Собери цикл»: Парсонс с отступами. Перетащить строки и сдвинуть их отступом Tab, чтобы вывод совпал с образцом. Дистракторы: `range(1, n)` против `range(1, n + 1)`, `print` внутри и вне тела, `=` против `==`.
++- Режим «Сломанный цикл»: программа зацикливается (счётчик мелькает, маскот потеет). Ученик кликает по строке, где ошибка.
++
++| Ошибка | Реакция |
++|---|---|
++| Граница `range` на 1 меньше/больше | Таблица трассировки показывает «потерянный» или лишний виток рядом с образцом |
++| `print` в теле вместо после цикла | В консоли много строк вместо одной, подсвечивается отступ |
++| Забыл `i = i + 1` в `while` | Анимация бесконечного цикла, кнопка «Стоп», вопрос «какая переменная не меняется?» |
++| Перепутал порядок строк в теле | Пошаговое сравнение двух трассировок |
++
++**Почему списывать невыгодно.** Трассировка по шагам со случайными границами; Парсонс — это действие с отступами (агент может, человек с чатом — медленно). Главное снова в цене: шаг дешёвый, ошибка объясняется сразу.
++
++**Вирусность.** «Симулятор цикла» — то, чего учителю не хватает на доске (боль, которую закрыл Python Tutor). Это самая сильная учительская встройка из трёх. Запросы «цикл while python», «range python» массовые (частоту снять в Wordstat).
++
++**Как мерить.** Первая попытка по заданиям курса «Циклы» (37 провалов на момент брифа tsk-572) у прошедших против непрошедших. Доля «брошенных» заданий по циклам. Встройки у учителей.
++
++### Концепт 3. «Линейка срезов» (строки: индексы, срезы, отрицательные индексы, шаг)
++
++**Раскадровка.** Слово выложено «бусинами» над линейкой с индексами 0…n и −n…−1. Ученик тянет две скобки по линейке (или кликает начало и конец), строка `s[a:b]` в коде меняется синхронно, ниже результат. Обратное задание: дан `s[2:-1:2]`, отметь бусины, которые попадут в срез. Слова и шаги случайные.
++
++| Ошибка | Реакция |
++|---|---|
++| Включил правую границу | Последняя бусина гаснет: «b — не включается» |
++| Отсчёт с 1 | Линейка подсвечивает 0 под первой буквой |
++| Отрицательный индекс считает с −0 | Вторая шкала снизу, −1 под последней буквой |
++| Шаг 2 — «каждая вторая с конца» | Анимация прыжков от начала среза |
++
++**Почему списывать невыгодно.** Действие — перетаскивание по своей случайной строке, а вопрос «что попадёт» проверяется мгновенно. Честно говоря, ИИ решит и это. Защита — опять цена шага и бесполезность списывания при нулевой ставке.
++
++**Вирусность.** Очень наглядно, коротко (2–3 минуты), понятно родителю. Хорошо идёт как «задача дня». Нужна в ОГЭ/ЕГЭ.
++
++**Как мерить.** Первая попытка по курсу «Строки» (26 провалов), время до решения заданий со срезами.
++
++### Рекомендация
++
++Начать с **концепта 1** — он уже прототипирован. Четыре причины:
++1. Минимальный объём (без перетаскивания).
++2. Готовая метрика и база из tsk-1246.
++3. Один узел 106 сразу в четырёх курсах.
++4. Его движок (код + память + консоль + вопрос перед шагом) — 80% концепта 2.
++
++После замера (4–6 недель) — концепт 2: на циклы приходится больше всего провалов, и это лучшая учительская встройка. Только потом, по итогам двух, — обобщение в «движок» и, возможно, тип задания в LMS. Это совпадает с мнением координатора от 05.10.
++
++### Прототип (`prototype.html`)
++
++Один файл без сервера и внешних библиотек, светлая и тёмная тема, работает на телефоне.
++
++- **Что внутри:** три уровня концепта 1, случайные варианты, зерно в адресе (`?seed=123` повторяет вариант — это и есть «вызов другу»), карта ошибок в финале, код вставки. Внизу раскрывается журнал «что ушло бы в LMS»: шаг, верно/нет, код ошибки, миллисекунды на шаг.
++- **Как проверен:** открыт в headless Chromium (Playwright). Пройден до финала на шести зёрнах, оба варианта уровня 2 (с `int()` и без). Отдельно проверены `ValueError` при вводе 12.5, `NameError` при неверных кавычках и ширина 375 px (горизонтальной прокрутки нет). Ошибок JavaScript нет.
++- **Чего в прототипе нет:** сохранения, реальных ссылок (кнопка «Записаться» и адрес вставки — заглушки), анимации персонажа сложнее SVG-мордочки, звука и адаптивности между заходами.
++
++---
++
++## F. Риски и открытые вопросы оператору
++
++| # | Вопрос | Варианты | Рекомендация |
++|---|---|---|---|
++| 1 | Где живёт тренажёр | (а) SPW + iframe на WP; (б) WP-блок; (в) новый тип задания LMS | **(а)**, (в) — после замера |
++| 2 | Открыть встраивание на любые сайты | (а) `frame-ancestors *` только для `/embed/trainer/*`, без cookie; (б) только victor-komlev.ru, как сейчас | **(а)**: без этого учительского канала нет. Риск минимален — маршрут пишет только обезличенные счётчики (показ, старт, финиш, домен родителя) и ничего не читает из учётки |
++| 3 | Лицензия для учителей | (а) бесплатно, некоммерческая, бренд обязателен (как PhET CC BY); (б) закрыто | **(а)**, текст лицензии согласовать |
++| 4 | Контакты | (а) только взрослые (родитель, учитель) с отдельным согласием; (б) спрашивать и у ученика | **(а)**. По 152-ФЗ с 01.09.2025 согласие — отдельным документом. Возраст 14 лет берётся из ГК. Это толкование по вторичным источникам — **нужна сверка с юристом** до сбора контактов |
++| 5 | Обязательность в курсе | (а) рекомендован, без замка; (б) замок перед заданиями 106 | **(а)**, как решено для дотренировки в tsk-1246. Замок закрыл бы путь тем, кто уже идёт дальше |
++| 6 | Персонаж | (а) простой SVG-маскот (как в прототипе); (б) заказать иллюстрации (Codex-handoff по `visuals-policy`) | **(а)** на пилот; (б), если замер покажет пользу |
++| 7 | Защита от ИИ | (а) не ловим, делаем честный путь выгоднее (§B.3); (б) слежка за вкладкой и вставкой | **(а)**. (б) обходится телефоном и подрывает доверие. Агентный браузер пройдёт тренажёр сам — принимаем, ставка нулевая |
++| 8 | SEO-запросы | Снять Wordstat по 10–15 запросам (тренажёр python, симулятор цикла, input python, срезы строк, задание ОГЭ…) | Оператору, около 10 минут, до выбора посадочных страниц |
++| 9 | Источники | Все внешние факты взяты из сниппетов поиска: домены закрыты сетевой политикой сессии | Перед публичным цитированием цифр (PhET 250 млн, 96,7%, −17%) **разрешить домены** arxiv.org, pnas.org, phet.colorado.edu, pythontutor.com и перепроверить. Для внутренних решений достаточно |
++| 10 | «Дипломат» | Ссылку на модель атома найти не удалось | Прислать ссылку — допишу разбор механики |
++| 11 | Малая выборка (около 85 учеников в узле 106) | Сравнение «до/после» шумное | Смотреть сдвиг по пяти заданиям и частоту ошибок внутри тренажёра (первый уровень против последнего). Не делать выводов по одной цифре |
++| 12 | Соблазн строить конструктор | — | Не строить: один тренажёр руками → замер → второй → только потом обобщение (координатор 05.10). Формат JSON (§D.4) держать простым |
++| 13 | Нагрузка на учителя | Режим «выдать классу» и дашборд — отдельная работа | Не в пилоте. В пилоте — только кнопка «Встроить» и карточка |
+diff --git a/docs/research/2026-10-28-tsk1247-trainers/sources-A-references.md b/docs/research/2026-10-28-tsk1247-trainers/sources-A-references.md
+new file mode 100644
+index 0000000..4d40120
+--- /dev/null
++++ b/docs/research/2026-10-28-tsk1247-trainers/sources-A-references.md
+@@ -0,0 +1,397 @@
++# A. Референсы для тренажёров по основам Python (uchi.ru, PhET и др.)
++
++Дата сбора: 2026-10-28.
++
++## Как проверялись источники (важно)
++
++- В этой сессии **WebFetch не открыл ни одной страницы**: каждая попытка (phet.colorado.edu, arxiv.org, en.wikipedia.org, edutechwiki.unige.ch, today.ucsd.edu) закончилась ошибкой `getaddrinfo ENOTFOUND`, потому что домены не входят в список разрешённых сетевых доменов сессии. Чтобы проверить источники полнотекстом, эти домены нужно разрешить.
++- Поэтому **все утверждения ниже опираются на сниппеты поисковой выдачи (WebSearch)**, то есть на короткие цитаты и выжимки из страниц, а не на прочитанный целиком текст. У каждого источника стоит пометка «сниппет поиска, просмотрено 2026-10-28; страница не открывалась». Цифры и формулировки стоит перепроверить по первоисточнику, прежде чем ставить их в публичные тексты.
++- Если по пункту сниппетов не нашлось, это сказано прямо («не подтверждено»). Ничего не дописано по памяти.
++
++---
++
++## 1. Учи.ру (uchi.ru)
++
++**Механики**
++- Адаптивность по скорости и правильности: «система автоматически подстраивается под уровень их подготовки. В зависимости от скорости и правильности решения задач план корректируется» (методичка школы).
++- Реакция на ошибку: «в случае правильного решения хвалит его и предлагает новое задание, а при ошибке задаёт уточняющие вопросы». В другом источнике: «программа автоматически находит ошибки, ученики получают подробные комментарии своих ответов». Оба описания относятся к школьным предметам в целом (математика и т. п.). **Что так же работают задания по программированию, не подтверждено.**
++- У учителя есть кабинет с результатами каждого ученика и статистикой, «быстро увидеть ошибки каждого ученика».
++- Курс Python для детей 6–11 лет (статья дизайнера интерактивных курсов Учи.ру Ирины Красильниковой на vc.ru): цель — освоить Python **без помощи родителей и учителей**; 10 модулей (на момент статьи 7 выложены); команда с июня 2018 года. Подход: **«честное программирование»**, где ребёнок пишет, стирает и отлаживает код сам, плюс среда разработки с игровым контекстом и «максимально отзывчивым интерфейсом» **вместо drag-and-drop**. В заголовке названа цифра «3 млн школьников»; полный текст статьи не читался.
++- Олимпиады по программированию для 1–11 классов: обучающие задачи, задачи на написание кода и на алгоритмическое мышление, интерактивные задания в игровой форме; в одном из сезонов участвовало более 544 тыс. детей.
++- Награды: дипломы, грамоты, сертификаты. **Персонажи (Заврики и др.) и виртуальная валюта в найденных сниппетах не подтверждены.**
++- Независимых контролируемых исследований эффективности в выдаче нет. Есть только отчёты школ и региональных институтов (ИРО), а также статья КФУ без количественных данных.
++
++**Переносится на Python**
++- Принцип «учусь без взрослого»: подсказка и разбор ошибки встроены в задание.
++- Настоящий код в игровом контексте вместо блоков. Для детей от 10 лет и для подготовки к ОГЭ/ЕГЭ это прямо полезно, ведь на экзамене пишут текст.
++- Учительская панель со списком ошибок по каждому ученику (у нас её роль может играть LMS).
++- Адаптация плана: дать больше задач по теме, если ученик ошибается или решает медленно.
++
++**Не переносится**
++- Масштаб контент-команды (8 человек, из них 4 JS-разработчика, на один курс) и детская иллюстрированная подача для 6–8 лет плохо подходят взрослым новичкам.
++- Подписочная модель и олимпиадная мотивация — другая бизнес-логика.
++
++**Источники**
++- https://vc.ru/149242-kak-uvlech-3-mln-shkolnikov-programmirovaniem-na-python — сниппет поиска, просмотрено 2026-10-28; страница не открывалась.
++- https://school-5tob.siteedu.ru/media/sub/1391/files/uchiru-pervaya-obrazovatelnaya-platforma.pdf — сниппет поиска (описание реакции на ошибку), просмотрено 2026-10-28.
++- https://edu.tatar.ru/upload/storage/org2245/files/%D1%83%D1%87%D0%B8%20%D1%80%D1%83.pdf — сниппет поиска (адаптивность), просмотрено 2026-10-28.
++- https://shkola14saratov-r64.gosweb.gosuslugi.ru/netcat_files/30/69/uchi.ru.pdf — сниппет поиска (кабинет учителя, автопоиск ошибок), просмотрено 2026-10-28.
++- https://kpfu.ru//staff_files/F_1154858363/Statya_Sabirova_Bochkarev_MPiP.pdf — сниппет поиска (статья КФУ без количественных данных), просмотрено 2026-10-28.
++- https://www.ucheba.ru/article/6356 — сниппет поиска (структура олимпиады), просмотрено 2026-10-28.
++- https://www.comnews.ru/content/203356/2019-12-05/2019-w49/onlayn-olimpiada-uchiru-programmirovaniyu-1-11-klassov — сниппет поиска (544 тыс. участников), просмотрено 2026-10-28.
++- https://skillbox.ru/media/education/mintsifry-i-uchiru-zapuskayut-besplatnye-kursy-po-programmirovaniyu-dlya-podrostkov/ — сниппет поиска (курсы для подростков: 144 ч, 4 модуля), просмотрено 2026-10-28.
++
++---
++
++## 2. PhET Interactive Simulations (+ «Build an Atom»)
++
++**Механики**
++- **Implicit scaffolding (неявные опоры).** Опоры заложены в сам инструмент через affordances, ограничения, обратную связь и визуальные подсказки, а не через явные инструкции. Благодаря этому явных инструкций нужно меньше (Podolefsky, Moore, Perkins, 2013). Стратегии в статье сгруппированы в четыре категории: общая концепция, как ученик «фреймит» работу с симуляцией, осмысление (sense-making) и поддержание вовлечённости.
++- Свободное исследование: в химическом исследовании 80 студентам дали 10 минут на симуляцию Molecule Polarity **без инструкций** (Moore, Herzog, Perkins, 2013).
++- Переделка Energy Skate Park под среднюю школу (PERC 2012): та же идея, меньше явных инструкций.
++- **Лицензия:** HTML5-симуляции распространяются по **CC BY 4.0**, исходный код — по GPL v3/MIT. Нужна атрибуция «Simulation by PhET Interactive Simulations, University of Colorado Boulder, licensed under CC-BY-4.0». Для коммерческого использования (блог, YouTube и т. п.), по справке на корейском языке, нужна отдельная коммерческая лицензия. Это **не проверено** по основной английской странице.
++- **Встраивание:** у каждой симуляции есть кнопка Embed, которая выдаёт HTML-сниппет (iframe). Некоторым LMS нужен полный URL с https://.
++- **HTML5 и доступность:** переход с Java/Flash на HTML5 в 2013 году. Параллельный слой семантического HTML поверх canvas/SVG/WebGL, описание состояния, генерируемое автоматически, сонификация, навигация с клавиатуры.
++- **Охват (по абстрактам, с разными датами):** около 4 млн запусков в год в начале 2010-х, 45–75 млн в середине 2010-х, «почти 100 млн» в 2018 году (APS), «более 100 млн» в 2019 году (NSTA), «более 120 млн» около 2020 года. Число уникальных учителей не найдено. В опросе 2014 года участвовали 1 233 учителя старшей школы и 276 преподавателей вузов, но это выборка.
++- **Build an Atom** (учебные цели по описанию RSC): собрать атом из протонов, нейтронов и электронов, определить элемент, массу и заряд, предсказать, что изменится при добавлении или удалении частицы, записать изотопный символ. Это эталон механики «собери модель — получи мгновенную обратную связь от самой модели».
++- **Школа «Дипломат»** и её встраиваемая модель атома в поиске **не найдены** (два запроса). Предположение, что она похожа на PhET Build an Atom, **не подтверждено**.
++
++**Переносится на Python**
++- Implicit scaffolding — ключевой принцип для тренажёров. Например, «коробки-переменные», куда нельзя положить значение не того типа без видимой реакции, или ограниченный набор команд на экране вместо текста «используй цикл». Обратную связь даёт состояние модели (стек, переменные, вывод), а не только «верно/неверно».
++- Модель «конструктора» в духе Build an Atom: собрать выражение или условие и тут же увидеть, как меняется результат (аналог «заряд и масса пересчитываются мгновенно»).
++- Короткая «открытая» фаза (5–10 минут поиграть) перед структурированными заданиями.
++- Технические практики: iframe-встраивание, лицензия с атрибуцией, доступность (клавиатура, текстовое описание состояния).
++
++**Не переносится**
++- Симуляция непрерывной физики не похожа на дискретное исполнение программы: «крутилки-ползунки» в Python применимы ограниченно (например, к параметрам range или к порогу в условии).
++- Готовые симуляции PhET про программирование в найденных источниках не упоминаются.
++
++**Источники**
++- https://arxiv.org/pdf/1306.6544 — сниппет поиска (4 категории стратегий), просмотрено 2026-10-28; **WebFetch по arxiv.org/abs/1306.6544 не открылся (ENOTFOUND)**.
++- https://www.per-central.org/perc/2013/Detail.cfm?id=5248 — сниппет поиска (определение implicit scaffolding), просмотрено 2026-10-28.
++- https://pubs.rsc.org/en/content/articlehtml/2013/rp/c3rp20157k — сниппет поиска (80 студентов, 10 минут без инструкций), просмотрено 2026-10-28.
++- https://clixplatform.tiss.ac.in/phet/en/licensing/html.html — сниппет поиска (CC BY 4.0, GPL v3/MIT), просмотрено 2026-10-28.
++- https://phet.colorado.edu/translation/114/help-center/getting-started — сниппет поиска (атрибуция, кнопка Embed), просмотрено 2026-10-28; **phet.colorado.edu через WebFetch не открылся (ENOTFOUND)**.
++- https://www.nsta.org/science-teacher/science-teacher-march-2019/teaching-simulations — сниппет поиска (>100 млн использований), просмотрено 2026-10-28.
++- https://meetings-archive.aps.org/apr/2018/g03/1 — сниппет поиска (почти 100 млн), просмотрено 2026-10-28.
++- https://ph.utexas.edu/events/icalrepeat.detail/2020/10/14/2048/-/physics-colloquium-dr-kathy-perkins — сниппет поиска (>120 млн), просмотрено 2026-10-28.
++- https://edu.rsc.org/resources/build-an-atom-simulation/1433.article — сниппет поиска (цели Build an Atom), просмотрено 2026-10-28.
++- https://snow.idrc.ocadu.ca/articles/the-phet-interactive-simulations-project-working-to-increase-access-to-interactive-stem-simulations-part-2-of-2/ — сниппет поиска (HTML5 в 2013 году, слой доступности), просмотрено 2026-10-28.
++- https://fluidproject.atlassian.net/wiki/spaces/fluid/pages/11516643/PhET+John+Travoltage+Simulation+Design — сниппет поиска (автогенерируемое описание состояния), просмотрено 2026-10-28.
++
++---
++
++## 3. Brilliant.org
++
++**Механики**
++- Позиционирование: «Learn by doing», интерактивные уроки с «immediate, tailored feedback», цель — «думать, а не запоминать».
++- Сначала задача, потом процедура: ученику дают попробовать решить до того, как покажут способ (описание с Trustpilot-страницы Brilliant). Урок устроен как «головоломка, которая раскрывается слоями» по мере манипуляций, а ошибки — это «возможности», а не тупики (Notion-страница Brilliant).
++- Визуальные объяснения, ручная манипуляция, затем конкретные вычисления.
++- Короткие уроки примерно по 15 минут в день, трекинг прогресса, персонализированные наборы практики.
++- В курсах по кодингу есть редактор Python с консолью вывода.
++- Эссе дизайнера Brilliant (UX Collective): от стандартных шаблонов интерактива («blueprints») ушли к интерактиву, привязанному к конкретной идее урока.
++- Цифра «в 6 раз эффективнее видеолекций» — маркетинговая, **источник исследования не указан**.
++
++**Переносится на Python**
++- Порядок «сначала предсказать или попробовать, потом объяснение»: например, «что выведет код?», затем пошаговый разбор.
++- Уроки по 10–15 минут, состоящие из микрошагов с мгновенной реакцией.
++- Специализированный интерактив под каждую идею, а не один универсальный шаблон (компромисс с затратами на разработку).
++
++**Не переносится**
++- Высокая стоимость уникального интерактива на каждый экран. Маленькой школе нужен набор переиспользуемых виджетов.
++- Курс на английском, рассчитан на взрослых самостоятельных учащихся; к экзаменационному формату ОГЭ/ЕГЭ не привязан.
++
++**Источники**
++- https://brilliant.org/ — сниппет поиска, просмотрено 2026-10-28.
++- https://apps.apple.com/us/app/-/id913335252 — сниппет поиска (active problem solving, редактор Python, «6x»), просмотрено 2026-10-28.
++- https://brilliantorg.notion.site/About-Brilliant-lessons-f90ec481d92c4f0fb28c5f5d346db90d — сниппет поиска (слои, ошибки как возможности), просмотрено 2026-10-28.
++- https://uxdesign.cc/the-key-to-learning-math-and-science-online-is-interactive-play-6ea68ce167fe — сниппет поиска (blueprints и интерактив под идею), просмотрено 2026-10-28.
++- https://jp.trustpilot.com/review/brilliant.org — сниппет поиска (сначала попытка, потом процедура), просмотрено 2026-10-28.
++
++---
++
++## 4. CodeCombat
++
++**Механики**
++- Ученик управляет героем, проходит уровни, **пишет настоящий код** на Python или JavaScript.
++- Встроенный интерпретатор сразу исполняет код, и результат виден в игровом мире.
++- Учительская панель: код каждого ученика, эталонные решения, ростер, назначения курсов; игровые испытания служат и оценкой.
++- Минус по обзору Common Sense: встроенные подсказки обширные, но «перегружены текстом» и могут больше раздражать, чем помогать.
++- Модель free-to-try и подписка (цены не сверены с официальным сайтом).
++
++**Переносится на Python**
++- Визуализация результата кода в «мире»: команда двигает персонажа, и связь «строка → действие» видна сразу. Хорошо подходит для циклов и условий, особенно для детей.
++- Учительская панель с кодом ученика.
++
++**Не переносится**
++- Игровой мир дорог в разработке и плохо ложится на темы ОГЭ/ЕГЭ (строки, файлы, перебор).
++- Большие текстовые подсказки противоречат принципу implicit scaffolding.
++
++**Источники**
++- https://www.commonsense.org/education/reviews/codecombat — сниппет поиска, просмотрено 2026-10-28.
++- https://ecampusontario.pressbooks.pub/codingoer/?p=207 — сниппет поиска (интерпретатор, общеупотребимые языки), просмотрено 2026-10-28.
++- https://www.schooldataleadership.org/systems/instruction-curriculum/code-combat — сниппет поиска (приватность данных), просмотрено 2026-10-28.
++
++---
++
++## 5. CheckiO
++
++**Механики**
++- Миссии сгруппированы в «острова»; новичкам рекомендован Library Island.
++- После решения открываются **лучшие решения других** по категориям, редакторы отбирают «элегантные» решения.
++- Code review: Гвидо ван Россум разбирал решения (2014), была видеосерия разборов, месячные лидерборды.
++- Около 50 тыс. MAU — данные самой компании.
++
++**Переносится на Python**
++- Показ альтернативных решений после успеха (вариант «как ещё можно» — идиоматичный Python, например `sum()` вместо цикла). Дёшево и хорошо учит.
++- Карта-«острова» как навигация по темам.
++
++**Не переносится**
++- Рассчитан на тех, кто уже умеет писать код. Для полного новичка порог входа высокий.
++- Соревновательные лидерборды детям и взрослым новичкам подходят ограниченно.
++
++**Источники**
++- https://checkio.org/ — сниппет поиска (50k MAU), просмотрено 2026-10-28.
++- https://py.checkio.org/blog/library-20 — сниппет поиска, просмотрено 2026-10-28.
++- https://thenextweb.com/dd/2014/07/08/checkio-introduces-crowdsourced-coding-game-platform-python-developers/ — сниппет поиска (ревью Гвидо), просмотрено 2026-10-28.
++- https://py.checkio.org/blog/new-missions-and-monthly-leaderboard — сниппет поиска, просмотрено 2026-10-28.
++
++---
++
++## 6. Scratch
++
++**Механики**
++- Принцип Резника: **low floor** (легко начать), **high ceiling** (можно дорасти до сложных проектов), **wide walls** (много разных путей к одному уровню знаний). Идея «низкого порога» восходит к Пейперту (Logo).
++- Онлайн-сообщество закладывалось с самого начала, чтобы у авторов была аудитория и вдохновение.
++- Масштаб (по вторичным источникам): более 123 млн опубликованных проектов и более 103 млн пользователей на февраль 2023 года. Официальная страница statistics в сниппете без цифр.
++
++**Переносится на Python**
++- «Wide walls»: один и тот же навык (цикл) отрабатывается в разных сюжетах — рисование, текст, числа.
++- Мгновенный визуальный результат (спрайт двигается) напрямую ложится на turtle в Python.
++
++**Не переносится**
++- Блоки вместо текста: на ОГЭ/ЕГЭ пишут текст, синтаксические ошибки не тренируются.
++- Социальная сеть с ремиксами — отдельный продукт с модерацией, не тренажёр.
++
++**Источники**
++- https://edutopia.org/scratch-programming-language-technology-tool — сниппет поиска (low floor / high ceiling / wide walls), просмотрено 2026-10-28.
++- https://abakcus.com/books/lifelong-kindergarten — сниппет поиска (wide walls), просмотрено 2026-10-28.
++- https://rosetta.to/u/cs50/scratch-2 — сниппет поиска (сообщество с самого начала), просмотрено 2026-10-28.
++- https://scratch.mit.edu/statistics/ — сниппет поиска (только заголовки, без цифр), просмотрено 2026-10-28.
++
++---
++
++## 7. Blockly
++
++**Механики**
++- JS-библиотека для блочных редакторов в браузере; генерирует синтаксически корректный код на JavaScript, **Python**, Lua, Dart, PHP; можно добавить свой генератор.
++- С 10 ноября 2025 года Blockly передан от Google в **Raspberry Pi Foundation**, лицензия Apache 2.0 сохранена, существующие проекты менять не нужно. В планах — доступность (скринридер, клавиатура).
++- **Blockly Games** в найденных сниппетах не описан, его статус не подтверждён.
++
++**Переносится на Python**
++- Режим «блоки ↔ Python рядом»: ученик собирает блоки и видит сгенерированный Python-текст. Это мост для младших и для взрослых новичков. Готовая открытая библиотека, без лицензионных рисков.
++- Блоки как формат Parsons-задач с отступами (вложенность if/for видна в форме блока).
++
++**Не переносится**
++- Сами блоки не тренируют набор кода и синтаксис, поэтому для экзаменационной подготовки годятся только как первая ступень.
++
++**Источники**
++- https://opensource.googleblog.com/2025/10/blockly-graduates-from-google.html — сниппет поиска, просмотрено 2026-10-28.
++- https://www.raspberrypi.org/blog/new-home-for-blockly/ — сниппет поиска (планы по доступности), просмотрено 2026-10-28.
++- https://linuxlinks.com/blockly-create-visual-block-programming-languages-editors — сниппет поиска (генерация кода, включая Python), просмотрено 2026-10-28.
++- https://en.wikipedia.org/wiki/Blockly — сниппет поиска; **WebFetch по en.wikipedia.org не открылся (ENOTFOUND)**.
++
++---
++
++## 8. Задачи Парсонса (академическое)
++
++**Механики**
++- **Parsons & Haden (2006), ACE, CRPIT т. 52, с. 157–163:** автоматизированный интерактивный инструмент; ученик расставляет перемешанные строки; каждое решение — образцовая программа (ученик видит хороший код); задачи можно нацелить на конкретные темы и **типичные ошибки**. Мотивация: «зубрёжка основ скучна».
++- **Denny, Luxton-Reilly, Simon (2008)**, со слов слайдов 2024 года: парные дистракторы рядом с правильным блоком, заданные отступы и меньшее число блоков упрощают задачу.
++- **Дистракторы:** Harms, Chen, Kelleher (2016): у юных новичков дистракторы повышают когнитивную нагрузку, снижают успешность на 26 % и увеличивают время на 14 %, а перенос навыка не меняется. ITiCSE 2023: время растёт заметно, баллы почти не меняются. ICER 2024: в формирующем режиме дистракторы заставляют вчитываться в детали.
++- **Ericson et al.:** в диссертации 2018 года Parsons-задачи решаются **значительно быстрее**, чем исправление или написание эквивалентного кода, **при тех же приростах pre→post**. ICER 2018 (Ericson, Foley, Rick) изучает адаптивные задачи. Адаптация внутри задачи (если ученик застрял, задача упрощается) и между задачами (следующая подбирается по результату). По слайдам 2022 года адаптивные версии почти вдвое чаще решаются верно. Оговорка: эффективность исчезает, если решение задачи «нестандартное».
++- **Runestone:** маркеры `#distractor` и `#paired`; режим `adaptive` после трёх неудачных попыток предлагает помощь и убирает дистракторы или отступы.
++- Вариант «faded Parsons» (с пропусками внутри строк) упомянут без деталей.
++
++**Переносится на Python**
++- Прямо и с высоким приоритетом. В Python **отступ — это синтаксис**, поэтому задача «расставь строки и отступы» тренирует ровно то, на чём спотыкаются новички (тело `if`/`for`).
++- Адаптация по Ericson: после N ошибок убрать дистракторы, подсказать отступ, «склеить» две строки.
++- Дистракторы нацелены на типичные ошибки (`=` вместо `==`, `range(1, n)` вместо `range(1, n+1)`, `input()` без `int()`), а с маленькими детьми их лучше дозировать.
++- Задачи Парсонса **сложнее решить копированием в LLM без понимания**, чем задачи с проверкой только вывода (наша гипотеза, в источниках не проверена).
++
++**Не переносится**
++- Сильным ученикам быстро становится слишком легко (бакалаврская работа Radboud: подходит прежде всего слабым ученикам). Нужна лестница Parsons → faded → написание с нуля.
++
++**Источники**
++- https://crpit.scem.westernsydney.edu.au/abstracts/CRPITV52Parsons.html — сниппет поиска (абстракт Parsons & Haden 2006), просмотрено 2026-10-28.
++- https://en.wikipedia.org/wiki/Parsons_problem — сниппет поиска; **WebFetch по en.wikipedia.org не открылся**.
++- https://www.cs.ru.nl/bachelors-theses/2020/Kirsten_Kingma___4449037___Parsons'_puzzles_as_formative_assessment.pdf — сниппет поиска (слишком легко для сильных), просмотрено 2026-10-28.
++- https://hg.gatech.edu/node/603172 — сниппет поиска (защита диссертации Ericson 2018: быстрее при равном приросте), просмотрено 2026-10-28.
++- https://deepblue.lib.umich.edu/handle/2027.42/174559 — сниппет поиска (интерактивный учебник с адаптивными Parsons-задачами), просмотрено 2026-10-28.
++- https://www.it.uu.se/research/group/upcerg/events/CompetenciesAI/EricsonSlides.pdf — сниппет поиска (адаптивные почти вдвое чаще решаются), просмотрено 2026-10-28.
++- https://www.raspberrypi.org/app/uploads/2024/01/January-2024-seminar-slides.pdf — сниппет поиска (выводы Denny et al. 2008), просмотрено 2026-10-28.
++- https://profiles.wustl.edu/en/publications/distractors-in-parsons-problems-decrease-learning-efficiency-for-/ — сниппет поиска (−26 %, +14 %), просмотрено 2026-10-28.
++- https://unpaywall.org/10.1145%2F3587102.3588819 — сниппет поиска (ITiCSE 2023), просмотрено 2026-10-28.
++- https://unpaywall.org/10.1145%2F3632620.3671114 — сниппет поиска (ICER 2024), просмотрено 2026-10-28.
++- https://runestone.academy/ns/books/published/authorguide/directives/parsons.html — сниппет поиска (`#distractor`, `#paired`, adaptive), просмотрено 2026-10-28.
++
++---
++
++## 9. Python Tutor (Philip Guo)
++
++**Механики**
++- Пошаговое исполнение **вперёд и назад**, видны стек (фреймы) и объекты в куче. Задумано как имитация того, что преподаватель рисует на доске.
++- Работает в браузере без плагинов и **встраивается через iframe**. Есть live-режим (`pythontutor.com/live.html`).
++- SIGCSE 2013: более 200 тыс. пользователей за 3 года, применялся в CS1 в UC Berkeley, MIT, University of Washington и Waterloo. Мотивация: прежние визуализаторы трудно было установить, поэтому они не выходили за пределы родных университетов.
++- UIST 2021: «Ten Million Users and Ten Years Later…» (с. 1235–1251), цифра 10 млн в сниппете есть только в названии. В исследовательском заявлении Гуо (2024) — более 20 млн человек из 180+ стран. Новость UCSD — 25 млн+ учащихся, 500 млн+ визуализаций, 10–20 тыс. пользователей в день и упоминание Test of Time award (к какой статье относится, неясно). Анонс доклада в Harvey Mudd (2026) — более 30 млн.
++
++**Переносится на Python**
++- Главный референс для тренажёров «что происходит в памяти»: переменные-ярлыки и объекты, списки по ссылке, фреймы функций. Шаг назад важен для понимания причин.
++- Механика «предскажи состояние»: ученик заполняет значение переменной на шаге k, затем визуализатор показывает правду. Сочетается с принципом Brilliant.
++- Технически возможно встроить iframe или поднять свою копию. Лицензию и ограничения нужно проверить в репозитории pgbovine/OnlinePythonTutor — **не проверено**.
++
++**Не переносится**
++- Визуализатор сам по себе пассивен, задач и проверки в нём нет. Задание и обратную связь нужно строить вокруг него.
++- Публичный сервер — внешняя зависимость. По README, локальная версия для не-Python языков ходит на сервер автора.
++
++**Источники**
++- https://pg.ucsd.edu/publications/Online-Python-Tutor-web-based-program-visualization_SIGCSE-2013.pdf — сниппет поиска (200 тыс., университеты, шаг назад), просмотрено 2026-10-28.
++- https://research.google/pubs/pub40591/ — сниппет поиска (абстракт SIGCSE 2013), просмотрено 2026-10-28.
++- https://dblp.org/pid/32/193 — сниппет поиска (запись UIST 2021), просмотрено 2026-10-28.
++- https://pg.ucsd.edu/guo-research-statement-july-2024.pdf — сниппет поиска (>20 млн, 180+ стран), просмотрено 2026-10-28.
++- https://today.ucsd.edu/story/a-uc-san-diego-tool-teaching-code-to-25-million-is-even-more-critical-in-age-of-ai — сниппет поиска (25 млн+, 500 млн+ визуализаций); **WebFetch не открылся (ENOTFOUND)**.
++- https://www.hmc.edu/calendar/?p=5742 — сниппет поиска (>30 млн, 2026), просмотрено 2026-10-28.
++- https://pythontutor.com/live.html — сниппет поиска (live-режим, «как преподаватель на доске»), просмотрено 2026-10-28.
++- https://github.com/dataquestio/visualization-online-python-tutor — сниппет поиска (форк README: iframe-встраивание, локальный запуск), просмотрено 2026-10-28.
++
++---
++
++## 10. Khan Academy и Khanmigo
++
++**Механики**
++- Уровни владения навыком: Not Started → Attempted (меньше 70 %) → Familiar (70–99 %) → Proficient (100 %) → **Mastered** (верный ответ в смешанной проверке при уже достигнутом Proficient). Смешанные проверки (mixed-skill) подтверждают прочность навыка.
++- Бета 2018 года: 100 mastery points на навык, ошибки при практике **не снижают** уровень. Актуальность этих цифр не подтверждена.
++- Как подсказки влияют на mastery, в найденных сниппетах **не описано**.
++- Khanmigo: ИИ-тьютор на GPT-4, задуман так, чтобы **не давать готовый ответ**, а задавать наводящие вопросы. По отзывам (не данные Khan Academy), это раздражает тех, кто застрял и кому сначала нужен разобранный пример, а иногда тьютор не учитывает уже сделанное учеником.
++
++**Переносится на Python**
++- Шкала уровней владения навыком на тему (переменные, условия, циклы…) и смешанные повторения, которые подтверждают «Mastered». Это хорошо ложится на подготовку к ОГЭ/ЕГЭ.
++- Ошибка на практике не наказывает (снижает тревожность у детей и взрослых новичков).
++- ИИ-подсказчик в сократовском стиле, но с возможностью показать разобранный пример после N попыток. Это закрывает главную претензию к Khanmigo.
++
++**Не переносится**
++- Автоматический подбор по огромному банку задач требует контента в масштабе Khan Academy.
++
++**Источники**
++- https://support.khanacademy.org/hc/tr/articles/5548760867853 — сниппет поиска (уровни владения), просмотрено 2026-10-28.
++- https://support.khanacademy.org/hc/nl/community/posts/115001845151/comments/360001808051 — сниппет поиска (бета 2018, 100 очков), просмотрено 2026-10-28.
++- https://www.jetlearn.com/blog/how-uk-students-are-using-khanmigo-socratic-and-ai-tutors----and-whats-actually-worth-your-time — сниппет поиска (сократовский стиль, жалобы), просмотрено 2026-10-28.
++- https://homeschoolfox.com/curriculum/khanmigo — сниппет поиска (отзыв), просмотрено 2026-10-28.
++
++---
++
++## 11. Codewars, LeetCode и проверка только по выводу (контрпример)
++
++**Механики**
++- Codewars: ранги kyu/dan по 8 уровней, растут только за решённые kata. Honor отражает активность. Решение засчитывается, когда **все тесты зелёные**. У kata есть бета-период с голосованием за сложность.
++- LeetCode: в обсуждении на форуме правила конкурсов прямо ИИ не запрещают (мульти-аккаунты, похожий код и т. п.). Codeforces с 2024-09-14 запрещает ИИ-генерацию алгоритмической логики. В сообществе фиксируют «подозрительно быстрые» решения после выхода o1.
++- **LLM против задач CS1:** Kiesler & Schiffner (2023): ChatGPT-3.5 и GPT-4 решили **94,4–95,8 %** из 72 задач CodingBat на Python для новичков. Finnie-Ansley et al. (2022, 2023): Codex опережает большинство студентов в задачах CS1 и CS2. Оговорка: задачи CodingBat короткие и чётко специфицированы.
++
++**Переносится на Python (как урок «чего избегать»)**
++- Задание «напиши функцию, выведи X», проверяемое только по выводу, **ничего не говорит о понимании** и решается LLM почти всегда. Тренажёру нужны форматы, где сам процесс (трассировка, предсказание состояния, расстановка, поиск ошибки в данном коде) — часть ответа, или где ответ — промежуточное состояние, а не конечный вывод.
++- Скрытые тесты и разбор «почему этот тест упал» полезнее, чем просто «зелёный/красный».
++
++**Не переносится**
++- Ранги и соревнования «на скорость» для новичков.
++
++**Источники**
++- https://docs.codewars.com/gamification/honor — сниппет поиска, просмотрено 2026-10-28.
++- https://docs.codewars.com/getting-started/kata-solved — сниппет поиска (все тесты зелёные), просмотрено 2026-10-28.
++- https://leetcode.com/discuss/general-discussion/3525104/Is-ChatGPT-Actually-Cheating — сниппет поиска, просмотрено 2026-10-28.
++- https://codeforces.com/blog/Martingale — сниппет поиска (правило 2024-09-14), просмотрено 2026-10-28.
++- https://arxiv.org/abs/2308.08572v1 — сниппет поиска (Kiesler & Schiffner, 94,4–95,8 %); **arxiv.org через WebFetch не открывается**.
++- https://research.utu.fi/converis/portal/Publication/457156993 — сниппет поиска (симулированный студент набрал 63,4–86,2 % баллов курса), просмотрено 2026-10-28.
++
++---
++
++## 12. Exercism, Codecademy, Sololearn
++
++**Механики**
++- **Exercism (Python-трек):** 140 упражнений, 17 «концептов», автоматический анализ кода и **живые менторы-волонтёры** (бесплатно). Упражнения поставляются с юнит-тестами, после тестов возможно ревью ментора с замечаниями об идиоматичности.
++- **Codecademy:** код в браузере и мгновенная обратная связь после запуска («функция либо работает, либо нет»). Официального описания механики checkpoint в выдаче **не найдено**, есть только вторичные упоминания и мнение конкурента.
++- **Sololearn Code Coach:** практики, которые разработчики сами называют «tricky»; добавлены решения, которые можно посмотреть, если застрял. Есть ли скрытые тесты, **не подтверждено**.
++
++**Переносится на Python**
++- Exercism: «концепты» как единица программы и ревью идиоматичности (у нас это может делать преподаватель или LLM с рубрикой).
++- Sololearn: кнопка «показать решение» после попыток, чтобы ученик не бросал занятие.
++
++**Не переносится**
++- Exercism требует локальной установки или CLI. Для детей и для старта это барьер.
++
++**Источники**
++- https://www.exercism.org/tracks/python — сниппет поиска, просмотрено 2026-10-28.
++- https://xebia.com/blog/learning-programming-languages-with-exercism/ — сниппет поиска, просмотрено 2026-10-28.
++- https://hackr.io/tutorial/coding-foundation-with-python — сниппет поиска (Codecademy: код в браузере, мгновенная обратная связь), просмотрено 2026-10-28.
++- https://www.apkmirror.com/?p=3409899 — сниппет поиска (заметка к релизу Sololearn 4.17.1, Code Coach), просмотрено 2026-10-28.
++
++---
++
++## 13. Duolingo: серии и «жизни» (кратко)
++
++**Механики**
++- Эксперимент со ставкой на серию (Streak Wager): удержание на 7-й день выросло примерно на 14 %, статистически значимо выросли D1, D7 и D14. Weekend Amulet позволяет брать выходные, потому что потеря серии демотивирует.
++- По словам PM команды удержания, проведено более 600 экспериментов со стриками. CTA сменили с «continue» на «commit to my goal».
++- Исследований про hearts («жизни») **не найдено**.
++
++**Переносится на Python**
++- Мягкие серии с «заморозкой» или выходными: подходят взрослым новичкам и подготовке к экзамену с регулярной практикой.
++- Явное обязательство («моя цель — 3 тренировки в неделю»).
++
++**Не переносится**
++- «Жизни» и наказание за ошибку противоречат идее тренажёра, где ошибка — главный учебный сигнал (ср. Khan Academy: ошибки не снижают уровень).
++
++**Источники**
++- https://making.duolingo.com/how-streaks-keep-duolingo-learners-committed-to-their-language-goals — сниппет поиска, просмотрено 2026-10-28.
++- https://videohighlight.com/v/_CCwoQZH5hI — сниппет поиска (доклад J. Shuttleworth), просмотрено 2026-10-28.
++
++---
++
++## 14. Российские аналоги
++
++### Яндекс Учебник
++- **Механики:** тренажёры по Python (условия, циклы, списки) с автоматической проверкой отправленного кода (доклад учителя, не страница Яндекса). Есть курс повышения квалификации учителей по Python по ФГОС. Курс для учеников 5–9 классов на официальной странице **не подтверждён**.
++- **Переносится:** автопроверка, привязка к ФГОС и школьной программе.
++- **Не переносится:** проверка только кода и вывода (см. п. 11).
++- **Источники:** https://vt8.uralschool.ru/file/download?id=16064 — сниппет поиска, просмотрено 2026-10-28; https://toipkro.ru/content/editor/krpm/informatika/Prilozhenie-1_O-kurse-povysheniya-kvalifikacii-dlya-uchitelej-informatiki.pdf — сниппет поиска, просмотрено 2026-10-28.
++
++### Stepik
++- **Механики:** более 20 типов шагов: тесты, пропуски, числовые и формульные ответы, **сортировка (упорядочивание), сопоставление**, таблица, задачи на программирование с проверкой. Есть официальный курс-документация типов шагов. Проверка кода может проверять значения конкретных переменных, а не только вывод.
++- **Переносится:** тип «сортировка» — готовый носитель Parsons-задач (без отступов), «сопоставление» — для пар «код ↔ вывод». Если LMS школы уже умеет импортировать подобное, это дешёвый старт.
++- **Не переносится:** нет визуализации и неявных опор, платформа «текстовая»; в отзыве жалуются на долгую загрузку.
++- **Источники:** https://stepik.org/course/4087/promo — сниппет поиска, просмотрено 2026-10-28; https://habr.com/en/companies/stepic/articles/321114 — сниппет поиска (>20 видов шагов), просмотрено 2026-10-28; https://habr.com/ru/post/1012430 — сниппет поиска (JSON-типы choices/number/text/matching/sorting/table, проверка переменных), просмотрено 2026-10-28; https://career.habr.com/education_centers/otzyvy/27-stepik/5003-pokolenie-python-kurs-dlya-nachinayuschih/18671 — сниппет поиска (отзыв о «Поколении Python»), просмотрено 2026-10-28.
++
++### Алгоритмика
++- **Механики:** дети 6–18 лет; визуальное программирование (Scratch, Minecraft) для 8–10 лет; курс «Основы программирования и программирования на Python» для 5–9 классов на собственной платформе; сюжетные миссии. Курс «Основы логики и алгоритмики» для 1–4 классов: задания «напоминают прохождение компьютерной игры», среда «максимально визуальна», подходит детям со слабым навыком чтения.
++- **Переносится:** минимум текста в младших тренажёрах (детям сложно читать); сюжетная обёртка.
++- **Не переносится:** модель «школа + своя платформа + преподаватель» — это продукт, а не набор тренажёров.
++- **Источники:** https://sh-vsm16-petropavlovskkamchatskij-r30.gosweb.gosuslugi.ru/netcat_files/userfiles/1._Agoritmika_prezentatsiya_proekta.pdf — сниппет поиска, просмотрено 2026-10-28; https://hh.ru/vacancy/135857817 — сниппет поиска, просмотрено 2026-10-28; https://sh6-gorlovka-r897.gosweb.gosuslugi.ru/netcat_files/30/41/RP_Osnovy_logiki_i_algoritmiki_1_4_klassy.pdf — сниппет поиска (визуальная среда, как игра), просмотрено 2026-10-28.
++
++### Кодики
++- **Механики:** школа для детей 6–16/17 лет (с 2019 года, 12+ городов): от Scratch и Roblox до Python и Unity, занятия за ноутбуками без учебников. **Собственной интерактивной платформы или тренажёров в выдаче не найдено.** Не путать с CODDY.
++- **Переносится / не переносится:** по механикам тренажёров данных нет.
++- **Источники:** https://topfranchise.ru/products/franshiza-onlayn-shkola-programmirovaniya-dizayna-i-3d-modelirovaniya-kodiki/ — сниппет поиска, просмотрено 2026-10-28; https://rutube.ru/video/7f4411bb974230e6bac4edba4d44d8ae/ — сниппет поиска, просмотрено 2026-10-28.
++
++### «Дипломат» (химия, модель атома)
++- **Не найдено** по двум запросам. Рабочим аналогом для механики «собери модель» служит PhET Build an Atom (раздел 2). Нужна ссылка от оператора.
++
++---
++
++## Сквозные выводы для тренажёров по Python (синтез, не из одного источника)
++
++1. **Неявные опоры (PhET) и ответ модели вместо «верно/неверно»:** видимое состояние переменных, стека и вывода в каждом тренажёре (Python Tutor как образец визуализации).
++2. **Сначала предсказание, потом объяснение** (Brilliant): «что выведет / какое значение у `x` на шаге 3».
++3. **Лестница форматов:** Parsons с отступами → адаптивные Parsons (Ericson, Runestone) → faded → написание кода. Дистракторы нацелены на типичные ошибки, младшим давать меньше.
++4. **Ошибка не наказывает** (Khan Academy). Подсказки ступенчатые, после N попыток — разобранный пример или решение (Sololearn; критика Khanmigo).
++5. **Уровни владения навыком на тему со смешанными повторениями** (Khan Academy) и мягкие серии с «заморозкой» (Duolingo).
++6. **Не строить ядро на проверке только вывода:** LLM решают около 95 % таких задач для новичков (Kiesler & Schiffner, 2023).
++7. **Встраивание через iframe и атрибуция по CC BY** (PhET); Blockly (Apache 2.0) — для младших в режиме «блоки ↔ Python».
+diff --git a/docs/research/2026-10-28-tsk1247-trainers/sources-B-ai-resistance.md b/docs/research/2026-10-28-tsk1247-trainers/sources-B-ai-resistance.md
+new file mode 100644
+index 0000000..84ae35d
+--- /dev/null
++++ b/docs/research/2026-10-28-tsk1247-trainers/sources-B-ai-resistance.md
+@@ -0,0 +1,283 @@
++# B. Обучение программированию в эпоху LLM и «AI-устойчивая» практика (2023–2026)
++
++Дата сбора: 2026-10-28.
++
++## Как собрано (важно для доверия к цифрам)
++
++- В этой сессии сетевая политика пропускала WebFetch только к `anthropic.com`. Домены arxiv.org, dl.acm.org, pnas.org, openai.com, университетские сайты и блоги **не открывались** (ENOTFOUND / 403 от прокси).
++- Поэтому источники размечены так:
++  - **[открыт]** — страница открыта через WebFetch, цифры сверены с текстом;
++  - **[сниппет]** — сведения взяты из выдачи WebSearch (заголовок, URL и сводка поисковика); сама страница не открывалась. Цифры из таких источников перед публикацией нужно сверить с оригиналом.
++- Из памяти ничего не дописано: каждое утверждение ниже взято из открытой страницы или из выдачи поиска с указанным URL.
++- Чтобы перепроверить [сниппет]-источники, в настройках сессии нужно разрешить домены arxiv.org, dl.acm.org, pnas.org, openai.com.
++
++---
++
++## 1. Что известно о новичках и LLM
++
++**F1. Bastani et al., «Generative AI without guardrails can harm learning», PNAS, 2025** [сниппет]
++- URL: https://ideas.repec.org/a/nas/journl/v122y2025pe2422633122.html ; препринт https://papers.ssrn.com/abstract=4895486 ; DOI 10.1073/pnas.2422633122. Просмотрено 2026-10-28.
++- Полевой эксперимент, около 1000 старшеклассников, математика. Сравнивались GPT Base (обычный ChatGPT-интерфейс) и GPT Tutor (промпт, который бережёт обучение).
++- На практике результат вырос: +48% у GPT Base и +127% у GPT Tutor.
++- На экзамене без ИИ группа GPT Base показала **на 17% хуже** контроля. Группа GPT Tutor — на уровне контроля.
++- Механизм по авторам: ИИ работал как костыль. Вывод: решает дизайн инструмента.
++- **Значение для нас.** Свой тьютор, который не выдаёт решение, по этим данным — правильный ход. Но он лишь «не вредит» (экзамен на уровне контроля), а не «учит лучше».
++
++**F2. Prather et al., «The Widening Gap: The Benefits and Harms of Generative AI for Novice Programmers», ICER 2024** [сниппет]
++- URL: https://icer2024.acm.org/details/icer-2024-papers/26/The-Widening-Gap-The-Benefits-and-Harms-of-Generative-AI-for-Novice-Programmers ; https://arxiv.org/html/2405.17739v1. Просмотрено 2026-10-28.
++- 21 лабораторная сессия: наблюдение, интервью, eye-tracking.
++- Сильные студенты использовали ИИ для кода, который уже спланировали, и отбрасывали плохие подсказки.
++- У слабых прежние метакогнитивные трудности сохранились и местами усилились. Добавились три новые: Interruption, Mislead, Progression.
++- **Значение для нас.** Разрыв растёт именно у «отстающих» — это ровно целевая аудитория школы.
++
++**F3. Kazemitabaar et al., «Studying the effect of AI code generators on supporting novice learners in introductory programming», CHI 2023** [сниппет]
++- URL: https://arxiv.org/abs/2302.07427v1 ; https://web.cs.toronto.edu/news-events/news/ai-code-generators-for-programming-education. Просмотрено 2026-10-28.
++- 69 новичков 10–17 лет; после каждой задачи с Codex шла задача на модификацию кода без Codex.
++- Через неделю ретенция не пострадала. Преимущество получили в основном те, у кого были более высокие исходные баллы.
++- Авторы сами предупреждают о риске чрезмерной опоры на инструмент.
++- **Важная деталь дизайна:** следом за генерацией шла самостоятельная модификация кода.
++
++**F4. Kazemitabaar et al., «CodeAid…», CHI 2024** [сниппет]
++- URL: https://arxiv.org/abs/2401.11314. Просмотрено 2026-10-28.
++- 12 недель, 700 студентов, около 8000 обращений к ассистенту; ассистент не пишет готовых решений, а даёт псевдокод с пояснениями и подсвечивает ошибки.
++- Опасения преподавателей: ассистент иногда ошибается, а студенты «уходят в ChatGPT».
++- Использование ассистента со временем снижалось.
++- **Значение для нас.** Свой «честный» тьютор не мешает ученику открыть ChatGPT в соседней вкладке.
++
++**F5. Kapoor, Diaz, MacNeil, Porter, Denny, «Exploring Student Behaviors and Motivations when using AI TAs with Optional Guardrails», arXiv 2504.11146, 2025** [сниппет]
++- URL: https://arxiv.org/html/2504.11146v1. Просмотрено 2026-10-28.
++- 885 студентов. Кнопкой «See Solution» хотя бы раз воспользовались 50%, на всех трёх задачах — 14%.
++- Чаще это делали слабые студенты и ближе к дедлайну.
++- Мотивы: нужна помощь, нехватка времени, слабая саморегуляция, любопытство.
++- В выдаче упомянут и препринт 2026 г. «Guardrails or Roadblocks?» (arXiv 2609.29995, RCT, n=132): сократический тьютор с полным контекстом студенты оценили хуже всех по ощущаемой поддержке.
++- **Ключевой вывод для нас.** Причина списывания — не злой умысел, а **застревание и дедлайн**. Значит, надо снижать стоимость честного пути: подсказки по шагам, отсутствие жёстких дедлайнов.
++
++**F6. Kazemitabaar et al., «Exploring the Design Space of Cognitive Engagement Techniques with AI-Generated Code for Enhanced Learning», IUI 2025** [сниппет]
++- URL: https://arxiv.org/abs/2410.08922v1. Просмотрено 2026-10-28.
++- Семь техник, n=82 и n=42.
++- Лучшей оказалась пошаговая: ученик сначала формулирует, что должно произойти на шаге, и только потом видит код (Lead-and-Reveal).
++- Trace-and-Predict (проследить выполнение и предсказать значения) — среди лидеров, но это указано по вторичным сводкам.
++
++**F7. Shen & Tamkin (Anthropic), «How AI assistance impacts the formation of coding skills», 29.01.2026** [открыт]
++- URL: https://www.anthropic.com/research/AI-assistance-coding-skills. Просмотрено 2026-10-28.
++- RCT, 52 разработчика, незнакомая библиотека Trio.
++- Тест без ИИ: 50% у группы с ИИ против 67% без ИИ (d=0.738, p=0.01). Самый большой разрыв — на отладке.
++- Выигрыш в скорости незначим: около 23 минут против 25, p=0.391.
++- Низкие баллы (<40%) — у тех, кто делегировал написание кода или «чинил через ИИ».
++- Высокие (≥65%) — у тех, кто задавал концептуальные вопросы и сам исправлял ошибки, или просил объяснение вместе с кодом.
++
++**F8. Anthropic Education Report: How university students use Claude, 08.04.2025** [открыт]
++- URL: https://www.anthropic.com/research/anthropic-education-report-how-university-students-use-claude. Просмотрено 2026-10-28.
++- 574 740 академических диалогов; около 47% — «Direct», то есть запрос ответа с минимальной вовлечённостью.
++- На CS приходится 36,8% (в другом месте отчёта — 38,6%) разговоров, хотя доля CS среди дипломов — 5,4%.
++- Примеры: «дай ответы на MCQ». Авторы оговаривают, что намерение установить трудно.
++
++**F9. Anthropic, «Introducing Claude for Education» (Learning mode), 02.04.2025** [открыт]
++- URL: https://www.anthropic.com/news/introducing-claude-for-education. Просмотрено 2026-10-28.
++- Сократические вопросы вместо готовых ответов; режим работает внутри Projects.
++- По выдаче поиска [сниппет], в августе 2025 режим стал доступен всем пользователям. В Claude Code появились стили Explanatory и Learning (ученик сам дописывает куски с `#TODO`), и выключить режим можно в любой момент: https://engadget.com/ai/anthropic-brings-claudes-learning-mode-to-regular-users-and-devs-170018471.html
++
++**F10. OpenAI ChatGPT Study Mode, 29.07.2025** [сниппет]
++- URL: https://alternativeto.net/news/2025/7/chatgpt-launches-study-mode-to-foster-student-learning-and-critical-thinking ; https://san.com/cc/openai-introduces-study-mode-in-chatgpt-to-support-students/. Просмотрено 2026-10-28.
++- Режим построен на промптах и инструкциях, новой модели нет.
++- Ученик может выйти из режима в любой момент. Блокировки для администраторов и родителей на момент запуска не было.
++- **Вывод.** «Обучающие режимы» вендоров — добровольные, это не защита.
++
++**F11. Kosmyna et al. (MIT Media Lab), «Your Brain on ChatGPT», препринт, 2025** [сниппет]
++- URL: https://www.wbur.org/onpoint/2025/08/11/ai-writing-chatgpt-study-cognitive ; https://lirneasia.net/wp-content/uploads/2025/12/Your-Brain-on-ChatGPT_Final.pdf. Просмотрено 2026-10-28.
++- 54 участника, эссе, EEG. У группы с LLM самая слабая связность, у «только мозг» — самая сильная.
++- Участники с LLM хуже цитировали собственные эссе.
++- **Оговорка:** маленькая выборка, нет рецензии, речь об эссе, а не о программировании. Использовать только как иллюстрацию.
++
++**F12. Liu, Malan et al., «Teaching CS50 with AI», SIGCSE 2024** [сниппет]
++- URL: https://cs.harvard.edu/malan/publications/V1fp0567-liu.pdf ; https://cs50.readthedocs.io/cs50.ai/. Просмотрено 2026-10-28.
++- CS50 Duck ведёт к ответу, а не выдаёт его. Внедряли поэтапно: около 70 студентов летом, затем тысячи онлайн, затем около 500 очно осенью 2023.
++- Политика курса: сторонний ИИ, который дописывает ответы или код, считается нечестным, если курс явно не разрешил.
++
++**F13. Denny et al., «Computing Education in the Era of Generative AI», CACM 67(2), 2024** [сниппет]
++- URL: https://arxiv.org/abs/2306.02608v1 ; https://ubffm.hds.hebis.de/EdsRecord/bsu%252C175048209. Просмотрено 2026-10-28.
++- Обзор влияния генераторов кода на вводные курсы. Модели хорошо решают типовые задачи CS1.
++
++**F14. Savelka et al., 2023, две статьи** [сниппет]
++- URL: https://deepai.org/publication/thrilled-by-your-progress-large-language-models-gpt-4-no-longer-struggle-to-pass-assessments-in-higher-education-programming-courses ; https://arxiv.org/abs/2303.08033. Просмотрено 2026-10-28.
++- GPT-4 «уверенно проходит» три Python-курса: 599 заданий, от MCQ до многофайловых проектов.
++- В мартовской статье (ранние модели GPT) хуже всего давались вопросы о предсказании вывода кода. Но это было до GPT-4.
++- **Вывод.** Устаревшее «LLM плохо трассируют код» нельзя использовать как аргумент.
++
++**F15. CRUXEval (предсказание вывода коротких Python-функций)** [сниппет]
++- URL: https://arxiv.org/html/2503.05703v1 ; https://iclr.cc/virtual/2024/22440. Просмотрено 2026-10-28.
++- 800 функций по 3–13 строк. GPT-4 даёт около 82% на предсказании вывода (цифра из вторичной статьи, ссылающейся на лидерборд).
++- **Вывод.** Задачи «предскажи вывод» модель решает в большинстве случаев. Защиту они дают, только если ответить нужно быстрее, чем дойти до чата, и только если ставка низкая.
++
++**F16. Lau & Guo, «From "Ban It Till We Understand It" to "Resistance is Futile"…», ICER 2023** [сниппет, только факт существования]
++- URL: https://icer2023.acm.org/profile/philipguo2. Просмотрено 2026-10-28.
++- Подтверждены только название, трек и конференция. Содержание (интервью с преподавателями) в выдаче не раскрыто — **не цитировать находки без проверки**.
++
++**F17. Delphino, «Assessing the Prevalence of AI-assisted Cheating in Programming Courses: A Pilot Study», arXiv 2507.06438, 2025** [сниппет]
++- URL: https://arxiv.org/abs/2507.06438?context=cs. Просмотрено 2026-10-28.
++- Один курс, 120 студентов. Более четверти респондентов анонимно признали «AI-плагиат».
++
++---
++
++## 2. Какие форматы ломает LLM, а какие нет
++
++**F18. Hou et al., «More Robots are Coming: Large Multimodal Models (ChatGPT) can Solve Visually Diverse Images of Parsons Problems», ACE 2024** [сниппет]
++- URL: https://arxiv.org/pdf/2311.04926. Просмотрено 2026-10-28.
++- GPT-4V решил **96,7%** Parsons-задач, поданных картинками; Bard — 69,2%.
++- Вывод авторов: переход на визуальные задачи — не панацея для академической честности.
++- **Это главный аргумент против идеи «покажем код картинкой».**
++
++**F19. Singla et al., 2023, «Evaluating ChatGPT and GPT-4 for Visual Programming»** [сниппет]
++- URL: https://deepai.org/publication/evaluating-chatgpt-and-gpt-4-for-visual-programming. Просмотрено 2026-10-28.
++- На задачах Hour of Code Maze и Karel модели справлялись плохо: им трудно совмещать пространственное и логическое мышление.
++- **Оговорка:** это 2023 год и текстовое представление сетки. С 2024 года мультимодальность резко выросла (F18), так что опираться на это нельзя.
++
++**F20. Denny et al., «Prompt Problems: A New Programming Exercise for the Generative AI Era», SIGCSE 2024; Promptly, 2023** [сниппет]
++- URL: https://sigcse2024.sigcse.org/details/sigcse-ts-2024-Papers-1/63/Prompt-Problems-A-New-Programming-Exercise-for-the-Generative-AI-Era ; https://arxiv.org/abs/2307.16364v1. Просмотрено 2026-10-28.
++- Ученик видит только примеры входов и выходов и пишет промпт; код генерирует LLM и проверяется тестами.
++- В Promptly (n=54, первый курс Python) инструмент принят хорошо.
++- **Смысл:** ИИ здесь — легальная часть задания. Списывать нечего, но учится уже другой навык.
++
++**F21. Smith & Zilles, EiPE-автогрейдинг через генерацию кода, SIGCSE 2024** [сниппет]
++- URL: https://arxiv.org/pdf/2311.14903 ; https://experts.illinois.edu/en/publications/evaluating-large-language-model-code-generation-as-an-autograding/. Просмотрено 2026-10-28.
++- Объяснение кода на естественном языке передаётся в GPT-4; по нему генерируется код и прогоняются тесты.
++- Согласие с людьми-оценщиками умеренное. Последующая работа даёт 86–88% точности.
++- **Вывод.** EiPE теперь можно проверять автоматически, но сам ответ EiPE LLM тоже пишет легко.
++
++**F22. Агентные браузеры (Comet, ChatGPT Atlas) и LMS-квизы, 2025** [сниппет]
++- URL: https://stacker.com/stories/technology/cheating-beyond-chatgpt-agentic-browsers-present-risks-universities ; https://dawsonite.dawsoncollege.qc.ca/2025/10/perplexity-comet-and-online-quizzes/ ; https://www.orizzontescuola.it/il-browser-comet-puo-fare-i-compiti-al-posto-tuo-in-16-secondi-il-ceo-di-perplexity-assolutamente-non-fatelo/. Просмотрено 2026-10-28.
++- Студенты публикуют посты о том, как агентные браузеры проходят квизы в Canvas и Coursera.
++- Ролик: Comet за 16 секунд сделал задание Coursera. Ответ CEO Perplexity: «Absolutely don't do this».
++- Dawson College: сайдбар Comet читает квизы Brightspace прямо в браузере и правильно отвечает.
++- Контрпример: Atlas в одном тесте Анны Миллс отказался проходить квиз в Canvas. Это анекдот, а не систематическая проверка.
++- **Вывод.** Принцип «взаимодействие только через UI» агент обходит: он видит страницу и кликает. Отказ агента — политика вендора, а не гарантия.
++
++**F23. OSWorld (бенчмарк агентов, работающих с компьютером)** [сниппет]
++- URL: https://www.simular.ai/articles/simulars-computer-use-agent-outperforms-humans ; https://leaderboard.steel.dev/leaderboards/osworld.md. Просмотрено 2026-10-28.
++- Базовый уровень человека — около 72%. В 2024 лучшая модель давала около 12%.
++- Agent S (Simular) заявил 72,6% в декабре 2025. Это самоотчёт вендора, а варианты бенчмарка несопоставимы между собой.
++- **Вывод.** Тренд — агенты всё лучше управляют произвольным GUI.
++
++**F24. Клавиатурная телеметрия и детекторы ИИ-кода** [сниппет]
++- Hart, Mano, Edwards, «Plagiarism Deterrence in CS1 Through Keystroke Data», SIGCSE 2023: https://sigcse2023.sigcse.org/details/sigcse-ts-2023-papers/84/Plagiarism-Deterrence-in-CS1-Through-Keystroke-Data. Студенты, обязанные сдавать лог нажатий, реже списывали; это **сдерживание**, а не детекция.
++- RECAP (arXiv 2605.01104, 2026): https://arxiv.org/pdf/2605.01104. Внешний код помечается по объёму вставки и «скорости печати» выше 100 WPM.
++- Препринт arXiv 2601.17280 (2026): детекцию авторства по таймингу клавиш **можно обойти подделкой таймингов** (по заголовку в выдаче).
++- Warwick, сводка проекта «Assessing AI detectors in identifying AI-generated code» (около 5069 образцов): https://warwick.ac.uk/fac/cross_fac/eduport/edufund/projects/yang/projects/assessing-ai-detectors-in-identifying-ai-generated-code-implications-for-education/. Детекторы по итоговому коду работают плохо.
++- Все просмотрены 2026-10-28.
++
++**F25. Прокторинг, ложные срабатывания, этика** [сниппет]
++- BLG (юрфирма), 2021: https://www.blg.com/en/insights/2021/04/online-proctoring-privacy-and-risk-management. Автоматический прокторинг даёт ложные срабатывания; особенно страдают тревожные и нейроотличные студенты.
++- arXiv 2106.05917: https://arxiv.org/pdf/2106.05917. Студенты высоко оценивают риски приватности.
++- Рецензируемых данных о частоте ложных срабатываний именно детекции смены вкладки **не найдено**.
++- Просмотрено 2026-10-28.
++
++**F26. «Разговорный экзамен» и устная защита кода** [сниппет]
++- Barba & Stegner, «The Conversational Exam», arXiv 2601.10691: https://arxiv.org/html/2601.10691v1. Живое кодирование с объяснением, 58 студентов. Авторы отказались от домашних заданий с автопроверкой, потому что те заполнялись ИИ-кодом.
++- Сидней: units COMP9001 и INFO1110 — viva по каждому заданию: https://www.sydney.edu.au/units/INFO1110/2023-S1C-ND-RE.
++- Просмотрено 2026-10-28.
++
++**F27. Обход гардрейлов ИИ-тьютора** [сниппет]
++- AWS Builder, HintGuard (практик, без рецензии): https://builder.aws.com/content/3KtiTNGXcGf9MY74pO3QcCboMrI/hintguard-an-ai-teaching-assistant-that-knows-when-not-to-give-the-answer. Студент пробовал «профессор разрешил». Решение — отдельная проверка вывода с редактированием кода-ответа: 11 из 11 утечек поймано, 0 ложных из 13.
++- arXiv 2605.06669 (2026): https://arxiv.org/pdf/2605.06669. Защиты от prompt injection у тьюторов стоят ложных отказов, а это бьёт по обучению.
++- Просмотрено 2026-10-28.
++
++---
++
++## 3. Университетские рамки 2023–2026
++
++**F28. University of Sydney, «two-lane approach»** [сниппет]
++- URL: https://educational-innovation.sydney.edu.au/teaching@sydney/embracing-the-future-of-assessment-at-the-university-of-sydney/ ; https://www.sydney.edu.au/news-opinion/news/2024/11/27/university-of-sydney-ai-assessment-policy.html. Просмотрено 2026-10-28.
++- Lane 1 (secure) — контролируемые формы: экзамены, viva, устные. Часто это hurdle-задания на уровне программы.
++- Lane 2 (open) — обучение с ИИ.
++- С S1 2025 ИИ по умолчанию разрешён везде, кроме экзаменов; two-lane — с S2 2025.
++- **Логика:** всё, что не под надзором, считается «открытой полосой». Это прямо про наши тренажёры.
++
++**F29. TEQSA, «Assessment reform for the age of artificial intelligence», 2023** (Lodge, Howard, Bearman, Dawson) [сниппет]
++- URL: https://www.teqsa.gov.au/about-us/news-and-events/latest-news/assessment-reform-age-artificial-intelligence. Просмотрено 2026-10-28.
++- Два принципа и пять положений. Фокус на программном уровне, а не на отдельном задании.
++
++**F30. Dawson, Bearman, Dollinger, Boud, «Validity matters more than cheating», 2024** [сниппет, журнал не подтверждён]
++- URL: https://leonfurze.com/2024/08/09/can-the-ai-assessment-scale-stop-students-cheating-with-ai/ ; https://www.timeshighereducation.com/node/735227. Просмотрено 2026-10-28.
++- Рамка «списывания» непродуктивна; в центре должна быть валидность.
++
++**F31. Perkins, Furze, Roe, MacVaugh, AI Assessment Scale (AIAS), 2024; v2 — декабрь 2024** [сниппет]
++- URL: https://leonfurze.com/2023/12/18/the-ai-assessment-scale-version-1/ ; https://export.arxiv.org/pdf/2412.09029. Просмотрено 2026-10-28.
++- Пять уровней — от «без ИИ» до полной интеграции. Сводки (Furze) подчёркивают, что шкала не останавливает списывание сама по себе.
++
++---
++
++## 4. Педагогика: сделать честный путь проще и интереснее
++
++**F32. PRIMM (Sentance, Waite, Kallia, Computer Science Education 29, 2019)** [сниппет]
++- URL: https://static.raspberrypi.org/files/curriculum/quickreads/11-Pedagogy_Summary_PRIMM_V4_2023.pdf ; https://eprints.gla.ac.uk/229012. Просмотрено 2026-10-28.
++- Последовательность Predict → Run → Investigate → Modify → Make.
++- 13 школ, около 500 учеников 11–14 лет, смешанные методы: PRIMM помог прогрессу. Цифра из вторичного источника.
++
++**F33. Parsons-задачи (Ericson и др.)** [сниппет]
++- URL: https://www.it.uu.se/research/group/upcerg/events/CompetenciesAI/EricsonSlides.pdf ; https://acelab.berkeley.edu/projects/faded-parsons. Просмотрено 2026-10-28.
++- Parsons решаются заметно быстрее, чем написание кода, при сопоставимом приросте знаний.
++- Faded Parsons помогают переносу паттернов, и ученики их предпочитают.
++
++**F34. Subgoal labels и worked examples (Margulieux и др., IJ STEM Ed 2020)** [сниппет]
++- URL: https://doaj.org/article/9a2c85d66fd54ec9ab019e9a510bbf17 ; https://neverworkintheory.org/2023/03/10/reducing-withdrawal-and-failure-rates-with-labeled-subgoals.html. Просмотрено 2026-10-28.
++- 265 студентов. Подцели улучшили формативные квизы, на экзаменах эффекта не было. Меньше отчислений и неудов, особенно у группы риска.
++
++**F35. Retrieval practice в CS1** [сниппет]
++- URL: https://par.nsf.gov/servlets/purl/10544324 ; https://link.springer.com/article/10.1186/s40594-024-00468-5. Просмотрено 2026-10-28.
++- Частые разнесённые низкоставочные квизы связаны с более высокими оценками за экзамен, но это корреляция.
++- Мета-анализ 2024 по STEM: эффект разнесения устойчив не везде.
++
++**F36. Обратная связь** [сниппет]
++- Keuning, Jeuring, Heeren, TOCE 2018 (обзор 101 инструмента): https://research.ou.nl/en/publications/a-systematic-literature-review-of-automated-feedback-generation-f/. Инструменты в основном находят ошибку и редко подсказывают следующий шаг.
++- Leinonen, Denny, Whalley, SIGCSE 2022 (немедленная против плановой ОС): https://acris.aalto.fi/ws/portalfiles/portal/80653198/SIGCSE_2022_Immediate_and_Scheduled_Feedback.pdf. Разные паттерны поведения, особенно у слабых.
++- Убедительного мета-анализа «немедленная лучше» для программирования **не найдено**.
++- Просмотрено 2026-10-28.
++
++**F37. Геймификация и самодетерминация, мета-анализ, ETR&D 2024** [сниппет]
++- URL: https://link.springer.com/article/10.1007/s11423-023-10337-7. Просмотрено 2026-10-28.
++- 35 интервенций, около 2500 участников. Эффект на внутреннюю мотивацию небольшой: g=0,257. На автономию — g=0,638, на компетентность — g=0,277.
++- Авторы связывают слабый эффект с недостатком ощущения компетентности и автономии.
++- **Вывод.** Очки и рейтинги сами по себе мало что дают; работает ощущение «у меня получается» и выбор.
++
++---
++
++## 5. Классификация техник
++
++Легенда «Мешает списыванию через LLM»: **да** — внешний ИИ реально бесполезен или невозможен; **частично** — повышает цену или время списывания, но не закрывает путь; **нет** — только видимость защиты.
++
++| Техника | Мешает LLM-списыванию? | Почему | Педагогическая ценность | Стоимость |
++|---|---|---|---|---|
++| Код или задача картинкой / скриншотом (защита от копипаста) | **нет** | GPT-4V решал 96,7% Parsons-картинок (F18); скриншот в чат — дело секунды | Нулевая или отрицательная: доступность, экранные чтецы | Низкая, но вредная |
++| Мелкие рандомизированные параметры (другие числа и строки) | **нет** | LLM решает любую конкретизацию; защищает только от обмена ответами между учениками | Средняя: можно повторять практику | Низкая |
++| «Только через UI» (drag-n-drop, клики, без текстового поля) | **нет** (против агентов) / частично (против копипаста) | Агентные браузеры (Comet, Atlas) видят и кликают страницу (F22, F23); но ручной перенос шагов из чата утомителен | Зависит от задачи (Parsons — высокая, F33) | Средняя |
++| Детекция смены вкладки / фокуса | **нет** | Телефон или второе устройство; сайдбар-агент в том же окне; ложные срабатывания и этика (F25) | Нулевая, подрывает доверие | Низкая технически, высокая репутационно |
++| Детекция вставки (paste) / телеметрия нажатий | частично | Вставку блокировать легко, перепечатать — нет; тайминги подделываются (F24); как сдерживание работает (Hart 2023) | Низкая; полезна как сигнал «ученик застрял» | Средняя, плюс вопросы приватности |
++| Детекторы ИИ-кода по итоговому коду | **нет** | Работают плохо (F24, Warwick) | Нулевая | Средняя |
++| Предсказание вывода / трассировка с таймером на микрошаг | частично | Модели решают около 82% CRUXEval (F15), но короткий таймер и низкая ставка делают поход в чат дороже, чем подумать самому | **Высокая** (PRIMM F32, Trace-and-Predict F6) | Низкая |
++| Объясни код словами (EiPE) письменно | **нет** | Объяснение LLM пишет легко; проверять можно ИИ (F21) | Высокая | Низкая или средняя |
++| Устная защита / разговорный экзамен / живое кодирование | **да** (при надзоре) | Это secure lane по Сиднею (F28, F26) | Высокая | **Высокая** (время преподавателя) |
++| Модификация данного кода, привязанного к прошлым шагам ученика | частично | Контекст можно вставить в чат, но цена выше; работает связка «генерация → самостоятельная модификация» (F3) | Высокая (Modify в PRIMM) | Средняя |
++| Prompt Problems (ИИ легален и встроен) | **да** (списывать нечего) | Внешний ИИ = инструмент задания (F20) | Средняя: учит промптингу и чтению кода, но не синтаксису | Средняя |
++| Свой тьютор без выдачи решений (гардрейлы + проверка вывода) | частично | Не гарантирует, что ученик не откроет ChatGPT (F4, F5); но снимает главную причину — застревание; при GPT Tutor экзамен на уровне контроля (F1) | Высокая при хорошем дизайне (F7: концептуальные вопросы) | Средняя или высокая |
++| Пошаговые подсказки, faded scaffolding, worked examples с подцелями | частично (снижает мотив) | Делает честный путь дешевле, чем копирование (F5: мотивы — время и застревание) | **Высокая** (F33, F34) | Средняя (контент) |
++| Lead-and-Reveal: сначала скажи, что будет на шаге, потом увидишь код | частично | Скорость и мелкая гранулярность делают чат неудобным | **Высокая** (лучшая техника в F6) | Средняя |
++| Частые низкоставочные квизы и повторение | частично (снимает стимул) | При низкой ставке выгода от списывания мала | Высокая (F35, с оговорками) | Низкая |
++| Немедленная конкретная обратная связь | — (не защита) | Увеличивает выгоду честной попытки | Высокая по смыслу; данные для программирования смешанные (F36) | Средняя |
++| Автономия + ощущение компетентности (выбор задач, видимый прогресс) | — (не защита) | Снижает мотивацию списывать | Средняя; эффект «голой» геймификации мал (F37) | Средняя |
++| Обучающие режимы вендоров (Study mode, Learning mode) | **нет** (как защита) | Выключаются учеником (F9, F10) | Средняя для мотивированных | Нулевая |
++
++### Что только кажется защитой (явно)
++
++1. **Скриншоты и картинки кода.** Мультимодальные модели читают их с 2023–2024: GPT-4V решил 96,7% Parsons-картинок (F18). Защиты нет, зато страдает доступность.
++2. **«Только UI-взаимодействие».** Агентные браузеры и computer-use агенты видят DOM или экран и кликают (F22). OSWorld-агенты по самоотчётам вендоров дошли до уровня человека (F23). Отказ Atlas проходить квиз — это политика вендора, которая может измениться, а не барьер.
++3. **Детекция вкладок, фокуса и вставки.** Обходится вторым устройством или перепечаткой. Даёт ложные срабатывания и сигналит ученику «тебе не доверяют» (F25), что противоречит цели «не ловить».
++4. **Рандомизация параметров** защищает от обмена ответами, но не от LLM.
++5. **«LLM плохо трассирует код»** — устаревший вывод 2023 года (F14). Современные модели решают большинство задач на предсказание вывода (F15).
++
++### Вывод для школы
++
++Технически «невозможного» для LLM формата практики без надзора нет. Реалистичная стратегия опирается на данные F5, F28 и F1:
++
++- **(а)** снять причины списывания — застревание и дедлайн. Помогают пошаговые подсказки, faded scaffolding и свой тьютор, который учит, а не выдаёт решение.
++- **(б)** сделать единицу работы мелкой, быстрой и низкоставочной: предсказать, запустить, изменить, микрошаг. Тогда поход в чат дороже, чем подумать.
++- **(в)** перенести проверку «умеет ли сам» в отдельную надзорную полосу: короткая устная или живая защита, контрольная без ИИ.
+diff --git a/docs/research/2026-10-28-tsk1247-trainers/sources-C-virality.md b/docs/research/2026-10-28-tsk1247-trainers/sources-C-virality.md
+new file mode 100644
+index 0000000..dc97dae
+--- /dev/null
++++ b/docs/research/2026-10-28-tsk1247-trainers/sources-C-virality.md
+@@ -0,0 +1,273 @@
++# C. Вирусность и встраиваемость бесплатных интерактивов: механизмы, SEO, воронка, риски
++
++Дата исследования: 2026-10-28. Заказчик: школа victor-komlev.ru (Python, ОГЭ/ЕГЭ информатика, ИИ для предпринимателей).
++
++## Как получены данные (важно для доверия)
++
++- **WebFetch в этой сессии недоступен**: прямое открытие страниц (phet.colorado.edu, pythontutor.com, learningapps.org, en.wikipedia.org, hourofcode.com) упало с ошибкой «домен не разрешён сетевыми настройками сессии». Дальше страницы напрямую не открывались.
++- Поэтому **все факты ниже взяты из сниппетов поисковой выдачи (WebSearch)**, то есть из коротких выдержек, которые поисковик показывает по странице. Каждый источник помечен «сниппет, просмотрено 2026-10-28». Полный текст страниц не проверялся. Цифры перед публикацией наружу стоит сверить на самой странице.
++- WebSearch работает из США, это **не выдача Яндекса**. Списки «кто ранжируется» ниже — только грубый ориентир.
++- Wordstat-цифр в открытых источниках не нашлось (подробнее в разделе 2).
++
++---
++
++## 1. Примеры и механизмы распространения
++
++### 1.1 PhET (симуляции по физике/химии, Университет Колорадо)
++- **Что:** бесплатные симуляции с кнопкой «Embed» под каждой: она выдаёт готовый HTML-код для вставки. Для некоммерческого учебного использования лицензия не нужна, коммерческое использование (например, платные материалы на Teachers Pay Teachers) требует отдельной лицензии.
++- **Масштаб:** по Impact Report 2024 — более 250 млн онлайн-запусков симуляций за 2024 год, около 50 млн учеников. В презентации для National Academies — 1,4 млрд доставок симуляций суммарно, около 50% использования приходится на США, Circuit Construction Kit — 12 млн запусков в год.
++- **Почему распространяется:** нет регистрации, вставка в один клик, учителю бесплатно, одна узкая тема на одну симуляцию (её удобно встроить в конкретный урок).
++- **Для нас:** модель «один тренажёр = одно понятие» (цикл for, while, срез строки, задание ОГЭ №N) и кнопка «Встроить на свой сайт» прямо под интерактивом. Условия: бесплатно для учителей, без регистрации, коммерческая перепродажа запрещена.
++- Источники:
++  - https://phet.colorado.edu/publications/PhET_Impact_Report_2024.pdf — сниппет, просмотрено 2026-10-28
++  - https://phet.colorado.edu/translation/114/help-center/getting-started — сниппет (кнопка Embed), просмотрено 2026-10-28
++  - https://www.nationalacademies.org/event/docs/DF125B151DD3F1C0E3B455C7D97AA9C15DC02A3487A8?noSaveAs=1 — сниппет, просмотрено 2026-10-28
++
++### 1.2 Python Tutor (Philip Guo) — пошаговая визуализация кода
++- **Что:** бесплатный сайт (с 2010 г.), показывает выполнение кода по шагам: переменные, стек, куча. Поддерживает Python, Java, C, C++, JS.
++- **Встраивание:** ссылку на визуализацию переводят на embed-страницу и вставляют в iframe. В актуальной инструкции для разработчиков говорится, что «тысячи сайтов курсов и интерактивных учебников» встраивают его именно так (это оценка самого сайта, независимой проверки нет).
++- **Масштаб (2013, статья SIGCSE):** более 200 000 пользователей за первые 3 года. Встроен в 3 веб-учебника по Python, у которых около 16 000 зрителей в месяц, использовался как минимум в 25 вузах. Им пользовались преподаватели CS1 в UC Berkeley, MIT и других университетах.
++- **Почему распространяется:** решает конкретную боль преподавателя («покажи, что происходит в цикле») и встраивается прямо в чужой учебник.
++- **Для нас:** это прямой аналог «симулятора цикла». Ниша на русском открыта: в выдаче по запросу «визуализатор выполнения кода python пошагово» первым показывается тот же Python Tutor и обзорные статьи, а русскоязычного встраиваемого аналога с привязкой к ОГЭ/ЕГЭ в выдаче не видно.
++- Источники:
++  - https://pg.ucsd.edu/publications/Online-Python-Tutor-web-based-program-visualization_SIGCSE-2013.pdf — сниппет, просмотрено 2026-10-28
++  - https://pythontutor.com/for-ai-assistants.html — сниппет (embed через iframe, «thousands of course websites»), просмотрено 2026-10-28
++  - https://research.google/pubs/online-python-tutor-embeddable-web-based-program-visualization-for-cs-education/ — сниппет, просмотрено 2026-10-28
++
++### 1.3 GeoGebra
++- **Что:** математические апплеты плюс режим урока (GeoGebra Classroom/Lessons). Учитель запускает урок, получает код урока и ссылку для учеников, а затем в реальном времени видит, кто начал, кто на каком задании, и миниатюры работ. Можно поставить на паузу, скрыть имена, добавить со-преподавателя.
++- **Масштаб:** в отраслевом интервью 2018 г. — «более 100 млн пользователей». Там же отмечено, что одно скачанное приложение используется целым классом, поэтому число пользователей занижает реальный охват классов. Бесплатность Classroom в найденных сниппетах не подтверждена.
++- **Для нас:** учительская механика «код класса → ссылка ученикам → живой дашборд» превращает учителя в канал распространения: один учитель приводит 25–30 учеников.
++- Источники:
++  - https://news.elearninginside.com/despite-clearing-100-million-users-geogebra-remains-true-to-its-founders-vision/ — сниппет, просмотрено 2026-10-28
++  - https://mat.geogebra.org/m/wcweh84t — сниппет («What is GeoGebra Classroom?»), просмотрено 2026-10-28
++
++### 1.4 LearningApps.org (очень популярен у российских учителей)
++- **Что:** конструктор и библиотека интерактивных упражнений. Код встраивания (iframe вида `learningapps.org/watch?app=ID`) находится справа внизу страницы упражнения. Готовыми модулями можно пользоваться без регистрации, для создания своих нужна простая регистрация.
++- **Нюанс:** встраивается только обёртка-iframe, поэтому упражнение работает только при доступности серверов learningapps.org. Некоторые российские LMS (ELiS) требуют отдельной настройки встраивания.
++- **Почему распространяется:** учителя встраивают чужие упражнения в Moodle, школьные сайты и электронные библиотеки, а российские LMS даже добавляют под него отдельную поддержку.
++- **Для нас:** учителя информатики уже привыкли встраивать iframe. Наш тренажёр должен вставляться так же просто, работать в Moodle и школьных CMS и не зависеть от cookie (см. раздел 4).
++- Источники:
++  - https://elibsystem.ru/docs/resources/learningapps — сниппет, просмотрено 2026-10-28
++  - https://pedagogie.ac-clermont.fr/disciplines/mpc-au-lycee-professionnel/wp-content/uploads/sites/6/2022/04/code_iframe.pdf — сниппет (пример iframe-кода), просмотрено 2026-10-28
++
++### 1.5 Wordwall
++- **Что:** у каждого упражнения есть кнопка Share (уникальная ссылка для email и соцсетей), режим Set Assignment (ссылка с отслеживанием результатов у учителя в My Results) и embed-код по значку `</>`. **Ученикам не нужен логин.** Встраивание и ссылки доступны на бесплатном тарифе (по памятке 2020 г. бесплатный тариф — 5 упражнений).
++- **Для нас:** три кнопки под тренажёром — «Поделиться ссылкой», «Выдать классу (с результатами)», «Встроить».
++- Источники:
++  - https://teachersfirst.org/blog/2025/11/tech-tool-of-the-month-wordwall-part-2/ — сниппет, просмотрено 2026-10-28
++  - https://avidopenaccess.org/wp-content/uploads/2020/11/Wordwall-Tip-Sheet.pdf — сниппет (лимиты free), просмотрено 2026-10-28
++
++### 1.6 Kahoot! и Quizlet Live — петля «учитель запускает, класс заходит по PIN»
++- **Kahoot:** ведущий запускает игру, сервис выдаёт PIN, игроки вводят его на своих устройствах. По пресс-релизу Kahoot (январь 2018): более 70 млн уникальных активных пользователей в месяц на конец 2017 г. (+75% год к году), 1,6 млрд суммарных игроков с 2013 г., из них 42 млн MAU в США. Прямых данных, что PIN служит именно вирусной петлёй, в источниках нет: это наш вывод.
++- **Quizlet Live (запуск в апреле 2016):** бесплатная командная игра в классе, вход по PIN-коду. В бете по разным источникам от 20 000 учителей / 500 000 учеников до 50 000 / 1 млн. Основатель отмечал, что до половины использования Quizlet приходится на время, когда учитель и ученики вместе.
++- **Для нас:** формат «урок-баттл по Python/ОГЭ»: учитель открывает комнату, ученики входят по коду без регистрации. Каждая такая игра показывает бренд школы целому классу.
++- Источники:
++  - https://kahoot.com/press/2018/01/18/kahoot-grows-reach-70-million-unique-users/ — сниппет, просмотрено 2026-10-28
++  - https://www.digitalcitizen.life/what-is-the-kahoot-game-pin/ — сниппет, просмотрено 2026-10-28
++  - https://edsurge.com/news/2016-04-12-quizlet-s-first-product-for-the-classroom-is-live — сниппет, просмотрено 2026-10-28
++
++### 1.7 Desmos Classroom
++- **Что:** бесплатные активности. Учитель (бесплатный аккаунт через email или Google) создаёт код класса, ученики вводят его на student.desmos.com. В дашборде учителя работы появляются сразу; есть вид Snapshot для показа на проекторе и анонимизация имён.
++- **Для нас:** «учительский режим» — это фича удержания учителя, а не только ученика. Учитель, которому удобно смотреть результаты класса, возвращается каждый урок.
++- Источник: https://ecampusontario.pressbooks.pub/techtoolsforteaching/chapter/26-using-activity-builder-by-desmos-to-engage-students-during-class/ — сниппет, просмотрено 2026-10-28
++
++### 1.8 Blockly Games (Google)
++- **Что:** бесплатные самообучающиеся игры по программированию (Puzzle, Maze с циклами и условиями, далее Pond JS с переходом от блоков к тексту). Код открыт, можно скачать zip для офлайн-работы. Отсутствие регистрации подтверждено только сторонним обзором.
++- **Для нас:** нарастающая последовательность уровней от блоков к тексту и открытая лицензия (её охотно берут учителя, она же даёт ссылки с GitHub и сайтов школ).
++- Источники:
++  - https://opensource.com/education/15/2/blockly-makes-easier-every-one-learn-code — сниппет, просмотрено 2026-10-28
++  - https://www.eweek.com/it-management/google-introduces-kids-to-coding-through-blockly-games-project/ — сниппет, просмотрено 2026-10-28
++
++### 1.9 Code.org Hour of Code — событие плюс сертификат
++- **Масштаб:** отчёт Code.org за 2017 г. — более 500 млн «часов кода», «каждый 10-й школьник планеты». В 2013 г. — участники из 170 стран.
++- **Сертификаты:** общий сертификат о прохождении Часа кода генерируется пакетно на studio.code.org. Учитель печатает сертификаты для всего класса, 100% прохождения не требуется. По сообщению учителя на форуме, в 2025–2026 учебном году бренд сменился на «Hour of AI» (официального ответа в треде нет).
++- **Почему распространяется:** привязка к дате (неделя CS), готовый сценарий урока для учителя и сертификат, который ребёнок приносит домой, то есть показывает родителю.
++- **Для нас:** ежегодная «Неделя Python» или «Час Python к ОГЭ» с именным сертификатом. Сертификат — естественная точка контакта с родителем (см. риски 152-ФЗ).
++- Источники:
++  - https://Code.Org/files/annual-report-2017.pdf — сниппет, просмотрено 2026-10-28
++  - https://support.code.org/hc/en-us/articles/204090698-Where-can-I-print-certificates-for-my-students — сниппет, просмотрено 2026-10-28
++  - https://forum.code.org/t/certificates-show-hour-of-ai-for-non-ai-activity-is-the-legacy-hour-of-code-certificate-still-available/41743 — сниппет, просмотрено 2026-10-28
++
++### 1.10 Wordle — ежедневная задача и эмодзи-результат
++- **Механизм:** одна задача в день, одна на всех. Результат можно поделиться сеткой эмодзи **без спойлера**. Кнопку «поделиться» автор добавил в декабре 2021 г., когда увидел, что игроки сами публикуют такие сетки.
++- **Рост:** 90 игроков 1 ноября 2021 → более 300 000 к 2 января 2022 → более 2 млн неделей позже (даты по разным источникам расходятся). С 1 по 13 января 2022 в Twitter опубликовано 1,2 млн результатов. NYT купила игру за «низкую семизначную сумму».
++- **Для нас:** «Задача дня по Python/ОГЭ» с карточкой результата без ответа (например, `🟩🟩🟥🟩 4/5 за 3:12 · victor-komlev.ru/daily`), удобной для чатов класса во VK и Telegram.
++- Источники:
++  - https://en.wikipedia.org/wiki/Wordle — сниппет, просмотрено 2026-10-28
++  - https://pressbooks.cuny.edu/inspire/part/the-wordle-effect-how-five-letters-changed-the-internet/ — сниппет, просмотрено 2026-10-28
++
++### 1.11 «Решу ОГЭ/ЕГЭ» (sdamgia, Д. Гущин)
++- **Что:** проект петербургского учителя математики Дмитрия Гущина. Начался с математики и расширился на все предметы ЕГЭ, затем ОГЭ и ВПР. Учитель собирает работу из каталога задач, результаты видят и учитель, и ученики; есть автоматическая работа над ошибками. Каталог обновляется еженедельно.
++- **Аудитория:** точных публичных цифр посещаемости в найденных сниппетах нет. Исследование «МегаФона» фиксировало рост трафика на сайты с тренировочными заданиями на 30–60% в части регионов, без разбивки по сайтам.
++- **Почему распространяется:** бесплатный банк задач в формате экзамена и учительские работы. Каждый учитель, выдавший работу, приводит класс.
++- **Для нас:** соревноваться банком задач с «Решу ОГЭ» бессмысленно. Нишевое отличие — **интерактивное объяснение** (симулятор: как выполняется программа из задания ОГЭ №N), которое учитель встраивает рядом с задачей.
++- Источники:
++  - https://mel.fm/novosti/1396854-shkolniki-v-ryade-regionov-stali-chashche-gotovitsya-k-yege-s-pomoshchyu-saytov-s-trenirovochnymi-za — сниппет, просмотрено 2026-10-28
++  - https://sgu.ru/sites/default/files/page/files/dzyurich-e.pdf — сниппет (функции учителя), просмотрено 2026-10-28
++
++### 1.12 Сайт К. Полякова / kompege.ru и государственные тренажёры
++- В найденных сниппетах подтверждены материалы Полякова на kpolyakov.spb.ru (на них ссылаются рабочие программы). **Сам kompege.ru в выдаче не найден и не подтверждён**: поисковик из США его не показал, открыть сайт напрямую нельзя.
++- Рособрнадзор опубликовал тренажёр, который имитирует ПО компьютерного ЕГЭ (КЕГЭ). В апреле 2026 г. на Госуслугах появился сервис «Навигатор подготовки к ЕГЭ» с отдельными заданиями и вариантами.
++- **Для нас:** государство и Поляков закрывают «тренировку на банке задач». Наша ниша — Python-механика решения (циклы, перебор, файлы) в виде симуляторов, а не ещё один банк.
++- Источники:
++  - https://skyeng.ru/magazine/obrazovanie/polyakov-informatika-kak-ispolzovat-besplatnyy-resurs-dlya-podgotovki-k-ege/ — сниппет, просмотрено 2026-10-28
++  - https://mel.fm/novosti/3705681-rosobrnadzor-opublikoval-trenazher-dlya-prokhozhdeniya-kompyuternogo-yege-po-informatike — сниппет, просмотрено 2026-10-28
++  - https://t-j.ru/news/ege-simulator-gosuslugi/ — сниппет, просмотрено 2026-10-28
++
++### 1.13 Учи.ру олимпиады и Яндекс Учебник — награды и учитель как канал
++- **Учи.ру:** все участники получают электронный диплом, грамоту или сертификат. **Учителю — благодарственное письмо, если участвуют не меньше 10 учеников или весь класс.** Это прямой стимул учителю привести класс. Олимпиада по программированию (предыдущий сезон перед 2020 г.) — более 544 000 детей; «Заврики» по математике — 1,2 млн за месяц.
++- **Яндекс Учебник:** по отчёту Яндекса за 2020/21 учебный год — более 100 тыс. учителей и 1,9 млн школьников; бесплатно для учителей. Весенняя диагностика по информатике для 5–11 классов — 228 тыс. учеников и 6,3 тыс. учителей.
++- **Для нас:** «грамота для ученика плюс благодарность для учителя за класс» — самая проверенная в России механика привлечения учителей. Учителю благодарность нужна для портфолио/аттестации (это наш вывод, в источниках не проверено).
++- Источники:
++  - https://www.comnews.ru/content/212232/2020-12-16/2020-w51/nachalas-vserossiyskaya-onlayn-olimpiada-programmirovaniyu-uchiru — сниппет, просмотрено 2026-10-28
++  - https://dagminobr.ru/files/52/Прил. 2 Инструкция для учителей по проведению олимпиады по английскому языку.pdf — сниппет (правило 10 учеников), просмотрено 2026-10-28
++  - https://www.techinsider.ru/editorial/584563-olimpiada-uchiru-po-matematike-i-fizike-sobrala-million-uchastnikov/ — сниппет, просмотрено 2026-10-28
++  - https://fund.yandex.ru/static/files/yandex_obrazovanie_5.pdf — сниппет, просмотрено 2026-10-28
++  - https://habr.com/en/news/824974 — сниппет (диагностика по информатике), просмотрено 2026-10-28
++
++### 1.14 Stepik — бесплатный курс как витрина
++- В выдаче по «тренажер python онлайн бесплатно» и «ЕГЭ/ОГЭ информатика тренажер» **Stepik занимает большую часть первых результатов**: «Тренажёр Python 3.12» (около 50 задач с автопроверкой), «Адаптивный тренажер Python» (устарел), «Тренажер ЕГЭ Информатика» (719 задач по банку ФИПИ 2018 г., помечен устаревшим), несколько курсов «ОГЭ информатика 2027». Конкретных данных о конверсии бесплатного курса Stepik в платного клиента не найдено.
++- **Для нас:** дешёвый способ попасть в выдачу — опубликовать бесплатный мини-тренажёр на Stepik со ссылкой на сайт школы. Минус: аудитория и данные остаются у Stepik.
++- Источники:
++  - https://stepik.org/course/293368 — сниппет, просмотрено 2026-10-28
++  - https://stepik.org/8290 — сниппет, просмотрено 2026-10-28
++  - https://stepik.org/course/296114 — сниппет, просмотрено 2026-10-28
++
++---
++
++## 2. SEO: спрос и выдача
++
++- **Wordstat:** открытых публикаций с частотностями по «тренажер python», «python онлайн тренажер», «симулятор цикла», «задание ОГЭ информатика онлайн», «ЕГЭ информатика тренажер» **не найдено**. Wordstat (wordstat.yandex.ru) требует входа в аккаунт Яндекса, из этой сессии он недоступен. **Действие для оператора:** выгрузить частотности самому (ввод в кавычках и с `!` для точной формы, регион Россия), примерно 10 минут.
++  - Источник о сервисе: https://practicum.yandex.ru/blog/statistika-zaprosov-yandex-wordstat/ — сниппет, просмотрено 2026-10-28
++- **Доминирование Яндекса:** по отчётности Яндекса за 2025 г. его доля на поисковом рынке РФ — 69,3%. По Statcounter на июль 2024 г. — 66,85% у Яндекса и 31,93% у Google. На мобильных устройствах доля Яндекса ниже. Вывод: оптимизировать в первую очередь под Яндекс (Вебмастер, Метрика, турбо/быстрые ответы), но Google в 30% тоже не упускать.
++  - https://ppc.world/news/yandeks-za-god-ukrepil-pozicii-na-poiskovom-rynke-dolya-google-snizilas-esche-silnee/ — сниппет, просмотрено 2026-10-28
++  - https://skillbox.ru/media/marketing/doli-yandeksa-i-google-v-rossii-chto-izmenilos-k-2025-godu/ — сниппет, просмотрено 2026-10-28
++- **Кто в выдаче (поисковик из США, только ориентир):**
++  - «тренажер python онлайн бесплатно» — Stepik (несколько курсов), подборки курсов (kokoc.com), Habr, конструктор тренажёров на Google Sites.
++  - «ЕГЭ информатика тренажер онлайн» — Stepik 8290, тренажёр Рособрнадзора (новость pnp.ru), приложения «Турбо ЕГЭ», статьи в «Информатике и образовании».
++  - «задание ОГЭ информатика онлайн решать» — курсы Stepik «ОГЭ информатика 2027», Habr Q&A, Учи.ру.
++  - «визуализатор выполнения кода python пошагово» — Python Tutor, статьи kedu.ru и neurohive.io, Habr.
++  - Вывод: в иностранной выдаче нет сильного русского **встраиваемого интерактива**. Выдачу держат курсы-агрегаторы и статьи. Отдельные посадочные страницы «Симулятор цикла for онлайн», «Задание ОГЭ №10 — тренажёр с пошаговым разбором» по одной на запрос имеют шанс, но в Яндексе это нужно проверить.
++
++---
++
++## 3. Метрики воронки для интерактивных лид-магнитов
++
++### Бенчмарки (все от вендоров, верхняя оценка)
++- **Interact (2025, 3 568 квизов):** от старта до лида — 40,1%, от старта до финиша — 65%. Для ниши «коучинг и курсы» — 44,9% и 59,1%. По словам Interact, показатель почти не меняется с 2013 г. Оговорка: это самоотобранная, мотивированная аудитория.
++  - https://www.tryinteract.com/blog/quiz-conversion-rate-report/ — сниппет, просмотрено 2026-10-28
++- **Outgrow (2026):** интерактивные формы — 47,3% против 2,8% у статичных. Калькуляторы ROI — «40–60%» без методологии. Средняя конверсия сайтов по Ruler Analytics — 2,6–3,3%.
++  - https://outgrow.co/blog/user-engagement-benchmarks/ — сниппет, просмотрено 2026-10-28
++  - https://outgrow.co/blog/fitness-marketing-tools-conversion-guide — сниппет, просмотрено 2026-10-28
++- **Как читать:** «40% старт→лид» — это квизы, где email просят в обмен на результат. Для детского тренажёра без регистрации ожидать такого нельзя: часть аудитории — дети, у которых email брать нельзя (раздел 4). Реалистичный ориентир нужно получить своими замерами за первые 4–6 недель.
++
++### Что измерять (воронка)
++1. **Показ** — загрузка тренажёра: отдельно «на нашем сайте» и «во встройке» (по хосту-родителю).
++2. **Старт** — первое действие (запуск кода или шаг симуляции).
++3. **Финиш** — прошёл задачу или уровень.
++4. **Шер** — нажал «поделиться» (карточка или ссылка-вызов) и по какому каналу (VK, Telegram, копирование).
++5. **Вирусный приход** — визиты по ссылке-вызову или карточке (`utm_source=share&utm_medium=card&ref=<id>`), K-фактор = приглашённые стартовавшие / стартовавшие.
++6. **Переход на сайт** — клик «Больше задач / Курс» из тренажёра или встройки.
++7. **Лид** — (а) учитель: регистрация «учительского режима»; (б) родитель: заявка или контакт; (в) ученик 14+: подписка на Telegram-бота.
++8. **Оплата** — запись на платный курс (сквозная аналитика по `ref`).
++
++### Атрибуция для встроек
++- Все ссылки из iframe — с `utm_source=embed&utm_medium=iframe&utm_campaign=<trainer>&utm_content=<хост-родителя>`. Хост-родитель брать так: по умолчанию браузеры передают iframe только **origin** родителя (политика `strict-origin-when-cross-origin`, в Chrome с 85-й версии), полного URL страницы не будет. Origin для учёта «какая школа встроила» хватает. Можно дать в embed-коде `data-school`/`?src=` параметр, который учитель не трогает.
++  - https://developer.mozilla.org/en-US/docs/Web/API/HTMLIFrameElement/referrerPolicy — сниппет, просмотрено 2026-10-28
++  - https://developer.chrome.com/blog/referrer-policy-new-chrome-default/?hl=es — сниппет, просмотрено 2026-10-28
++- **oEmbed:** WordPress умеет автовстраивать по ссылке через `wp_oembed_add_provider()`. Если сделать свой oEmbed-эндпоинт, учителю на WordPress достаточно вставить ссылку на тренажёр. Встройку в чужие WP-сайты это не включает автоматически (нужен плагин или регистрация провайдера на их стороне). У себя на victor-komlev.ru — включить.
++  - https://developer.wordpress.org/reference/functions/wp_oembed_add_provider — сниппет, просмотрено 2026-10-28
++
++---
++
++## 4. Риски
++
++### 4.1 iframe и cookie
++- **Safari (ITP):** cookie для сторонних (cross-site) ресурсов заблокированы по умолчанию. Доступ к своим cookie из iframe — только через Storage Access API (`document.requestStorageAccess()`) после действия пользователя. Доступ пропадает, когда iframe закрыт.
++  - https://webkit.org/?p=10218 (Full Third-Party Cookie Blocking) — сниппет, просмотрено 2026-10-28
++  - https://www.webkit.org/blog/8124/introducing-storage-access-api — сниппет, просмотрено 2026-10-28
++- **Chrome:** в апреле 2025 г. Google решил сохранить текущий выбор пользователя по сторонним cookie и не выводить отдельный запрос. У части пользователей сторонние cookie уже заблокированы. Для встроек рекомендован CHIPS (`Partitioned` cookie, отдельная «банка» на каждый сайт-родитель), включён по умолчанию с Chrome 114.
++  - https://assets.publishing.service.gov.uk/media/6889f52a6478525675738fe0/Google_s_Q2_2025_report.pdf — сниппет, просмотрено 2026-10-28
++  - https://developer.chrome.com/docs/privacy-sandbox/chips/ — сниппет, просмотрено 2026-10-28
++- **Вывод для архитектуры:** встраиваемый тренажёр должен **полностью работать без cookie и без логина** (состояние в URL или localStorage, который тоже разделён по родителю). Вход, сохранение прогресса и сбор лида — только **кнопкой «Открыть на victor-komlev.ru»** в новой вкладке, где мы first-party. Это совпадает с уроком SPW (tsk-603: кросс-доменные cookie не сохранялись).
++
++### 4.2 Персональные данные детей (152-ФЗ)
++- **Согласие — отдельным документом:** с 1 сентября 2025 г. согласие на обработку ПДн оформляется отдельно от других документов (нельзя прятать его в оферту или форму регистрации). Штрафы ужесточены законом 420-ФЗ от 30.11.2024 (поправки в КоАП с 30.05.2025): по данным Гаранта — 300–700 тыс. руб. за нарушения требований к согласию. Цифры между источниками расходятся, нужно сверить с текстом КоАП ст. 13.11.
++  - https://www.garant.ru/article/1862510/ — сниппет, просмотрено 2026-10-28
++  - https://harant.ru/blog/internet-pravo/chto-izmenilos-s-1-sentyabrya-2025-goda-v-oblasti-personalnyh-dannyh-dlya-onlajn-biznesa/ — сниппет, просмотрено 2026-10-28
++  - https://habr.com/ru/articles/994568 — сниппет, просмотрено 2026-10-28
++- **Дети:** по найденным разъяснениям, **отдельного возрастного порога в 152-ФЗ нет**. Юрист на ppt.ru пишет, что отдельных требований к ПДн несовершеннолетних закон не устанавливает. Ч. 6 ст. 9 говорит о согласии законного представителя для недееспособного субъекта, по описанию securitylab.ru. Порог «14 лет» берётся из Гражданского кодекса (малолетние до 14 лет, сделки за них совершают родители; с 14 до 18 — с согласия родителей). Это толкование, **авторитетного текста статьи или разъяснения РКН открыть не удалось.** Перед запуском сбора контактов проверить ст. 9 152-ФЗ на pravo.gov.ru / КонсультантПлюс и ст. 26, 28 ГК РФ, при сомнении — у юриста.
++  - https://ppt.ru/amp/art/personal-data/soglasie-na-obrabotku-personalnykh-dannykh-nesovershennoletnego — сниппет, просмотрено 2026-10-28
++  - https://www.securitylab.ru/blog/personal/emeliyannikov/296078.php — сниппет, просмотрено 2026-10-28
++- **Практический вывод:** у ребёнка в тренажёре не собирать ничего. Без имени в сертификате на сервере: имя вписывается в карточку локально и не уходит к нам. Лид собирать у **взрослого**: у родителя (через «отправить сертификат родителю» → родитель сам оставляет контакт с отдельным согласием) и у учителя.
++
++---
++
++## 5. Рекомендации
++
++1. **Один тренажёр — одно понятие, одна посадочная страница.** «Симулятор цикла for», «while», «срезы строк», «задание ОГЭ №N пошагово». Каждый — отдельный URL под запрос Яндекса (модель PhET и Python Tutor).
++2. **Без регистрации и без cookie во встройке.** Всё работает анонимно, сохранение и вход — только на нашем домене в новой вкладке (ITP, CHIPS, урок tsk-603).
++3. **Три кнопки под каждым тренажёром** (модель Wordwall): «Поделиться», «Выдать классу», «Встроить на сайт» (готовый iframe с `?src=` и `utm`). На WordPress — oEmbed по ссылке.
++4. **Учительский режим «код класса»** (Desmos, GeoGebra, Kahoot): учитель создаёт комнату, ученики входят по коду без аккаунта, учитель видит дашборд. Учитель — главный лид и канал, через него проходят 25–30 учеников.
++5. **«Задача дня» с эмодзи-карточкой без спойлера** (Wordle) для чатов классов в VK и Telegram, со ссылкой-вызовом «реши быстрее меня» (`ref=`).
++6. **Сезонное событие с сертификатами** («Неделя Python», «Час ОГЭ-информатики», по модели Hour of Code и Учи.ру): ученику — грамота, учителю — благодарственное письмо за класс от 10 человек.
++7. **Не строить ещё один банк задач** (его закрывают «Решу ОГЭ», Поляков, Навигатор на Госуслугах, Stepik). Наша ниша — **интерактивное объяснение механики Python** под конкретные номера ОГЭ/ЕГЭ, которое учитель встраивает рядом с банком.
++8. **Открытая лицензия для некоммерческого использования** (по модели PhET): бесплатно встраивать в школах, коммерческая перепродажа запрещена. Обязательный видимый бренд и ссылка «victor-komlev.ru» внутри iframe.
++9. **Дублировать на Stepik** один бесплатный мини-тренажёр: Stepik стабильно в топе по этим запросам. Внутри — ссылки на наши интерактивы.
++10. **Лиды — только у взрослых** (родитель, учитель) с отдельным согласием по 152-ФЗ. Ученик 14+ может подписаться на бота, но после юридической проверки.
++11. **Снять Wordstat вручную** (оператор, около 10 минут) по 10–15 запросам до выбора первых трёх тренажёров.
++
++## 6. Воронка измерения (события Яндекс Метрики, цели)
++
++| Шаг | Событие | Параметры |
++|---|---|---|
++| Показ | `trainer_view` | trainer_id, context=site/embed, parent_origin |
++| Старт | `trainer_start` | trainer_id, context |
++| Финиш | `trainer_finish` | trainer_id, score, time |
++| Шер | `share_click` | channel=vk/tg/copy, format=card/challenge |
++| Вирусный приход | визит с `utm_source=share` / `ref=` | ref_id |
++| Встройка | `embed_copy` + первые показы с новым parent_origin | parent_origin |
++| Переход | `go_site_click` (из embed) | utm_source=embed, utm_content=parent_origin |
++| Лид-учитель | `teacher_signup` / `class_created` | число учеников в классе |
++| Лид-родитель | `parent_lead` (отдельное согласие) | источник: certificate/share |
++| Оплата | CRM-сделка с `ref` / utm | — |
++
++Ключевые отношения: start/view (вовлечение), finish/start (качество задачи), share/finish (вирусность карточки), K-фактор = стартовавшие по ref / стартовавшие, лиды/1000 стартов, «новые встраивающие хосты в неделю» (учительский канал).
++Для iframe postMessage событий в Метрику родителя слать не нужно: считаем на своём сервере или в Метрике, загруженной внутри iframe (без cookie — по возможности в режиме без cookie/сессии, проверить на практике).
++
++---
++
++## Список источников (все — сниппеты выдачи, просмотрено 2026-10-28)
++1. https://phet.colorado.edu/publications/PhET_Impact_Report_2024.pdf
++2. https://phet.colorado.edu/translation/114/help-center/getting-started
++3. https://www.nationalacademies.org/event/docs/DF125B151DD3F1C0E3B455C7D97AA9C15DC02A3487A8?noSaveAs=1
++4. https://pg.ucsd.edu/publications/Online-Python-Tutor-web-based-program-visualization_SIGCSE-2013.pdf
++5. https://pythontutor.com/for-ai-assistants.html
++6. https://news.elearninginside.com/despite-clearing-100-million-users-geogebra-remains-true-to-its-founders-vision/
++7. https://mat.geogebra.org/m/wcweh84t
++8. https://elibsystem.ru/docs/resources/learningapps
++9. https://teachersfirst.org/blog/2025/11/tech-tool-of-the-month-wordwall-part-2/
++10. https://kahoot.com/press/2018/01/18/kahoot-grows-reach-70-million-unique-users/
++11. https://edsurge.com/news/2016-04-12-quizlet-s-first-product-for-the-classroom-is-live
++12. https://ecampusontario.pressbooks.pub/techtoolsforteaching/chapter/26-using-activity-builder-by-desmos-to-engage-students-during-class/
++13. https://opensource.com/education/15/2/blockly-makes-easier-every-one-learn-code
++14. https://Code.Org/files/annual-report-2017.pdf
++15. https://support.code.org/hc/en-us/articles/204090698-Where-can-I-print-certificates-for-my-students
++16. https://en.wikipedia.org/wiki/Wordle
++17. https://mel.fm/novosti/1396854-shkolniki-v-ryade-regionov-stali-chashche-gotovitsya-k-yege-s-pomoshchyu-saytov-s-trenirovochnymi-za
++18. https://sgu.ru/sites/default/files/page/files/dzyurich-e.pdf
++19. https://mel.fm/novosti/3705681-rosobrnadzor-opublikoval-trenazher-dlya-prokhozhdeniya-kompyuternogo-yege-po-informatike
++20. https://www.comnews.ru/content/212232/2020-12-16/2020-w51/nachalas-vserossiyskaya-onlayn-olimpiada-programmirovaniyu-uchiru
++21. https://fund.yandex.ru/static/files/yandex_obrazovanie_5.pdf
++22. https://stepik.org/course/293368
++23. https://ppc.world/news/yandeks-za-god-ukrepil-pozicii-na-poiskovom-rynke-dolya-google-snizilas-esche-silnee/
++24. https://www.tryinteract.com/blog/quiz-conversion-rate-report/
++25. https://outgrow.co/blog/user-engagement-benchmarks/
++26. https://developer.mozilla.org/en-US/docs/Web/API/HTMLIFrameElement/referrerPolicy
++27. https://developer.wordpress.org/reference/functions/wp_oembed_add_provider
++28. https://www.webkit.org/blog/8124/introducing-storage-access-api
++29. https://developer.chrome.com/docs/privacy-sandbox/chips/
++30. https://www.garant.ru/article/1862510/
++31. https://ppt.ru/amp/art/personal-data/soglasie-na-obrabotku-personalnykh-dannykh-nesovershennoletnego
++32. https://www.securitylab.ru/blog/personal/emeliyannikov/296078.php
+diff --git a/reviews/2026-10-28-tsk1247-trainers-research.md b/reviews/2026-10-28-tsk1247-trainers-research.md
+new file mode 100644
+index 0000000..5ce6b12
+--- /dev/null
++++ b/reviews/2026-10-28-tsk1247-trainers-research.md
+@@ -0,0 +1,33 @@
++# tsk-1247 — исследование движка интерактивных тренажёров (ревью)
++
++Контекст: исследование, код продукта не менялся. Добавлена папка
++`docs/research/2026-10-28-tsk1247-trainers/` (report.md, mechanics-board.md,
++prototype.html, sources-A/B/C) и исключение `!docs/research/` в `.gitignore`
++(раньше `docs/*` скрывал папку).
++
++## Независимое ревью (отдельный агент, только чтение)
++
++- Полнота A–F: всё на месте.
++- Числа report.md сверены с sources-*.md — совпадают. Ссылки на код LMS/SPW проверены (10 шт.) — верны.
++- Исправлено по ревью:
++  - прототип: неверный разбор варианта `age = "input("…")"` (это SyntaxError) → вариант с одинарными кавычками;
++    надпись после ValueError уточнена (настоящий Python начал бы сначала);
++    путаница `=`/`==` получила свой код ошибки `assign_eq`; подсказка про тип `name` без «имя — это буквы»;
++    `?seed=0` теперь работает; ввод «007» нормализуется; в трассировке добавлено `in <module>`;
++  - отчёт: убраны формулировки, обещавшие больше источников («ИИ бесполезен» → «списывать невыгодно»,
++    про Atlas — данные противоречивые); g = 0,26 переформулирован по выводу мета-анализа;
++    бенчмарк конверсии — только Interact ~40%; песочница с выполнением кода помечена «вне tsk-1247»;
++    пояснены термины (дистракторы, трассировка, RCT, PRIMM, CSP).
++- Ограничение: внешние источники — только сниппеты поиска (сетевая политика сессии закрыла домены), это сказано в отчёте.
++
++## Проверка прототипа
++
++Headless Chromium (Playwright): 6 зёрен до финала, оба варианта уровня 2, ValueError на 12.5,
++NameError на кавычках, ширина 375 px без горизонтальной прокрутки, ошибок JS нет.
++
++## Начало diff
++
++```
++.gitignore: +!docs/research/  +!docs/research/**
++docs/research/2026-10-28-tsk1247-trainers/*: новые файлы
++```

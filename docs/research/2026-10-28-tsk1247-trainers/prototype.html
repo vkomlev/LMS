@@ -1,0 +1,690 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ты — интерпретатор</title>
+<meta name="description" content="Прототип тренажёра tsk-1247: кавычки, input и цикл while пошагово. Без сервера, без регистрации.">
+<style>
+:root {
+  --bg: #f6f7fb; --card: #ffffff; --ink: #1d2433; --muted: #5d6680; --line: #dfe3ee;
+  --accent: #3b5bdb; --accent-ink: #ffffff; --ok: #1f8a4c; --ok-bg: #e6f6ec; --bad: #c92a2a; --bad-bg: #fdecec;
+  --warn-bg: #fff6dd; --hl: #fff3b0; --console: #14161c; --console-ink: #d7e2ff; --console-dim: #8b95b3;
+  --chip-str: #e7f0ff; --chip-str-ink: #1c4fb8; --chip-int: #ecf8e9; --chip-int-ink: #2b7a1f;
+  --mascot: #4aa96c; --mascot-dark: #2d7a4a;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #11141b; --card: #1a1f2a; --ink: #e6e9f2; --muted: #9aa3bd; --line: #2c3342;
+    --accent: #7b93ff; --accent-ink: #0d1020; --ok: #5fd08c; --ok-bg: #16301f; --bad: #ff8a8a; --bad-bg: #3a1c1f;
+    --warn-bg: #3a3218; --hl: #4a4220; --console: #0a0b0f; --chip-str: #1d2b48; --chip-str-ink: #a9c3ff;
+    --chip-int: #1c3320; --chip-int-ink: #9fe39a;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #11141b; --card: #1a1f2a; --ink: #e6e9f2; --muted: #9aa3bd; --line: #2c3342;
+  --accent: #7b93ff; --accent-ink: #0d1020; --ok: #5fd08c; --ok-bg: #16301f; --bad: #ff8a8a; --bad-bg: #3a1c1f;
+  --warn-bg: #3a3218; --hl: #4a4220; --console: #0a0b0f; --chip-str: #1d2b48; --chip-str-ink: #a9c3ff;
+  --chip-int: #1c3320; --chip-int-ink: #9fe39a;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+.wrap { max-width: 1040px; margin: 0 auto; padding: 16px; }
+header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+h1 { font-size: 22px; margin: 0; }
+.sub { color: var(--muted); font-size: 14px; }
+.levels { display: flex; gap: 6px; }
+.lv { padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line); font-size: 13px; color: var(--muted); background: var(--card); }
+.lv.cur { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.lv.done { color: var(--ok); border-color: var(--ok); }
+.stars { font-size: 15px; color: var(--muted); }
+.grid { display: grid; grid-template-columns: 1.2fr 1fr; gap: 12px; }
+@media (max-width: 760px) { .grid { grid-template-columns: 1fr; } }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px; min-width: 0; }
+.card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 8px; }
+.code { font: 15px/1.6 ui-monospace, "Cascadia Code", Consolas, monospace; overflow-x: auto; }
+.ln { display: flex; gap: 8px; padding: 1px 6px; border-radius: 6px; white-space: pre; }
+.ln .no { color: var(--muted); width: 1.6em; text-align: right; flex: none; user-select: none; }
+.ln .arrow { width: 1em; flex: none; color: var(--accent); }
+.ln.cur { background: var(--hl); }
+.tok { border-radius: 4px; }
+.tok.q { cursor: pointer; padding: 0 2px; border-bottom: 2px dashed var(--accent); }
+.tok.q:hover, .tok.q:focus { background: var(--chip-str); outline: none; }
+.mem table { width: 100%; border-collapse: collapse; font-size: 15px; }
+.mem td, .mem th { padding: 6px 4px; border-bottom: 1px solid var(--line); text-align: left; }
+.mem th { font-size: 12px; color: var(--muted); font-weight: 500; }
+.mem .val { font-family: ui-monospace, Consolas, monospace; }
+.mem .empty { color: var(--muted); font-size: 14px; }
+.chip { font-size: 12px; padding: 1px 7px; border-radius: 999px; }
+.chip.str { background: var(--chip-str); color: var(--chip-str-ink); }
+.chip.int { background: var(--chip-int); color: var(--chip-int-ink); }
+.flash { animation: flash 0.9s ease; }
+@keyframes flash { 0% { background: var(--hl); } 100% { background: transparent; } }
+.console { background: var(--console); color: var(--console-ink); border-radius: 10px; padding: 10px 12px; font: 15px/1.5 ui-monospace, Consolas, monospace; min-height: 96px; margin-top: 12px; overflow-x: auto; white-space: pre-wrap; word-break: break-word; }
+.console .dim { color: var(--console-dim); }
+.console .err { color: #ff9b9b; }
+.console input { background: transparent; border: none; color: #fff; font: inherit; outline: none; width: 12ch; caret-color: #fff; }
+.cursor { display: inline-block; width: 9px; height: 1.1em; background: #fff; vertical-align: text-bottom; animation: blink 1s steps(1) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+.coach { display: flex; gap: 12px; align-items: flex-start; margin-top: 12px; }
+.mascot { flex: none; width: 64px; height: 64px; }
+.mascot.happy { animation: hop .5s ease; }
+.mascot.sad { animation: shake .45s ease; }
+@keyframes hop { 30% { transform: translateY(-10px); } 60% { transform: translateY(0); } }
+@keyframes shake { 20%, 60% { transform: translateX(-5px); } 40%, 80% { transform: translateX(5px); } }
+.bubble { flex: 1; min-width: 0; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
+.bubble.ok { background: var(--ok-bg); border-color: var(--ok); }
+.bubble.bad { background: var(--bad-bg); border-color: var(--bad); }
+.bubble .q { font-weight: 600; margin-bottom: 8px; }
+.opts { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+button { font: inherit; cursor: pointer; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--ink); padding: 8px 12px; text-align: left; }
+button:hover:not(:disabled) { border-color: var(--accent); }
+button:disabled { opacity: .45; cursor: default; }
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); text-align: center; font-weight: 600; }
+.row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; align-items: center; }
+input.ans { font: 15px ui-monospace, Consolas, monospace; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); color: var(--ink); min-width: 0; flex: 1 1 180px; }
+.why { margin-top: 8px; font-size: 15px; }
+.target { font-family: ui-monospace, Consolas, monospace; background: var(--warn-bg); padding: 2px 6px; border-radius: 6px; }
+.finish { text-align: center; }
+.share { margin: 12px auto; max-width: 420px; border: 2px solid var(--accent); border-radius: 14px; padding: 16px; }
+.share .big { font-size: 28px; font-weight: 700; }
+.mistakes { text-align: left; margin: 8px auto; max-width: 420px; font-size: 15px; }
+textarea.embed { width: 100%; font: 13px ui-monospace, Consolas, monospace; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--ink); padding: 8px; }
+details { margin-top: 16px; }
+details pre { font-size: 12px; max-height: 240px; overflow: auto; background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 8px; }
+.note { font-size: 13px; color: var(--muted); margin-top: 12px; }
+.theme { font-size: 13px; padding: 4px 10px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Ты — интерпретатор</h1>
+      <div class="sub">Тренажёр по Python: проживи программу шаг за шагом вместо компьютера</div>
+    </div>
+    <div class="row" style="margin:0">
+      <div class="levels" id="levels"></div>
+      <div class="stars" id="stars"></div>
+      <button class="theme" id="themeBtn" type="button" title="Сменить тему">Тема</button>
+    </div>
+  </header>
+
+  <div id="main"></div>
+
+  <details id="evDetails">
+    <summary>Что тренажёр отправил бы в LMS (демо, данные никуда не уходят)</summary>
+    <pre id="events"></pre>
+  </details>
+  <p class="note">Прототип tsk-1247 · один HTML-файл без сервера · сценарии и подборка значений меняются при каждом запуске (зерно <span id="seedOut"></span>).</p>
+</div>
+
+<script>
+"use strict";
+/* ---------- случайность с зерном: «вызов другу» повторяет тот же вариант ---------- */
+const params = new URLSearchParams(location.search);
+const seedParam = params.get("seed");
+const SEED = seedParam !== null && /^\d+$/.test(seedParam) ? Number(seedParam) : Math.floor(Math.random() * 1e6);
+document.getElementById("seedOut").textContent = SEED;
+function mulberry32(a) { return function () { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+const rng = mulberry32(SEED);
+const pick = (arr) => arr[Math.floor(rng() * arr.length)];
+const randint = (a, b) => a + Math.floor(rng() * (b - a + 1));
+
+/* ---------- журнал событий (то, что ушло бы в learning_events) ---------- */
+const events = [];
+let stepStarted = performance.now();
+function logEvent(e) {
+  const now = performance.now();
+  events.push(Object.assign({ t: new Date().toISOString(), ms: Math.round(now - stepStarted) }, e));
+  document.getElementById("events").textContent = JSON.stringify(events, null, 1);
+}
+
+/* ---------- общий счёт ---------- */
+const MISC = {
+  quotes: "Кавычки: текст или имя",
+  input_prompt: "input: подсказка ≠ ответ",
+  input_wait: "input ждёт человека",
+  types: "Типы: input даёт текст",
+  print_args: "print: пробел между аргументами",
+  loop_order: "Цикл: порядок строк",
+  assign_eq: "= (положить) и == (сравнить)",
+  loop_cond: "Цикл: условие и границы",
+  loop_after: "Цикл: что после цикла",
+};
+const mistakes = {}; // misconception → count
+const levelMistakes = [0, 0, 0];
+let levelIdx = 0;
+const startTime = Date.now();
+function addMistake(code) { mistakes[code] = (mistakes[code] || 0) + 1; levelMistakes[levelIdx]++; }
+const starsFor = (m) => (m === 0 ? 3 : m <= 2 ? 2 : 1);
+
+/* ---------- маскот (SVG) ---------- */
+function mascotSVG(mood) {
+  const mouth = mood === "sad" ? "M22 44 Q32 36 42 44" : mood === "think" ? "M23 42 L41 42" : "M22 40 Q32 50 42 40";
+  return `<svg class="mascot ${mood}" viewBox="0 0 64 64" aria-hidden="true">
+    <ellipse cx="32" cy="36" rx="26" ry="22" fill="var(--mascot)"/>
+    <ellipse cx="32" cy="42" rx="17" ry="11" fill="#bfe8cd" opacity=".55"/>
+    <circle cx="22" cy="28" r="7" fill="#fff"/><circle cx="42" cy="28" r="7" fill="#fff"/>
+    <circle cx="${mood === "think" ? 25 : 23}" cy="29" r="3.2" fill="#1d2433"/><circle cx="${mood === "think" ? 45 : 43}" cy="29" r="3.2" fill="#1d2433"/>
+    <path d="${mouth}" stroke="var(--mascot-dark)" stroke-width="3" fill="none" stroke-linecap="round"/>
+    <path d="M32 58 q4 5 0 6 q-4-1 0-6" fill="#e05a5a"/>
+  </svg>`;
+}
+
+/* ---------- утилиты отрисовки ---------- */
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const norm = (s) => String(s).trim().replace(/\s+/g, " ");
+function typeChip(t) { return t === "int" ? '<span class="chip int">int · число</span>' : '<span class="chip str">str · текст</span>'; }
+function showVal(v) { return v.t === "str" ? `'${esc(v.v)}'` : esc(v.v); }
+
+function renderHeader() {
+  const names = ["1 · Кавычки", "2 · Программа ждёт", "3 · Цикл"];
+  document.getElementById("levels").innerHTML = names
+    .map((n, i) => `<span class="lv ${i < levelIdx ? "done" : i === levelIdx ? "cur" : ""}">${n}</span>`).join("");
+  const got = levelMistakes.slice(0, levelIdx).reduce((s, m) => s + starsFor(m), 0);
+  document.getElementById("stars").textContent = `★ ${got}`;
+}
+
+/* =====================================================================
+   УРОВЕНЬ 1. Кавычки. Ученик кликает по словам, чтобы поставить/снять
+   кавычки, и запускает программу. Значения подбираются случайно.
+   ===================================================================== */
+function quoteItems() {
+  const name = pick(["Оля", "Тимур", "Вика", "Артём", "Дана"]);
+  const city = pick(["Казань", "Пермь", "Омск", "Тула"]);
+  const age = randint(11, 17);
+  return [
+    { // имя в переменной
+      intro: `Сделай так, чтобы программа напечатала: <span class="target">Привет ${esc(name)}</span>`,
+      lines: [[{ v: "name" }, { s: " = " }, { q: name }], [{ s: "print(" }, { q: "Привет" }, { s: ", " }, { q: "name" }, { s: ")" }]],
+      target: `Привет ${name}`,
+    },
+    { // ловушка: нужно напечатать само слово city
+      intro: `А теперь напечатай само <b>слово</b> <span class="target">city</span> — не город`,
+      lines: [[{ v: "city" }, { s: " = " }, { q: city }], [{ s: "print(" }, { q: "city" }, { s: ")" }]],
+      target: "city",
+    },
+    { // число: кавычки не нужны, но и не ломают вывод
+      intro: `Нужно: <span class="target">Мне ${age}</span>`,
+      lines: [[{ v: "age" }, { s: " = " }, { q: String(age) }], [{ s: "print(" }, { q: "Мне" }, { s: ", " }, { q: "age" }, { s: ")" }]],
+      target: `Мне ${age}`,
+    },
+  ];
+}
+
+/* Мини-вычислитель ровно для этих двух форм строк: `имя = значение` и `print(арг, ...)`.
+   Это не интерпретатор Python — он знает только то, что задано в сценарии. */
+function runQuoteProgram(lines, quoted) {
+  const vars = {};
+  const out = [];
+  function evalTok(tok, key) {
+    const text = tok.q;
+    if (quoted.has(key)) return { ok: true, v: { v: text, t: "str" } };
+    if (/^\d+$/.test(text)) return { ok: true, v: { v: Number(text), t: "int" } };
+    if (text in vars) return { ok: true, v: vars[text] };
+    return { ok: false, err: `NameError: name '${text}' is not defined`, name: text };
+  }
+  for (let li = 0; li < lines.length; li++) {
+    const line = lines[li];
+    if (line[0].v) { // присваивание
+      const r = evalTok(line[2], `${li}:2`);
+      if (!r.ok) return { out, err: r.err, errName: r.name, line: li };
+      vars[line[0].v] = r.v;
+    } else { // print
+      const parts = [];
+      for (let ti = 0; ti < line.length; ti++) {
+        if (!line[ti].q) continue;
+        const r = evalTok(line[ti], `${li}:${ti}`);
+        if (!r.ok) return { out, err: r.err, errName: r.name, line: li };
+        parts.push(String(r.v.v));
+      }
+      out.push(parts.join(" "));
+    }
+  }
+  return { out, vars };
+}
+
+function level1() {
+  const items = quoteItems();
+  let k = 0;
+  let quoted = new Set();
+  let solved = false;
+  function codeHTML(item) {
+    return item.lines.map((line, li) => {
+      const toks = line.map((t, ti) => {
+        if (t.s) return esc(t.s);
+        if (t.v) return esc(t.v);
+        const key = `${li}:${ti}`;
+        const on = quoted.has(key);
+        return `<span class="tok q" tabindex="0" role="button" data-key="${key}" aria-label="поставить или снять кавычки">${on ? '"' : ""}${esc(t.q)}${on ? '"' : ""}</span>`;
+      }).join("");
+      return `<div class="ln"><span class="no">${li + 1}</span><span class="arrow"></span><span>${toks}</span></div>`;
+    }).join("");
+  }
+  function draw(feedback) {
+    const item = items[k];
+    const fb = feedback || { cls: "", mood: "happy", html: `${item.intro}<div class="why">Нажимай на подчёркнутые слова — кавычки появятся или исчезнут. Потом жми «Запустить».</div>` };
+    document.getElementById("main").innerHTML = `
+      <div class="grid">
+        <div class="card"><h2>Код · задание ${k + 1} из ${items.length}</h2><div class="code" id="code">${codeHTML(item)}</div>
+          <div class="console" id="console"><span class="dim">&gt;&gt;&gt; здесь появится вывод</span></div></div>
+        <div>
+          <div class="coach">${mascotSVG(fb.mood)}<div class="bubble ${fb.cls}">${fb.html}
+            <div class="row">${solved ? '<button class="primary" id="next">Дальше →</button>' : '<button class="primary" id="run">▶ Запустить</button>'}</div></div></div>
+        </div>
+      </div>`;
+    document.querySelectorAll(".tok.q").forEach((el) => {
+      const toggle = () => { if (solved) return; const key = el.dataset.key; quoted.has(key) ? quoted.delete(key) : quoted.add(key); draw(); };
+      el.addEventListener("click", toggle);
+      el.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } });
+    });
+    const run = document.getElementById("run");
+    if (run) run.onclick = () => check();
+    const next = document.getElementById("next");
+    if (next) next.onclick = () => { k++; quoted = new Set(); solved = false; stepStarted = performance.now(); if (k < items.length) draw(); else finishLevel(); };
+  }
+  function consoleShow(res) {
+    const c = document.getElementById("console");
+    let h = res.out.map((o) => esc(o)).join("<br>");
+    if (res.err) h += (h ? "<br>" : "") + `<span class="err">Traceback (most recent call last):<br>  File "main.py", line ${res.line + 1}, in &lt;module&gt;<br>${esc(res.err)}</span>`;
+    c.innerHTML = h || '<span class="dim">(ничего не напечатано)</span>';
+  }
+  function check() {
+    const item = items[k];
+    const res = runQuoteProgram(item.lines, quoted);
+    const got = res.out.join("\n");
+    const ok = !res.err && norm(got) === norm(item.target);
+    let html, misc = null;
+    if (ok) {
+      solved = true;
+      html = "<b>Работает!</b> ";
+      const ageTok = k === 2 && quoted.has("0:2");
+      if (ageTok) html += `Заметь: вывод тот же, но в <code>age</code> теперь лежит <b>текст</b> "${esc(item.lines[0][2].q)}", а не число. Прибавить к нему 1 уже не выйдет — числам кавычки не нужны.`;
+      else if (k === 1) html += "Без кавычек <code>city</code> — это имя ящика, где лежит город. В кавычках — просто буквы c-i-t-y.";
+      else html += "В кавычках — текст как есть. Без кавычек — имя переменной, Python достаёт из неё значение.";
+    } else if (res.err) {
+      misc = "quotes";
+      html = `<b>Python не знает имени <code>${esc(res.errName)}</code>.</b> Без кавычек слово — это имя переменной, а такой переменной никто не создавал. Если нужен сам текст — возьми его в кавычки.`;
+    } else {
+      misc = "quotes";
+      const wanted = norm(item.target), shown = norm(got);
+      html = `<b>Напечаталось <span class="target">${esc(shown)}</span>, а нужно <span class="target">${esc(wanted)}</span>.</b> `;
+      const quotedVarInPrint = item.lines[1].some((t, ti) => t.q && t.q === item.lines[0][0].v && quoted.has(`1:${ti}`));
+      html += quotedVarInPrint && k !== 1
+        ? `Ты взял имя переменной в кавычки — и Python напечатал само слово, а не то, что лежит в переменной.`
+        : `Посмотри на каждое слово в <code>print</code>: это текст как есть или имя ящика с данными?`;
+    }
+    if (misc) addMistake(misc);
+    logEvent({ level: 1, item: k + 1, kind: "quotes_run", ok, misconception: misc, quoted: [...quoted] });
+    consoleShow(res);
+    // перерисовываем только пузырь, консоль оставляем
+    const bubbleHost = document.querySelector(".coach");
+    bubbleHost.outerHTML = `<div class="coach">${mascotSVG(ok ? "happy" : "sad")}<div class="bubble ${ok ? "ok" : "bad"}">${html}
+      <div class="row">${ok ? '<button class="primary" id="next">Дальше →</button>' : '<button class="primary" id="run">▶ Запустить ещё раз</button>'}</div></div></div>`;
+    if (ok) {
+      document.getElementById("next").onclick = () => { k++; quoted = new Set(); solved = false; stepStarted = performance.now(); if (k < items.length) draw(); else finishLevel(); };
+      document.querySelectorAll(".tok.q").forEach((el) => el.replaceWith(Object.assign(document.createElement("span"), { textContent: el.textContent })));
+    } else {
+      document.getElementById("run").onclick = () => check();
+    }
+  }
+  draw();
+}
+
+/* =====================================================================
+   УРОВНИ 2–3. Пошаговый движок: код + память + консоль + вопрос перед
+   каждым шагом. Сценарий — список шагов; шаг описан данными и короткими
+   функциями-диагнозами (какую ошибку выдаёт этот неверный ответ).
+   ===================================================================== */
+function stepper(scn) {
+  const st = { vars: {}, order: [], console: [], waiting: null, flash: null };
+  let i = 0;
+  let locked = false;
+  const steps = scn.steps;
+
+  /* Варианты ответа перемешиваются один раз на шаг: верный не стоит всегда на одном месте. */
+  const optCache = new Map();
+  function stepOpts(step) {
+    if (!optCache.has(step.id)) {
+      const raw = typeof step.opts === "function" ? step.opts(st) : step.opts;
+      const arr = raw.slice();
+      for (let j = arr.length - 1; j > 0; j--) { const r = Math.floor(rng() * (j + 1)); [arr[j], arr[r]] = [arr[r], arr[j]]; }
+      optCache.set(step.id, arr);
+    }
+    return optCache.get(step.id);
+  }
+  function setVar(name, v, t) { if (!(name in st.vars)) st.order.push(name); st.vars[name] = { v, t }; st.flash = name; }
+  const api = { st, setVar, print: (s) => st.console.push({ s }), err: (s) => st.console.push({ s, err: true }) };
+
+  function draw(fb) {
+    const step = steps[i];
+    const line = typeof step.line === "function" ? step.line(st) : step.line;
+    const codeHTML = scn.code.map((l, li) => `<div class="ln ${li + 1 === line ? "cur" : ""}"><span class="no">${li + 1}</span><span class="arrow">${li + 1 === line ? "➜" : ""}</span><span>${esc(l)}</span></div>`).join("");
+    const memHTML = st.order.length
+      ? `<table><tr><th>имя</th><th>значение</th><th>тип</th></tr>${st.order.map((n) => `<tr class="${st.flash === n ? "flash" : ""}"><td class="val">${esc(n)}</td><td class="val">${showVal(st.vars[n])}</td><td>${typeChip(st.vars[n].t)}</td></tr>`).join("")}</table>`
+      : '<div class="empty">Пока пусто: переменные появятся, когда программа их создаст.</div>';
+    let con = st.console.map((c) => (c.err ? `<span class="err">${esc(c.s)}</span>` : esc(c.s))).join("<br>");
+    if (st.waiting !== null) con += (con ? "<br>" : "") + `${esc(st.waiting)}<input id="conIn" autocomplete="off" aria-label="ввод в консоль"><span class="cursor"></span>`;
+    st.flash = null;
+
+    const q = typeof step.q === "function" ? step.q(st) : step.q;
+    let body = `<div class="q">${q}</div>`;
+    if (fb) body += `<div class="why">${fb.html}</div>`;
+    if (fb && fb.ok) body += `<div class="row"><button class="primary" id="next">${i + 1 < steps.length ? "Дальше →" : "Завершить уровень →"}</button></div>`;
+    else if (step.kind === "choice") {
+      const opts = stepOpts(step);
+      body += `<div class="opts">${opts.map((o, oi) => `<button data-oi="${oi}" ${fb && fb.tried && fb.tried.has(oi) ? "disabled" : ""}>${o.t}</button>`).join("")}</div>`;
+    } else if (step.kind === "value") {
+      body += `<div class="row"><input class="ans" id="ans" autocomplete="off" placeholder="${esc(step.ph || "твой ответ")}"><button class="primary" id="go">Проверить</button></div>`;
+    }
+    document.getElementById("main").innerHTML = `
+      <div class="grid">
+        <div class="card"><h2>${esc(scn.title)}</h2><div class="code">${codeHTML}</div>
+          <div class="console" aria-live="polite">${con || '<span class="dim">консоль пуста</span>'}</div></div>
+        <div>
+          <div class="card mem"><h2>Память программы</h2>${memHTML}</div>
+          <div class="coach">${mascotSVG(fb ? (fb.ok ? "happy" : fb.neutral ? "think" : "sad") : "think")}<div class="bubble ${fb ? (fb.ok ? "ok" : fb.neutral ? "" : "bad") : ""}">${body}</div></div>
+        </div>
+      </div>`;
+    const next = document.getElementById("next");
+    if (next) { next.onclick = advance; next.focus(); }
+    document.querySelectorAll("[data-oi]").forEach((b) => (b.onclick = () => answerChoice(Number(b.dataset.oi), fb)));
+    const go = document.getElementById("go");
+    if (go) {
+      const ans = document.getElementById("ans");
+      go.onclick = () => answerValue(ans.value);
+      ans.addEventListener("keydown", (e) => { if (e.key === "Enter") answerValue(ans.value); });
+      ans.focus();
+    }
+    const conIn = document.getElementById("conIn");
+    if (conIn && step.kind === "console") {
+      conIn.focus();
+      conIn.addEventListener("keydown", (e) => { if (e.key === "Enter") answerConsole(conIn.value); });
+    }
+  }
+  function good(html) { draw({ ok: true, html }); }
+  function answerChoice(oi, prevFb) {
+    if (locked) return;
+    const step = steps[i];
+    const o = stepOpts(step)[oi];
+    const tried = prevFb && prevFb.tried ? prevFb.tried : new Set();
+    logEvent({ level: levelIdx + 1, step: step.id, kind: "choice", answer: o.t.replace(/<[^>]+>/g, ""), ok: !!o.ok, misconception: o.ok ? null : o.m || null });
+    if (o.ok) { if (step.after) step.after(api, o); good(o.why || "Верно!"); return; }
+    addMistake(o.m || step.m);
+    tried.add(oi);
+    draw({ ok: false, html: o.why, tried });
+  }
+  function answerValue(raw) {
+    const step = steps[i];
+    const res = step.check(norm(raw), st);
+    logEvent({ level: levelIdx + 1, step: step.id, kind: "value", answer: raw, ok: res.ok, misconception: res.ok ? null : res.m || step.m || null });
+    if (res.ok) { if (step.after) step.after(api, raw); good(res.why || "Верно!"); return; }
+    addMistake(res.m || step.m);
+    draw({ ok: false, html: res.why });
+  }
+  function answerConsole(raw) {
+    const step = steps[i];
+    const res = step.check(raw.trim(), st);
+    logEvent({ level: levelIdx + 1, step: step.id, kind: "console", answer: raw, ok: res.ok, misconception: res.ok ? null : res.m || null });
+    if (res.ok) { st.console.push({ s: st.waiting + raw.trim() }); st.waiting = null; if (step.after) step.after(api, raw.trim()); good(res.why); return; }
+    if (res.crash) { // программа упала по-настоящему (так сделал бы Python): показываем и запускаем строку заново
+      st.console.push({ s: st.waiting + raw.trim() });
+      res.crash.forEach((s) => api.err(s));
+      st.console.push({ s: "— настоящий Python начал бы программу сначала; в тренажёре продолжаем с этой строки —" });
+    }
+    if (res.m) addMistake(res.m);
+    draw({ ok: false, neutral: !res.m, html: res.why });
+  }
+  function advance() {
+    i++;
+    stepStarted = performance.now();
+    if (i >= steps.length) { finishLevel(); return; }
+    if (steps[i].before) steps[i].before(api);
+    draw();
+  }
+  if (steps[0].before) steps[0].before(api);
+  draw();
+}
+
+/* ---------- сценарий уровня 2: input / int / типы; вариант выбирается случайно ---------- */
+function scenarioInput() {
+  const withInt = rng() < 0.5;
+  const code = [
+    'name = input("Как тебя зовут? ")',
+    withInt ? 'age = int(input("Сколько тебе лет? "))' : 'age = input("Сколько тебе лет? ")',
+    'print("Привет,", name)',
+    'print("Через год тебе", age + 1)',
+  ];
+  const steps = [
+    { id: "l1_predict", line: 1, kind: "choice", m: "input_prompt",
+      q: "Что сделает строка 1, когда программа до неё дойдёт?",
+      opts: [
+        { t: "Сохранит в <code>name</code> текст «Как тебя зовут?»", m: "input_prompt", why: "В скобках у <code>input</code> — <b>подсказка для человека</b>, а не ответ. Ответ человек напечатает сам — он и попадёт в <code>name</code>." },
+        { t: "Спросит и сразу перейдёт к строке 2", m: "input_wait", why: "<code>input</code> <b>останавливает</b> программу, пока человек не нажмёт Enter. Это не зависание — программа ждёт тебя." },
+        { t: "Напишет «Как тебя зовут?» и остановится — будет ждать ответа", ok: true, why: "Точно. Смотри в консоль: курсор мигает — программа ждёт." },
+      ],
+      after: (api) => { api.st.waiting = "Как тебя зовут? "; },
+    },
+    { id: "l1_type", line: 1, kind: "console",
+      q: "Теперь ты — пользователь. Напечатай в консоли своё имя (можно выдуманное) и нажми Enter.",
+      check: (v) => {
+        if (!v) return { ok: false, why: "Программа всё ещё ждёт: напечатай имя прямо в чёрной консоли и нажми Enter." };
+        if (/^["'].*["']$/.test(v)) return { ok: false, m: "quotes", why: "Пользователь кавычки не печатает — это пишут только в коде. <code>input</code> сам сделает из ответа текст. Напечатай имя без кавычек." };
+        return { ok: true, why: `Программа проснулась и положила то, что ты напечатал, в <code>name</code>. Загляни в «Память».` };
+      },
+      after: (api, v) => api.setVar("name", v, "str"),
+    },
+    { id: "l1_typeof", line: 1, kind: "choice", m: "types",
+      q: "Какого типа значение лежит в <code>name</code>?",
+      opts: [
+        { t: "str — текст", ok: true, why: "Да. <code>input</code> <b>всегда</b> отдаёт текст — даже если напечатать цифры." },
+        { t: "Зависит от того, что напечатали: цифры станут числом", m: "types", why: "Нет — <code>input</code> всегда отдаёт текст. Напечатаешь 123 — получишь строку '123'. Чтобы получилось число, нужен <code>int()</code>." },
+        { t: "int — число", m: "types", why: "<code>input</code> всегда отдаёт текст — что бы ни напечатал человек. Числом значение становится только через <code>int()</code>." },
+      ],
+    },
+    { id: "l2_type", line: 2, kind: "console",
+      before: (api) => { api.st.waiting = "Сколько тебе лет? "; },
+      q: "Строка 2 снова ждёт. Напечатай возраст и нажми Enter. (Если любопытно — попробуй сначала 12.5 и посмотри, что будет.)",
+      check: (v) => {
+        if (!v) return { ok: false, why: "Напечатай число в консоли и нажми Enter." };
+        if (withInt && !/^-?\d+$/.test(v)) {
+          return { ok: false, crash: ["Traceback (most recent call last):", '  File "main.py", line 2, in <module>', `ValueError: invalid literal for int() with base 10: '${v}'`],
+            why: `Вот что сделал бы настоящий Python: <code>int()</code> умеет превращать в целое только текст из цифр. «${esc(v)}» — не целое, поэтому <b>ValueError</b>. Это не твоя ошибка — так ведёт себя программа. Напечатай целое число.` };
+        }
+        if (!withInt && !/^-?\d+$/.test(v)) return { ok: false, why: "Здесь программа примет любой текст, но для следующего шага нужен возраст целым числом. Напечатай, например, 14." };
+        return { ok: true, why: "Принято. Что теперь лежит в <code>age</code>? Сначала подумай, потом жми «Дальше»." };
+      },
+      after: (api, v) => { api.st.pendingAge = withInt ? String(Number(v)) : v; },
+    },
+    { id: "l2_typeof", line: 2, kind: "choice", m: "types",
+      q: (st) => `Ты напечатал ${esc(st.pendingAge)}. Что окажется в <code>age</code>?`,
+      opts: (st) => {
+        const v = st.pendingAge;
+        const asStr = { t: `'${esc(v)}' — текст (str)`, ok: !withInt, m: "types",
+          why: withInt ? `Без <code>int()</code> было бы так. Но в строке 2 есть <code>int(...)</code> — он превращает текст '${esc(v)}' в число ${esc(v)}.` : `Верно: <code>int()</code> в этой программе нет, значит возраст так и остался текстом '${esc(v)}'.` };
+        const asInt = { t: `${esc(v)} — число (int)`, ok: withInt, m: "types",
+          why: withInt ? "Верно: <code>input</code> дал текст, а <code>int()</code> превратил его в число." : `Посмотри на строку 2: <code>int()</code> там нет. А <code>input</code> всегда отдаёт текст — значит, в <code>age</code> лежит '${esc(v)}'.` };
+        const asPrompt = { t: `'Сколько тебе лет? ${esc(v)}'`, m: "input_prompt", why: "Подсказка в скобках только показывается человеку и в переменную не попадает. В <code>age</code> — только то, что напечатал человек." };
+        return [asPrompt, asInt, asStr];
+      },
+      after: (api) => api.setVar("age", withInt ? Number(api.st.pendingAge) : api.st.pendingAge, withInt ? "int" : "str"),
+    },
+    { id: "l3_output", line: 3, kind: "value", ph: "что появится в консоли",
+      q: "Что именно напечатает строка 3? Набери так, как будет в консоли.",
+      check: (v, st) => {
+        const name = st.vars.name.v;
+        const want = `Привет, ${name}`;
+        if (v === want) return { ok: true, why: "Точно. <code>print</code> печатает аргументы через пробел — поэтому между запятой и именем пробел." };
+        if (v.toLowerCase() === "привет, name") return { ok: false, m: "quotes", why: "<code>name</code> без кавычек — это имя переменной. Python достанет из неё значение, а не напечатает слово name." };
+        if (v === `Привет,${name}`) return { ok: false, m: "print_args", why: "Почти! Но <code>print</code> сам ставит <b>пробел</b> между аргументами." };
+        if (/["']/.test(v)) return { ok: false, m: "quotes", why: "В консоли кавычек не будет: они только показывают Python, где текст в коде." };
+        return { ok: false, m: "print_args", why: `В <code>print</code> два аргумента: текст "Привет," и значение из <code>name</code>. Загляни в «Память» — что там лежит?` };
+      },
+      after: (api) => api.print(`Привет, ${api.st.vars.name.v}`),
+    },
+  ];
+  if (withInt) {
+    steps.push({ id: "l4_output", line: 4, kind: "value", ph: "что появится в консоли",
+      q: "И последняя строка: что напечатает строка 4?",
+      check: (v, st) => {
+        const a = st.vars.age.v;
+        if (v === `Через год тебе ${a + 1}`) return { ok: true, why: "Да! <code>age</code> — число, значит <code>+</code> складывает." };
+        if (v === `Через год тебе ${a}1`) return { ok: false, m: "types", why: `Склеилось бы, если бы <code>age</code> был текстом. Но благодаря <code>int()</code> в строке 2 там число ${a} — и <code>+</code> складывает.` };
+        if (/age/.test(v)) return { ok: false, m: "quotes", why: "<code>age + 1</code> стоит без кавычек — Python посчитает выражение, а не напечатает его буквами." };
+        return { ok: false, m: "types", why: "Посмотри в «Память»: что в <code>age</code> и какого оно типа? Что сделает <code>+ 1</code>?" };
+      },
+      after: (api) => api.print(`Через год тебе ${api.st.vars.age.v + 1}`),
+    });
+  } else {
+    steps.push({ id: "l4_predict", line: 4, kind: "choice", m: "types",
+      q: "Что произойдёт на строке 4?",
+      opts: (st) => {
+        const a = st.vars.age.v;
+        return [
+          { t: `Напечатает «Через год тебе ${Number(a) + 1}»`, m: "types", why: `Так было бы, если бы в <code>age</code> лежало число. Но там текст '${esc(a)}' (смотри тип в «Памяти»).` },
+          { t: `Напечатает «Через год тебе ${esc(a)}1»`, m: "types", why: "Склеить текст с текстом можно, но здесь к тексту прибавляют <b>число</b> 1. Python так не умеет." },
+          { t: "Программа упадёт с ошибкой", ok: true, why: "Именно: <b>TypeError</b> — текст и число не складываются. Смотри консоль." },
+        ];
+      },
+      after: (api) => { api.err("Traceback (most recent call last):"); api.err('  File "main.py", line 4, in <module>'); api.err('TypeError: can only concatenate str (not "int") to str'); },
+    });
+    steps.push({ id: "l4_fix", line: 2, kind: "choice", m: "types",
+      q: "Почини программу одной правкой. Какую строку 2 поставить?",
+      opts: [
+        { t: '<code>age = input(int("Сколько тебе лет? "))</code>', m: "types", why: "<code>int()</code> здесь пытается превратить в число саму подсказку — а это не цифры. Превращать надо <b>ответ</b> человека." },
+        { t: '<code>age = int(input("Сколько тебе лет? "))</code>', ok: true, why: "Верно: сначала <code>input</code> получает текст, потом <code>int()</code> делает из него число. Теперь <code>age + 1</code> сложится." },
+        { t: '<code>age = \'input("Сколько тебе лет? ")\'</code>', m: "quotes", why: "В кавычках всё это станет просто текстом — <code>input</code> даже не вызовется, а в <code>age</code> ляжет строка из букв." },
+      ],
+    });
+  }
+  return { title: withInt ? "Код · вариант А" : "Код · вариант Б", code, steps };
+}
+
+/* ---------- сценарий уровня 3: while с накоплением суммы; границы случайные ---------- */
+function scenarioLoop() {
+  const i0 = pick([1, 2]);
+  const n = i0 + randint(2, 3); // 3–4 витка
+  const code = [`n = ${n}`, "s = 0", `i = ${i0}`, "while i <= n:", "    s = s + i", "    i = i + 1", "print(s)"];
+  const steps = [];
+  steps.push({ id: "init", line: 3, kind: "choice", m: "loop_order",
+    before: (api) => { api.setVar("n", n, "int"); api.setVar("s", 0, "int"); },
+    q: `Строки 1 и 2 уже выполнены (смотри «Память»). Что сделает строка 3?`,
+    opts: [
+      { t: `Создаст переменную <code>i</code> со значением ${i0}`, ok: true, why: "Да. Теперь у программы три переменные." },
+      { t: `Проверит, равно ли <code>i</code> числу ${i0}`, m: "assign_eq", why: "Один знак <code>=</code> — это <b>присваивание</b>: положить значение в ящик. Сравнение пишется двумя: <code>==</code>." },
+    ],
+    after: (api) => api.setVar("i", i0, "int"),
+  });
+  let s = 0;
+  for (let i = i0; ; i++) {
+    const cond = i <= n;
+    const iNow = i, sNow = s;
+    steps.push({ id: `cond_i${iNow}`, line: 4, kind: "choice", m: "loop_cond",
+      q: `Проверка условия: <code>i &lt;= n</code>. Сейчас <code>i</code> = ${iNow}, <code>n</code> = ${n}. Условие верно?`,
+      opts: [
+        { t: "Да — заходим внутрь цикла", ok: cond, m: "loop_cond", why: cond ? `${iNow} &lt;= ${n} — верно, значит выполняем строки 5 и 6.` : `${iNow} &lt;= ${n} — <b>неверно</b>: ${iNow} больше ${n}. Цикл заканчивается.` },
+        { t: "Нет — цикл заканчивается", ok: !cond, m: "loop_cond", why: !cond ? `Верно: ${iNow} больше ${n}, программа идёт к строке 7.` : (iNow === n ? `<code>&lt;=</code> значит «меньше <b>или равно</b>». ${iNow} равно ${n} — условие верно.` : `${iNow} меньше ${n} — условие верно, цикл продолжается.`) },
+      ],
+    });
+    if (!cond) break;
+    const sNew = sNow + iNow;
+    steps.push({ id: `s_i${iNow}`, line: 5, kind: "value", ph: "новое значение s", m: "loop_order",
+      q: `Строка 5: <code>s = s + i</code>. Каким станет <code>s</code>?`,
+      check: (v) => {
+        const x = Number(v);
+        if (v === "" || Number.isNaN(x)) return { ok: false, why: "Введи число." };
+        if (x === sNew) return { ok: true, why: `${sNow} + ${iNow} = ${sNew}. Старое значение <code>s</code> заменилось новым.` };
+        if (x === sNow + iNow + 1) return { ok: false, m: "loop_order", why: `Похоже, ты взял <code>i</code> уже увеличенным. Но строка 6 ещё не выполнялась — сейчас <code>i</code> = ${iNow}. Строки идут строго сверху вниз.` };
+        if (x === iNow) return { ok: false, m: "loop_order", why: `<code>s = s + i</code> — к <b>старому</b> s (${sNow}) прибавляем i, а не просто кладём i.` };
+        return { ok: false, m: "loop_order", why: `Подставь значения из «Памяти»: s = ${sNow}, i = ${iNow}. Сколько будет s + i?` };
+      },
+      after: (api) => api.setVar("s", sNew, "int"),
+    });
+    steps.push({ id: `i_i${iNow}`, line: 6, kind: "value", ph: "новое значение i", m: "loop_order",
+      q: `Строка 6: <code>i = i + 1</code>. Каким станет <code>i</code>?`,
+      check: (v) => {
+        const x = Number(v);
+        if (v === "" || Number.isNaN(x)) return { ok: false, why: "Введи число." };
+        if (x === iNow + 1) return { ok: true, why: `Да, ${iNow + 1}. Теперь программа вернётся к строке 4 — к проверке условия.` };
+        if (x === iNow) return { ok: false, m: "loop_order", why: "Эта строка как раз меняет <code>i</code>: берёт старое значение и прибавляет 1." };
+        return { ok: false, m: "loop_order", why: `Старое i = ${iNow}. Прибавь 1.` };
+      },
+      after: (api) => api.setVar("i", iNow + 1, "int"),
+    });
+    s = sNew;
+  }
+  const total = s;
+  steps.push({ id: "out", line: 7, kind: "value", ph: "что напечатает программа", m: "loop_after",
+    q: "Строка 7 стоит без отступа — она после цикла. Что напечатает программа?",
+    check: (v) => {
+      const lines = v.split(/[\s,]+/).filter(Boolean);
+      if (Number(v) === total) return { ok: true, why: `Да: ${total}. <code>print</code> без отступа выполняется <b>один раз</b>, после цикла.` };
+      if (lines.length > 1) return { ok: false, m: "loop_after", why: "<code>print(s)</code> не внутри цикла (нет отступа) — он выполнится один раз, когда цикл уже закончится." };
+      return { ok: false, m: "loop_after", why: "Посмотри в «Память»: что лежит в <code>s</code> сейчас, когда цикл закончился?" };
+    },
+    after: (api) => api.print(String(total)),
+  });
+  return { title: `Код · цикл while (n = ${n})`, code, steps };
+}
+
+/* ---------- переходы между уровнями и финал ---------- */
+function finishLevel() {
+  logEvent({ level: levelIdx + 1, kind: "level_done", mistakes: levelMistakes[levelIdx], stars: starsFor(levelMistakes[levelIdx]) });
+  levelIdx++;
+  renderHeader();
+  stepStarted = performance.now();
+  if (levelIdx === 1) stepper(scenarioInput());
+  else if (levelIdx === 2) stepper(scenarioLoop());
+  else finish();
+}
+
+function finish() {
+  const stars = levelMistakes.reduce((s, m) => s + starsFor(m), 0);
+  const mins = Math.max(1, Math.round((Date.now() - startTime) / 60000));
+  const list = Object.keys(mistakes).sort((a, b) => mistakes[b] - mistakes[a]);
+  const challenge = `${location.origin === "null" ? "" : location.origin}${location.pathname}?seed=${SEED}`;
+  const embed = `<iframe src="https://learn.victor-komlev.ru/embed/trainer/interpreter?seed=${SEED}" width="100%" height="640" style="border:0" loading="lazy" title="Тренажёр «Ты — интерпретатор»"></iframe>`;
+  document.getElementById("main").innerHTML = `
+    <div class="card finish">
+      ${mascotSVG("happy")}
+      <h2 style="font-size:18px;text-transform:none;color:var(--ink)">Ты прожил три программы вместо компьютера</h2>
+      <div class="share">
+        <div class="big">★ ${stars} из 9</div>
+        <div>«Ты — интерпретатор» · ${mins} мин · ошибок: ${levelMistakes.reduce((a, b) => a + b, 0)}</div>
+        <div class="sub">Карточку можно отправить другу: у него будет тот же вариант задач</div>
+      </div>
+      <div class="mistakes"><b>Где ты споткнулся:</b><br>${list.length ? list.map((c) => `• ${MISC[c]} — ${mistakes[c]}`).join("<br>") : "Нигде — чисто!"}
+        ${list.length ? `<div class="sub" style="margin-top:6px">Это и есть твоя «карта ошибок». В кабинете её увидел бы преподаватель — и следующий тренажёр начался бы с этой темы.</div>` : ""}</div>
+      <div class="row" style="justify-content:center">
+        <button class="primary" id="copyCh">Вызвать друга (скопировать ссылку)</button>
+        <button id="again">Пройти другой вариант</button>
+      </div>
+      <div class="row" style="justify-content:center"><a href="#" onclick="return false" class="sub">Записаться на пробное занятие (в прототипе не работает)</a></div>
+      <details style="text-align:left"><summary>Учителю: вставить тренажёр на свой сайт</summary>
+        <p class="sub">Код вставки (адрес — пример будущего, сейчас не работает):</p>
+        <textarea class="embed" rows="3" readonly>${esc(embed)}</textarea></details>
+    </div>`;
+  document.getElementById("copyCh").onclick = async (e) => {
+    const text = `Я прошёл тренажёр «Ты — интерпретатор» на ★${stars} из 9. Повторишь? ${challenge}`;
+    try { await navigator.clipboard.writeText(text); e.target.textContent = "Скопировано ✓"; }
+    catch { e.target.textContent = "Скопируй вручную: " + challenge; }
+    logEvent({ kind: "share_click" });
+  };
+  document.getElementById("again").onclick = () => { location.href = location.pathname + "?seed=" + Math.floor(Math.random() * 1e6); };
+  logEvent({ kind: "trainer_done", stars, minutes: mins, mistakes });
+}
+
+/* ---------- тема ---------- */
+document.getElementById("themeBtn").onclick = () => {
+  const r = document.documentElement;
+  const dark = r.dataset.theme ? r.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+  r.dataset.theme = dark ? "light" : "dark";
+};
+
+renderHeader();
+logEvent({ kind: "trainer_start", seed: SEED, referrer: document.referrer || null });
+level1();
+</script>
+</body>
+</html>
