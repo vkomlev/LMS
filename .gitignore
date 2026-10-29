@@ -50,6 +50,8 @@ docs/*
 !docs/curriculum/**
 !docs/research/
 !docs/research/**
+!docs/design/
+!docs/design/**
 .cursor/*
 !.cursor/rules/
 
