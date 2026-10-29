@@ -21,7 +21,7 @@
 | `UserCourse` | `models/user_courses.py` | Связка student↔course с авто-`order_number` (триггер) |
 | `TeacherCourse` | — | Связка teacher↔course; синхронизация дочерних курсов |
 | `StudentTeacherLink` | `repos/student_teacher_links_repository.py` | Прикрепление студента к преподавателю |
-| `Material` | `models/materials.py` | Учебный материал курса; типы: text, video, link, pdf, script, document |
+| `Material` | `models/materials.py` | Учебный материал курса; типы: text, video, audio, image, link, pdf, office_document, script, document, trainer (tsk-1247, [trainers.md](trainers.md)) |
 | `Task` | `models/tasks.py` | Задача (quiz) с solution-правилами |
 | `MetaTask` | `schemas/meta_tasks.py` | Обёртки над задачами |
 | `Attempt` | `models/attempts.py` (repo) | Попытка решения задачи студентом |
@@ -81,6 +81,7 @@
 | `20260717_010000_tsk264_attempts_root_course` | tsk-264: `attempts.root_course_id` — контекст навигации, попытки по паре «курс + задание» |
 | `20260726_010000_tsk428_lesson_calendar_stage1` | tsk-428 (Календарь LMS Фаза 1): `operating_hours` + `lesson_slot` + `lesson_occurrence` + `attendance_event` — 4 новые таблицы, ноль изменений в существующих |
 | `20260805_100000_tsk114_task_audit` | tsk-114: `task_audit` (append-only) + AFTER-триггеры на `tasks` — аудит `course_id`/`is_active`, профилактика повтора tsk-113 |
+| `2026_10_29_tsk1247_material_type_trainer` | tsk-1247: `ALTER TYPE content_type ADD VALUE 'trainer'` (без данных); откат пересоздаёт тип и отказывает при существующих тренажёрах — [trainers.md](trainers.md) |
 
 ## Date/Time safety (критично)
 

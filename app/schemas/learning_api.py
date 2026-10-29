@@ -11,6 +11,8 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from app.schemas.trainers import TrainerSuggestion
+
 
 # ----- Next item -----
 
@@ -35,6 +37,13 @@ class NextItemResponse(BaseModel):
         None, description="tsk-231: название курса-зависимости для UI (SPW/TG_LMS)."
     )
     dependency_course_uid: Optional[str] = None
+    trainer_suggestion: Optional[TrainerSuggestion] = Field(
+        None,
+        description=(
+            "tsk-1247: следующий шаг — задание, последний ответ на которое неверный, "
+            "и в его узле есть тренажёр: {slug, title}. null — нет, или TRAINERS_ENABLED=false."
+        ),
+    )
 
 
 # ----- Material complete -----

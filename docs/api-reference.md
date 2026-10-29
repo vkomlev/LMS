@@ -705,7 +705,7 @@ Stateless-проверка одной задачи без сохранения �
 
 | Метод | Путь | Описание |
 |-------|------|----------|
-| GET | `/learning/next-item?student_id=` | Следующий шаг: material \| task \| none \| blocked_dependency \| blocked_limit. |
+| GET | `/learning/next-item?student_id=` | Следующий шаг: material \| task \| none \| blocked_dependency \| blocked_limit. **tsk-1247:** поле `trainer_suggestion` `{slug, title}\|null` — следующий шаг задание, последний ответ на него неверный (`task_results.is_correct = false`) и в узле задания есть активный тренажёр; при `TRAINERS_ENABLED=false` всегда null. Тренажёр (`type=trainer`, уровень `recommended`) следующим шагом не выдаётся; «Да» на развилке — `after_material_id=<id тренажёра>`. |
 | POST | `/learning/materials/{material_id}/complete` | Отметить материал пройденным (body: `student_id`). |
 | POST | `/learning/materials/{material_id}/checkpoint/{checkpoint_id}` | **tsk-998 (П9):** ответ ученика на контрольную точку «Проверь себя» внутри материала. Body `{answer: str}` (1–200 символов, иначе 422): для `kind=single` — id варианта, для `short` — текст (сверка без регистра, «ё»=«е», лишние пробелы и конечная точка не важны). Ответ `{material_id, checkpoint_id, correct, explanation\|null, first_attempt}` — правильный ответ не возвращается. Только ученик по своей сессии (сервисный ключ — 403). Гейты как у `GET /materials/{id}`: зачисление в дерево курса, оплата (403 `payment_overdue`), выключенный материал — 404. 409 `payload.code=checkpoints_disabled` — рубильник `MATERIAL_CHECKPOINTS_ENABLED` выключен (по умолчанию); 404 `payload.code=checkpoint_not_found`. Повтор разрешён; каждое обращение пишет `learning_events` `material_checkpoint` с `payload {material_id, checkpoint_id, correct, answer, first_attempt}`. Прохождение материала, статусы курса, попытки и `task_results` не меняются. |
 | POST | `/learning/tasks/{task_id}/start-or-get-attempt` | Начать или получить текущую попытку по задаче. Гарантия: в ответе `GET /attempts/{id}` поле `attempt.meta.task_ids` (int[]) содержит как минимум этот `task_id`; при пустом/битом `meta` backend восстанавливает его при вызове. |
@@ -882,6 +882,19 @@ Stateless-проверка одной задачи без сохранения �
 
 ---
 
+## Тренажёры (tsk-1247)
+
+Публичные ручки (без входа: ученик, гость, встройка на чужом сайте). При `TRAINERS_ENABLED=false` (по умолчанию) обе — 404. Подробно: [ai/trainers.md](ai/trainers.md).
+
+| Метод | Путь | Описание |
+|---|---|---|
+| GET | `/trainers/{slug}` | `{slug, title, scenario, version}`; заголовки `ETag: "<version>"`, `Cache-Control: public, max-age=300`; `If-None-Match` с тем же ETag → 304. 404 — нет активного тренажёра со slug. Лимит 600 запросов/мин с IP (429). |
+| POST | `/trainers/{slug}/events` | 202 `{accepted}`. Тело `{context: student\|guest\|embed, events: [{type, level?, step?, iter?, ok?, misconception?, ms?, stars?, answer?, parent_domain?}]}`, 1–200 событий; `type` ∈ `trainer_start, trainer_step, trainer_done, checkpoint_answer, embed_view`; `answer` ≤ 64 символов; `parent_domain` — только `embed`; `misconception` — только из `scenario.misconceptions` (иначе 422 `payload.code=unknown_misconception`). `student` — ученик из cookie `session`/Bearer (иначе 401), строки `learning_events` (`event_type` = `type`, payload `{slug, trainer_material_id, context, …}`); `guest` — cookie `guest_session` (иначе 400), строки `guest_attempt` с `task_id = NULL`, `answer_json.kind = trainer_event`, переносятся `attribute-guest`; `embed` — cookie не читаются, пишутся только `embed_view`/`trainer_start`/`trainer_done` в `product_event` (`user_id = NULL`, `properties {slug, context, parent_domain}`), ввод не пишется. Лимиты: 120 запросов/мин с IP и 30/мин на пишущего — ученика, гостевую сессию, у встройки slug+IP (429). |
+
+`POST /attempts/{id}/answers`: у элемента `results[]` поле `trainer_suggestion` `{slug, title}\|null` — ответ неверный (`check_result.is_correct = false`) и в узле задания есть активный тренажёр.
+
+---
+
 ## Эндпойнты материалов
 
 API учебных материалов курса: CRUD, список по курсу, изменение порядка, перемещение, массовое обновление активности, копирование в другой курс, статистика, импорт из Google Sheets.
@@ -893,6 +906,7 @@ API учебных материалов курса: CRUD, список по ку
 - **GET** `/materials/search` — поиск материалов по title и external_uid (параметр q обязателен; course_id опционально — по всем курсам или по одному)
 - **GET** `/courses/{course_id}/materials` — список материалов курса (параметр q — поиск по title/external_uid в рамках курса; фильтры: is_active, type; сортировка: order_position, title, created_at; пагинация skip/limit)
 - **tsk-998:** `content` текстового материала может нести `checkpoints: [{id, after_block, question, kind: single|short, options?, answer, explanation?}]` (формат и метка `<div data-cb-checkpoint="id"></div>` — `app/schemas/material_content.py`, `MaterialCheckpoint`). Ученику (`GET /materials/{id}` и список выше) точки отдаются без `answer`/`explanation`, а при выключенном `MATERIAL_CHECKPOINTS_ENABLED` — без `checkpoints`; сервисный ключ и teacher/methodist/admin получают content целиком.
+- **tsk-1247:** тип материала `trainer` — интерактивный тренажёр. `content = {slug, scenario}`, `scenario` — JSON `trainer-scenario/1` (`docs/design/trainers/scenarios/README.md`), проверяется схемой `app/schemas/trainer_scenario.py` при создании/правке/bulk-upsert (битый — 422 / per-item `validation` с путём и причиной); `slug` = `scenario.slug`; slug, занятый тренажёром с другим сценарием, — 409 (в bulk-upsert — per-item `validation`). Уровень обязательности тренажёра всегда пишется `recommended` (вне обхода next-item и счётчиков прогресса). У материала-теории (любой тип, кроме `trainer`) — необязательная развилка `content.checkpoint = {question: "Всё понятно?", trainer_material_id}`. Ученику при `TRAINERS_ENABLED=false` тренажёры не отдаются (`GET /materials/{id}` — 404, список и программа курса — без них), `checkpoint` снят; при `true` `checkpoint` снят, только если его тренажёр не активен или из другого курса. Сервисный ключ и teacher/methodist/admin видят всё.
 - **POST** `/materials` — создание материала
 - **GET** `/materials/{id}` — получение материала
 - **PATCH** `/materials/{id}` — обновление материала (при изменении content передаётся полный объект content для типа)

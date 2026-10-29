@@ -19,6 +19,7 @@ from app.schemas.task_content import QUIZ_TASK_TYPES
 # и «следующий шаг» считали долг одинаково.
 from app.services.content_grace_service import compute_graced_items, done_among
 from app.services.requirement_override_service import reason_payload, resolve_levels
+from app.services.trainers_service import trainers_enabled
 from app.services.node_sequence import (
     anchor_of,
     in_after_part,
@@ -1418,7 +1419,12 @@ async def get_syllabus_states(
 
     # Группировка по course_id для depth-first emit
     materials_by_course: dict[int, list[dict]] = {}
+    # tsk-1247: тренажёр — материал узла, место ему даёт тот же `node_sequence`;
+    # при выключенном рубильнике его в программе нет вовсе.
+    show_trainers = trainers_enabled()
     for r in material_rows:
+        if r["material_type"] == "trainer" and not show_trainers:
+            continue
         m = dict(r)
         # tsk-996: настоящий курс материала — для ключа `node_sequence`.
         m["_src_course_id"] = int(m["course_id"])

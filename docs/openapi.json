@@ -34383,6 +34383,182 @@
         }
       }
     },
+    "/api/v1/trainers/{slug}": {
+      "get": {
+        "tags": [
+          "trainers"
+        ],
+        "summary": "Сценарий тренажёра (публично: ученик, гость, встройка)",
+        "description": "Отдать сценарий `trainer-scenario/1` с версией (ETag) для кеша.\n\nОтветы шагов в сценарии не скрываются (бриф Р3): движок проверяет ответ в\nбраузере, защита — выгодность честного пути, а не секретность.",
+        "operationId": "get_trainer_api_v1_trainers__slug__get",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$",
+              "title": "Slug"
+            }
+          },
+          {
+            "name": "if-none-match",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-None-Match"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrainerRead"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Сценарий не менялся (If-None-Match совпал с ETag)"
+          },
+          "404": {
+            "description": "Тренажёра нет, он выключен или TRAINERS_ENABLED=false"
+          },
+          "429": {
+            "description": "Лимит запросов с IP"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/trainers/{slug}/events": {
+      "post": {
+        "tags": [
+          "trainers"
+        ],
+        "summary": "События тренажёра пакетом (ученик / гость / встройка)",
+        "description": "Принять пакет событий (≤ 200) и записать по контексту.\n\n* `student` — ученик из токена входа (cookie `session` или Bearer); сервисный\n  ключ не принимается: событие обязано принадлежать человеку.\n* `guest` — по cookie `guest_session` (как ответы гостя на демо-задачу).\n* `embed` — cookie не читаются вовсе; пишутся только обезличенные счётчики.",
+        "operationId": "post_trainer_events_api_v1_trainers__slug__events_post",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$",
+              "title": "Slug"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "guest_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Guest Session"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TrainerEventsRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrainerEventsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "context=guest без действующей cookie guest_session"
+          },
+          "401": {
+            "description": "context=student без входа"
+          },
+          "404": {
+            "description": "Тренажёра нет, он выключен или TRAINERS_ENABLED=false"
+          },
+          "422": {
+            "description": "Больше 200 событий, неизвестный код ошибки, ввод длиннее 64 символов"
+          },
+          "429": {
+            "description": "Лимит запросов с IP"
+          }
+        }
+      }
+    },
     "/api/v1/methodist/escalations/pending": {
       "get": {
         "tags": [
@@ -55575,6 +55751,17 @@
           "check_result": {
             "$ref": "#/components/schemas/CheckResult",
             "description": "Результат проверки ответа по данной задаче."
+          },
+          "trainer_suggestion": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TrainerSuggestion"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "tsk-1247: ответ неверный и в узле задания есть тренажёр — {slug, title}; иначе null (и всегда null при TRAINERS_ENABLED=false)."
           }
         },
         "type": "object",
@@ -70726,7 +70913,7 @@
           "type": {
             "type": "string",
             "title": "Type",
-            "description": "Тип материала: text, video, audio, image, link, pdf, office_document, script, document"
+            "description": "Тип материала: text, video, audio, image, link, pdf, office_document, script, document, trainer (tsk-1247)"
           },
           "content": {
             "title": "Content",
@@ -73057,6 +73244,17 @@
               }
             ],
             "title": "Dependency Course Uid"
+          },
+          "trainer_suggestion": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TrainerSuggestion"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "tsk-1247: следующий шаг — задание, последний ответ на которое неверный, и в его узле есть тренажёр: {slug, title}. null — нет, или TRAINERS_ENABLED=false."
           }
         },
         "type": "object",
@@ -89776,6 +89974,241 @@
           "init_data"
         ],
         "title": "TgInitRequest"
+      },
+      "TrainerEvent": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "trainer_start",
+              "trainer_step",
+              "trainer_done",
+              "checkpoint_answer",
+              "embed_view"
+            ],
+            "title": "Type"
+          },
+          "level": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Level",
+            "description": "id уровня сценария (L1…) или его номер"
+          },
+          "step": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,64}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Step",
+            "description": "id шага"
+          },
+          "iter": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 1000.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Iter",
+            "description": "Номер витка цикла для шагов trace (README §1.5)"
+          },
+          "ok": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ok"
+          },
+          "misconception": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]{0,63}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Misconception",
+            "description": "Код ошибки — только из словаря misconceptions сценария"
+          },
+          "ms": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 3600000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ms",
+            "description": "Время на шаг/уровень, мс"
+          },
+          "stars": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 60.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stars"
+          },
+          "answer": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Answer",
+            "description": "Ввод ученика (≤ 64 символов); у встройки не пишется"
+          },
+          "parent_domain": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 253
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Domain",
+            "description": "Домен страницы со встройкой (только context=embed)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "type"
+        ],
+        "title": "TrainerEvent",
+        "description": "Одно событие тренажёра.\n\nНезнакомые поля молча отбрасываются (не пишутся): клиент с очередью\nдосылки (бриф 2A) не должен застревать на 422 из-за нового поля."
+      },
+      "TrainerEventsRequest": {
+        "properties": {
+          "context": {
+            "type": "string",
+            "enum": [
+              "student",
+              "guest",
+              "embed"
+            ],
+            "title": "Context"
+          },
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/TrainerEvent"
+            },
+            "type": "array",
+            "maxItems": 200,
+            "minItems": 1,
+            "title": "Events"
+          }
+        },
+        "type": "object",
+        "required": [
+          "context",
+          "events"
+        ],
+        "title": "TrainerEventsRequest",
+        "description": "Тело `POST /trainers/{slug}/events`."
+      },
+      "TrainerEventsResponse": {
+        "properties": {
+          "accepted": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Accepted"
+          }
+        },
+        "type": "object",
+        "required": [
+          "accepted"
+        ],
+        "title": "TrainerEventsResponse",
+        "description": "Ответ 202: сколько событий записано (у встройки — только счётчики)."
+      },
+      "TrainerRead": {
+        "properties": {
+          "slug": {
+            "type": "string",
+            "title": "Slug"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "scenario": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Scenario",
+            "description": "Сценарий trainer-scenario/1 как опубликован"
+          },
+          "version": {
+            "type": "string",
+            "title": "Version",
+            "description": "Версия сценария — то же значение, что в заголовке ETag"
+          }
+        },
+        "type": "object",
+        "required": [
+          "slug",
+          "title",
+          "scenario",
+          "version"
+        ],
+        "title": "TrainerRead",
+        "description": "Ответ `GET /trainers/{slug}`."
+      },
+      "TrainerSuggestion": {
+        "properties": {
+          "slug": {
+            "type": "string",
+            "title": "Slug"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          }
+        },
+        "type": "object",
+        "required": [
+          "slug",
+          "title"
+        ],
+        "title": "TrainerSuggestion",
+        "description": "Предложение тренажёра после неверного ответа на задание узла."
       },
       "TransferSlotParticipantRequest": {
         "properties": {

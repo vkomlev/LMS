@@ -15,6 +15,21 @@ from app.schemas.content_requirement import RequirementLevel
 
 # ---------- CRUD схемы ----------
 
+#: tsk-1247: уровень обязательности тренажёра. В LMS `skippable` идёт в счёт
+#: обязательного (движок next-item его выдаёт, процент курса его ждёт —
+#: `requirement_override_service.REQUIRED_LEVELS`), а «необязательный и не
+#: блокирует продвижение» — это `recommended`: вне обхода и вне счётчиков,
+#: но в программе курса виден. Тренажёр всегда пишется с этим уровнем.
+TRAINER_REQUIREMENT_LEVEL = "recommended"
+
+
+def trainer_requirement_level(material_type: Optional[str], level: Optional[str]) -> Optional[str]:
+    """Уровень, с которым материал реально пишется: у тренажёра — всегда `recommended`."""
+    if material_type == "trainer":
+        return TRAINER_REQUIREMENT_LEVEL
+    return level
+
+
 
 # tsk-1403: место материала в узле курса (`materials.placement`).
 MaterialPlacement = Literal["head", "after_children"]
@@ -26,7 +41,7 @@ class MaterialCreate(BaseModel):
     title: str = Field(..., max_length=500, description="Заголовок материала")
     type: str = Field(
         ...,
-        description="Тип материала: text, video, audio, image, link, pdf, office_document, script, document",
+        description="Тип материала: text, video, audio, image, link, pdf, office_document, script, document, trainer (tsk-1247)",
     )
     content: Any = Field(..., description="Содержимое (структура зависит от type)")
     description: Optional[str] = None
@@ -48,6 +63,9 @@ class MaterialCreate(BaseModel):
                 object.__setattr__(self, "content", validated)
             except Exception as e:
                 raise ValueError(f"Некорректная структура content для типа '{self.type}': {e}")
+        object.__setattr__(
+            self, "requirement_level", trainer_requirement_level(self.type, self.requirement_level)
+        )
         return self
 
 
@@ -79,6 +97,9 @@ class MaterialUpdate(BaseModel):
                 object.__setattr__(self, "content", validated)
             except Exception as e:
                 raise ValueError(f"Некорректная структура content для типа '{self.type}': {e}")
+        if self.type == "trainer":
+            object.__setattr__(self, "requirement_level", TRAINER_REQUIREMENT_LEVEL)
+            self.model_fields_set.add("requirement_level")
         return self
 
 
@@ -205,7 +226,7 @@ class MaterialsBulkUpsertItem(BaseModel):
     title: str = Field(..., max_length=500)
     type: str = Field(
         ...,
-        description="Тип: text, video, audio, image, link, pdf, office_document, script, document",
+        description="Тип: text, video, audio, image, link, pdf, office_document, script, document, trainer (tsk-1247)",
     )
     content: Any = Field(..., description="Содержимое (структура по type)")
     description: Optional[str] = None
@@ -271,6 +292,12 @@ class MaterialsBulkUpsertItem(BaseModel):
                 object.__setattr__(self, "content", validated)
             except Exception as e:
                 raise ValueError(f"Некорректная структура content для типа '{self.type}': {e}")
+        if self.type == "trainer":
+            # tsk-1247: уровень тренажёра пишется всегда, даже если публикатор
+            # его не прислал, — иначе смена типа на trainer при переиздании
+            # оставила бы прежний `required` и тренажёр заблокировал бы путь.
+            object.__setattr__(self, "requirement_level", TRAINER_REQUIREMENT_LEVEL)
+            self.model_fields_set.add("requirement_level")
         self._reject_known_junk()
         return self
 

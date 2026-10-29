@@ -36,9 +36,11 @@ class MaterialsRepository(BaseRepository[Materials]):
         order_by: str = "order_position",
         skip: int = 0,
         limit: int = 100,
+        exclude_types: Optional[List[str]] = None,
     ) -> Tuple[List[Materials], int]:
         """
         Список материалов курса с фильтрацией и пагинацией.
+        exclude_types: типы, которых в выдаче нет (tsk-1247: тренажёры ученику при выключенном рубильнике).
         q: поиск по title и external_uid (ILIKE %q%).
 
         Returns:
@@ -63,6 +65,9 @@ class MaterialsRepository(BaseRepository[Materials]):
         if type_filter is not None:
             stmt = stmt.where(Materials.type == type_filter)
             count_stmt = count_stmt.where(Materials.type == type_filter)
+        if exclude_types:
+            stmt = stmt.where(Materials.type.not_in(exclude_types))
+            count_stmt = count_stmt.where(Materials.type.not_in(exclude_types))
 
         total = (await db.execute(count_stmt)).scalar() or 0
 

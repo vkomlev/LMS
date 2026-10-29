@@ -6,6 +6,7 @@ from datetime import datetime  # импортируем datetime для испо
 from pydantic import BaseModel, Field, ConfigDict
 
 from app.schemas.checking import StudentAnswer, CheckResult
+from app.schemas.trainers import TrainerSuggestion
 
 
 class AttemptCreate(BaseModel):
@@ -260,6 +261,13 @@ class AttemptAnswerResult(BaseModel):
     check_result: CheckResult = Field(
         ...,
         description="Результат проверки ответа по данной задаче.",
+    )
+    trainer_suggestion: Optional[TrainerSuggestion] = Field(
+        None,
+        description=(
+            "tsk-1247: ответ неверный и в узле задания есть тренажёр — {slug, title}; "
+            "иначе null (и всегда null при TRAINERS_ENABLED=false)."
+        ),
     )
 
 

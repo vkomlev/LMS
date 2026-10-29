@@ -94,6 +94,7 @@ from app.services import help_attempt_gate
 from app.services import retrieval_service
 from app.services import final_check_service
 from app.services import material_checkpoints_service
+from app.services import trainers_service
 from app.services.materials_acl_service import assert_material_access
 from app.services import course_activity_service
 from app.services.attempts_service import AttemptsService
@@ -274,8 +275,27 @@ async def get_next_item(
             "next-item: student_id=%s type=%s course_id=%s material_id=%s task_id=%s",
             student_id, result.type, result.course_id, result.material_id, result.task_id,
         )
+    # tsk-1247: задание после неверного ответа — предложить тренажёр узла.
+    # При выключенном рубильнике запросов нет.
+    # Soft-fail в точке сохранения: подсказка не должна ронять next-item.
+    trainer_suggestion = None
+    if (
+        result.type == "task" and result.task_id is not None
+        and result.course_id is not None and trainers_service.trainers_enabled()
+    ):
+        try:
+            async with db.begin_nested():
+                trainer_suggestion = await trainers_service.suggestion_after_last_answer(
+                    db, student_id, result.task_id, result.course_id
+                )
+        except Exception:
+            logger.warning(
+                "tsk-1247: предложение тренажёра не посчитано: student=%s task=%s",
+                student_id, result.task_id, exc_info=True,
+            )
     await db.commit()
     return NextItemResponse(
+        trainer_suggestion=trainer_suggestion,
         type=result.type,
         course_id=result.course_id,
         root_course_id=result.root_course_id,

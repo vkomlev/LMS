@@ -7,12 +7,14 @@ from __future__ import annotations
 
 from typing import Any, List, Literal, Optional, Union
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from app.schemas.trainer_scenario import SLUG_PATTERN, validate_scenario
 
 
 MaterialType = Literal[
     "text", "video", "audio", "image", "link", "pdf", "office_document",
-    "script", "document",
+    "script", "document", "trainer",
 ]
 
 # ---------- Общие типы источников ----------
@@ -92,6 +94,28 @@ class DocumentSourceItem(BaseModel):
 # ---------- Контент по типам материала ----------
 
 
+class TrainerCheckpoint(BaseModel):
+    """Развилка после теории «Всё понятно?» (tsk-1247).
+
+    `materials.content.checkpoint` у материала-теории. «Да» — ученик идёт к
+    элементу узла после тренажёра, «Нет» — открывается тренажёр
+    `trainer_material_id`. Не путать с `checkpoints` (tsk-998, вопросы внутри
+    текста): это разные механизмы с разными рубильниками.
+    """
+    model_config = ConfigDict(extra="forbid")
+
+    question: str = Field(default="Всё понятно?", min_length=1, max_length=500)
+    trainer_material_id: int = Field(..., gt=0, description="id материала типа trainer в этом узле")
+
+
+class _WithTrainerCheckpoint(BaseModel):
+    """Необязательная развилка tsk-1247 у любого материала-теории."""
+    checkpoint: Optional[TrainerCheckpoint] = Field(
+        default=None,
+        description="tsk-1247: развилка «Всё понятно?» → тренажёр (при TRAINERS_ENABLED)",
+    )
+
+
 class MaterialCheckpointOption(BaseModel):
     """Вариант ответа контрольной точки `kind="single"` (tsk-998)."""
     id: str = Field(..., min_length=1, max_length=16, description="Стабильный id варианта (a, b, c…)")
@@ -149,7 +173,7 @@ class MaterialCheckpoint(BaseModel):
         return self
 
 
-class TextContent(BaseModel):
+class TextContent(_WithTrainerCheckpoint):
     """Контент для type='text'."""
     text: str = Field(..., description="Основной текст материала")
     format: Optional[Literal["markdown", "html", "plain"]] = Field(
@@ -176,7 +200,7 @@ class TextContent(BaseModel):
         return v
 
 
-class VideoContent(BaseModel):
+class VideoContent(_WithTrainerCheckpoint):
     """Контент для type='video'."""
     sources: List[VideoSourceItem] = Field(
         default_factory=list,
@@ -188,19 +212,19 @@ class VideoContent(BaseModel):
     )
 
 
-class AudioContent(BaseModel):
+class AudioContent(_WithTrainerCheckpoint):
     """Контент для type='audio'."""
     sources: List[AudioSourceItem] = Field(default_factory=list)
     default_source: int = Field(default=0)
 
 
-class ImageContent(BaseModel):
+class ImageContent(_WithTrainerCheckpoint):
     """Контент для type='image'."""
     sources: List[ImageSourceItem] = Field(default_factory=list)
     default_source: int = Field(default=0)
 
 
-class LinkContent(BaseModel):
+class LinkContent(_WithTrainerCheckpoint):
     """Контент для type='link'."""
     url: str = Field(..., description="URL ссылки")
     title: Optional[str] = None
@@ -208,19 +232,19 @@ class LinkContent(BaseModel):
     preview_image: Optional[str] = None
 
 
-class PdfContent(BaseModel):
+class PdfContent(_WithTrainerCheckpoint):
     """Контент для type='pdf'."""
     sources: List[PdfSourceItem] = Field(default_factory=list)
     default_source: int = Field(default=0)
 
 
-class OfficeDocumentContent(BaseModel):
+class OfficeDocumentContent(_WithTrainerCheckpoint):
     """Контент для type='office_document'."""
     sources: List[OfficeDocumentSourceItem] = Field(default_factory=list)
     default_source: int = Field(default=0)
 
 
-class ScriptContent(BaseModel):
+class ScriptContent(_WithTrainerCheckpoint):
     """Контент для type='script' — программы и скрипты (py, js, ps1 и т.д.)."""
     sources: List[ScriptSourceItem] = Field(
         default_factory=list,
@@ -229,13 +253,35 @@ class ScriptContent(BaseModel):
     default_source: int = Field(default=0)
 
 
-class DocumentContent(BaseModel):
+class DocumentContent(_WithTrainerCheckpoint):
     """Контент для type='document' — документы (docx, xlsx, pptx, txt)."""
     sources: List[DocumentSourceItem] = Field(
         default_factory=list,
         description="Список источников (файл, URL)",
     )
     default_source: int = Field(default=0)
+
+
+class TrainerContent(BaseModel):
+    """Контент для type='trainer' (tsk-1247): `{slug, scenario}`.
+
+    `scenario` — сценарий `trainer-scenario/1`, проверяется схемой целиком
+    (`app/schemas/trainer_scenario.py`); `slug` обязан совпадать со
+    `scenario.slug` — по нему тренажёр отдаёт `GET /trainers/{slug}`.
+    """
+    model_config = ConfigDict(extra="forbid")
+
+    slug: str = Field(..., pattern=SLUG_PATTERN, description="Адрес тренажёра (/t/{slug})")
+    scenario: dict[str, Any] = Field(..., description="Сценарий trainer-scenario/1")
+
+    @model_validator(mode="after")
+    def _scenario_valid(self) -> "TrainerContent":
+        parsed = validate_scenario(self.scenario)
+        if parsed.slug != self.slug:
+            raise ValueError(
+                f"slug материала «{self.slug}» не совпадает со scenario.slug «{parsed.slug}»"
+            )
+        return self
 
 
 # ---------- Валидация контента по типу материала ----------
@@ -250,6 +296,7 @@ CONTENT_MODELS: dict[str, type[BaseModel]] = {
     "office_document": OfficeDocumentContent,
     "script": ScriptContent,
     "document": DocumentContent,
+    "trainer": TrainerContent,
 }
 
 
@@ -265,7 +312,15 @@ def validate_material_content(material_type: str, content: Any) -> dict[str, Any
     if not isinstance(content, dict):
         raise ValueError(f"content должен быть объектом (dict), получено: {type(content)}")
     obj = model.model_validate(content)
+    if material_type == "trainer":
+        # tsk-1247: сценарий хранится как прислан (порядок ключей и значения
+        # по умолчанию не дописываются) — движок SPW читает его по README §1.
+        return {"slug": content["slug"], "scenario": content["scenario"]}
     dumped = obj.model_dump()
+    # tsk-1247: пустая развилка не записывается — content без неё байт в байт
+    # прежний (bulk-upsert не считает такие материалы изменёнными).
+    if dumped.get("checkpoint") is None:
+        dumped.pop("checkpoint", None)
     # tsk-998: пустой `checkpoints` не записывается — content материалов без
     # контрольных точек остаётся байт в байт прежним (и bulk-upsert не считает
     # их изменёнными).
