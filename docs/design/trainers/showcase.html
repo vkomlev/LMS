@@ -1,0 +1,513 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Тренажёры по Python</title>
+<meta name="description" content="Макет витрины /trainers и страницы тренажёра /t/interpreter (tsk-1247, дизайн).">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* Токены — те же, что в prototype-v2.html (DESIGN.md §3). */
+:root {
+  color-scheme: light;
+  --bg: #f4f6fb; --surface: #ffffff; --surface-2: #eef1f7; --ink: #141821; --muted: #545d72;
+  --line: #d9dee8; --line-strong: #8b93a7;
+  --accent: #2756b0; --accent-ink: #ffffff; --accent-soft: #e6eefc;
+  --changed-bg: #fff0b3; --changed-tag: #ffe58a; --changed-ink: #5c4300;
+  --ok: #13703f; --ok-bg: #e2f5e9; --bad: #b3261e; --bad-bg: #fdebe9; --wait: #8a5300; --wait-bg: #fff3dc;
+  --str: #a0175a; --str-bg: #fbe6f0; --int: #0a6870; --int-bg: #ddf3f4;
+  --console: #0f131c; --con-ink: #e4e9f6; --con-dim: #929cb4; --con-prompt: #ffd43b;
+  --cta: #c2410c; --cta-ink: #ffffff;
+  --strip: #141821; --strip-ink: #e9ecf4; --strip-link: #ffd43b;
+  --shadow: 0 1px 2px rgb(20 24 33 / .06), 0 8px 24px -12px rgb(20 24 33 / .18);
+  --radius: 10px; --radius-lg: 16px;
+  --font: "Geist", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: "Geist Mono", ui-monospace, "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #0c0f16; --surface: #151a24; --surface-2: #1c2230; --ink: #e9ecf4; --muted: #a0a9bd;
+    --line: #2b3242; --line-strong: #5d6680;
+    --accent: #86a8ff; --accent-ink: #0c0f16; --accent-soft: #1a2742;
+    --changed-bg: #463a0c; --changed-tag: #ffe27a; --changed-ink: #2a2100;
+    --ok: #62d69a; --ok-bg: #10291c; --bad: #ff8d84; --bad-bg: #341619; --wait: #ffc062; --wait-bg: #33260e;
+    --str: #ff8fc8; --str-bg: #3a1a2d; --int: #62d9df; --int-bg: #0e2e31;
+    --console: #07090e; --cta: #ff9a5c; --cta-ink: #1a0d05; --strip: #000000;
+    --shadow: 0 1px 2px rgb(0 0 0 / .4), 0 12px 32px -16px rgb(0 0 0 / .7);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0c0f16; --surface: #151a24; --surface-2: #1c2230; --ink: #e9ecf4; --muted: #a0a9bd;
+  --line: #2b3242; --line-strong: #5d6680;
+  --accent: #86a8ff; --accent-ink: #0c0f16; --accent-soft: #1a2742;
+  --changed-bg: #463a0c; --changed-tag: #ffe27a; --changed-ink: #2a2100;
+  --ok: #62d69a; --ok-bg: #10291c; --bad: #ff8d84; --bad-bg: #341619; --wait: #ffc062; --wait-bg: #33260e;
+  --str: #ff8fc8; --str-bg: #3a1a2d; --int: #62d9df; --int-bg: #0e2e31;
+  --console: #07090e; --cta: #ff9a5c; --cta-ink: #1a0d05; --strip: #000000;
+  --shadow: 0 1px 2px rgb(0 0 0 / .4), 0 12px 32px -16px rgb(0 0 0 / .7);
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.55 var(--font); }
+a { color: var(--accent); text-underline-offset: 3px; }
+:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+code, .mono { font-family: var(--mono); }
+.wrap { max-width: 1120px; margin: 0 auto; padding: 0 16px; }
+@media (min-width: 768px) { .wrap { padding: 0 24px; } }
+.sub { color: var(--muted); }
+h1 { font-size: clamp(28px, 6vw, 44px); line-height: 1.1; letter-spacing: -.02em; margin: 0 0 12px; font-weight: 800; }
+h2 { font-size: clamp(22px, 4vw, 28px); line-height: 1.2; margin: 0 0 12px; font-weight: 800; letter-spacing: -.01em; }
+h3 { font-size: 18px; margin: 0 0 6px; }
+section { padding: 40px 0; }
+
+/* ---------- макетный переключатель (не часть продукта) ---------- */
+.mock { background: repeating-linear-gradient(45deg, var(--surface-2), var(--surface-2) 10px, var(--bg) 10px, var(--bg) 20px); border-bottom: 1px dashed var(--line-strong); font-size: 13px; }
+.mock .wrap { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding-top: 8px; padding-bottom: 8px; }
+.mock a { padding: 6px 12px; border-radius: 999px; border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink); text-decoration: none; min-height: 32px; display: inline-flex; align-items: center; }
+.mock a[aria-current="page"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+
+/* ---------- шапка сайта ---------- */
+.site { background: var(--surface); border-bottom: 1px solid var(--line); }
+.site .wrap { display: flex; align-items: center; gap: 16px; min-height: 64px; }
+.mono-logo { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 9px; background: var(--ink); color: var(--bg); font-weight: 800; font-size: 14px; }
+.site .name { font-weight: 700; color: var(--ink); text-decoration: none; display: flex; align-items: center; gap: 10px; }
+.site nav { display: flex; gap: 4px; margin-left: auto; overflow-x: auto; }
+.site nav a { color: var(--muted); text-decoration: none; padding: 10px 12px; border-radius: 8px; white-space: nowrap; font-size: 15px; min-height: 44px; display: inline-flex; align-items: center; }
+.site nav a.on { color: var(--ink); font-weight: 600; background: var(--surface-2); }
+@media (max-width: 640px) { .site .wrap { flex-wrap: wrap; gap: 4px; padding-top: 8px; } .site nav { margin-left: 0; width: 100%; order: 3; } .site .name { flex: 1; } .site nav a { padding: 8px 10px; } }
+.icon-btn { display: inline-grid; place-items: center; width: 44px; height: 44px; border-radius: 10px; border: 1.5px solid var(--line-strong); background: var(--surface); color: var(--ink); cursor: pointer; flex: none; }
+.icon-btn svg { width: 20px; height: 20px; }
+.ic-sun { display: none; }
+:root[data-theme="dark"] .ic-sun { display: block; } :root[data-theme="dark"] .ic-moon { display: none; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .ic-sun { display: block; } :root:not([data-theme="light"]) .ic-moon { display: none; } }
+
+/* ---------- кнопки ---------- */
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; padding: 10px 18px; border-radius: var(--radius); font: 600 15px/1.2 var(--font);
+  text-decoration: none; cursor: pointer; border: 1.5px solid var(--line-strong); background: var(--surface); color: var(--ink); }
+.btn:hover { border-color: var(--accent); background: var(--accent-soft); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.btn.primary:hover { filter: brightness(1.08); }
+.btn.cta { background: var(--cta); border-color: var(--cta); color: var(--cta-ink); }
+.btn[aria-disabled="true"] { border-style: dashed; color: var(--muted); background: transparent; cursor: default; }
+
+/* ---------- витрина ---------- */
+.hero { padding: 40px 0 24px; }
+.hero .lead { font-size: 19px; max-width: 640px; color: var(--muted); margin: 0 0 20px; }
+.hero .kicker { display: inline-flex; align-items: center; gap: 8px; font: 600 13px/1 var(--mono); color: var(--accent); background: var(--accent-soft); padding: 6px 10px; border-radius: 999px; margin-bottom: 14px; }
+.facts { display: flex; flex-wrap: wrap; gap: 8px 20px; color: var(--muted); font-size: 14px; margin: 0; padding: 0; list-style: none; }
+.facts li::before { content: "✓ "; color: var(--ok); font-weight: 700; }
+.filters { display: flex; gap: 8px; flex-wrap: wrap; margin: 24px 0 16px; }
+.filters button { font: 500 14px var(--font); min-height: 44px; padding: 8px 14px; border-radius: 999px; border: 1.5px solid var(--line-strong); background: var(--surface); color: var(--ink); cursor: pointer; }
+.filters button[aria-pressed="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 20px; }
+@media (max-width: 400px) { .cards { grid-template-columns: minmax(0, 1fr); } }
+.card { display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); overflow: hidden; box-shadow: var(--shadow);
+  transition: transform .18s ease, box-shadow .18s ease; min-width: 0; }
+.card:not(.soon):hover { transform: translateY(-3px); box-shadow: 0 2px 4px rgb(20 24 33 / .08), 0 18px 36px -16px rgb(20 24 33 / .3); }
+.card .pic { position: relative; aspect-ratio: 16 / 9; background: var(--console); display: grid; place-items: center; }
+.card .pic svg { width: 100%; height: 100%; display: block; }
+.card .badge { position: absolute; top: 12px; right: 12px; font: 700 12px/1 var(--font); padding: 6px 10px; border-radius: 999px; }
+.badge.new { background: var(--con-prompt); color: #141821; }
+.badge.soon { background: var(--surface); color: var(--ink); }
+.card .body { padding: 18px; display: flex; flex-direction: column; gap: 10px; flex: 1; }
+.card h3 { font-size: 20px; margin: 0; }
+.card h3 a { color: inherit; text-decoration: none; }
+.card h3 a::after { content: ""; position: absolute; inset: 0; }
+.card .body { position: relative; }
+.card p { margin: 0; color: var(--muted); }
+.tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.tag { font: 500 12px/1 var(--mono); padding: 5px 8px; border-radius: 6px; background: var(--surface-2); color: var(--ink); }
+.meta { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 13px; color: var(--muted); margin-top: auto; padding-top: 4px; }
+.card .acts { display: flex; gap: 8px; flex-wrap: wrap; position: relative; z-index: 1; }
+.card.soon .pic { filter: saturate(.35); opacity: .75; }
+.card.soon h3, .card.soon p { color: var(--muted); }
+
+.teach { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-top: 20px; }
+@media (max-width: 760px) { .teach { grid-template-columns: minmax(0, 1fr); } }
+.teach div { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 18px; }
+.teach .ico { font: 700 18px/1 var(--mono); color: var(--accent); background: var(--accent-soft); width: 40px; height: 40px; border-radius: 10px; display: grid; place-items: center; margin-bottom: 10px; }
+.teach p { margin: 0; color: var(--muted); font-size: 15px; }
+
+.band { background: var(--console); color: var(--con-ink); border-radius: var(--radius-lg); padding: 28px; display: flex; flex-wrap: wrap; gap: 16px 28px; align-items: center; justify-content: space-between; }
+.band h2 { color: #fff; margin: 0 0 4px; }
+.band p { margin: 0; color: var(--con-dim); max-width: 560px; }
+.band .btn.cta { background: #ff9a5c; border-color: #ff9a5c; color: #1a0d05; }
+
+footer { border-top: 1px solid var(--line); padding: 24px 0 40px; color: var(--muted); font-size: 14px; }
+
+/* ---------- страница тренажёра ---------- */
+.crumbs { font-size: 14px; color: var(--muted); padding: 20px 0 8px; }
+.crumbs a { color: var(--muted); }
+.thead { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
+.thead h1 { margin: 0 0 6px; }
+.thead .lead { margin: 0; color: var(--muted); font-size: 18px; max-width: 620px; }
+.stage { border-radius: var(--radius-lg); box-shadow: var(--shadow); overflow: hidden; border: 1px solid var(--line); background: var(--surface); }
+.stage iframe { display: block; width: 100%; height: 820px; border: 0; }
+@media (max-width: 640px) { .stage iframe { height: 760px; } .stage { margin: 0 -16px; border-radius: 0; border-left: 0; border-right: 0; } }
+.under { display: flex; flex-wrap: wrap; gap: 8px; justify-content: space-between; align-items: center; margin-top: 12px; font-size: 14px; color: var(--muted); }
+.two { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 24px; }
+@media (max-width: 860px) { .two { grid-template-columns: minmax(0, 1fr); } }
+.steps3 { display: grid; gap: 12px; counter-reset: s; margin: 16px 0 0; padding: 0; list-style: none; }
+.steps3 li { display: flex; gap: 14px; align-items: flex-start; counter-increment: s; }
+.steps3 li::before { content: counter(s); flex: none; width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; background: var(--accent); color: var(--accent-ink); font-weight: 700; }
+.steps3 li p { margin: 2px 0 0; color: var(--muted); font-size: 15px; }
+.topics { display: grid; gap: 10px; margin-top: 16px; }
+.topic { display: flex; gap: 12px; align-items: flex-start; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; }
+.topic code { flex: none; font-size: 13px; padding: 4px 8px; border-radius: 6px; background: var(--str-bg); color: var(--str); }
+.topic code.i { background: var(--int-bg); color: var(--int); }
+.topic code.k { background: var(--accent-soft); color: var(--accent); }
+.topic p { margin: 0; font-size: 15px; }
+
+.embed { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 24px; }
+.embed .grid { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 24px; }
+@media (max-width: 860px) { .embed .grid { grid-template-columns: minmax(0, 1fr); } }
+.sizes { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0; }
+.sizes button { font: 500 14px var(--font); min-height: 44px; padding: 8px 12px; border-radius: 8px; border: 1.5px solid var(--line-strong); background: var(--surface); color: var(--ink); cursor: pointer; }
+.sizes button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+pre.snippet { margin: 0; background: var(--console); color: var(--con-ink); border-radius: var(--radius); padding: 16px; font: 13px/1.6 var(--mono); white-space: pre-wrap; word-break: break-all; }
+pre.snippet .a { color: #9cc3ff; } pre.snippet .v { color: #ff9fd0; } pre.snippet .t { color: var(--con-dim); }
+.license { border: 2px solid var(--ok); background: var(--ok-bg); border-radius: var(--radius-lg); padding: 18px; }
+.license h3 { color: var(--ok); }
+.license ul { margin: 8px 0 0; padding-left: 20px; font-size: 15px; }
+.license li { margin: 4px 0; }
+.license .no { color: var(--muted); }
+.plate-demo { margin-top: 14px; border-radius: 10px; overflow: hidden; border: 1px solid var(--line); }
+.plate-demo .strip { background: var(--strip); color: var(--strip-ink); font-size: 13px; padding: 7px 14px; }
+.plate-demo .strip b { color: var(--strip-link); text-decoration: underline; }
+.plate-demo .rest { height: 44px; background: repeating-linear-gradient(-45deg, var(--surface-2), var(--surface-2) 8px, var(--surface) 8px, var(--surface) 16px); display: grid; place-items: center; font-size: 12px; color: var(--muted); }
+.draft { display: inline-block; font: 600 11px/1 var(--font); text-transform: uppercase; letter-spacing: .05em; padding: 4px 7px; border-radius: 6px; background: var(--wait-bg); color: var(--wait); vertical-align: 3px; margin-left: 6px; }
+
+.trial { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 20px; align-items: center; background: color-mix(in srgb, var(--cta) 10%, var(--surface)); border: 1.5px solid color-mix(in srgb, var(--cta) 40%, transparent); border-radius: var(--radius-lg); padding: 24px; }
+.trial p { margin: 0; color: var(--muted); }
+.trial .face { font: 800 22px/1 var(--font); width: 56px; height: 56px; border-radius: 50%; background: var(--ink); color: var(--bg); display: grid; place-items: center; }
+@media (max-width: 640px) { .trial { grid-template-columns: minmax(0, 1fr); } }
+.faq details { border-bottom: 1px solid var(--line); }
+.faq summary { cursor: pointer; padding: 14px 0; font-weight: 600; min-height: 44px; }
+.faq details p { margin: 0 0 14px; color: var(--muted); }
+
+[hidden] { display: none !important; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition-duration: .001ms !important; animation-duration: .001ms !important; } }
+</style>
+</head>
+<body>
+
+<div class="mock" role="navigation" aria-label="Переключатель макета">
+  <div class="wrap"><b>Макет tsk-1247:</b>
+    <a href="#catalog" data-view="catalog">Витрина /trainers</a>
+    <a href="#interpreter" data-view="interpreter">Страница /t/interpreter</a>
+  </div>
+</div>
+
+<header class="site">
+  <div class="wrap">
+    <a class="name" href="#catalog"><span class="mono-logo">ВК</span>Виктор Комлев · Python</a>
+    <nav aria-label="Разделы">
+      <a href="#catalog" class="on">Тренажёры</a>
+      <a href="#" onclick="return false">Курсы</a>
+      <a href="#" onclick="return false">Для учителя</a>
+      <a href="#trial" >Пробное занятие</a>
+    </nav>
+    <button class="icon-btn" id="themeBtn" type="button" aria-label="Сменить тему" title="Сменить тему">
+      <svg class="ic-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+      <svg class="ic-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+    </button>
+  </div>
+</header>
+
+<!-- =================================================================
+     ВИТРИНА /trainers
+     ================================================================= -->
+<main id="view-catalog">
+  <div class="wrap">
+    <div class="hero">
+      <span class="kicker">&gt;_ тренажёры</span>
+      <h1>Тренажёры по Python:<br>проживи программу вместо компьютера</h1>
+      <p class="lead">Код выполняется по шагам, а ты предсказываешь, что будет дальше. Ошибся — видишь, что сделал бы настоящий Python, и почему.</p>
+      <ul class="facts">
+        <li>бесплатно</li><li>без регистрации</li><li>работает на телефоне</li><li>можно встроить на свой сайт</li>
+      </ul>
+    </div>
+
+    <div class="filters" role="group" aria-label="Темы">
+      <button type="button" aria-pressed="true" data-f="all">Все</button>
+      <button type="button" aria-pressed="false" data-f="basics">Основы</button>
+      <button type="button" aria-pressed="false" data-f="loops">Циклы</button>
+      <button type="button" aria-pressed="false" data-f="strings">Строки</button>
+      <button type="button" aria-pressed="false" data-f="cond">Условия</button>
+    </div>
+
+    <div class="cards" id="cards">
+      <article class="card" data-t="basics loops">
+        <div class="pic">
+          <span class="badge new">Новый</span>
+          <svg viewBox="0 0 320 180" aria-hidden="true">
+            <rect width="320" height="180" fill="#0f131c"/>
+            <g font-family="Geist Mono, monospace" font-size="13">
+              <text x="22" y="40" fill="#929cb4">1</text><text x="44" y="40" fill="#e4e9f6">name = <tspan fill="#86a8ff">input</tspan>(<tspan fill="#ff8fc8">"Имя? "</tspan>)</text>
+              <rect x="12" y="52" width="296" height="24" rx="4" fill="#1a2742"/><rect x="12" y="52" width="4" height="24" fill="#86a8ff"/>
+              <text x="22" y="69" fill="#86a8ff">2</text><text x="44" y="69" fill="#e4e9f6"><tspan fill="#86a8ff">print</tspan>(<tspan fill="#ff8fc8">"Привет,"</tspan>, name)</text>
+              <text x="22" y="112" fill="#ffd43b">Имя? Оля</text><rect x="94" y="100" width="8" height="15" fill="#ffd43b"/>
+            </g>
+            <g transform="translate(232 108)"><rect x="0" y="6" width="60" height="54" rx="16" fill="#4f82ec"/><rect x="6" y="12" width="48" height="42" rx="11" fill="#0f1a2e"/><path d="M17 33 q4 -7 8 0 M35 33 q4 -7 8 0" stroke="#7fe0a6" stroke-width="3" fill="none" stroke-linecap="round"/><path d="M22 42 q8 8 16 0" stroke="#7fe0a6" stroke-width="3" fill="none" stroke-linecap="round"/></g>
+          </svg>
+        </div>
+        <div class="body">
+          <h3><a href="#interpreter">Ты — интерпретатор</a></h3>
+          <p>Кавычки, <code>input</code>, типы и цикл <code>while</code>: проживи три программы шаг за шагом.</p>
+          <div class="tags"><span class="tag">"текст"</span><span class="tag">input()</span><span class="tag">int()</span><span class="tag">while</span></div>
+          <div class="meta"><span>⏱ 10–15 мин</span><span>3 уровня</span><span>с 10 лет · для новичков</span></div>
+          <div class="acts"><a class="btn primary" href="#interpreter">Открыть</a><a class="btn" href="#embed">Встроить</a></div>
+        </div>
+      </article>
+
+      <article class="card" data-t="loops">
+        <div class="pic">
+          <span class="badge new">Новый</span>
+          <svg viewBox="0 0 320 180" aria-hidden="true">
+            <rect width="320" height="180" fill="#0f131c"/>
+            <g font-family="Geist Mono, monospace" font-size="12">
+              <text x="20" y="34" fill="#929cb4">for i in range(1, 5):</text>
+              <g font-size="11" fill="#929cb4"><text x="20" y="64">виток</text><text x="20" y="92">i</text><text x="20" y="120">s</text></g>
+              <g>
+                <rect x="70" y="50" width="52" height="84" rx="6" fill="#1c2230"/><rect x="128" y="50" width="52" height="84" rx="6" fill="#1c2230"/>
+                <rect x="186" y="50" width="52" height="84" rx="6" fill="#463a0c" stroke="#ffe27a" stroke-width="2"/><rect x="244" y="50" width="52" height="84" rx="6" fill="none" stroke="#5d6680" stroke-dasharray="4 4"/>
+                <g text-anchor="middle" fill="#e4e9f6"><text x="96" y="64">1</text><text x="154" y="64">2</text><text x="212" y="64" fill="#ffe27a">3</text><text x="270" y="64" fill="#929cb4">4</text>
+                <text x="96" y="92" fill="#62d9df">1</text><text x="154" y="92" fill="#62d9df">2</text><text x="212" y="92" fill="#ffe27a">3</text><text x="270" y="92" fill="#929cb4">?</text>
+                <text x="96" y="120" fill="#62d9df">1</text><text x="154" y="120" fill="#62d9df">3</text><text x="212" y="120" fill="#ffe27a">6</text><text x="270" y="120" fill="#929cb4">?</text></g>
+              </g>
+              <path d="M70 156 H296" stroke="#2b3242" stroke-width="6" stroke-linecap="round"/><path d="M70 156 H238" stroke="#7fe0a6" stroke-width="6" stroke-linecap="round"/>
+            </g>
+          </svg>
+        </div>
+        <div class="body">
+          <h3><a href="#" onclick="return false">Цикл-машина</a></h3>
+          <p>Заполни таблицу витков сам: <code>while</code>, <code>for</code>, <code>range</code> — где цикл начинается и где останавливается.</p>
+          <div class="tags"><span class="tag">while</span><span class="tag">for</span><span class="tag">range()</span><span class="tag">трассировка</span></div>
+          <div class="meta"><span>⏱ 10 мин</span><span>4 уровня</span><span>ОГЭ · задание 15</span></div>
+          <div class="acts"><a class="btn primary" href="#" onclick="return false">Открыть</a><a class="btn" href="#embed">Встроить</a></div>
+        </div>
+      </article>
+
+      <article class="card soon" data-t="strings">
+        <div class="pic">
+          <span class="badge soon">Скоро</span>
+          <svg viewBox="0 0 320 180" aria-hidden="true">
+            <rect width="320" height="180" fill="#0f131c"/>
+            <g font-family="Geist Mono, monospace" font-size="18" text-anchor="middle">
+              <g fill="#1c2230"><rect x="30" y="64" width="36" height="40" rx="6"/><rect x="72" y="64" width="36" height="40" rx="6"/><rect x="114" y="64" width="36" height="40" rx="6"/><rect x="156" y="64" width="36" height="40" rx="6"/><rect x="198" y="64" width="36" height="40" rx="6"/><rect x="240" y="64" width="36" height="40" rx="6"/></g>
+              <g fill="#ff8fc8"><text x="48" y="91">П</text><text x="90" y="91">и</text><text x="132" y="91">т</text><text x="174" y="91">о</text><text x="216" y="91">н</text><text x="258" y="91">!</text></g>
+              <g fill="#929cb4" font-size="11"><text x="48" y="124">0</text><text x="90" y="124">1</text><text x="132" y="124">2</text><text x="174" y="124">3</text><text x="216" y="124">4</text><text x="258" y="124">5</text><text x="258" y="50">-1</text><text x="216" y="50">-2</text></g>
+              <path d="M70 140 v8 h82 v-8" stroke="#ffd43b" stroke-width="3" fill="none"/>
+            </g>
+          </svg>
+        </div>
+        <div class="body">
+          <h3>Линейка срезов</h3>
+          <p>Строки: индексы, срезы и отрицательные номера. Тянешь скобки — срез пересчитывается.</p>
+          <div class="tags"><span class="tag">s[1:4]</span><span class="tag">s[-1]</span><span class="tag">шаг</span></div>
+          <div class="meta"><span>в работе</span></div>
+          <div class="acts"><span class="btn" aria-disabled="true">Скоро</span></div>
+        </div>
+      </article>
+
+      <article class="card soon" data-t="cond">
+        <div class="pic">
+          <span class="badge soon">Скоро</span>
+          <svg viewBox="0 0 320 180" aria-hidden="true">
+            <rect width="320" height="180" fill="#0f131c"/>
+            <g font-family="Geist Mono, monospace" font-size="13" text-anchor="middle">
+              <rect x="110" y="24" width="100" height="34" rx="8" fill="#1a2742" stroke="#86a8ff"/><text x="160" y="46" fill="#e4e9f6">x &gt; 10 ?</text>
+              <path d="M160 58 v16 M160 74 L90 104 M160 74 L230 104" stroke="#5d6680" stroke-width="2" fill="none"/>
+              <rect x="40" y="104" width="100" height="34" rx="8" fill="#10291c" stroke="#62d69a"/><text x="90" y="126" fill="#62d69a">if</text>
+              <rect x="180" y="104" width="100" height="34" rx="8" fill="#1c2230" stroke="#5d6680"/><text x="230" y="126" fill="#929cb4">else</text>
+            </g>
+          </svg>
+        </div>
+        <div class="body">
+          <h3>Развилка</h3>
+          <p>Условия <code>if / elif / else</code>: по какой ветке пойдёт программа при твоих данных.</p>
+          <div class="tags"><span class="tag">if</span><span class="tag">elif</span><span class="tag">and / or</span></div>
+          <div class="meta"><span>в планах</span></div>
+          <div class="acts"><span class="btn" aria-disabled="true">Скоро</span></div>
+        </div>
+      </article>
+    </div>
+  </div>
+
+  <section>
+    <div class="wrap">
+      <h2>Учителю: возьмите тренажёр в свой урок</h2>
+      <p class="sub" style="max-width:640px;margin:0">Как симуляции PhET: открыл, скопировал одну строку — и тренажёр на вашем сайте, в Moodle или на странице класса.</p>
+      <div class="teach">
+        <div><div class="ico">&lt;/&gt;</div><h3>Одна строка кода</h3><p>Кнопка «Встроить» на каждой странице. Подходит для любого сайта, где можно вставить iframe.</p></div>
+        <div><div class="ico">0₽</div><h3>Бесплатно</h3><p>Условие одно — внутри тренажёра остаётся плашка автора со ссылкой на victor-komlev.ru.</p></div>
+        <div><div class="ico">⇥</div><h3>Без входа для ученика</h3><p>Ничего не нужно регистрировать: ученик открывает и проходит, вариант задач у каждого свой.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section style="padding-top:0">
+    <div class="wrap">
+      <div class="band">
+        <div><h2>Застрял на теме — разберём вместе</h2><p>Пробное занятие по Python: преподаватель смотрит на твои ошибки и объясняет именно их.</p></div>
+        <a class="btn cta" href="#trial">Записаться на пробное</a>
+      </div>
+    </div>
+  </section>
+</main>
+
+<!-- =================================================================
+     СТРАНИЦА ТРЕНАЖЁРА /t/interpreter
+     ================================================================= -->
+<main id="view-interpreter" hidden>
+  <div class="wrap">
+    <nav class="crumbs" aria-label="Путь"><a href="#catalog">Тренажёры</a> / Ты — интерпретатор</nav>
+    <div class="thead">
+      <div>
+        <h1>Ты — интерпретатор</h1>
+        <p class="lead">Тренажёр по Python для новичков: кавычки, <code>input</code>, типы и цикл <code>while</code>. Проживи программу вместо компьютера.</p>
+      </div>
+      <div class="meta" style="margin:0"><span>⏱ 10–15 мин</span><span>3 уровня</span><span>с 10 лет</span></div>
+    </div>
+
+    <div class="stage">
+      <iframe src="prototype-v2.html?embed=1&amp;seed=4242" title="Тренажёр «Ты — интерпретатор»" loading="lazy"></iframe>
+    </div>
+    <div class="under"><span>Вариант задач меняется при каждом запуске. Ссылка «Вызвать друга» даёт другу тот же вариант.</span><a href="prototype-v2.html">Открыть на весь экран ↗</a></div>
+  </div>
+
+  <section>
+    <div class="wrap two">
+      <div>
+        <h2>Что тренирует</h2>
+        <div class="topics">
+          <div class="topic"><code>"name"</code><p><b>Кавычки.</b> В кавычках — текст как есть, без кавычек — имя переменной. Отсюда половина ошибок <code>NameError</code>.</p></div>
+          <div class="topic"><code class="k">input()</code><p><b>Программа ждёт человека.</b> Подсказка в скобках — не ответ; <code>input</code> всегда отдаёт текст, даже если напечатать цифры.</p></div>
+          <div class="topic"><code class="i">i = i + 1</code><p><b>Цикл по шагам.</b> Проверка условия, порядок строк внутри витка и то, что выполняется после цикла.</p></div>
+        </div>
+      </div>
+      <div>
+        <h2>Как это устроено</h2>
+        <ol class="steps3">
+          <li><div><b>Предскажи</b><p>Перед каждой строкой — вопрос: что она сделает, что окажется в переменной.</p></div></li>
+          <li><div><b>Посмотри на память и консоль</b><p>Изменившаяся переменная подсвечивается, ошибки — настоящие сообщения Python.</p></div></li>
+          <li><div><b>Разбери ошибку</b><p>На каждый неверный ответ — объяснение именно этой ошибки. Жизней и штрафов нет.</p></div></li>
+        </ol>
+      </div>
+    </div>
+  </section>
+
+  <section id="embed" style="padding-top:0">
+    <div class="wrap">
+      <div class="embed">
+        <h2>Встроить на свой сайт</h2>
+        <div class="grid">
+          <div>
+            <p class="sub" style="margin:0">Скопируйте код и вставьте в HTML страницы — в блог, Moodle, Tilda, сайт школы.</p>
+            <div class="sizes" role="group" aria-label="Высота">
+              <button type="button" data-h="640" aria-pressed="true">Компактно · 640</button>
+              <button type="button" data-h="760" aria-pressed="false">Обычно · 760</button>
+              <button type="button" data-h="900" aria-pressed="false">Для телефона · 900</button>
+            </div>
+            <pre class="snippet" id="snippet"></pre>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
+              <button class="btn primary" type="button" id="copySnippet">Скопировать код</button>
+              <a class="btn" href="prototype-v2.html?embed=1" target="_blank" rel="noopener">Посмотреть, как выглядит</a>
+            </div>
+          </div>
+          <div class="license">
+            <h3>Лицензия: бесплатно, с указанием автора <span class="draft">черновик</span></h3>
+            <ul>
+              <li>Можно: встраивать на любые сайты, в том числе школьные и коммерческие курсы.</li>
+              <li>Обязательно: не скрывать плашку «Тренажёр — Виктор Комлев, victor-komlev.ru» и ссылку в ней.</li>
+              <li class="no">Нельзя: продавать доступ к самому тренажёру или выдавать его за свой.</li>
+            </ul>
+            <div class="plate-demo" aria-hidden="true">
+              <div class="strip">Тренажёр — <b>Виктор Комлев, victor-komlev.ru</b></div>
+              <div class="rest">тренажёр</div>
+            </div>
+            <p class="sub" style="font-size:13px;margin:10px 0 0">Плашка рисуется внутри iframe, поэтому стили вашего сайта её не меняют. Окончательный текст лицензии — после юриста (бриф §6).</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="trial" style="padding-top:0">
+    <div class="wrap">
+      <div class="trial">
+        <div class="face" aria-hidden="true">ВК</div>
+        <div><h2 style="margin:0 0 4px">Записаться на пробное занятие</h2><p>Покажите преподавателю свою карту ошибок из тренажёра — начнём занятие ровно с этих тем.</p></div>
+        <a class="btn cta" href="#" onclick="return false">Записаться</a>
+      </div>
+    </div>
+  </section>
+
+  <section style="padding-top:0">
+    <div class="wrap faq">
+      <h2>Вопросы</h2>
+      <details><summary>Нужна ли регистрация?</summary><p>Нет. Тренажёр открывается сразу. Если войти в кабинет, результат и карта ошибок сохранятся и их увидит преподаватель.</p></details>
+      <details><summary>Работает ли на телефоне?</summary><p>Да, от ширины 375 px. Ввод в консоль — обычной клавиатурой телефона.</p></details>
+      <details><summary>Можно ли решить через ChatGPT?</summary><p>Можно, но бессмысленно: ответы — короткие шаги по 5–15 секунд, а вариант у каждого свой. Быстрее подумать самому.</p></details>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">© Виктор Комлев · victor-komlev.ru · макет витрины тренажёров, tsk-1247 (ссылки и запись в макете не работают)</div>
+</footer>
+
+<script>
+"use strict";
+/* Макет: переключение «страниц» по якорю, фильтр карточек, генератор кода вставки. */
+const views = { catalog: document.getElementById("view-catalog"), interpreter: document.getElementById("view-interpreter") };
+function route() {
+  const h = location.hash.replace("#", "");
+  const v = h === "interpreter" || h === "embed" || h === "trial" ? "interpreter" : "catalog";
+  for (const [k, el] of Object.entries(views)) el.hidden = k !== v;
+  document.querySelectorAll(".mock a").forEach((a) => a.toggleAttribute("aria-current", a.dataset.view === v) || a.removeAttribute("aria-current"));
+  document.querySelectorAll(".mock a").forEach((a) => { if (a.dataset.view === v) a.setAttribute("aria-current", "page"); });
+  if (h === "embed" || h === "trial") document.getElementById(h).scrollIntoView();
+  else window.scrollTo(0, 0);
+}
+addEventListener("hashchange", route);
+route();
+
+document.querySelectorAll(".filters button").forEach((b) => b.addEventListener("click", () => {
+  document.querySelectorAll(".filters button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+  const f = b.dataset.f;
+  document.querySelectorAll("#cards .card").forEach((c) => { c.hidden = f !== "all" && !c.dataset.t.split(" ").includes(f); });
+}));
+
+let H = 640;
+function snippetText() { return `<iframe src="https://learn.victor-komlev.ru/embed/trainer/interpreter" width="100%" height="${H}" style="border:0" loading="lazy" title="Тренажёр «Ты — интерпретатор»"></iframe>`; }
+function renderSnippet() {
+  const e = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  document.getElementById("snippet").innerHTML = e(snippetText())
+    .replace(/(\w+)=(&quot;|")([^"]*)"/g, '<span class="a">$1</span>=<span class="v">"$3"</span>')
+    .replace(/(&lt;\/?iframe)/g, '<span class="t">$1</span>');
+}
+document.querySelectorAll(".sizes button").forEach((b) => b.addEventListener("click", () => {
+  document.querySelectorAll(".sizes button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+  H = Number(b.dataset.h); renderSnippet();
+}));
+renderSnippet();
+document.getElementById("copySnippet").onclick = async (e) => {
+  try { await navigator.clipboard.writeText(snippetText()); e.target.textContent = "Скопировано ✓"; }
+  catch { e.target.textContent = "Не вышло — выделите код вручную"; }
+};
+
+document.getElementById("themeBtn").onclick = () => {
+  const r = document.documentElement;
+  const dark = r.dataset.theme ? r.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+  r.dataset.theme = dark ? "light" : "dark";
+  /* Тема витрины передаётся тренажёру во встройке (тот же домен). */
+  const f = document.querySelector(".stage iframe");
+  if (f && f.contentWindow) f.contentWindow.postMessage({ theme: r.dataset.theme }, location.protocol === "file:" ? "*" : location.origin);
+};
+</script>
+</body>
+</html>
