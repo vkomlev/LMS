@@ -417,7 +417,7 @@ async def test_get_trainer_public_with_etag(db, client, trainers_on):
     assert body["title"] == "Ты — интерпретатор"
     assert body["scenario"]["schema"] == "trainer-scenario/1"
     assert resp.headers["etag"] == f'"{body["version"]}"'
-    assert "max-age" in resp.headers["cache-control"]
+    assert "no-cache" in resp.headers["cache-control"]
     cached = await client.get(f"/api/v1/trainers/{slug}", headers={"If-None-Match": resp.headers["etag"]})
     assert cached.status_code == 304
     assert cached.headers["etag"] == resp.headers["etag"]
