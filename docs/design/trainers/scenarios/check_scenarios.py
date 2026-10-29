@@ -138,9 +138,13 @@ def combos(params):
         yield ctx
 
 
+# Дочерний Python пишет в UTF-8 и на Windows: -I отключает PYTHON*-переменные, поэтому ещё -X utf8.
+_ENV = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+
+
 def run_py(code, stdin="", timeout=3):
-    r = subprocess.run([sys.executable, "-I", "-c", code], input=stdin, capture_output=True,
-                       text=True, timeout=timeout)
+    r = subprocess.run([sys.executable, "-I", "-X", "utf8", "-c", code], input=stdin, capture_output=True,
+                       text=True, encoding="utf-8", timeout=timeout, env=_ENV)
     return r.stdout, r.stderr
 
 
@@ -271,7 +275,7 @@ def check_choice(st, ctx, where):
 
 # =============== interpreter-input ===============
 def check_interpreter():
-    sc = json.load(open(DIR + "interpreter-input.json"))
+    sc = json.load(open(DIR + "interpreter-input.json", encoding="utf-8"))
     mis = sc["misconceptions"]
     used = set()
 
@@ -448,7 +452,7 @@ def check_interpreter():
 
 # =============== loop-machine ===============
 def check_loops():
-    sc = json.load(open(DIR + "loop-machine.json"))
+    sc = json.load(open(DIR + "loop-machine.json", encoding="utf-8"))
     mis = sc["misconceptions"]
     used = set()
 
@@ -497,7 +501,7 @@ def check_loops():
             # сломанный цикл: не заканчивается и печатает i0
             br = next(s for s in L1["steps"] if s["id"] == "broken")
             src = "\n".join(render(l, ctx) for l in br["code"])
-            p = subprocess.Popen([sys.executable, "-I", "-c", src], stdout=subprocess.PIPE, text=True)
+            p = subprocess.Popen([sys.executable, "-I", "-X", "utf8", "-c", src], stdout=subprocess.PIPE, text=True, encoding="utf-8", env=_ENV)
             try:
                 p.wait(timeout=1)
                 ok(False, f"L1 broken {k1}: программа закончилась")
