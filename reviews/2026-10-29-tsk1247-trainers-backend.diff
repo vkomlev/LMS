@@ -1,0 +1,3260 @@
+diff --git a/.env.example b/.env.example
+index 620187a..59008f8 100644
+--- a/.env.example
++++ b/.env.example
+@@ -58,6 +58,12 @@ HELP_REFLECTION_ENABLED=false
+ # ученику материал отдаётся без checkpoints (выглядит как раньше), ответ на
+ # точку — 409 checkpoints_disabled.
+ MATERIAL_CHECKPOINTS_ENABLED=false
++
++# tsk-1247: интерактивные тренажёры (материал типа trainer, развилка «Всё
++# понятно?» у теории, ручки /api/v1/trainers/*, trainer_suggestion после
++# неверного ответа). Выключено: тренажёров ученику нет, checkpoint не отдаётся,
++# ручки отвечают 404, trainer_suggestion — null. Читается на каждый запрос.
++TRAINERS_ENABLED=false
+ # tsk-996 (П7, ADR-0008): порядок элементов узла курса через общую node_sequence.
+ # false — прежний обход без выката (откат: смена значения + рестарт).
+ NODE_SEQUENCE_ENABLED=true
+diff --git a/app/api/main.py b/app/api/main.py
+index 73025ed..27c8904 100644
+--- a/app/api/main.py
++++ b/app/api/main.py
+@@ -114,7 +114,8 @@ app.add_middleware(
+     # кабинет физически не может прочитать `Retry-After` из ответа 503 и
+     # отступить на указанную паузу. Заголовок сам по себе бесполезен, пока
+     # он не объявлен здесь.
+-    expose_headers=["Retry-After"],
++    # tsk-1247: `ETag` — версия сценария тренажёра (`GET /trainers/{slug}`).
++    expose_headers=["Retry-After", "ETag"],
+ )
+ 
+ # Request-ID для сквозной трассировки (Этап 4 tsk-004). Регистрируется
+@@ -455,6 +456,9 @@ app.include_router(guest_funnel_router, prefix=API_PREFIX)  # tsk-1139
+ # tsk-053 фаза 2: ЕГЭ-диагностика. Ветка /diagnostic/* с квизовой не пересекается.
+ app.include_router(guest_diagnostic_router, prefix=API_PREFIX)
+ app.include_router(auth_test_session_router, prefix=API_PREFIX)
++# tsk-1247: интерактивные тренажёры — публичные ручки за TRAINERS_ENABLED.
++from app.api.v1.trainers import router as trainers_router  # noqa: E402
++app.include_router(trainers_router, prefix=API_PREFIX)
+ 
+ # Phase Y-6: methodist escalations
+ from app.api.v1.methodist_escalations import router as methodist_escalations_router
+diff --git a/app/api/v1/attempts.py b/app/api/v1/attempts.py
+index bca3bfb..bf33079 100644
+--- a/app/api/v1/attempts.py
++++ b/app/api/v1/attempts.py
+@@ -57,6 +57,7 @@ from app.services.text_authorship_service import pick_text_for_review
+ # эталона — там разбирается только соответствие критериям.
+ from app.services import ai_check_policy
+ from app.services import rubric_review_service
++from app.services import trainers_service
+ from app.core import settings_store
+ # tsk-301: единственная дверь прав подписки. Своей проверки здесь быть не должно —
+ # правило живёт в одном месте на все точки принуждения (пробел П13).
+@@ -1488,11 +1489,28 @@ async def submit_attempt_answers(
+                     tr_id, exc_info=True,
+                 )
+ 
++        # 2.4f tsk-1247: неверный ответ — предложить тренажёр узла задания.
++        # Soft-fail в точке сохранения: подсказка не должна ломать сдачу.
++        trainer_suggestion = None
++        if check_result.is_correct is False and trainers_service.trainers_enabled():
++            suggestion_task_id = task.id
++            try:
++                async with db.begin_nested():
++                    trainer_suggestion = await trainers_service.suggestion_for_course(
++                        db, task.course_id
++                    )
++            except Exception:
++                logger.warning(
++                    "tsk-1247: предложение тренажёра не посчитано: task=%s",
++                    suggestion_task_id, exc_info=True,
++                )
++
+         # 2.5 Накопление для ответа
+         results.append(
+             AttemptAnswerResult(
+                 task_id=task.id,
+                 check_result=check_result,
++                trainer_suggestion=trainer_suggestion,
+             )
+         )
+         total_score_delta += check_result.score
+diff --git a/app/api/v1/learning.py b/app/api/v1/learning.py
+index c560674..2decc94 100644
+--- a/app/api/v1/learning.py
++++ b/app/api/v1/learning.py
+@@ -94,6 +94,7 @@ from app.services import help_attempt_gate
+ from app.services import retrieval_service
+ from app.services import final_check_service
+ from app.services import material_checkpoints_service
++from app.services import trainers_service
+ from app.services.materials_acl_service import assert_material_access
+ from app.services import course_activity_service
+ from app.services.attempts_service import AttemptsService
+@@ -274,8 +275,27 @@ async def get_next_item(
+             "next-item: student_id=%s type=%s course_id=%s material_id=%s task_id=%s",
+             student_id, result.type, result.course_id, result.material_id, result.task_id,
+         )
++    # tsk-1247: задание после неверного ответа — предложить тренажёр узла.
++    # При выключенном рубильнике запросов нет.
++    # Soft-fail в точке сохранения: подсказка не должна ронять next-item.
++    trainer_suggestion = None
++    if (
++        result.type == "task" and result.task_id is not None
++        and result.course_id is not None and trainers_service.trainers_enabled()
++    ):
++        try:
++            async with db.begin_nested():
++                trainer_suggestion = await trainers_service.suggestion_after_last_answer(
++                    db, student_id, result.task_id, result.course_id
++                )
++        except Exception:
++            logger.warning(
++                "tsk-1247: предложение тренажёра не посчитано: student=%s task=%s",
++                student_id, result.task_id, exc_info=True,
++            )
+     await db.commit()
+     return NextItemResponse(
++        trainer_suggestion=trainer_suggestion,
+         type=result.type,
+         course_id=result.course_id,
+         root_course_id=result.root_course_id,
+diff --git a/app/api/v1/materials_extra.py b/app/api/v1/materials_extra.py
+index 2731208..25d930c 100644
+--- a/app/api/v1/materials_extra.py
++++ b/app/api/v1/materials_extra.py
+@@ -34,6 +34,7 @@ from app.services.material_checkpoints_service import student_content
+ from app.schemas.material_content import validate_material_content
+ from app.services.courses_acl_service import assert_course_access
+ from app.schemas.materials import (
++    TRAINER_REQUIREMENT_LEVEL,
+     MaterialRead,
+     MaterialReorderRequest,
+     MaterialReorderResponse,
+@@ -51,6 +52,7 @@ from app.schemas.materials import (
+     MaterialsImportByCourseItem,
+ )
+ from app.services import material_files_storage
++from app.services import trainers_service
+ from app.services.materials_service import MaterialsService
+ from app.services.google_sheets_service import GoogleSheetsService
+ from app.services.materials_sheets_parser_service import MaterialsSheetsParserService
+@@ -141,7 +143,7 @@ async def materials_bulk_upsert(
+     return result
+ 
+ 
+-def _read_for(material: Any, *, privileged: bool) -> MaterialRead:
++def _read_for(material: Any, *, privileged: bool, content: Any = None) -> MaterialRead:
+     """MaterialRead для вызывающего: ученику — без ответов контрольных точек (tsk-998).
+ 
+     Привилегированный (сервисный ключ, teacher / methodist / admin) получает
+@@ -154,6 +156,9 @@ def _read_for(material: Any, *, privileged: bool) -> MaterialRead:
+     read = MaterialRead.model_validate(material)
+     if privileged:
+         return read
++    if content is not None:
++        # tsk-1247: развилка «Всё понятно?» снята (`trainers_service.student_visible`).
++        read = read.model_copy(update={"content": content})
+     projected = student_content(read.content)
+     if projected is read.content:
+         return read
+@@ -244,10 +249,22 @@ async def list_course_materials(
+         order_by=order_by,
+         skip=skip,
+         limit=limit,
++        # tsk-1247: при выключенном TRAINERS_ENABLED тренажёров ученику нет —
++        # фильтр в SQL, чтобы пагинация и total не расходились.
++        exclude_types=(
++            None if privileged or trainers_service.trainers_enabled()
++            else [trainers_service.TRAINER_TYPE]
++        ),
+     )
++    replaced: dict[int, Any] = {}
++    if not privileged:
++        items, replaced = await trainers_service.student_visible(db, items)
+     logger.info("list_course_materials course_id=%s total=%s skip=%s limit=%s", course_id, total, skip, limit)
+     return MaterialsListResponse(
+-        items=[_read_for(m, privileged=bool(privileged)) for m in items],
++        items=[
++            _read_for(m, privileged=bool(privileged), content=replaced.get(m.id))
++            for m in items
++        ],
+         total=total,
+         skip=skip,
+         limit=limit,
+@@ -710,8 +727,14 @@ async def get_material_by_id(
+             current_user.id, material_id,
+         )
+         raise HTTPException(status.HTTP_404_NOT_FOUND, "Материал не найден")
++    replaced: dict[int, Any] = {}
++    if not privileged:
++        shown, replaced = await trainers_service.student_visible(db, [material])
++        if not shown:
++            # tsk-1247: тренажёр при выключенном рубильнике — как удалённый.
++            raise HTTPException(status.HTTP_404_NOT_FOUND, "Материал не найден")
+     # tsk-998: ученику — без правильных ответов контрольных точек.
+-    return _read_for(material, privileged=privileged)
++    return _read_for(material, privileged=privileged, content=replaced.get(material.id))
+ 
+ 
+ # ---------------------------------------------------------------------------
+@@ -787,6 +810,15 @@ async def patch_material_manual(
+                 status.HTTP_422_UNPROCESSABLE_ENTITY,
+                 f"Некорректная структура content для типа '{material.type}': {e}",
+             ) from e
++    if material.type == "trainer" and "requirement_level" in changed:
++        # tsk-1247: тренажёр не блокирует продвижение — уровень всегда recommended.
++        changed["requirement_level"] = TRAINER_REQUIREMENT_LEVEL
++    if material.type == "trainer" and changed.get("content") is not None:
++        conflict = await trainers_service.slug_conflict(
++            db, changed["content"], exclude_id=material.id
++        )
++        if conflict:
++            raise HTTPException(status.HTTP_409_CONFLICT, conflict)
+ 
+     # Пометку ставим только на контентные поля: служебные (активность, порядок,
+     # уровень) импорт и так не трогает без явной передачи (tsk-377/378/407),
+diff --git a/app/api/v1/trainers.py b/app/api/v1/trainers.py
+new file mode 100644
+index 0000000..7a55be3
+--- /dev/null
++++ b/app/api/v1/trainers.py
+@@ -0,0 +1,176 @@
++"""Интерактивные тренажёры `/api/v1/trainers/*` (tsk-1247).
++
++Обе ручки публичные: тренажёр открывают ученик в курсе, гость на витрине и
++посетитель чужого сайта во встройке. Сценарий хранится в материале узла типа
++`trainer` (`app/services/trainers_service.py`). При выключенном
++`TRAINERS_ENABLED` обе ручки отвечают 404 — так же, как на неизвестный slug.
++"""
++from __future__ import annotations
++
++import logging
++from uuid import UUID
++
++from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Path, Request, Response, status
++from sqlalchemy.ext.asyncio import AsyncSession
++
++from app.api.deps import get_bare_db, get_current_user
++from app.core.config import Settings
++from app.schemas.trainer_scenario import SLUG_PATTERN
++from app.schemas.trainers import TrainerEventsRequest, TrainerEventsResponse, TrainerRead
++from app.services import trainers_service
++from app.services.rate_limit_service import get_redis, is_rate_limited
++from app.utils.exceptions import DomainError
++
++logger = logging.getLogger("api.trainers")
++router = APIRouter(prefix="/trainers", tags=["trainers"])
++_settings = Settings()
++
++#: Кеш сценария у клиента и на прокси. Правка сценария видна через пять минут;
++#: ETag избавляет от повторной загрузки ~30 КБ, пока сценарий не менялся.
++_CACHE_CONTROL = "public, max-age=300"
++#: Лимиты по IP. Чтение — как у гостевой выдачи заданий. События идут пакетом
++#: раз в уровень (бриф Р7); запас — на класс за одним NAT.
++_READ_LIMIT = (600, 60)
++_EVENTS_LIMIT = (120, 60)
++#: Второй ключ лимита событий — на того, кто пишет: ученик, гостевая сессия,
++#: у встройки — slug + IP. Пакет идёт раз в уровень, 30 в минуту — с запасом;
++#: без него один IP заливал бы `guest_attempt` до 24 000 строк в минуту.
++_EVENTS_PER_WRITER_LIMIT = (30, 60)
++
++_NOT_FOUND = "Тренажёр не найден"
++
++
++def _client_ip(request: Request) -> str | None:
++    return request.client.host if request.client else None
++
++
++async def _limit(request: Request, name: str, rule: tuple[int, int], key: str | None = None) -> None:
++    """429 при превышении. `key` — свой ключ лимита; без него — IP клиента."""
++    key = key or _client_ip(request)
++    if not key:
++        return
++    redis = get_redis(_settings.redis_url)
++    if await is_rate_limited(redis, f"{name}:{key}", max_requests=rule[0], window_seconds=rule[1]):
++        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Слишком много запросов")
++
++
++async def _load(db: AsyncSession, slug: str) -> dict:
++    if not trainers_service.trainers_enabled():
++        raise HTTPException(status.HTTP_404_NOT_FOUND, _NOT_FOUND)
++    trainer = await trainers_service.find_trainer(db, slug)
++    if trainer is None:
++        raise HTTPException(status.HTTP_404_NOT_FOUND, _NOT_FOUND)
++    return trainer
++
++
++@router.get(
++    "/{slug}",
++    response_model=TrainerRead,
++    summary="Сценарий тренажёра (публично: ученик, гость, встройка)",
++    responses={
++        304: {"description": "Сценарий не менялся (If-None-Match совпал с ETag)"},
++        404: {"description": "Тренажёра нет, он выключен или TRAINERS_ENABLED=false"},
++        429: {"description": "Лимит запросов с IP"},
++    },
++)
++async def get_trainer(
++    request: Request,
++    response: Response,
++    slug: str = Path(..., pattern=SLUG_PATTERN),
++    if_none_match: str | None = Header(default=None),
++    db: AsyncSession = Depends(get_bare_db),
++) -> TrainerRead | Response:
++    """Отдать сценарий `trainer-scenario/1` с версией (ETag) для кеша.
++
++    Ответы шагов в сценарии не скрываются (бриф Р3): движок проверяет ответ в
++    браузере, защита — выгодность честного пути, а не секретность.
++    """
++    await _limit(request, "trainer_read", _READ_LIMIT)
++    trainer = await _load(db, slug)
++    content = trainer["content"]
++    version = trainers_service.scenario_version(content["scenario"])
++    etag = f'"{version}"'
++    headers = {"ETag": etag, "Cache-Control": _CACHE_CONTROL}
++    if if_none_match and etag in [t.strip().removeprefix("W/") for t in if_none_match.split(",")]:
++        return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers=headers)
++    response.headers.update(headers)
++    return TrainerRead(
++        slug=content["slug"],
++        title=trainers_service.trainer_title(content, trainer["title"]),
++        scenario=content["scenario"],
++        version=version,
++    )
++
++
++@router.post(
++    "/{slug}/events",
++    response_model=TrainerEventsResponse,
++    status_code=status.HTTP_202_ACCEPTED,
++    summary="События тренажёра пакетом (ученик / гость / встройка)",
++    responses={
++        400: {"description": "context=guest без действующей cookie guest_session"},
++        401: {"description": "context=student без входа"},
++        404: {"description": "Тренажёра нет, он выключен или TRAINERS_ENABLED=false"},
++        422: {"description": "Больше 200 событий, неизвестный код ошибки, ввод длиннее 64 символов"},
++        429: {"description": "Лимит запросов с IP"},
++    },
++)
++async def post_trainer_events(
++    request: Request,
++    body: TrainerEventsRequest,
++    slug: str = Path(..., pattern=SLUG_PATTERN),
++    guest_session: str | None = Cookie(default=None),
++    session_token: str | None = Cookie(default=None, alias="session"),
++    authorization: str | None = Header(default=None),
++    db: AsyncSession = Depends(get_bare_db),
++) -> TrainerEventsResponse:
++    """Принять пакет событий (≤ 200) и записать по контексту.
++
++    * `student` — ученик из токена входа (cookie `session` или Bearer); сервисный
++      ключ не принимается: событие обязано принадлежать человеку.
++    * `guest` — по cookie `guest_session` (как ответы гостя на демо-задачу).
++    * `embed` — cookie не читаются вовсе; пишутся только обезличенные счётчики.
++    """
++    await _limit(request, "trainer_events", _EVENTS_LIMIT)
++    trainer = await _load(db, slug)
++    trainers_service.check_misconceptions(
++        body.events, trainers_service.misconception_codes(trainer["content"])
++    )
++
++    try:
++        if body.context == "student":
++            user = await get_current_user(
++                db=db, session_token=session_token, authorization=authorization,
++                token=None, x_api_key=None, api_key=None,
++            )
++            await _limit(request, "trainer_events_user", _EVENTS_PER_WRITER_LIMIT, str(user.id))
++            accepted = await trainers_service.record_student_events(db, user.id, trainer, body.events)
++        elif body.context == "guest":
++            if not guest_session:
++                raise HTTPException(
++                    status.HTTP_400_BAD_REQUEST,
++                    "Требуется cookie guest_session. Сначала вызовите POST /learning/guest/session.",
++                )
++            try:
++                gs_uuid = UUID(guest_session)
++            except ValueError as exc:
++                raise HTTPException(
++                    status.HTTP_400_BAD_REQUEST, "Некорректный формат guest_session cookie."
++                ) from exc
++            await _limit(request, "trainer_events_guest", _EVENTS_PER_WRITER_LIMIT, str(gs_uuid))
++            accepted = await trainers_service.record_guest_events(db, gs_uuid, trainer, body.events)
++        else:
++            await _limit(
++                request, "trainer_events_embed", _EVENTS_PER_WRITER_LIMIT,
++                f"{slug}:{_client_ip(request) or '-'}",
++            )
++            accepted = await trainers_service.record_embed_counters(db, trainer, body.events)
++    except (HTTPException, DomainError):
++        await db.rollback()
++        raise
++    await db.commit()
++    logger.info(
++        "trainer_events slug=%s context=%s received=%s accepted=%s",
++        slug, body.context, len(body.events), accepted,
++    )
++    return TrainerEventsResponse(accepted=accepted)
+diff --git a/app/db/migrations/versions/2026_10_29_tsk1247_material_type_trainer.py b/app/db/migrations/versions/2026_10_29_tsk1247_material_type_trainer.py
+new file mode 100644
+index 0000000..2dded6c
+--- /dev/null
++++ b/app/db/migrations/versions/2026_10_29_tsk1247_material_type_trainer.py
+@@ -0,0 +1,59 @@
++"""Тип материала `trainer` — интерактивный тренажёр (tsk-1247).
++
++Revision ID: tsk1247_material_type_trainer
++Revises: tsk1442_slot_student_dates
++Create Date: 2026-10-29
++
++Только ``ALTER TYPE content_type ADD VALUE 'trainer'``: данных и других
++изменений схемы нет (бриф tsk-1247, Р2 — отдельной ревизией без данных).
++``ADD VALUE`` идёт в autocommit-блоке: новое значение enum нельзя использовать
++в той же транзакции, где его добавили, а следующие ревизии цепочки могут.
++
++Откат: PostgreSQL не умеет удалять значение enum, поэтому тип пересоздаётся
++без ``trainer`` (переименовать → создать прежний → перевести колонку →
++удалить старый). Если в ``materials`` уже есть тренажёры, откат отказывает с
++понятной ошибкой: удалить их молча — потерять сценарии. Сначала выключить
++рубильник ``TRAINERS_ENABLED`` и удалить материалы ``type = 'trainer'`` руками.
++"""
++from typing import Sequence, Union
++
++from alembic import op
++from sqlalchemy import text
++
++revision: str = "tsk1247_material_type_trainer"
++down_revision: Union[str, None] = "tsk1442_slot_student_dates"
++branch_labels: Union[str, Sequence[str], None] = None
++depends_on: Union[str, Sequence[str], None] = None
++
++# Значения enum до этой ревизии — в прежнем порядке (baseline + 20260129_*).
++_PREVIOUS_VALUES = (
++    "text", "video", "link", "pdf", "audio", "image", "office_document",
++    "script", "document",
++)
++
++
++def upgrade() -> None:
++    """Добавить значение `trainer` в enum `content_type` (идемпотентно)."""
++    with op.get_context().autocommit_block():
++        op.execute("ALTER TYPE content_type ADD VALUE IF NOT EXISTS 'trainer'")
++
++
++def downgrade() -> None:
++    """Пересоздать `content_type` без `trainer`; отказ, если тренажёры есть."""
++    bind = op.get_bind()
++    count = bind.execute(
++        text("SELECT count(*) FROM materials WHERE type::text = 'trainer'")
++    ).scalar()
++    if count:
++        raise RuntimeError(
++            f"tsk-1247: в materials {count} материалов type='trainer' — откат типа "
++            "удалил бы их сценарии. Удалите их явно и повторите downgrade."
++        )
++    values = ", ".join(f"'{v}'" for v in _PREVIOUS_VALUES)
++    op.execute("ALTER TYPE content_type RENAME TO content_type_tsk1247_old")
++    op.execute(f"CREATE TYPE content_type AS ENUM ({values})")
++    op.execute(
++        "ALTER TABLE materials ALTER COLUMN type TYPE content_type "
++        "USING type::text::content_type"
++    )
++    op.execute("DROP TYPE content_type_tsk1247_old")
+diff --git a/app/models/materials.py b/app/models/materials.py
+index 1413588..8b0121a 100644
+--- a/app/models/materials.py
++++ b/app/models/materials.py
+@@ -63,7 +63,7 @@ class Materials(Base):
+     type: Mapped[str] = mapped_column(
+         Enum(
+             "text", "video", "audio", "image", "link", "pdf", "office_document",
+-            "script", "document",
++            "script", "document", "trainer",
+             name="content_type",
+         ),
+         nullable=False,
+diff --git a/app/repos/materials_repo.py b/app/repos/materials_repo.py
+index 9576a34..8e44cb0 100644
+--- a/app/repos/materials_repo.py
++++ b/app/repos/materials_repo.py
+@@ -36,9 +36,11 @@ class MaterialsRepository(BaseRepository[Materials]):
+         order_by: str = "order_position",
+         skip: int = 0,
+         limit: int = 100,
++        exclude_types: Optional[List[str]] = None,
+     ) -> Tuple[List[Materials], int]:
+         """
+         Список материалов курса с фильтрацией и пагинацией.
++        exclude_types: типы, которых в выдаче нет (tsk-1247: тренажёры ученику при выключенном рубильнике).
+         q: поиск по title и external_uid (ILIKE %q%).
+ 
+         Returns:
+@@ -63,6 +65,9 @@ class MaterialsRepository(BaseRepository[Materials]):
+         if type_filter is not None:
+             stmt = stmt.where(Materials.type == type_filter)
+             count_stmt = count_stmt.where(Materials.type == type_filter)
++        if exclude_types:
++            stmt = stmt.where(Materials.type.not_in(exclude_types))
++            count_stmt = count_stmt.where(Materials.type.not_in(exclude_types))
+ 
+         total = (await db.execute(count_stmt)).scalar() or 0
+ 
+diff --git a/app/schemas/attempts.py b/app/schemas/attempts.py
+index 837a61f..6c3d2ee 100644
+--- a/app/schemas/attempts.py
++++ b/app/schemas/attempts.py
+@@ -6,6 +6,7 @@ from datetime import datetime  # импортируем datetime для испо
+ from pydantic import BaseModel, Field, ConfigDict
+ 
+ from app.schemas.checking import StudentAnswer, CheckResult
++from app.schemas.trainers import TrainerSuggestion
+ 
+ 
+ class AttemptCreate(BaseModel):
+@@ -261,6 +262,13 @@ class AttemptAnswerResult(BaseModel):
+         ...,
+         description="Результат проверки ответа по данной задаче.",
+     )
++    trainer_suggestion: Optional[TrainerSuggestion] = Field(
++        None,
++        description=(
++            "tsk-1247: ответ неверный и в узле задания есть тренажёр — {slug, title}; "
++            "иначе null (и всегда null при TRAINERS_ENABLED=false)."
++        ),
++    )
+ 
+ 
+ class AttemptAnswersResponse(BaseModel):
+diff --git a/app/schemas/learning_api.py b/app/schemas/learning_api.py
+index c89978f..dacb1b7 100644
+--- a/app/schemas/learning_api.py
++++ b/app/schemas/learning_api.py
+@@ -11,6 +11,8 @@ from typing import Any, Literal, Optional
+ 
+ from pydantic import BaseModel, Field, field_validator, model_validator
+ 
++from app.schemas.trainers import TrainerSuggestion
++
+ 
+ # ----- Next item -----
+ 
+@@ -35,6 +37,13 @@ class NextItemResponse(BaseModel):
+         None, description="tsk-231: название курса-зависимости для UI (SPW/TG_LMS)."
+     )
+     dependency_course_uid: Optional[str] = None
++    trainer_suggestion: Optional[TrainerSuggestion] = Field(
++        None,
++        description=(
++            "tsk-1247: следующий шаг — задание, последний ответ на которое неверный, "
++            "и в его узле есть тренажёр: {slug, title}. null — нет, или TRAINERS_ENABLED=false."
++        ),
++    )
+ 
+ 
+ # ----- Material complete -----
+diff --git a/app/schemas/material_content.py b/app/schemas/material_content.py
+index 1e941d4..3957503 100644
+--- a/app/schemas/material_content.py
++++ b/app/schemas/material_content.py
+@@ -7,12 +7,14 @@ from __future__ import annotations
+ 
+ from typing import Any, List, Literal, Optional, Union
+ 
+-from pydantic import BaseModel, Field, field_validator, model_validator
++from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
++
++from app.schemas.trainer_scenario import SLUG_PATTERN, validate_scenario
+ 
+ 
+ MaterialType = Literal[
+     "text", "video", "audio", "image", "link", "pdf", "office_document",
+-    "script", "document",
++    "script", "document", "trainer",
+ ]
+ 
+ # ---------- Общие типы источников ----------
+@@ -92,6 +94,28 @@ class DocumentSourceItem(BaseModel):
+ # ---------- Контент по типам материала ----------
+ 
+ 
++class TrainerCheckpoint(BaseModel):
++    """Развилка после теории «Всё понятно?» (tsk-1247).
++
++    `materials.content.checkpoint` у материала-теории. «Да» — ученик идёт к
++    элементу узла после тренажёра, «Нет» — открывается тренажёр
++    `trainer_material_id`. Не путать с `checkpoints` (tsk-998, вопросы внутри
++    текста): это разные механизмы с разными рубильниками.
++    """
++    model_config = ConfigDict(extra="forbid")
++
++    question: str = Field(default="Всё понятно?", min_length=1, max_length=500)
++    trainer_material_id: int = Field(..., gt=0, description="id материала типа trainer в этом узле")
++
++
++class _WithTrainerCheckpoint(BaseModel):
++    """Необязательная развилка tsk-1247 у любого материала-теории."""
++    checkpoint: Optional[TrainerCheckpoint] = Field(
++        default=None,
++        description="tsk-1247: развилка «Всё понятно?» → тренажёр (при TRAINERS_ENABLED)",
++    )
++
++
+ class MaterialCheckpointOption(BaseModel):
+     """Вариант ответа контрольной точки `kind="single"` (tsk-998)."""
+     id: str = Field(..., min_length=1, max_length=16, description="Стабильный id варианта (a, b, c…)")
+@@ -149,7 +173,7 @@ class MaterialCheckpoint(BaseModel):
+         return self
+ 
+ 
+-class TextContent(BaseModel):
++class TextContent(_WithTrainerCheckpoint):
+     """Контент для type='text'."""
+     text: str = Field(..., description="Основной текст материала")
+     format: Optional[Literal["markdown", "html", "plain"]] = Field(
+@@ -176,7 +200,7 @@ class TextContent(BaseModel):
+         return v
+ 
+ 
+-class VideoContent(BaseModel):
++class VideoContent(_WithTrainerCheckpoint):
+     """Контент для type='video'."""
+     sources: List[VideoSourceItem] = Field(
+         default_factory=list,
+@@ -188,19 +212,19 @@ class VideoContent(BaseModel):
+     )
+ 
+ 
+-class AudioContent(BaseModel):
++class AudioContent(_WithTrainerCheckpoint):
+     """Контент для type='audio'."""
+     sources: List[AudioSourceItem] = Field(default_factory=list)
+     default_source: int = Field(default=0)
+ 
+ 
+-class ImageContent(BaseModel):
++class ImageContent(_WithTrainerCheckpoint):
+     """Контент для type='image'."""
+     sources: List[ImageSourceItem] = Field(default_factory=list)
+     default_source: int = Field(default=0)
+ 
+ 
+-class LinkContent(BaseModel):
++class LinkContent(_WithTrainerCheckpoint):
+     """Контент для type='link'."""
+     url: str = Field(..., description="URL ссылки")
+     title: Optional[str] = None
+@@ -208,19 +232,19 @@ class LinkContent(BaseModel):
+     preview_image: Optional[str] = None
+ 
+ 
+-class PdfContent(BaseModel):
++class PdfContent(_WithTrainerCheckpoint):
+     """Контент для type='pdf'."""
+     sources: List[PdfSourceItem] = Field(default_factory=list)
+     default_source: int = Field(default=0)
+ 
+ 
+-class OfficeDocumentContent(BaseModel):
++class OfficeDocumentContent(_WithTrainerCheckpoint):
+     """Контент для type='office_document'."""
+     sources: List[OfficeDocumentSourceItem] = Field(default_factory=list)
+     default_source: int = Field(default=0)
+ 
+ 
+-class ScriptContent(BaseModel):
++class ScriptContent(_WithTrainerCheckpoint):
+     """Контент для type='script' — программы и скрипты (py, js, ps1 и т.д.)."""
+     sources: List[ScriptSourceItem] = Field(
+         default_factory=list,
+@@ -229,7 +253,7 @@ class ScriptContent(BaseModel):
+     default_source: int = Field(default=0)
+ 
+ 
+-class DocumentContent(BaseModel):
++class DocumentContent(_WithTrainerCheckpoint):
+     """Контент для type='document' — документы (docx, xlsx, pptx, txt)."""
+     sources: List[DocumentSourceItem] = Field(
+         default_factory=list,
+@@ -238,6 +262,28 @@ class DocumentContent(BaseModel):
+     default_source: int = Field(default=0)
+ 
+ 
++class TrainerContent(BaseModel):
++    """Контент для type='trainer' (tsk-1247): `{slug, scenario}`.
++
++    `scenario` — сценарий `trainer-scenario/1`, проверяется схемой целиком
++    (`app/schemas/trainer_scenario.py`); `slug` обязан совпадать со
++    `scenario.slug` — по нему тренажёр отдаёт `GET /trainers/{slug}`.
++    """
++    model_config = ConfigDict(extra="forbid")
++
++    slug: str = Field(..., pattern=SLUG_PATTERN, description="Адрес тренажёра (/t/{slug})")
++    scenario: dict[str, Any] = Field(..., description="Сценарий trainer-scenario/1")
++
++    @model_validator(mode="after")
++    def _scenario_valid(self) -> "TrainerContent":
++        parsed = validate_scenario(self.scenario)
++        if parsed.slug != self.slug:
++            raise ValueError(
++                f"slug материала «{self.slug}» не совпадает со scenario.slug «{parsed.slug}»"
++            )
++        return self
++
++
+ # ---------- Валидация контента по типу материала ----------
+ 
+ CONTENT_MODELS: dict[str, type[BaseModel]] = {
+@@ -250,6 +296,7 @@ CONTENT_MODELS: dict[str, type[BaseModel]] = {
+     "office_document": OfficeDocumentContent,
+     "script": ScriptContent,
+     "document": DocumentContent,
++    "trainer": TrainerContent,
+ }
+ 
+ 
+@@ -265,7 +312,15 @@ def validate_material_content(material_type: str, content: Any) -> dict[str, Any
+     if not isinstance(content, dict):
+         raise ValueError(f"content должен быть объектом (dict), получено: {type(content)}")
+     obj = model.model_validate(content)
++    if material_type == "trainer":
++        # tsk-1247: сценарий хранится как прислан (порядок ключей и значения
++        # по умолчанию не дописываются) — движок SPW читает его по README §1.
++        return {"slug": content["slug"], "scenario": content["scenario"]}
+     dumped = obj.model_dump()
++    # tsk-1247: пустая развилка не записывается — content без неё байт в байт
++    # прежний (bulk-upsert не считает такие материалы изменёнными).
++    if dumped.get("checkpoint") is None:
++        dumped.pop("checkpoint", None)
+     # tsk-998: пустой `checkpoints` не записывается — content материалов без
+     # контрольных точек остаётся байт в байт прежним (и bulk-upsert не считает
+     # их изменёнными).
+diff --git a/app/schemas/materials.py b/app/schemas/materials.py
+index b790d3d..26740d2 100644
+--- a/app/schemas/materials.py
++++ b/app/schemas/materials.py
+@@ -15,6 +15,21 @@ from app.schemas.content_requirement import RequirementLevel
+ 
+ # ---------- CRUD схемы ----------
+ 
++#: tsk-1247: уровень обязательности тренажёра. В LMS `skippable` идёт в счёт
++#: обязательного (движок next-item его выдаёт, процент курса его ждёт —
++#: `requirement_override_service.REQUIRED_LEVELS`), а «необязательный и не
++#: блокирует продвижение» — это `recommended`: вне обхода и вне счётчиков,
++#: но в программе курса виден. Тренажёр всегда пишется с этим уровнем.
++TRAINER_REQUIREMENT_LEVEL = "recommended"
++
++
++def trainer_requirement_level(material_type: Optional[str], level: Optional[str]) -> Optional[str]:
++    """Уровень, с которым материал реально пишется: у тренажёра — всегда `recommended`."""
++    if material_type == "trainer":
++        return TRAINER_REQUIREMENT_LEVEL
++    return level
++
++
+ 
+ # tsk-1403: место материала в узле курса (`materials.placement`).
+ MaterialPlacement = Literal["head", "after_children"]
+@@ -26,7 +41,7 @@ class MaterialCreate(BaseModel):
+     title: str = Field(..., max_length=500, description="Заголовок материала")
+     type: str = Field(
+         ...,
+-        description="Тип материала: text, video, audio, image, link, pdf, office_document, script, document",
++        description="Тип материала: text, video, audio, image, link, pdf, office_document, script, document, trainer (tsk-1247)",
+     )
+     content: Any = Field(..., description="Содержимое (структура зависит от type)")
+     description: Optional[str] = None
+@@ -48,6 +63,9 @@ class MaterialCreate(BaseModel):
+                 object.__setattr__(self, "content", validated)
+             except Exception as e:
+                 raise ValueError(f"Некорректная структура content для типа '{self.type}': {e}")
++        object.__setattr__(
++            self, "requirement_level", trainer_requirement_level(self.type, self.requirement_level)
++        )
+         return self
+ 
+ 
+@@ -79,6 +97,9 @@ class MaterialUpdate(BaseModel):
+                 object.__setattr__(self, "content", validated)
+             except Exception as e:
+                 raise ValueError(f"Некорректная структура content для типа '{self.type}': {e}")
++        if self.type == "trainer":
++            object.__setattr__(self, "requirement_level", TRAINER_REQUIREMENT_LEVEL)
++            self.model_fields_set.add("requirement_level")
+         return self
+ 
+ 
+@@ -205,7 +226,7 @@ class MaterialsBulkUpsertItem(BaseModel):
+     title: str = Field(..., max_length=500)
+     type: str = Field(
+         ...,
+-        description="Тип: text, video, audio, image, link, pdf, office_document, script, document",
++        description="Тип: text, video, audio, image, link, pdf, office_document, script, document, trainer (tsk-1247)",
+     )
+     content: Any = Field(..., description="Содержимое (структура по type)")
+     description: Optional[str] = None
+@@ -271,6 +292,12 @@ class MaterialsBulkUpsertItem(BaseModel):
+                 object.__setattr__(self, "content", validated)
+             except Exception as e:
+                 raise ValueError(f"Некорректная структура content для типа '{self.type}': {e}")
++        if self.type == "trainer":
++            # tsk-1247: уровень тренажёра пишется всегда, даже если публикатор
++            # его не прислал, — иначе смена типа на trainer при переиздании
++            # оставила бы прежний `required` и тренажёр заблокировал бы путь.
++            object.__setattr__(self, "requirement_level", TRAINER_REQUIREMENT_LEVEL)
++            self.model_fields_set.add("requirement_level")
+         self._reject_known_junk()
+         return self
+ 
+diff --git a/app/schemas/trainer_scenario.py b/app/schemas/trainer_scenario.py
+new file mode 100644
+index 0000000..0a725c3
+--- /dev/null
++++ b/app/schemas/trainer_scenario.py
+@@ -0,0 +1,400 @@
++"""Схема сценария интерактивного тренажёра `trainer-scenario/1` (tsk-1247).
++
++Формат описан в `docs/design/trainers/scenarios/README.md` §1. Сценарий —
++данные, а не код: его исполняет движок SPW, LMS только хранит его в
++`materials.content.scenario` и проверяет при публикации, чтобы битый сценарий
++не дошёл до ученика (бриф tsk-1247, Р2).
++
++Что проверяется здесь (структура и ссылки), а чего нет:
++- структура верхнего уровня, уровней, шагов и вариантов ответа — с отказом на
++  незнакомых ключах (опечатка в имени поля молча выключила бы шаг);
++- ссылки на коды ошибок: каждый `misconception` в шагах есть в словаре
++  `misconceptions`, и каждый код словаря где-то используется (README §1.6);
++- у неверного варианта `choice` есть код ошибки, у каждого варианта — разбор;
++- уникальность `id` уровней и шагов, `max_len` консоли ≤ 64 (бриф Р3);
++- разметка текстов без HTML: сценарий показывается на чужих сайтах (README §1.3).
++
++Семантику шагов (шаблоны `{…}`, условия, совпадение с настоящим Python)
++проверяет `docs/design/trainers/scenarios/check_scenarios.py` — это задача
++методиста, а не публикации.
++"""
++from __future__ import annotations
++
++import json
++import re
++from typing import Annotated, Any, Dict, Iterator, List, Literal, Optional, Tuple, Union
++
++from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
++
++#: Версия формата, которую понимает эта схема.
++SCENARIO_SCHEMA = "trainer-scenario/1"
++#: Адрес тренажёра: `/t/{slug}`, `/embed/trainer/{slug}`.
++SLUG_PATTERN = r"^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$"
++#: Код ошибки (ключ словаря `misconceptions`).
++MISCONCEPTION_CODE_PATTERN = r"^[a-z][a-z0-9_]{0,63}$"
++#: Потолок размера сценария в компактном JSON. Бриф Р7 целится в ≤30 КБ, но
++#: пилотные сценарии уже 26–33 КБ в компактной записи: потолок — защита
++#: хранилища и встройки от случайно раздутого файла, а не цель размера.
++MAX_SCENARIO_BYTES = 96 * 1024
++#: Потолок ввода в консоль тренажёра (бриф Р3).
++CONSOLE_MAX_LEN = 64
++
++# HTML в текстах запрещён (README §1.3): разрешённый набор — только `` `код` `` и
++# `**жирный**`. Тег — `<` сразу с буквой, `/` или `!` (`a < b` в коде тегом не
++# считается). Листинги и вывод программы (`code`, `lines`, `print`, `error`,
++# `crash`) — текст кода, а не разметка: в них законны `<module>` и сравнения.
++# Это вторая линия: SPW обязан выводить тексты сценария как текст.
++_TAG_RE = re.compile(r"<[A-Za-z/!?]")
++# Опасные схемы ссылок — после удаления пробельных и управляющих символов
++# (браузер вырезает их из схемы: `java\nscript:`).
++_SCHEME_RE = re.compile(r"(?:javascript|vbscript|data):", re.IGNORECASE)
++_STRIP_RE = re.compile(r"[\s\x00-\x1f\x7f]+")
++_CODE_KEYS = frozenset({"code", "lines", "print", "error", "crash"})
++# Внутри `` `код` `` текст — код (`i<n` законно): из проверки тегов вырезается.
++_INLINE_CODE_RE = re.compile(r"`[^`]*`")
++
++
++class _Strict(BaseModel):
++    """База частей сценария: незнакомый ключ — ошибка (опечатка не проходит)."""
++
++    model_config = ConfigDict(extra="forbid")
++
++
++#: Текст или выбор по условию: `[{"when": …, "text"|"value": …}, …]` (README §1.3).
++ConditionalText = Union[str, List[Dict[str, Any]]]
++
++
++class Misconception(_Strict):
++    """Код ошибки: строка карты ошибок, уровень повтора, подсказка наставнику."""
++
++    label: str = Field(..., min_length=1, max_length=200)
++    level: int = Field(..., ge=1, description="Номер уровня (1…) для повтора")
++    tutor_hint: str = Field(..., min_length=1, max_length=1000)
++    map_ref: Optional[str] = Field(default=None, max_length=200)
++
++
++class ScenarioParam(_Strict):
++    """Параметр зерна: ровно один из `pick` / `int` / `expr` (README §1.2)."""
++
++    name: str = Field(..., pattern=r"^[A-Za-z_][A-Za-z0-9_]{0,31}$")
++    pick: Optional[List[Any]] = Field(default=None, min_length=1)
++    int_: Optional[List[int]] = Field(default=None, alias="int")
++    expr: Optional[str] = Field(default=None, min_length=1, max_length=200)
++
++    model_config = ConfigDict(extra="forbid", populate_by_name=True)
++
++    @model_validator(mode="after")
++    def _one_kind(self) -> "ScenarioParam":
++        kinds = [k for k in (self.pick, self.int_, self.expr) if k is not None]
++        if len(kinds) != 1:
++            raise ValueError(f"параметр {self.name}: нужен ровно один из pick / int / expr")
++        if self.int_ is not None and (len(self.int_) != 2 or self.int_[0] > self.int_[1]):
++            raise ValueError(f"параметр {self.name}: int — отрезок [от, до]")
++        return self
++
++
++class ChoiceOption(_Strict):
++    """Вариант ответа шага `choice`."""
++
++    text: str = Field(..., min_length=1, max_length=2000)
++    correct: Union[bool, str, None] = None
++    misconception: Optional[str] = None
++    why: ConditionalText
++
++    @model_validator(mode="after")
++    def _wrong_has_code(self) -> "ChoiceOption":
++        # Вариант, верный не всегда (`false`, условие или поле не задано), обязан
++        # назвать ошибку: иначе карте ошибок нечего посчитать (README §1.5).
++        if self.correct is not True and not self.misconception:
++            raise ValueError(f"вариант «{self.text[:40]}»: у неверного варианта нужен misconception")
++        return self
++
++
++StepKind = Literal["choice", "console", "value", "trace"]
++
++
++class ScenarioStep(_Strict):
++    """Шаг уровня `stepper` или шаблон шага витка цикла (README §1.5)."""
++
++    id: str = Field(..., pattern=r"^[A-Za-z0-9_-]{1,64}$")
++    kind: StepKind
++    line: Union[int, None, List[Dict[str, Any]]] = None
++    q: Optional[ConditionalText] = None
++    placeholder: Optional[str] = Field(default=None, max_length=200)
++    variants: Optional[List[str]] = None
++    code: Optional[List[str]] = None
++    before: Optional[Dict[str, Any]] = None
++    effect: Optional[Dict[str, Any]] = None
++    why_ok: Optional[ConditionalText] = None
++    # choice
++    options: Optional[List[ChoiceOption]] = None
++    # console
++    normalize: Optional[List[Literal["trim", "collapse_spaces", "numbers", "casefold"]]] = None
++    max_len: Optional[int] = Field(default=None, ge=1, le=CONSOLE_MAX_LEN)
++    accept: Optional[str] = Field(default=None, max_length=500)
++    reject: Optional[List[Dict[str, Any]]] = None
++    crash_note: Optional[str] = None
++    store: Optional[Dict[str, str]] = None
++    # value
++    expect: Union[str, int, Dict[str, Any], List[Dict[str, Any]], None] = None
++    diagnose: Optional[List[Dict[str, Any]]] = None
++    fallback: Optional[Dict[str, Any]] = None
++    # trace
++    loop: Optional[Dict[str, Any]] = None
++    acc: Optional[Dict[str, Any]] = None
++    per_iteration: Optional[List["ScenarioStep"]] = None
++    iters: Optional[Literal["all", "first"]] = None
++    on_exit: Optional[List[Dict[str, Any]]] = None
++
++    @model_validator(mode="after")
++    def _shape_by_kind(self) -> "ScenarioStep":
++        where = f"шаг {self.id}"
++        if self.kind == "trace":
++            if not self.loop or self.loop.get("type") not in ("while", "for_range"):
++                raise ValueError(f"{where}: trace требует loop.type = while | for_range")
++            if not self.per_iteration:
++                raise ValueError(f"{where}: trace требует непустой per_iteration")
++            if any(s.kind == "trace" for s in self.per_iteration):
++                raise ValueError(f"{where}: trace внутри trace не поддерживается")
++            ids = [s.id for s in self.per_iteration]
++            if len(set(ids)) != len(ids):
++                raise ValueError(f"{where}: id шагов per_iteration повторяются")
++            return self
++        if self.q is None:
++            raise ValueError(f"{where}: нужен вопрос q")
++        if self.kind == "choice":
++            if not self.options or len(self.options) < 2:
++                raise ValueError(f"{where}: у choice нужно не меньше двух вариантов")
++            if not any(o.correct not in (None, False) for o in self.options):
++                raise ValueError(f"{where}: у choice нет ни одного верного варианта")
++        elif self.kind == "console":
++            if self.max_len is None:
++                raise ValueError(f"{where}: у console нужен max_len (≤ {CONSOLE_MAX_LEN})")
++            if self.why_ok is None:
++                raise ValueError(f"{where}: у console нужен why_ok")
++            for pattern in [self.accept, *((r.get("match") for r in self.reject or []))]:
++                if isinstance(pattern, str):
++                    _check_regex(pattern, where)
++        elif self.kind == "value":
++            if self.expect is None:
++                raise ValueError(f"{where}: у value нужен expect")
++            if self.why_ok is None:
++                raise ValueError(f"{where}: у value нужен why_ok")
++            for rule in self.diagnose or []:
++                if isinstance(rule.get("matches"), str):
++                    _check_regex(rule["matches"], where)
++        return self
++
++
++class PuzzleItem(_Strict):
++    """Мини-задача уровня `quotes_puzzle` (README §1.4)."""
++
++    id: str = Field(..., pattern=r"^[A-Za-z0-9_-]{1,64}$")
++    intro: str = Field(..., min_length=1)
++    lines: List[List[Dict[str, Any]]] = Field(..., min_length=1)
++    target: str = Field(..., min_length=1)
++    diagnose: List[Dict[str, Any]] = Field(..., min_length=1)
++    success: ConditionalText
++
++    @model_validator(mode="after")
++    def _tokens(self) -> "PuzzleItem":
++        for line in self.lines:
++            for token in line:
++                kinds = [k for k in ("var", "code", "word") if k in token]
++                if len(kinds) != 1:
++                    raise ValueError(f"задача {self.id}: токен строки — ровно один из var / code / word")
++                if "word" in token and not token.get("id"):
++                    raise ValueError(f"задача {self.id}: у слова нужен id")
++        return self
++
++
++class QuotesPuzzleLevel(_Strict):
++    """Уровень «Расставь кавычки»."""
++
++    id: str = Field(..., pattern=r"^[A-Za-z0-9_-]{1,32}$")
++    title: str = Field(..., min_length=1, max_length=200)
++    kind: Literal["quotes_puzzle"]
++    hint: Optional[str] = None
++    items: List[PuzzleItem] = Field(..., min_length=1)
++
++
++class StepperLevel(_Strict):
++    """Уровень «код + память + консоль + вопрос перед строкой»."""
++
++    id: str = Field(..., pattern=r"^[A-Za-z0-9_-]{1,32}$")
++    title: str = Field(..., min_length=1, max_length=200)
++    kind: Literal["stepper"]
++    hint: Optional[str] = None
++    code: Union[List[str], Dict[str, List[str]]]
++    code_key: Optional[str] = None
++    steps: List[ScenarioStep] = Field(..., min_length=1)
++
++    @model_validator(mode="after")
++    def _code_and_ids(self) -> "StepperLevel":
++        if isinstance(self.code, dict) and not self.code_key:
++            raise ValueError(f"уровень {self.id}: code — словарь вариантов, нужен code_key")
++        ids = [s.id for s in self.steps]
++        if len(set(ids)) != len(ids):
++            raise ValueError(f"уровень {self.id}: id шагов повторяются")
++        return self
++
++
++ScenarioLevel = Annotated[Union[QuotesPuzzleLevel, StepperLevel], Field(discriminator="kind")]
++
++
++class StarsRule(_Strict):
++    """Правило звёзд за уровень: до `max_mistakes` ошибок → `stars`."""
++
++    max_mistakes: Optional[int] = Field(default=None, ge=0)
++    stars: int = Field(..., ge=0, le=3)
++
++
++class Scoring(_Strict):
++    """Счёт (README §1.7)."""
++
++    stars_per_level: List[StarsRule] = Field(..., min_length=1)
++    neutral_is_mistake: bool = False
++    same_option_twice: Literal["not_counted", "counted"] = "not_counted"
++
++
++class Finish(BaseModel):
++    """Тексты финала. Состав подписей меняет методист — лишние ключи разрешены."""
++
++    title: str = Field(..., min_length=1)
++    buttons: Dict[str, str] = Field(default_factory=dict)
++
++    model_config = ConfigDict(extra="allow")
++
++
++class TrainerScenario(_Strict):
++    """Сценарий тренажёра `trainer-scenario/1` (README §1.1)."""
++
++    schema_: Literal["trainer-scenario/1"] = Field(..., alias="schema")
++    slug: str = Field(..., pattern=SLUG_PATTERN)
++    title: str = Field(..., min_length=1, max_length=200)
++    subtitle: Optional[str] = Field(default=None, max_length=500)
++    lang: str = Field(..., pattern=r"^[a-z]{2}$")
++    node_refs: Optional[List[int]] = None
++    est_minutes: Optional[List[int]] = None
++    intro: Optional[str] = None
++    misconceptions: Dict[str, Misconception] = Field(..., min_length=1)
++    params: List[ScenarioParam]
++    levels: List[ScenarioLevel] = Field(..., min_length=1, max_length=20)
++    scoring: Scoring
++    finish: Finish
++
++    model_config = ConfigDict(extra="forbid", populate_by_name=True)
++
++    @field_validator("misconceptions")
++    @classmethod
++    def _codes(cls, v: Dict[str, Misconception]) -> Dict[str, Misconception]:
++        bad = [code for code in v if not re.match(MISCONCEPTION_CODE_PATTERN, code)]
++        if bad:
++            raise ValueError(f"недопустимые коды ошибок: {', '.join(bad)}")
++        return v
++
++    @field_validator("est_minutes")
++    @classmethod
++    def _minutes(cls, v: Optional[List[int]]) -> Optional[List[int]]:
++        if v is not None and (len(v) != 2 or not 0 < v[0] <= v[1]):
++            raise ValueError("est_minutes — отрезок [от, до] в минутах")
++        return v
++
++    @model_validator(mode="after")
++    def _references(self) -> "TrainerScenario":
++        level_ids = [lvl.id for lvl in self.levels]
++        if len(set(level_ids)) != len(level_ids):
++            raise ValueError("id уровней повторяются")
++        names = [p.name for p in self.params]
++        if len(set(names)) != len(names):
++            raise ValueError("имена параметров повторяются")
++        for code, m in self.misconceptions.items():
++            if m.level > len(self.levels):
++                raise ValueError(f"код {code}: level {m.level} — нет такого уровня")
++        known = set(self.misconceptions)
++        used: set[str] = set()
++        for path, value in _walk_misconceptions([lvl.model_dump() for lvl in self.levels]):
++            if value not in known:
++                raise ValueError(f"{path}: неизвестный код ошибки «{value}»")
++            used.add(value)
++        unused = sorted(known - used)
++        if unused:
++            raise ValueError(f"коды ошибок нигде не используются: {', '.join(unused)}")
++        for path, text in _walk_strings(self.model_dump(by_alias=True)):
++            if _TAG_RE.search(_INLINE_CODE_RE.sub("", text)) or _SCHEME_RE.search(_STRIP_RE.sub("", text)):
++                raise ValueError(f"{path}: HTML в тексте сценария запрещён (только `код` и **жирный**)")
++        return self
++
++    def misconception_codes(self) -> set[str]:
++        """Коды ошибок, которые принимает ручка событий (бриф Р3)."""
++        return set(self.misconceptions)
++
++
++def _check_regex(pattern: str, where: str) -> None:
++    """Регулярка сценария обязана компилироваться (иначе шаг упадёт у ученика)."""
++    try:
++        re.compile(pattern)
++    except re.error as exc:
++        raise ValueError(f"{where}: регулярка «{pattern}» не компилируется: {exc}") from exc
++
++
++def _walk_misconceptions(node: Any, path: str = "levels") -> Iterator[Tuple[str, str]]:
++    """Все значения ключей `misconception` в дереве уровней."""
++    if isinstance(node, dict):
++        for key, value in node.items():
++            if key == "misconception" and isinstance(value, str):
++                yield path, value
++            else:
++                yield from _walk_misconceptions(value, f"{path}.{key}")
++    elif isinstance(node, list):
++        for i, value in enumerate(node):
++            yield from _walk_misconceptions(value, f"{path}[{i}]")
++
++
++def _walk_strings(node: Any, path: str = "scenario") -> Iterator[Tuple[str, str]]:
++    """Все строки сценария (значения и ключи словарей) с путём для сообщения."""
++    if isinstance(node, str):
++        yield path, node
++    elif isinstance(node, dict):
++        for key, value in node.items():
++            yield path, str(key)
++            if key in _CODE_KEYS:
++                continue
++            yield from _walk_strings(value, f"{path}.{key}")
++    elif isinstance(node, list):
++        for i, value in enumerate(node):
++            yield from _walk_strings(value, f"{path}[{i}]")
++
++
++def scenario_size(scenario: Any) -> int:
++    """Размер сценария в компактном JSON (байты UTF-8)."""
++    return len(json.dumps(scenario, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
++
++
++def validate_scenario(raw: Any) -> TrainerScenario:
++    """Проверить сценарий целиком. ValueError / ValidationError — сценарий битый."""
++    if not isinstance(raw, dict):
++        raise ValueError("scenario должен быть объектом")
++    size = scenario_size(raw)
++    if size > MAX_SCENARIO_BYTES:
++        raise ValueError(f"сценарий {size} байт — больше потолка {MAX_SCENARIO_BYTES}")
++    try:
++        return TrainerScenario.model_validate(raw)
++    except ValidationError as exc:
++        raise ValueError(f"сценарий не прошёл схему {SCENARIO_SCHEMA}: {describe_errors(exc)}") from None
++
++
++def describe_errors(exc: ValidationError, limit: int = 8) -> str:
++    """Ошибки схемы одной строкой: «путь: сообщение; …» (первые `limit`)."""
++    parts = []
++    for err in exc.errors()[:limit]:
++        loc = ".".join(str(p) for p in err.get("loc", ())) or "scenario"
++        msg = str(err.get("msg", "")).removeprefix("Value error, ")
++        parts.append(f"{loc}: {msg}")
++    more = len(exc.errors()) - limit
++    if more > 0:
++        parts.append(f"и ещё {more}")
++    return "; ".join(parts)
++
++
++ScenarioStep.model_rebuild()
+diff --git a/app/schemas/trainers.py b/app/schemas/trainers.py
+new file mode 100644
+index 0000000..72f3b0a
+--- /dev/null
++++ b/app/schemas/trainers.py
+@@ -0,0 +1,99 @@
++"""Схемы ручек интерактивных тренажёров `/api/v1/trainers/*` (tsk-1247)."""
++from __future__ import annotations
++
++import re
++from typing import Any, List, Literal, Optional, Union
++
++from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
++
++from app.schemas.trainer_scenario import MISCONCEPTION_CODE_PATTERN
++
++#: Потолок событий в одном пакете (бриф Р3).
++MAX_EVENTS_PER_BATCH = 200
++#: Потолок ввода ученика в событии (бриф Р3: ввод консоли ≤ 64 символов).
++MAX_ANSWER_LEN = 64
++
++TrainerContext = Literal["student", "guest", "embed"]
++TrainerEventType = Literal[
++    "trainer_start", "trainer_step", "trainer_done", "checkpoint_answer", "embed_view",
++]
++
++_DOMAIN_RE = re.compile(r"^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
++
++
++class TrainerRead(BaseModel):
++    """Ответ `GET /trainers/{slug}`."""
++
++    slug: str
++    title: str
++    scenario: dict[str, Any] = Field(..., description="Сценарий trainer-scenario/1 как опубликован")
++    version: str = Field(..., description="Версия сценария — то же значение, что в заголовке ETag")
++
++
++class TrainerSuggestion(BaseModel):
++    """Предложение тренажёра после неверного ответа на задание узла."""
++
++    slug: str
++    title: str
++
++
++class TrainerEvent(BaseModel):
++    """Одно событие тренажёра.
++
++    Незнакомые поля молча отбрасываются (не пишутся): клиент с очередью
++    досылки (бриф 2A) не должен застревать на 422 из-за нового поля.
++    """
++
++    model_config = ConfigDict(extra="ignore")
++
++    type: TrainerEventType
++    level: Optional[Union[int, str]] = Field(default=None, description="id уровня сценария (L1…) или его номер")
++    step: Optional[str] = Field(default=None, pattern=r"^[A-Za-z0-9_-]{1,64}$", description="id шага")
++    iter: Optional[int] = Field(default=None, ge=1, le=1000, description="Номер витка цикла для шагов trace (README §1.5)")
++    ok: Optional[bool] = None
++    misconception: Optional[str] = Field(
++        default=None, pattern=MISCONCEPTION_CODE_PATTERN,
++        description="Код ошибки — только из словаря misconceptions сценария",
++    )
++    ms: Optional[int] = Field(default=None, ge=0, le=3_600_000, description="Время на шаг/уровень, мс")
++    stars: Optional[int] = Field(default=None, ge=0, le=60)
++    answer: Optional[str] = Field(default=None, max_length=MAX_ANSWER_LEN, description="Ввод ученика (≤ 64 символов); у встройки не пишется")
++    parent_domain: Optional[str] = Field(default=None, max_length=253, description="Домен страницы со встройкой (только context=embed)")
++
++    @field_validator("level")
++    @classmethod
++    def _level(cls, v: Optional[Union[int, str]]) -> Optional[Union[int, str]]:
++        if isinstance(v, int) and not 0 <= v <= 100:
++            raise ValueError("level: номер уровня 0…100")
++        if isinstance(v, str) and not re.match(r"^[A-Za-z0-9_-]{1,32}$", v):
++            raise ValueError("level: id уровня — латиница, цифры, _ и -, до 32 символов")
++        return v
++
++    @field_validator("parent_domain")
++    @classmethod
++    def _domain(cls, v: Optional[str]) -> Optional[str]:
++        if v is None:
++            return None
++        host = v.strip().lower().rstrip(".")
++        if not _DOMAIN_RE.match(host):
++            raise ValueError("parent_domain: нужно доменное имя без схемы, пути и порта")
++        return host
++
++
++class TrainerEventsRequest(BaseModel):
++    """Тело `POST /trainers/{slug}/events`."""
++
++    context: TrainerContext
++    events: List[TrainerEvent] = Field(..., min_length=1, max_length=MAX_EVENTS_PER_BATCH)
++
++    @model_validator(mode="after")
++    def _domain_only_embed(self) -> "TrainerEventsRequest":
++        if self.context != "embed" and any(e.parent_domain for e in self.events):
++            raise ValueError("parent_domain принимается только в context=embed")
++        return self
++
++
++class TrainerEventsResponse(BaseModel):
++    """Ответ 202: сколько событий записано (у встройки — только счётчики)."""
++
++    accepted: int = Field(..., ge=0)
+diff --git a/app/services/materials_service.py b/app/services/materials_service.py
+index 5fd782d..07f5086 100644
+--- a/app/services/materials_service.py
++++ b/app/services/materials_service.py
+@@ -12,11 +12,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
+ from app.models.materials import Materials
+ from app.repos.courses_repo import CoursesRepository
+ from app.repos.materials_repo import MaterialsRepository
++from app.schemas.material_content import validate_material_content
+ from app.schemas.materials import (
++    TRAINER_REQUIREMENT_LEVEL,
+     MaterialsBulkUpsertItem,
+     MaterialsBulkUpsertResponse,
+     MaterialsBulkUpsertResultItem,
+ )
++from app.services import trainers_service
+ from app.services.base import BaseService
+ 
+ logger_provenance = logging.getLogger(__name__)
+@@ -83,6 +86,49 @@ class MaterialsService(BaseService[Materials]):
+         super().__init__(repo or MaterialsRepository())
+         self._courses_repo = CoursesRepository()
+ 
++    async def update(
++        self, db: AsyncSession, db_obj: Materials, obj_in: Dict[str, Any]
++    ) -> Materials:
++        """Обновить материал (generic CRUD PUT).
++
++        tsk-1247: у тренажёра содержимое проверяется схемой сценария и тогда,
++        когда `type` не передан (схема `MaterialUpdate` без типа content не
++        проверяет), а уровень обязательности всегда `recommended`.
++        """
++        effective_type = obj_in.get("type") or db_obj.type
++        if effective_type == "trainer":
++            if db_obj.type != "trainer" and obj_in.get("content") is None:
++                raise DomainError(
++                    "Смена типа на 'trainer' требует content {slug, scenario}", status_code=422,
++                )
++            if obj_in.get("content") is not None and "type" not in obj_in:
++                try:
++                    obj_in = {
++                        **obj_in,
++                        "content": validate_material_content("trainer", obj_in["content"]),
++                    }
++                except ValueError as exc:
++                    raise DomainError(
++                        f"Некорректная структура content для типа 'trainer': {exc}",
++                        status_code=422,
++                    ) from exc
++            obj_in = {**obj_in, "requirement_level": TRAINER_REQUIREMENT_LEVEL}
++            if obj_in.get("content") is not None:
++                conflict = await trainers_service.slug_conflict(
++                    db, obj_in["content"], exclude_id=db_obj.id
++                )
++                if conflict:
++                    raise DomainError(conflict, status_code=409)
++        return await super().update(db, db_obj, obj_in)
++
++    async def create(self, db: AsyncSession, obj_in: Dict[str, Any]) -> Materials:
++        """Создать материал; tsk-1247: slug тренажёра не занят другим сценарием (409)."""
++        if obj_in.get("type") == "trainer":
++            conflict = await trainers_service.slug_conflict(db, obj_in.get("content"))
++            if conflict:
++                raise DomainError(conflict, status_code=409)
++        return await super().create(db, obj_in)
++
+     async def list_by_course(
+         self,
+         db: AsyncSession,
+@@ -94,6 +140,7 @@ class MaterialsService(BaseService[Materials]):
+         order_by: str = "order_position",
+         skip: int = 0,
+         limit: int = 100,
++        exclude_types: Optional[List[str]] = None,
+     ) -> Tuple[List[Materials], int]:
+         """Список материалов курса с фильтрацией и пагинацией. q — поиск по title/external_uid. Возвращает (items, total)."""
+         course = await self._courses_repo.get(db, course_id)
+@@ -108,6 +155,7 @@ class MaterialsService(BaseService[Materials]):
+             order_by=order_by,
+             skip=skip,
+             limit=limit,
++            exclude_types=exclude_types,
+         )
+ 
+     async def search_materials(
+@@ -428,6 +476,20 @@ class MaterialsService(BaseService[Materials]):
+                 )
+                 continue
+ 
++            if item.type == "trainer":
++                conflict = await trainers_service.slug_conflict(
++                    db, item.content, exclude_key=(item.course_id, item.external_uid)
++                )
++                if conflict:
++                    val_results[key] = MaterialsBulkUpsertResultItem(
++                        course_id=item.course_id,
++                        external_uid=item.external_uid,
++                        status="error",
++                        error=conflict,
++                        error_type="validation",
++                    )
++                    continue
++
+             pending.append((key, item))
+ 
+         db_by_key: Dict[BulkKey, MaterialsBulkUpsertResultItem] = {}
+diff --git a/app/services/me_service.py b/app/services/me_service.py
+index 7d96447..340d040 100644
+--- a/app/services/me_service.py
++++ b/app/services/me_service.py
+@@ -19,6 +19,7 @@ from app.schemas.task_content import QUIZ_TASK_TYPES
+ # и «следующий шаг» считали долг одинаково.
+ from app.services.content_grace_service import compute_graced_items, done_among
+ from app.services.requirement_override_service import reason_payload, resolve_levels
++from app.services.trainers_service import trainers_enabled
+ from app.services.node_sequence import (
+     anchor_of,
+     in_after_part,
+@@ -1418,7 +1419,12 @@ async def get_syllabus_states(
+ 
+     # Группировка по course_id для depth-first emit
+     materials_by_course: dict[int, list[dict]] = {}
++    # tsk-1247: тренажёр — материал узла, место ему даёт тот же `node_sequence`;
++    # при выключенном рубильнике его в программе нет вовсе.
++    show_trainers = trainers_enabled()
+     for r in material_rows:
++        if r["material_type"] == "trainer" and not show_trainers:
++            continue
+         m = dict(r)
+         # tsk-996: настоящий курс материала — для ключа `node_sequence`.
+         m["_src_course_id"] = int(m["course_id"])
+diff --git a/app/services/trainers_service.py b/app/services/trainers_service.py
+new file mode 100644
+index 0000000..a2cbe9b
+--- /dev/null
++++ b/app/services/trainers_service.py
+@@ -0,0 +1,398 @@
++"""Интерактивные тренажёры: выдача сценария, события, предложение после ошибки (tsk-1247).
++
++Тренажёр — материал узла типа `trainer` (`content = {slug, scenario}`), уровень
++`recommended`: в обход next-item и в счётчики прогресса не входит, поэтому
++продвижение не блокирует, а место в узле ему даёт тот же `node_sequence`, что
++и остальным материалам (П7). Второй вход в тренажёр — развилка
++`content.checkpoint` у теории и предложение после неверного ответа на задание
++узла (бриф tsk-1247, §3).
++
++Где пишутся события (бриф Р4, исследование §D.5) — без новых таблиц:
++* вошедший ученик — `learning_events` (`event_type` = тип события);
++* гость — `guest_attempt` с `task_id = NULL`, как ответы квиза и диагностики:
++  после входа строки переносит тот же `attribute-guest`, что и попытки;
++* встройка на чужом сайте — только обезличенные счётчики (показ, старт, финиш,
++  домен родителя) в `product_event` с `user_id = NULL`; ввод, шаги и коды
++  ошибок не пишутся.
++
++Рубильник `TRAINERS_ENABLED` (по умолчанию выключен): тип `trainer` не попадает
++в выдачу ученику, `checkpoint` не отдаётся, ручки `/trainers/*` отвечают 404,
++`trainer_suggestion` всегда null. Читается из окружения на каждый вызов, как
++рубильники обхода (`node_sequence.node_sequence_enabled`).
++"""
++from __future__ import annotations
++
++import hashlib
++import json
++import logging
++import os
++from typing import Any, Iterable, Optional, Sequence
++from uuid import UUID
++
++from sqlalchemy import text
++from sqlalchemy.ext.asyncio import AsyncSession
++
++from app.schemas.trainers import TrainerEvent, TrainerSuggestion
++from app.utils.exceptions import DomainError
++
++logger = logging.getLogger(__name__)
++
++#: Тип материала-тренажёра.
++TRAINER_TYPE = "trainer"
++#: События встройки, которые идут в обезличенные счётчики (показ/старт/финиш).
++EMBED_COUNTED = ("embed_view", "trainer_start", "trainer_done")
++#: Поля события, которые пишутся в payload (ученик, гость).
++_PAYLOAD_FIELDS = ("level", "step", "iter", "ok", "misconception", "ms", "stars", "answer")
++
++
++def trainers_enabled() -> bool:
++    """Рубильник `TRAINERS_ENABLED` (tsk-1247, по умолчанию выключен)."""
++    return os.getenv("TRAINERS_ENABLED", "false").strip().lower() in ("true", "1", "yes")
++
++
++# ── Сценарий ────────────────────────────────────────────────────────────────
++
++
++async def find_trainer(db: AsyncSession, slug: str) -> Optional[dict[str, Any]]:
++    """Активный материал-тренажёр по slug: `{material_id, course_id, title, content}`.
++
++    Один тренажёр может стоять в нескольких курсах (узел 106 — в четырёх);
++    сценарий у них один, берётся последний изданный.
++    """
++    row = (
++        await db.execute(
++            text(
++                """
++                SELECT id, course_id, title, content
++                FROM materials
++                WHERE type = 'trainer' AND is_active
++                  AND content->>'slug' = :slug
++                ORDER BY updated_at DESC, id DESC
++                LIMIT 1
++                """
++            ),
++            {"slug": slug},
++        )
++    ).mappings().first()
++    if row is None:
++        return None
++    return {
++        "material_id": int(row["id"]),
++        "course_id": int(row["course_id"]),
++        "title": row["title"],
++        "content": row["content"],
++    }
++
++
++def trainer_title(content: Any, fallback: str) -> str:
++    """Название тренажёра: `scenario.title`, иначе заголовок материала."""
++    if isinstance(content, dict):
++        scenario = content.get("scenario")
++        if isinstance(scenario, dict) and isinstance(scenario.get("title"), str):
++            return scenario["title"]
++    return fallback
++
++
++def scenario_version(scenario: Any) -> str:
++    """Версия сценария для ETag: хэш канонического JSON (меняется с любой правкой)."""
++    canonical = json.dumps(scenario, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
++    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:20]
++
++
++def misconception_codes(content: Any) -> set[str]:
++    """Коды ошибок сценария (ручка событий принимает только их)."""
++    scenario = content.get("scenario") if isinstance(content, dict) else None
++    if not isinstance(scenario, dict) or not isinstance(scenario.get("misconceptions"), dict):
++        return set()
++    return set(scenario["misconceptions"])
++
++
++async def slug_conflict(
++    db: AsyncSession,
++    content: Any,
++    *,
++    exclude_id: Optional[int] = None,
++    exclude_key: Optional[tuple[int, str]] = None,
++) -> Optional[str]:
++    """Текст ошибки, если slug уже занят тренажёром с другим сценарием, иначе None.
++
++    Публичный `GET /trainers/{slug}` и встройки на чужих сайтах смотрят на slug:
++    второй материал с тем же slug и другим сценарием молча подменил бы их.
++    Копии одного сценария в разных курсах разрешены. `exclude_id` /
++    `exclude_key` (course_id, external_uid) — сам записываемый материал.
++    """
++    if not isinstance(content, dict) or not content.get("slug"):
++        return None
++    rows = (
++        await db.execute(
++            text(
++                """
++                SELECT id, course_id, external_uid, content->'scenario'
++                FROM materials
++                WHERE type = 'trainer' AND content->>'slug' = :slug
++                """
++            ),
++            {"slug": content["slug"]},
++        )
++    ).fetchall()
++    for mid, cid, ext, scenario in rows:
++        if exclude_id is not None and int(mid) == exclude_id:
++            continue
++        if exclude_key is not None and (int(cid), ext) == exclude_key:
++            continue
++        if scenario != content.get("scenario"):
++            return (
++                f"slug «{content['slug']}» уже занят тренажёром {mid} (курс {cid}) с другим "
++                "сценарием — обновите тот материал или выберите другой slug"
++            )
++    return None
++
++
++# ── События ─────────────────────────────────────────────────────────────────
++
++
++def check_misconceptions(events: Sequence[TrainerEvent], allowed: set[str]) -> None:
++    """Отказ 422, если код ошибки не из словаря сценария (бриф Р3)."""
++    unknown = sorted({e.misconception for e in events if e.misconception and e.misconception not in allowed})
++    if unknown:
++        raise DomainError(
++            f"Неизвестные коды ошибок для этого тренажёра: {', '.join(unknown)}",
++            status_code=422,
++            payload={"code": "unknown_misconception", "misconceptions": unknown},
++        )
++
++
++def _event_payload(event: TrainerEvent, trainer: dict[str, Any], context: str) -> dict[str, Any]:
++    payload: dict[str, Any] = {
++        "slug": trainer["content"]["slug"],
++        "trainer_material_id": trainer["material_id"],
++        "context": context,
++    }
++    for name in _PAYLOAD_FIELDS:
++        value = getattr(event, name)
++        if value is not None:
++            payload[name] = value
++    return payload
++
++
++async def record_student_events(
++    db: AsyncSession, student_id: int, trainer: dict[str, Any], events: Iterable[TrainerEvent]
++) -> int:
++    """Записать события вошедшего ученика в `learning_events`."""
++    rows = [
++        {
++            "student_id": student_id,
++            "event_type": e.type,
++            "payload": json.dumps(_event_payload(e, trainer, "student"), ensure_ascii=False),
++        }
++        for e in events
++    ]
++    await db.execute(
++        text(
++            """
++            INSERT INTO learning_events (student_id, event_type, payload, created_at)
++            VALUES (:student_id, :event_type, CAST(:payload AS jsonb), now())
++            """
++        ),
++        rows,
++    )
++    return len(rows)
++
++
++async def record_guest_events(
++    db: AsyncSession, guest_session_id: UUID, trainer: dict[str, Any], events: Iterable[TrainerEvent]
++) -> int:
++    """Записать события гостя в `guest_attempt` (без задания, `task_id = NULL`).
++
++    Сессия должна существовать: иначе 400, как у ответа гостя на демо-задачу.
++    `is_correct` — признак `ok` шага; после входа строки атрибутируются вместе
++    с попытками сессии (`guest_attribution_service`).
++    """
++    exists = (
++        await db.execute(
++            text("UPDATE guest_session SET last_used_at = now() WHERE id = :id RETURNING id"),
++            {"id": guest_session_id},
++        )
++    ).first()
++    if exists is None:
++        raise DomainError(
++            "Гостевая сессия не найдена. Сначала вызовите POST /learning/guest/session.",
++            status_code=400,
++        )
++    rows = []
++    for e in events:
++        payload = {"kind": "trainer_event", "event_type": e.type, **_event_payload(e, trainer, "guest")}
++        rows.append(
++            {
++                "gs": guest_session_id,
++                "answer": json.dumps(payload, ensure_ascii=False),
++                "ok": e.ok if e.type == "trainer_step" else None,
++            }
++        )
++    await db.execute(
++        text(
++            """
++            INSERT INTO guest_attempt (guest_session_id, task_id, answer_json, is_correct)
++            VALUES (:gs, NULL, CAST(:answer AS jsonb), :ok)
++            """
++        ),
++        rows,
++    )
++    return len(rows)
++
++
++async def record_embed_counters(
++    db: AsyncSession, trainer: dict[str, Any], events: Iterable[TrainerEvent]
++) -> int:
++    """Обезличенные счётчики встройки в `product_event` (`user_id = NULL`).
++
++    Пишутся только показ/старт/финиш и домен родителя. Остальные события
++    встройки (шаги, ответы, коды ошибок, развилка) отбрасываются: ввод
++    посетителя чужого сайта на сервер не попадает.
++
++    Счётчик — не учебные данные: если запись не прошла (например, у
++    `product_event` нет партиции на текущий месяц), ответ всё равно 202,
++    а сбой виден в журнале.
++    """
++    rows = [
++        {
++            "event_type": e.type,
++            "props": json.dumps(
++                {"slug": trainer["content"]["slug"], "context": "embed", "parent_domain": e.parent_domain},
++                ensure_ascii=False,
++            ),
++        }
++        for e in events
++        if e.type in EMBED_COUNTED
++    ]
++    if not rows:
++        return 0
++    try:
++        async with db.begin_nested():
++            await db.execute(
++                text(
++                    """
++                    INSERT INTO product_event (user_id, event_type, ts, properties)
++                    VALUES (NULL, :event_type, now(), CAST(:props AS jsonb))
++                    """
++                ),
++                rows,
++            )
++    except Exception:  # noqa: BLE001 — счётчик не роняет ответ встройке
++        logger.warning(
++            "tsk-1247: счётчики встройки не записаны slug=%s n=%s",
++            trainer["content"]["slug"], len(rows), exc_info=True,
++        )
++        return 0
++    return len(rows)
++
++
++# ── Предложение тренажёра после неверного ответа ────────────────────────────
++
++
++async def suggestion_for_course(db: AsyncSession, course_id: int) -> Optional[TrainerSuggestion]:
++    """Первый активный тренажёр узла (по порядку материалов) или None."""
++    if not trainers_enabled():
++        return None
++    row = (
++        await db.execute(
++            text(
++                """
++                SELECT title, content
++                FROM materials
++                WHERE course_id = :cid AND type = 'trainer' AND is_active
++                ORDER BY order_position ASC NULLS LAST, id ASC
++                LIMIT 1
++                """
++            ),
++            {"cid": course_id},
++        )
++    ).mappings().first()
++    if row is None or not isinstance(row["content"], dict) or not row["content"].get("slug"):
++        return None
++    return TrainerSuggestion(
++        slug=row["content"]["slug"], title=trainer_title(row["content"], row["title"]),
++    )
++
++
++async def suggestion_after_last_answer(
++    db: AsyncSession, student_id: int, task_id: int, course_id: int
++) -> Optional[TrainerSuggestion]:
++    """Предложение для next-item: последний ответ ученика на задание неверный.
++
++    При выключенном рубильнике запросов нет вовсе.
++    """
++    if not trainers_enabled():
++        return None
++    last = (
++        await db.execute(
++            text(
++                """
++                SELECT is_correct FROM task_results
++                WHERE user_id = :sid AND task_id = :tid
++                ORDER BY submitted_at DESC, id DESC
++                LIMIT 1
++                """
++            ),
++            {"sid": student_id, "tid": task_id},
++        )
++    ).first()
++    if last is None or last[0] is not False:
++        return None
++    return await suggestion_for_course(db, course_id)
++
++
++# ── Выдача материалов ученику ───────────────────────────────────────────────
++
++
++def _strip_checkpoint(content: Any) -> Any:
++    if isinstance(content, dict) and "checkpoint" in content:
++        return {k: v for k, v in content.items() if k != "checkpoint"}
++    return content
++
++
++async def student_visible(db: AsyncSession, materials: Sequence[Any]) -> tuple[list[Any], dict[int, Any]]:
++    """Что из материалов показывать ученику и с каким `content` (tsk-1247).
++
++    Возвращает (материалы без скрытых тренажёров, {id: новый content}) — во
++    втором словаре только материалы, у которых `content` надо подменить:
++    * рубильник выключен — тренажёров нет, у теории снята развилка;
++    * включён — развилка остаётся, только если её тренажёр — активный
++      материал `trainer` того же курса (иначе «Нет» вело бы в 404).
++
++    ORM-объекты не трогаются: правка их `content` ушла бы в базу при flush.
++    """
++    enabled = trainers_enabled()
++    visible = [m for m in materials if enabled or m.type != TRAINER_TYPE]
++    with_checkpoint = [
++        m for m in visible if isinstance(m.content, dict) and "checkpoint" in m.content
++    ]
++    if not with_checkpoint:
++        return visible, {}
++    if not enabled:
++        return visible, {m.id: _strip_checkpoint(m.content) for m in with_checkpoint}
++    targets = {
++        int(m.content["checkpoint"].get("trainer_material_id") or 0)
++        for m in with_checkpoint
++        if isinstance(m.content.get("checkpoint"), dict)
++    }
++    live = {
++        (int(r[0]), int(r[1]))
++        for r in (
++            await db.execute(
++                text(
++                    "SELECT id, course_id FROM materials "
++                    "WHERE id = ANY(:ids) AND type = 'trainer' AND is_active"
++                ),
++                {"ids": sorted(targets)},
++            )
++        ).fetchall()
++    }
++    replaced: dict[int, Any] = {}
++    for m in with_checkpoint:
++        cp = m.content.get("checkpoint")
++        target = int(cp.get("trainer_material_id") or 0) if isinstance(cp, dict) else 0
++        if (target, int(m.course_id)) not in live:
++            replaced[m.id] = _strip_checkpoint(m.content)
++    return visible, replaced
++
+diff --git a/docs/ai/INDEX.md b/docs/ai/INDEX.md
+index ee5fd38..8a5223e 100644
+--- a/docs/ai/INDEX.md
++++ b/docs/ai/INDEX.md
+@@ -21,6 +21,7 @@
+ - [individual-courses.md](individual-courses.md) — индивидуальный курс ученику с замком на основные курсы (правило оператора, tsk-1245)
+ - [task-audit.md](task-audit.md) — журнал `task_audit` (триггерный, `tasks.course_id`/`is_active`) — как расследовать «куда делось задание» (tsk-113/114)
+ - [task-result-audit.md](task-result-audit.md) — журнал `task_result_audit` (триггерный, `task_results.score`/`is_correct`) — как проследить и откатить правку оценки (tsk-803)
++- [trainers.md](trainers.md) — интерактивные тренажёры: тип материала `trainer`, развилка «Всё понятно?», ручки `/trainers/*`, хранение событий, рубильник (tsk-1247)
+ 
+ ## Specs (исполняемые ТЗ)
+ 
+diff --git a/docs/ai/data-model.md b/docs/ai/data-model.md
+index d3c5ee1..60a16b8 100644
+--- a/docs/ai/data-model.md
++++ b/docs/ai/data-model.md
+@@ -21,7 +21,7 @@
+ | `UserCourse` | `models/user_courses.py` | Связка student↔course с авто-`order_number` (триггер) |
+ | `TeacherCourse` | — | Связка teacher↔course; синхронизация дочерних курсов |
+ | `StudentTeacherLink` | `repos/student_teacher_links_repository.py` | Прикрепление студента к преподавателю |
+-| `Material` | `models/materials.py` | Учебный материал курса; типы: text, video, link, pdf, script, document |
++| `Material` | `models/materials.py` | Учебный материал курса; типы: text, video, audio, image, link, pdf, office_document, script, document, trainer (tsk-1247, [trainers.md](trainers.md)) |
+ | `Task` | `models/tasks.py` | Задача (quiz) с solution-правилами |
+ | `MetaTask` | `schemas/meta_tasks.py` | Обёртки над задачами |
+ | `Attempt` | `models/attempts.py` (repo) | Попытка решения задачи студентом |
+@@ -81,6 +81,7 @@
+ | `20260717_010000_tsk264_attempts_root_course` | tsk-264: `attempts.root_course_id` — контекст навигации, попытки по паре «курс + задание» |
+ | `20260726_010000_tsk428_lesson_calendar_stage1` | tsk-428 (Календарь LMS Фаза 1): `operating_hours` + `lesson_slot` + `lesson_occurrence` + `attendance_event` — 4 новые таблицы, ноль изменений в существующих |
+ | `20260805_100000_tsk114_task_audit` | tsk-114: `task_audit` (append-only) + AFTER-триггеры на `tasks` — аудит `course_id`/`is_active`, профилактика повтора tsk-113 |
++| `2026_10_29_tsk1247_material_type_trainer` | tsk-1247: `ALTER TYPE content_type ADD VALUE 'trainer'` (без данных); откат пересоздаёт тип и отказывает при существующих тренажёрах — [trainers.md](trainers.md) |
+ 
+ ## Date/Time safety (критично)
+ 
+diff --git a/docs/ai/glossary.md b/docs/ai/glossary.md
+index 583a5f9..9be53fa 100644
+--- a/docs/ai/glossary.md
++++ b/docs/ai/glossary.md
+@@ -49,6 +49,7 @@
+ - **guest_session / guest_attempt** — анонимный пользователь; атрибуция при регистрации.
+ - **audit_event** — append-only лог: login/logout/identity-change; immutable trigger.
+ - **product_event** — funnel-аналитика; partitioned by month.
++- **Тренажёр (trainer)** — материал узла `type='trainer'` со сценарием `trainer-scenario/1` (движок в SPW); уровень `recommended`, развилка `content.checkpoint` у теории, рубильник `TRAINERS_ENABLED` — [trainers.md](trainers.md) (tsk-1247).
+ - **Phase Y-1** — фаза проекта: 5 Alembic-миграций + auth-расширение LMS API. Исполнитель: `/executor-pro`. Tech-spec: [docs/specs/2026-04-27-tech-spec-Y1-auth-extension.md](../specs/2026-04-27-tech-spec-Y1-auth-extension.md).
+ - **FernetService** — шифрование VK access_token (FERNET_MASTER_KEY в .env); `vk_access_token_enc BYTEA` в `identity_link`.
+ 
+diff --git a/docs/ai/trainers.md b/docs/ai/trainers.md
+new file mode 100644
+index 0000000..84e9d16
+--- /dev/null
++++ b/docs/ai/trainers.md
+@@ -0,0 +1,91 @@
++# Интерактивные тренажёры (tsk-1247)
++
++Сухие факты для агента. Бриф: `docs/briefs/tsk-1247-interactive-trainers.md`. Формат
++сценария: `docs/design/trainers/scenarios/README.md` §1. Движок — в SPW; LMS хранит
++сценарий, отдаёт его, принимает события и подсказывает тренажёр после ошибки.
++
++## Модель
++
++| Что | Где |
++|---|---|
++| Тип материала `trainer` | enum `content_type` (ревизия `tsk1247_material_type_trainer`, только `ADD VALUE`) |
++| `content = {slug, scenario}` | `app/schemas/material_content.py` `TrainerContent`; сценарий хранится как прислан |
++| Схема `trainer-scenario/1` | `app/schemas/trainer_scenario.py` (`validate_scenario`) |
++| Развилка «Всё понятно?» | `content.checkpoint = {question, trainer_material_id}` у любого не-trainer материала (`TrainerCheckpoint`). Не путать с `content.checkpoints` (tsk-998) |
++| Уровень обязательности | всегда `recommended` (`schemas/materials.py` `TRAINER_REQUIREMENT_LEVEL`; PATCH/PUT/bulk-upsert приводят) |
++| Сервис | `app/services/trainers_service.py` |
++| Ручки | `app/api/v1/trainers.py`: `GET /trainers/{slug}`, `POST /trainers/{slug}/events` |
++| Рубильник | `TRAINERS_ENABLED` (по умолчанию `false`), читается из окружения процесса на каждый вызов (как `NODE_SEQUENCE_ENABLED`: на проде — в окружении сервиса, не только в `.env`) |
++| Уникальность slug | один slug — один сценарий: запись тренажёра с занятым slug и другим сценарием — 409 (create/PUT/PATCH) или `validation` в bulk-upsert (`trainers_service.slug_conflict`). Копии того же сценария в разных курсах разрешены |
++| Разметка сценария | разрешены только `` `код` `` и `**жирный**`: отказ на `<` + буква/`/`/`!`/`?` вне `` `…` `` и на схемах `javascript:`/`vbscript:`/`data:` (после удаления пробелов и управляющих). Листинги и вывод (`code`, `lines`, `print`, `error`, `crash`) не проверяются. Это вторая линия: SPW обязан выводить тексты как текст |
++
++## Почему `recommended`, а не `skippable`
++
++В LMS `skippable` входит в обязательное (`requirement_override_service.REQUIRED_LEVELS =
++("required", "skippable")`): next-item выдаёт такой материал следующим шагом, процент курса и
++`compute_course_state` его ждут. «Необязательный и не блокирует продвижение» — это
++`recommended`: вне обхода и вне всех счётчиков, но в программе курса виден, и курсор
++next-item (`after_material_id`) на нём работает. Поэтому бриф («skippable») реализован
++уровнем `recommended`; порядок узла и счётчики не правились ни в одном месте.
++
++## Порядок узла
++
++Свой порядок не заводится: тренажёр — материал узла, место ему даёт `node_sequence` (П7) по
++`order_position`. Программа курса (`me_service` syllabus) показывает его на этом месте при
++`TRAINERS_ENABLED=true` и не показывает при `false`. next-item его не выдаёт никогда
++(`recommended`). «Да» на развилке — `GET /learning/next-item?after_material_id=<тренажёр>`;
++«Нет» — открыть тренажёр (`GET /materials/{id}` → `content.slug` → `GET /trainers/{slug}`).
++
++## Выдача ученику (непривилегированному)
++
++`trainers_service.student_visible`, вызывается в `GET /materials/{id}` и
++`GET /courses/{id}/materials`:
++- рубильник выкл — тренажёров нет (одиночный — 404), `checkpoint` снят;
++- вкл — `checkpoint` остаётся, только если `trainer_material_id` — активный `trainer` того же курса.
++
++Сервисный ключ и teacher/methodist/admin видят всё (как у tsk-998). ТГ-бот ходит сервисным
++ключом — тип `trainer` ему виден независимо от рубильника (шаг 6 плана: показывать ссылкой).
++
++## События
++
++| context | Кто | Куда |
++|---|---|---|
++| `student` | ученик из cookie `session`/Bearer; сервисный ключ — 401 | `learning_events` (`event_type` = тип, payload `{slug, trainer_material_id, context, level, step, iter, ok, misconception, ms, stars, answer}`, без `task_id`) |
++| `guest` | cookie `guest_session` (существующая сессия, иначе 400) | `guest_attempt`, `task_id = NULL`, `answer_json.kind = "trainer_event"`; атрибутируется при входе тем же `attribute-guest` |
++| `embed` | cookie не читаются | только `embed_view`/`trainer_start`/`trainer_done` → `product_event` (`user_id = NULL`, `properties {slug, context, parent_domain}`); прочие события отбрасываются. Сбой записи (нет партиции месяца) — 202 и warning в журнале |
++
++Новых таблиц нет. Проверки: ≤ 200 событий, `answer` ≤ 64, `misconception` только из
++`scenario.misconceptions` (422 `unknown_misconception`), `parent_domain` — только у `embed`,
++доменное имя без схемы. Лимиты (Redis, fail-open): чтение 600/мин с IP; события 120/мин с IP
++и 30/мин на пишущего (ученик / гостевая сессия / slug+IP у встройки). IP — `request.client.host`,
++как у гостевых ручек: за прокси нужен uvicorn `--proxy-headers`.
++
++Известные ограничения (не сделано): повтор пакета из очереди досылки пишет дубли
++(нет `event_id` от клиента); строки тренажёра гостя увеличивают `attributed_count` в ответе
++`attribute-guest`, а аналитика по `guest_attempt` должна фильтровать `answer_json->>'kind'`;
++индекса по `content->>'slug'` нет (материалов ~3,5 тыс., ответ кешируется ETag).
++
++Чужие потребители `learning_events` фильтруют по `event_type` или `payload.task_id` —
++новые типы их не задевают; `lesson_idle_cron_service` засчитывает любое событие как
++признак активности на занятии (тренажёр — настоящая учебная активность).
++
++## `trainer_suggestion`
++
++`{slug, title}` первого активного тренажёра узла задания (`materials.course_id = tasks.course_id`,
++по `order_position`), иначе `null`. Где:
++- `POST /attempts/{id}/answers` → `results[].trainer_suggestion`, когда `check_result.is_correct is False`;
++- `GET /learning/next-item` → когда следующий шаг — задание и последний `task_results.is_correct = false`.
++
++При выключенном рубильнике запросов не делается, поле всегда `null`. Подсчёт — в точке
++сохранения: сбой не роняет ни сдачу, ни next-item. Узел — `tasks.course_id` (для заданий
++прозрачного подкурса в списке хозяина тренажёр хозяина не предлагается), последний ответ — без
++учёта корня попытки (tsk-264).
++
++## Откат
++
++Рубильник `TRAINERS_ENABLED=false`. Ревизия обратима: downgrade пересоздаёт `content_type`
++без `trainer` и отказывает, если тренажёры есть в `materials` (удалить их явно).
++
++## Тесты
++
++`tests/test_tsk1247_trainers.py`.
+diff --git a/docs/api-reference.md b/docs/api-reference.md
+index f72e6c1..75e6bf9 100644
+--- a/docs/api-reference.md
++++ b/docs/api-reference.md
+@@ -705,7 +705,7 @@ Stateless-проверка одной задачи без сохранения 
+ 
+ | Метод | Путь | Описание |
+ |-------|------|----------|
+-| GET | `/learning/next-item?student_id=` | Следующий шаг: material \| task \| none \| blocked_dependency \| blocked_limit. |
++| GET | `/learning/next-item?student_id=` | Следующий шаг: material \| task \| none \| blocked_dependency \| blocked_limit. **tsk-1247:** поле `trainer_suggestion` `{slug, title}\|null` — следующий шаг задание, последний ответ на него неверный (`task_results.is_correct = false`) и в узле задания есть активный тренажёр; при `TRAINERS_ENABLED=false` всегда null. Тренажёр (`type=trainer`, уровень `recommended`) следующим шагом не выдаётся; «Да» на развилке — `after_material_id=<id тренажёра>`. |
+ | POST | `/learning/materials/{material_id}/complete` | Отметить материал пройденным (body: `student_id`). |
+ | POST | `/learning/materials/{material_id}/checkpoint/{checkpoint_id}` | **tsk-998 (П9):** ответ ученика на контрольную точку «Проверь себя» внутри материала. Body `{answer: str}` (1–200 символов, иначе 422): для `kind=single` — id варианта, для `short` — текст (сверка без регистра, «ё»=«е», лишние пробелы и конечная точка не важны). Ответ `{material_id, checkpoint_id, correct, explanation\|null, first_attempt}` — правильный ответ не возвращается. Только ученик по своей сессии (сервисный ключ — 403). Гейты как у `GET /materials/{id}`: зачисление в дерево курса, оплата (403 `payment_overdue`), выключенный материал — 404. 409 `payload.code=checkpoints_disabled` — рубильник `MATERIAL_CHECKPOINTS_ENABLED` выключен (по умолчанию); 404 `payload.code=checkpoint_not_found`. Повтор разрешён; каждое обращение пишет `learning_events` `material_checkpoint` с `payload {material_id, checkpoint_id, correct, answer, first_attempt}`. Прохождение материала, статусы курса, попытки и `task_results` не меняются. |
+ | POST | `/learning/tasks/{task_id}/start-or-get-attempt` | Начать или получить текущую попытку по задаче. Гарантия: в ответе `GET /attempts/{id}` поле `attempt.meta.task_ids` (int[]) содержит как минимум этот `task_id`; при пустом/битом `meta` backend восстанавливает его при вызове. |
+@@ -882,6 +882,19 @@ Stateless-проверка одной задачи без сохранения 
+ 
+ ---
+ 
++## Тренажёры (tsk-1247)
++
++Публичные ручки (без входа: ученик, гость, встройка на чужом сайте). При `TRAINERS_ENABLED=false` (по умолчанию) обе — 404. Подробно: [ai/trainers.md](ai/trainers.md).
++
++| Метод | Путь | Описание |
++|---|---|---|
++| GET | `/trainers/{slug}` | `{slug, title, scenario, version}`; заголовки `ETag: "<version>"`, `Cache-Control: public, max-age=300`; `If-None-Match` с тем же ETag → 304. 404 — нет активного тренажёра со slug. Лимит 600 запросов/мин с IP (429). |
++| POST | `/trainers/{slug}/events` | 202 `{accepted}`. Тело `{context: student\|guest\|embed, events: [{type, level?, step?, iter?, ok?, misconception?, ms?, stars?, answer?, parent_domain?}]}`, 1–200 событий; `type` ∈ `trainer_start, trainer_step, trainer_done, checkpoint_answer, embed_view`; `answer` ≤ 64 символов; `parent_domain` — только `embed`; `misconception` — только из `scenario.misconceptions` (иначе 422 `payload.code=unknown_misconception`). `student` — ученик из cookie `session`/Bearer (иначе 401), строки `learning_events` (`event_type` = `type`, payload `{slug, trainer_material_id, context, …}`); `guest` — cookie `guest_session` (иначе 400), строки `guest_attempt` с `task_id = NULL`, `answer_json.kind = trainer_event`, переносятся `attribute-guest`; `embed` — cookie не читаются, пишутся только `embed_view`/`trainer_start`/`trainer_done` в `product_event` (`user_id = NULL`, `properties {slug, context, parent_domain}`), ввод не пишется. Лимиты: 120 запросов/мин с IP и 30/мин на пишущего — ученика, гостевую сессию, у встройки slug+IP (429). |
++
++`POST /attempts/{id}/answers`: у элемента `results[]` поле `trainer_suggestion` `{slug, title}\|null` — ответ неверный (`check_result.is_correct = false`) и в узле задания есть активный тренажёр.
++
++---
++
+ ## Эндпойнты материалов
+ 
+ API учебных материалов курса: CRUD, список по курсу, изменение порядка, перемещение, массовое обновление активности, копирование в другой курс, статистика, импорт из Google Sheets.
+@@ -893,6 +906,7 @@ API учебных материалов курса: CRUD, список по ку
+ - **GET** `/materials/search` — поиск материалов по title и external_uid (параметр q обязателен; course_id опционально — по всем курсам или по одному)
+ - **GET** `/courses/{course_id}/materials` — список материалов курса (параметр q — поиск по title/external_uid в рамках курса; фильтры: is_active, type; сортировка: order_position, title, created_at; пагинация skip/limit)
+ - **tsk-998:** `content` текстового материала может нести `checkpoints: [{id, after_block, question, kind: single|short, options?, answer, explanation?}]` (формат и метка `<div data-cb-checkpoint="id"></div>` — `app/schemas/material_content.py`, `MaterialCheckpoint`). Ученику (`GET /materials/{id}` и список выше) точки отдаются без `answer`/`explanation`, а при выключенном `MATERIAL_CHECKPOINTS_ENABLED` — без `checkpoints`; сервисный ключ и teacher/methodist/admin получают content целиком.
++- **tsk-1247:** тип материала `trainer` — интерактивный тренажёр. `content = {slug, scenario}`, `scenario` — JSON `trainer-scenario/1` (`docs/design/trainers/scenarios/README.md`), проверяется схемой `app/schemas/trainer_scenario.py` при создании/правке/bulk-upsert (битый — 422 / per-item `validation` с путём и причиной); `slug` = `scenario.slug`; slug, занятый тренажёром с другим сценарием, — 409 (в bulk-upsert — per-item `validation`). Уровень обязательности тренажёра всегда пишется `recommended` (вне обхода next-item и счётчиков прогресса). У материала-теории (любой тип, кроме `trainer`) — необязательная развилка `content.checkpoint = {question: "Всё понятно?", trainer_material_id}`. Ученику при `TRAINERS_ENABLED=false` тренажёры не отдаются (`GET /materials/{id}` — 404, список и программа курса — без них), `checkpoint` снят; при `true` `checkpoint` снят, только если его тренажёр не активен или из другого курса. Сервисный ключ и teacher/methodist/admin видят всё.
+ - **POST** `/materials` — создание материала
+ - **GET** `/materials/{id}` — получение материала
+ - **PATCH** `/materials/{id}` — обновление материала (при изменении content передаётся полный объект content для типа)
+diff --git a/docs/openapi.json b/docs/openapi.json
+index b4c2cb1..134ee7a 100644
+--- a/docs/openapi.json
++++ b/docs/openapi.json
+@@ -34383,6 +34383,182 @@
+         }
+       }
+     },
++    "/api/v1/trainers/{slug}": {
++      "get": {
++        "tags": [
++          "trainers"
++        ],
++        "summary": "Сценарий тренажёра (публично: ученик, гость, встройка)",
++        "description": "Отдать сценарий `trainer-scenario/1` с версией (ETag) для кеша.\n\nОтветы шагов в сценарии не скрываются (бриф Р3): движок проверяет ответ в\nбраузере, защита — выгодность честного пути, а не секретность.",
++        "operationId": "get_trainer_api_v1_trainers__slug__get",
++        "parameters": [
++          {
++            "name": "slug",
++            "in": "path",
++            "required": true,
++            "schema": {
++              "type": "string",
++              "pattern": "^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$",
++              "title": "Slug"
++            }
++          },
++          {
++            "name": "if-none-match",
++            "in": "header",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "If-None-Match"
++            }
++          }
++        ],
++        "responses": {
++          "200": {
++            "description": "Successful Response",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/TrainerRead"
++                }
++              }
++            }
++          },
++          "304": {
++            "description": "Сценарий не менялся (If-None-Match совпал с ETag)"
++          },
++          "404": {
++            "description": "Тренажёра нет, он выключен или TRAINERS_ENABLED=false"
++          },
++          "429": {
++            "description": "Лимит запросов с IP"
++          },
++          "422": {
++            "description": "Validation Error",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/HTTPValidationError"
++                }
++              }
++            }
++          }
++        }
++      }
++    },
++    "/api/v1/trainers/{slug}/events": {
++      "post": {
++        "tags": [
++          "trainers"
++        ],
++        "summary": "События тренажёра пакетом (ученик / гость / встройка)",
++        "description": "Принять пакет событий (≤ 200) и записать по контексту.\n\n* `student` — ученик из токена входа (cookie `session` или Bearer); сервисный\n  ключ не принимается: событие обязано принадлежать человеку.\n* `guest` — по cookie `guest_session` (как ответы гостя на демо-задачу).\n* `embed` — cookie не читаются вовсе; пишутся только обезличенные счётчики.",
++        "operationId": "post_trainer_events_api_v1_trainers__slug__events_post",
++        "parameters": [
++          {
++            "name": "slug",
++            "in": "path",
++            "required": true,
++            "schema": {
++              "type": "string",
++              "pattern": "^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$",
++              "title": "Slug"
++            }
++          },
++          {
++            "name": "authorization",
++            "in": "header",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Authorization"
++            }
++          },
++          {
++            "name": "guest_session",
++            "in": "cookie",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Guest Session"
++            }
++          },
++          {
++            "name": "session",
++            "in": "cookie",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Session"
++            }
++          }
++        ],
++        "requestBody": {
++          "required": true,
++          "content": {
++            "application/json": {
++              "schema": {
++                "$ref": "#/components/schemas/TrainerEventsRequest"
++              }
++            }
++          }
++        },
++        "responses": {
++          "202": {
++            "description": "Successful Response",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/TrainerEventsResponse"
++                }
++              }
++            }
++          },
++          "400": {
++            "description": "context=guest без действующей cookie guest_session"
++          },
++          "401": {
++            "description": "context=student без входа"
++          },
++          "404": {
++            "description": "Тренажёра нет, он выключен или TRAINERS_ENABLED=false"
++          },
++          "422": {
++            "description": "Больше 200 событий, неизвестный код ошибки, ввод длиннее 64 символов"
++          },
++          "429": {
++            "description": "Лимит запросов с IP"
++          }
++        }
++      }
++    },
+     "/api/v1/methodist/escalations/pending": {
+       "get": {
+         "tags": [
+@@ -55575,6 +55751,17 @@
+           "check_result": {
+             "$ref": "#/components/schemas/CheckResult",
+             "description": "Результат проверки ответа по данной задаче."
++          },
++          "trainer_suggestion": {
++            "anyOf": [
++              {
++                "$ref": "#/components/schemas/TrainerSuggestion"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "description": "tsk-1247: ответ неверный и в узле задания есть тренажёр — {slug, title}; иначе null (и всегда null при TRAINERS_ENABLED=false)."
+           }
+         },
+         "type": "object",
+@@ -70726,7 +70913,7 @@
+           "type": {
+             "type": "string",
+             "title": "Type",
+-            "description": "Тип материала: text, video, audio, image, link, pdf, office_document, script, document"
++            "description": "Тип материала: text, video, audio, image, link, pdf, office_document, script, document, trainer (tsk-1247)"
+           },
+           "content": {
+             "title": "Content",
+@@ -73057,6 +73244,17 @@
+               }
+             ],
+             "title": "Dependency Course Uid"
++          },
++          "trainer_suggestion": {
++            "anyOf": [
++              {
++                "$ref": "#/components/schemas/TrainerSuggestion"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "description": "tsk-1247: следующий шаг — задание, последний ответ на которое неверный, и в его узле есть тренажёр: {slug, title}. null — нет, или TRAINERS_ENABLED=false."
+           }
+         },
+         "type": "object",
+@@ -89777,6 +89975,241 @@
+         ],
+         "title": "TgInitRequest"
+       },
++      "TrainerEvent": {
++        "properties": {
++          "type": {
++            "type": "string",
++            "enum": [
++              "trainer_start",
++              "trainer_step",
++              "trainer_done",
++              "checkpoint_answer",
++              "embed_view"
++            ],
++            "title": "Type"
++          },
++          "level": {
++            "anyOf": [
++              {
++                "type": "integer"
++              },
++              {
++                "type": "string"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Level",
++            "description": "id уровня сценария (L1…) или его номер"
++          },
++          "step": {
++            "anyOf": [
++              {
++                "type": "string",
++                "pattern": "^[A-Za-z0-9_-]{1,64}$"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Step",
++            "description": "id шага"
++          },
++          "iter": {
++            "anyOf": [
++              {
++                "type": "integer",
++                "maximum": 1000.0,
++                "minimum": 1.0
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Iter",
++            "description": "Номер витка цикла для шагов trace (README §1.5)"
++          },
++          "ok": {
++            "anyOf": [
++              {
++                "type": "boolean"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Ok"
++          },
++          "misconception": {
++            "anyOf": [
++              {
++                "type": "string",
++                "pattern": "^[a-z][a-z0-9_]{0,63}$"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Misconception",
++            "description": "Код ошибки — только из словаря misconceptions сценария"
++          },
++          "ms": {
++            "anyOf": [
++              {
++                "type": "integer",
++                "maximum": 3600000.0,
++                "minimum": 0.0
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Ms",
++            "description": "Время на шаг/уровень, мс"
++          },
++          "stars": {
++            "anyOf": [
++              {
++                "type": "integer",
++                "maximum": 60.0,
++                "minimum": 0.0
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Stars"
++          },
++          "answer": {
++            "anyOf": [
++              {
++                "type": "string",
++                "maxLength": 64
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Answer",
++            "description": "Ввод ученика (≤ 64 символов); у встройки не пишется"
++          },
++          "parent_domain": {
++            "anyOf": [
++              {
++                "type": "string",
++                "maxLength": 253
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Parent Domain",
++            "description": "Домен страницы со встройкой (только context=embed)"
++          }
++        },
++        "type": "object",
++        "required": [
++          "type"
++        ],
++        "title": "TrainerEvent",
++        "description": "Одно событие тренажёра.\n\nНезнакомые поля молча отбрасываются (не пишутся): клиент с очередью\nдосылки (бриф 2A) не должен застревать на 422 из-за нового поля."
++      },
++      "TrainerEventsRequest": {
++        "properties": {
++          "context": {
++            "type": "string",
++            "enum": [
++              "student",
++              "guest",
++              "embed"
++            ],
++            "title": "Context"
++          },
++          "events": {
++            "items": {
++              "$ref": "#/components/schemas/TrainerEvent"
++            },
++            "type": "array",
++            "maxItems": 200,
++            "minItems": 1,
++            "title": "Events"
++          }
++        },
++        "type": "object",
++        "required": [
++          "context",
++          "events"
++        ],
++        "title": "TrainerEventsRequest",
++        "description": "Тело `POST /trainers/{slug}/events`."
++      },
++      "TrainerEventsResponse": {
++        "properties": {
++          "accepted": {
++            "type": "integer",
++            "minimum": 0.0,
++            "title": "Accepted"
++          }
++        },
++        "type": "object",
++        "required": [
++          "accepted"
++        ],
++        "title": "TrainerEventsResponse",
++        "description": "Ответ 202: сколько событий записано (у встройки — только счётчики)."
++      },
++      "TrainerRead": {
++        "properties": {
++          "slug": {
++            "type": "string",
++            "title": "Slug"
++          },
++          "title": {
++            "type": "string",
++            "title": "Title"
++          },
++          "scenario": {
++            "additionalProperties": true,
++            "type": "object",
++            "title": "Scenario",
++            "description": "Сценарий trainer-scenario/1 как опубликован"
++          },
++          "version": {
++            "type": "string",
++            "title": "Version",
++            "description": "Версия сценария — то же значение, что в заголовке ETag"
++          }
++        },
++        "type": "object",
++        "required": [
++          "slug",
++          "title",
++          "scenario",
++          "version"
++        ],
++        "title": "TrainerRead",
++        "description": "Ответ `GET /trainers/{slug}`."
++      },
++      "TrainerSuggestion": {
++        "properties": {
++          "slug": {
++            "type": "string",
++            "title": "Slug"
++          },
++          "title": {
++            "type": "string",
++            "title": "Title"
++          }
++        },
++        "type": "object",
++        "required": [
++          "slug",
++          "title"
++        ],
++        "title": "TrainerSuggestion",
++        "description": "Предложение тренажёра после неверного ответа на задание узла."
++      },
+       "TransferSlotParticipantRequest": {
+         "properties": {
+           "target_slot_id": {
+diff --git a/reviews/2026-10-29-tsk1247-trainers-backend.md b/reviews/2026-10-29-tsk1247-trainers-backend.md
+new file mode 100644
+index 0000000..0e606df
+--- /dev/null
++++ b/reviews/2026-10-29-tsk1247-trainers-backend.md
+@@ -0,0 +1,21 @@
++# tsk-1247 шаг 3: бэкенд интерактивных тренажёров
++
++Дата: 2026-10-29. Ветка `claude/tsk-1247-lms`. Diff: `2026-10-29-tsk1247-trainers-backend.diff`.
++
++## Контекст
++Тип материала `trainer` (`content = {slug, scenario}`, схема `trainer-scenario/1`), развилка
++`content.checkpoint` у теории, ручки `GET /trainers/{slug}` и `POST /trainers/{slug}/events`,
++`trainer_suggestion` в ответе проверки и next-item, рубильник `TRAINERS_ENABLED`.
++Факты — `docs/ai/trainers.md`.
++
++## Отклонение от контракта
++Уровень тренажёра — `recommended`, а не `skippable`: в LMS `skippable` входит в обязательное
++(next-item его выдаёт, проценты курса его ждут), а «не блокирует продвижение» — это `recommended`.
++
++## Независимое ревью (отдельный агент)
++Блокеров нет. Исправлено: ложные отказы HTML-проверки на `a < b` и запрещённый список тегов
++(заменено на разрешённый набор), лимит событий на пишущего (ученик / гостевая сессия / slug+IP),
++уникальность slug (409), soft-fail подсказки в next-item, пагинация списка при выключенном
++рубильнике (фильтр в SQL), смена типа на trainer без content (422).
++Оставлено с записью в docs/ai/trainers.md: дедуп пакетов досылки, `attributed_count` гостя,
++узел прозрачных подкурсов и корень попытки в подсказке, индекс по slug, бот видит тип по сервисному ключу.
+diff --git a/tests/test_tsk1247_trainers.py b/tests/test_tsk1247_trainers.py
+new file mode 100644
+index 0000000..09960c8
+--- /dev/null
++++ b/tests/test_tsk1247_trainers.py
+@@ -0,0 +1,715 @@
++"""tsk-1247: интерактивные тренажёры — бэкенд (шаг 3 плана).
++
++Проверяется:
++- схема `trainer-scenario/1`: оба пилотных сценария из
++  `docs/design/trainers/scenarios/` проходят, битые — отказ (в ручках — 422 с
++  понятной ошибкой); тренажёр всегда пишется уровнем `recommended`;
++- выдача ученику при рубильнике `TRAINERS_ENABLED` вкл/выкл: материал,
++  список курса, программа курса, развилка `checkpoint` у теории;
++- порядок узла: при выключенном рубильнике выдача та же, что без тренажёра,
++  тренажёр не блокирует next-item ни при каком положении рубильника, а «Да»
++  на развилке (next-item после тренажёра) ведёт к следующему элементу;
++- `GET /trainers/{slug}`: 404 / ETag / 304;
++- `POST /trainers/{slug}/events`: вошедший, гость, встройка, отказ неизвестного
++  кода ошибки, лимит пакета, длина ввода, лимит частоты;
++- `trainer_suggestion` после неверного ответа — в ответе проверки и в next-item.
++"""
++from __future__ import annotations
++
++import copy
++import json
++import uuid
++from pathlib import Path
++
++import pytest
++from sqlalchemy import text
++
++from app.schemas.material_content import validate_material_content
++from app.schemas.trainer_scenario import validate_scenario
++from app.services import trainers_service
++from test_help_ladder_endpoints_tsk303 import _bearer, _headers, _user
++
++pytestmark = pytest.mark.asyncio
++
++SCENARIOS_DIR = Path(__file__).resolve().parents[1] / "docs" / "design" / "trainers" / "scenarios"
++
++
++def _scenario(name: str = "interpreter-input") -> dict:
++    return json.loads((SCENARIOS_DIR / f"{name}.json").read_text(encoding="utf-8"))
++
++
++@pytest.fixture
++def trainers_on(monkeypatch):
++    monkeypatch.setenv("TRAINERS_ENABLED", "true")
++
++
++@pytest.fixture
++def trainers_off(monkeypatch):
++    monkeypatch.setenv("TRAINERS_ENABLED", "false")
++
++
++# ── данные ──────────────────────────────────────────────────────────────────
++
++
++async def _course(db) -> int:
++    return (
++        await db.execute(
++            text("INSERT INTO courses (title, access_level) VALUES (:t, 'self_guided') RETURNING id"),
++            {"t": f"t1247 курс {uuid.uuid4().hex[:8]}"},
++        )
++    ).scalar_one()
++
++
++async def _material(
++    db, course_id: int, *, mtype: str = "text", content: dict | None = None,
++    position: int | None = None, level: str = "required", active: bool = True,
++) -> int:
++    return (
++        await db.execute(
++            text(
++                "INSERT INTO materials (title, type, content, course_id, is_active, "
++                "order_position, requirement_level, external_uid) "
++                "VALUES (:t, CAST(:ty AS content_type), CAST(:c AS jsonb), :cid, :a, :p, :lvl, :e) "
++                "RETURNING id"
++            ),
++            {
++                "t": f"t1247 {mtype}", "ty": mtype,
++                "c": json.dumps(content or {"text": "<p>Теория</p>", "format": "html"}, ensure_ascii=False),
++                "cid": course_id, "a": active, "p": position, "lvl": level,
++                "e": f"t1247:{uuid.uuid4().hex}",
++            },
++        )
++    ).scalar_one()
++
++
++async def _trainer(db, course_id: int, *, slug: str | None = None, position: int | None = None,
++                   active: bool = True) -> tuple[int, str]:
++    scenario = _scenario()
++    slug = slug or f"t1247-{uuid.uuid4().hex[:10]}"
++    scenario["slug"] = slug
++    content = validate_material_content("trainer", {"slug": slug, "scenario": scenario})
++    mid = await _material(
++        db, course_id, mtype="trainer", content=content, position=position,
++        level="recommended", active=active,
++    )
++    return mid, slug
++
++
++async def _task(db, course_id: int, position: int | None = None) -> int:
++    did = (await db.execute(text("SELECT id FROM difficulties ORDER BY id LIMIT 1"))).scalar_one()
++    return (
++        await db.execute(
++            text(
++                "INSERT INTO tasks (task_content, solution_rules, course_id, difficulty_id, "
++                "external_uid, max_attempts, is_active, order_position) VALUES "
++                "(CAST(:tc AS jsonb), CAST(:sr AS jsonb), :cid, :did, :uid, 10, true, :p) RETURNING id"
++            ),
++            {
++                "tc": '{"type":"SC","stem":"2+2?","options":[{"id":"a","text":"3"},{"id":"b","text":"4"}]}',
++                "sr": '{"max_score":1,"correct_options":["b"]}',
++                "cid": course_id, "did": did, "uid": f"t1247-task-{uuid.uuid4().hex[:12]}", "p": position,
++            },
++        )
++    ).scalar_one()
++
++
++async def _enroll(db, user_id: int, course_id: int) -> None:
++    await db.execute(
++        text(
++            "INSERT INTO user_courses (user_id, course_id, is_active, order_number) "
++            "VALUES (:u, :c, true, 1) ON CONFLICT DO NOTHING"
++        ),
++        {"u": user_id, "c": course_id},
++    )
++
++
++async def _node(db, *, with_trainer: bool = True):
++    """Узел «теория → тренажёр → задание», ученик зачислен.
++
++    Тренажёр стоит позицией между теорией и заданием (в голове узла), у теории
++    развилка на него.
++    """
++    sid, token = await _user(db, "t1247 ученик", with_session=True)
++    cid = await _course(db)
++    theory = await _material(db, cid, position=1)
++    trainer_id, slug = (None, None)
++    if with_trainer:
++        trainer_id, slug = await _trainer(db, cid, position=2)
++        await db.execute(
++            text("UPDATE materials SET content = content || CAST(:cp AS jsonb) WHERE id = :m"),
++            {"cp": json.dumps({"checkpoint": {"question": "Всё понятно?", "trainer_material_id": trainer_id}}),
++             "m": theory},
++        )
++    task = await _task(db, cid, position=1)
++    await _enroll(db, sid, cid)
++    await db.commit()
++    return {"sid": sid, "token": token, "cid": cid, "theory": theory,
++            "trainer": trainer_id, "slug": slug, "task": task}
++
++
++# ── 1. схема сценария ───────────────────────────────────────────────────────
++
++
++@pytest.mark.parametrize("name", ["interpreter-input", "loop-machine"])
++async def test_pilot_scenarios_pass_schema(name):
++    scenario = _scenario(name)
++    parsed = validate_scenario(scenario)
++    assert parsed.slug == name
++    stored = validate_material_content("trainer", {"slug": name, "scenario": scenario})
++    # Сценарий хранится как прислан — без дописанных значений по умолчанию.
++    assert stored == {"slug": name, "scenario": scenario}
++
++
++def _broken(mutate):
++    s = _scenario()
++    mutate(s)
++    return s
++
++
++BROKEN = {
++    "wrong_schema": lambda s: s.update(schema="trainer-scenario/2"),
++    "unknown_misconception": lambda s: s["levels"][1]["steps"][0]["options"][0].update(misconception="nope"),
++    "unused_misconception": lambda s: s["misconceptions"].update(
++        spare={"label": "x", "level": 1, "tutor_hint": "x"}
++    ),
++    "wrong_option_without_code": lambda s: s["levels"][1]["steps"][0]["options"][0].pop("misconception"),
++    "console_too_long": lambda s: s["levels"][1]["steps"][2].update(max_len=65),
++    "typo_in_step_key": lambda s: s["levels"][1]["steps"][0].update(optoins=[]),
++    "duplicate_step_id": lambda s: s["levels"][1]["steps"][1].update(id=s["levels"][1]["steps"][0]["id"]),
++    "html_in_text": lambda s: s.update(intro="<script>alert(1)</script>"),
++    "html_event_handler": lambda s: s.update(intro="<details open ontoggle=alert(1)>"),
++    "js_link_with_newline": lambda s: s.update(subtitle="[x](java\nscript:alert(1))"),
++    "bad_regex": lambda s: s["levels"][1]["steps"][2].update(accept="(["),
++    "no_levels": lambda s: s.update(levels=[]),
++    "unknown_level_kind": lambda s: s["levels"][0].update(kind="drag_drop"),
++}
++
++
++@pytest.mark.parametrize("case", sorted(BROKEN))
++async def test_broken_scenario_rejected(case):
++    with pytest.raises(ValueError):
++        validate_scenario(_broken(BROKEN[case]))
++
++
++async def test_code_comparisons_are_not_html():
++    """`a < b` в листинге и `i<n` в `коде` вопроса — не теги."""
++    s = _scenario("loop-machine")
++    s["levels"][0]["code"].append("while a < b:")
++    s["levels"][0]["steps"][0]["q"] = "Что будет, если `i<n` неверно?"
++    validate_scenario(s)
++
++
++async def test_slug_must_match_scenario():
++    with pytest.raises(ValueError, match="не совпадает"):
++        validate_material_content("trainer", {"slug": "other", "scenario": _scenario()})
++
++
++async def test_create_broken_trainer_returns_422(db, client):
++    cid = await _course(db)
++    await db.commit()
++    bad = _broken(BROKEN["unknown_misconception"])
++    resp = await client.post(
++        "/api/v1/materials/",
++        json={"course_id": cid, "title": "Тренажёр", "type": "trainer",
++              "content": {"slug": "interpreter-input", "scenario": bad}},
++        headers=_headers(),
++    )
++    assert resp.status_code == 422, resp.text
++    assert "неизвестный код ошибки «nope»" in resp.text
++
++
++async def test_create_trainer_forces_recommended(db, client):
++    """Тренажёр не блокирует продвижение: уровень всегда recommended."""
++    cid = await _course(db)
++    await db.commit()
++    resp = await client.post(
++        "/api/v1/materials/",
++        json={"course_id": cid, "title": "Тренажёр", "type": "trainer", "requirement_level": "skippable",
++              "content": {"slug": "interpreter-input", "scenario": _scenario()}},
++        headers=_headers(),
++    )
++    assert resp.status_code in (200, 201), resp.text
++    assert resp.json()["requirement_level"] == "recommended"
++
++
++async def test_bulk_upsert_validates_trainer(db, client):
++    cid = await _course(db)
++    await db.commit()
++    good = {"course_id": cid, "external_uid": f"t1247:{uuid.uuid4().hex}", "title": "Цикл-машина",
++            "type": "trainer", "content": {"slug": "loop-machine", "scenario": _scenario("loop-machine")}}
++    bad = {**good, "external_uid": f"t1247:{uuid.uuid4().hex}",
++           "content": {"slug": "loop-machine", "scenario": {**_scenario("loop-machine"), "levels": []}}}
++    resp = await client.post("/api/v1/materials/bulk-upsert", json={"items": [good, bad]}, headers=_headers())
++    # Ошибка валидации одного элемента — per-item, остальные пишутся.
++    assert resp.status_code == 200, resp.text
++    errors = [r for r in resp.json()["items"] if r.get("error_type") == "validation"]
++    assert len(errors) == 1 and "levels" in errors[0]["error"], resp.text
++    stored = (
++        await db.execute(
++            text("SELECT requirement_level, content->>'slug' FROM materials WHERE external_uid = :e"),
++            {"e": good["external_uid"]},
++        )
++    ).first()
++    bad_stored = (
++        await db.execute(text("SELECT 1 FROM materials WHERE external_uid = :e"), {"e": bad["external_uid"]})
++    ).first()
++    assert bad_stored is None
++    assert stored == ("recommended", "loop-machine")
++
++
++async def test_put_content_without_type_validated(db, client):
++    """Generic PUT без `type` у тренажёра всё равно проверяет сценарий."""
++    cid = await _course(db)
++    mid, _ = await _trainer(db, cid)
++    await db.commit()
++    resp = await client.put(
++        f"/api/v1/materials/{mid}",
++        json={"content": {"slug": "x", "scenario": {"schema": "trainer-scenario/1"}}, "requirement_level": "required"},
++        headers=_headers(),
++    )
++    assert resp.status_code == 422, resp.text
++
++
++async def test_text_checkpoint_kept_and_validated():
++    out = validate_material_content(
++        "text", {"text": "<p>x</p>", "format": "html", "checkpoint": {"trainer_material_id": 7}}
++    )
++    assert out["checkpoint"] == {"question": "Всё понятно?", "trainer_material_id": 7}
++    # Без развилки content прежний — bulk-upsert не считает материал изменённым.
++    assert validate_material_content("text", {"text": "<p>x</p>", "format": "html"}) == {
++        "text": "<p>x</p>", "format": "html",
++    }
++    with pytest.raises(ValueError):
++        validate_material_content("text", {"text": "x", "checkpoint": {"trainer_material_id": 0}})
++
++
++# ── 2. выдача ученику и рубильник ───────────────────────────────────────────
++
++
++async def test_switch_is_off_by_default(monkeypatch):
++    monkeypatch.delenv("TRAINERS_ENABLED", raising=False)
++    assert trainers_service.trainers_enabled() is False
++
++
++async def test_switch_off_hides_trainer_and_checkpoint(db, client, trainers_off):
++    n = await _node(db)
++    h = _bearer(n["token"])
++    assert (await client.get(f"/api/v1/materials/{n['trainer']}", headers=h)).status_code == 404
++    items = (await client.get(f"/api/v1/courses/{n['cid']}/materials", headers=h)).json()["items"]
++    assert [i["id"] for i in items] == [n["theory"]]
++    assert "checkpoint" not in items[0]["content"]
++    one = (await client.get(f"/api/v1/materials/{n['theory']}", headers=h)).json()
++    assert "checkpoint" not in one["content"]
++    # Методист/сервисный ключ видят всё как есть.
++    svc = (await client.get(f"/api/v1/courses/{n['cid']}/materials", headers=_headers())).json()["items"]
++    assert {i["id"] for i in svc} == {n["theory"], n["trainer"]}
++
++
++async def test_switch_on_shows_trainer_and_checkpoint(db, client, trainers_on):
++    n = await _node(db)
++    h = _bearer(n["token"])
++    tr = await client.get(f"/api/v1/materials/{n['trainer']}", headers=h)
++    assert tr.status_code == 200, tr.text
++    assert tr.json()["type"] == "trainer"
++    assert tr.json()["requirement_level"] == "recommended"
++    items = (await client.get(f"/api/v1/courses/{n['cid']}/materials", headers=h)).json()["items"]
++    assert [i["id"] for i in items] == [n["theory"], n["trainer"]]
++    assert items[0]["content"]["checkpoint"] == {"question": "Всё понятно?", "trainer_material_id": n["trainer"]}
++
++
++async def test_checkpoint_to_inactive_trainer_dropped(db, client, trainers_on):
++    n = await _node(db)
++    await db.execute(text("UPDATE materials SET is_active = false WHERE id = :m"), {"m": n["trainer"]})
++    await db.commit()
++    one = (await client.get(f"/api/v1/materials/{n['theory']}", headers=_bearer(n["token"]))).json()
++    assert "checkpoint" not in one["content"]
++
++
++async def _syllabus(client, n) -> list:
++    resp = await client.get(f"/api/v1/me/courses/{n['cid']}/syllabus-states", headers=_bearer(n["token"]))
++    assert resp.status_code == 200, resp.text
++    body = resp.json()
++    return [
++        (i["kind"], i.get("material_id") or i.get("task_id"), i.get("requirement_level"))
++        for i in body["items"]
++    ]
++
++
++async def test_syllabus_order_with_switch(db, client, monkeypatch):
++    n = await _node(db)
++    monkeypatch.setenv("TRAINERS_ENABLED", "false")
++    off = await _syllabus(client, n)
++    assert off == [("material", n["theory"], "required"), ("task", n["task"], "required")]
++    monkeypatch.setenv("TRAINERS_ENABLED", "true")
++    on = await _syllabus(client, n)
++    # Место тренажёру даёт node_sequence: между теорией и заданием.
++    assert on == [
++        ("material", n["theory"], "required"),
++        ("material", n["trainer"], "recommended"),
++        ("task", n["task"], "required"),
++    ]
++
++
++async def _next(client, n, **after) -> dict:
++    params = {"student_id": n["sid"], "root_course_id": n["cid"], **after}
++    resp = await client.get("/api/v1/learning/next-item", params=params, headers=_bearer(n["token"]))
++    assert resp.status_code == 200, resp.text
++    return resp.json()
++
++
++async def _complete(client, n, mid: int) -> None:
++    resp = await client.post(
++        f"/api/v1/learning/materials/{mid}/complete", json={"student_id": n["sid"]}, headers=_bearer(n["token"]),
++    )
++    assert resp.status_code == 200, resp.text
++
++
++@pytest.mark.parametrize("switch", ["true", "false"])
++async def test_trainer_does_not_block_next_item(db, client, monkeypatch, switch):
++    """next-item: тренажёр не выдаётся следующим шагом и не держит путь."""
++    monkeypatch.setenv("TRAINERS_ENABLED", switch)
++    n = await _node(db)
++    first = await _next(client, n)
++    assert (first["type"], first["material_id"]) == ("material", n["theory"])
++    after_theory = await _next(client, n, after_material_id=n["theory"])
++    assert (after_theory["type"], after_theory["task_id"]) == ("task", n["task"])
++    # «Да» на развилке — следующий элемент после тренажёра.
++    after_trainer = await _next(client, n, after_material_id=n["trainer"])
++    assert (after_trainer["type"], after_trainer["task_id"]) == ("task", n["task"])
++    await _complete(client, n, n["theory"])
++    resumed = await _next(client, n)
++    assert (resumed["type"], resumed["task_id"]) == ("task", n["task"])
++    assert resumed["trainer_suggestion"] is None
++
++
++async def test_order_unchanged_when_switch_off(db, client, trainers_off):
++    """При выключенном рубильнике выдача узла та же, что у узла без тренажёра."""
++    with_t = await _node(db)
++    without = await _node(db, with_trainer=False)
++
++    async def shape(n):
++        chain = [await _next(client, n), await _next(client, n, after_material_id=n["theory"])]
++        return [(c["type"], c["material_id"] == n["theory"], c["task_id"] == n["task"]) for c in chain], [
++            (k, lvl) for k, _id, lvl in await _syllabus(client, n)
++        ]
++
++    assert await shape(with_t) == await shape(without)
++
++
++# ── 3. GET /trainers/{slug} ─────────────────────────────────────────────────
++
++
++async def test_get_trainer_404_when_switch_off(db, client, trainers_off):
++    cid = await _course(db)
++    _, slug = await _trainer(db, cid)
++    await db.commit()
++    assert (await client.get(f"/api/v1/trainers/{slug}")).status_code == 404
++
++
++async def test_get_trainer_public_with_etag(db, client, trainers_on):
++    cid = await _course(db)
++    _, slug = await _trainer(db, cid)
++    await db.commit()
++    resp = await client.get(f"/api/v1/trainers/{slug}")
++    assert resp.status_code == 200, resp.text
++    body = resp.json()
++    assert body["slug"] == slug
++    assert body["title"] == "Ты — интерпретатор"
++    assert body["scenario"]["schema"] == "trainer-scenario/1"
++    assert resp.headers["etag"] == f'"{body["version"]}"'
++    assert "max-age" in resp.headers["cache-control"]
++    cached = await client.get(f"/api/v1/trainers/{slug}", headers={"If-None-Match": resp.headers["etag"]})
++    assert cached.status_code == 304
++    assert cached.headers["etag"] == resp.headers["etag"]
++
++
++async def test_get_trainer_unknown_or_inactive_404(db, client, trainers_on):
++    cid = await _course(db)
++    _, slug = await _trainer(db, cid, active=False)
++    await db.commit()
++    assert (await client.get(f"/api/v1/trainers/{slug}")).status_code == 404
++    assert (await client.get("/api/v1/trainers/no-such-trainer")).status_code == 404
++    assert (await client.get("/api/v1/trainers/Bad_Slug")).status_code == 422
++
++
++# ── 4. POST /trainers/{slug}/events ─────────────────────────────────────────
++
++
++STEP = {"type": "trainer_step", "level": "L2", "step": "l1_predict", "ok": False,
++        "misconception": "input_prompt", "ms": 4200, "answer": "Как тебя зовут?"}
++
++
++async def _post(client, slug, body, **kw):
++    return await client.post(f"/api/v1/trainers/{slug}/events", json=body, **kw)
++
++
++async def test_events_404_when_switch_off(db, client, trainers_off):
++    cid = await _course(db)
++    _, slug = await _trainer(db, cid)
++    await db.commit()
++    resp = await _post(client, slug, {"context": "embed", "events": [{"type": "embed_view"}]})
++    assert resp.status_code == 404
++
++
++async def test_student_events_to_learning_events(db, client, trainers_on):
++    n = await _node(db)
++    body = {"context": "student", "events": [
++        {"type": "trainer_start", "level": "L1"}, STEP,
++        {"type": "trainer_step", "level": "L3", "step": "cond", "iter": 2, "ok": True, "ms": 900},
++        {"type": "trainer_done", "stars": 7},
++        {"type": "checkpoint_answer", "answer": "no"},
++    ]}
++    resp = await _post(client, n["slug"], body, headers=_bearer(n["token"]))
++    assert resp.status_code == 202, resp.text
++    assert resp.json() == {"accepted": 5}
++    rows = (await db.execute(
++        text("SELECT event_type, payload FROM learning_events WHERE student_id = :s ORDER BY id"),
++        {"s": n["sid"]},
++    )).fetchall()
++    assert [r[0] for r in rows] == ["trainer_start", "trainer_step", "trainer_step", "trainer_done", "checkpoint_answer"]
++    step = rows[1][1]
++    assert step == {"slug": n["slug"], "trainer_material_id": n["trainer"], "context": "student",
++                    "level": "L2", "step": "l1_predict", "ok": False, "misconception": "input_prompt",
++                    "ms": 4200, "answer": "Как тебя зовут?"}
++    assert rows[2][1]["iter"] == 2
++    assert "task_id" not in step
++
++
++async def test_student_events_require_login(db, client, trainers_on):
++    n = await _node(db)
++    resp = await _post(client, n["slug"], {"context": "student", "events": [STEP]})
++    assert resp.status_code == 401
++    # Сервисный ключ — не ученик.
++    resp = await _post(client, n["slug"], {"context": "student", "events": [STEP]}, headers=_headers())
++    assert resp.status_code == 401
++
++
++async def _guest_session(client) -> str:
++    resp = await client.post("/api/v1/learning/guest/session", json={})
++    assert resp.status_code == 201, resp.text
++    return resp.json()["guest_session_id"]
++
++
++async def test_guest_events_to_guest_attempt(db, client, trainers_on):
++    cid = await _course(db)
++    _, slug = await _trainer(db, cid)
++    await db.commit()
++    gs = await _guest_session(client)
++    resp = await _post(client, slug, {"context": "guest", "events": [{"type": "trainer_start"}, STEP]},
++                       cookies={"guest_session": gs})
++    assert resp.status_code == 202, resp.text
++    rows = (await db.execute(
++        text("SELECT task_id, answer_json, is_correct, attributed_user_id FROM guest_attempt "
++             "WHERE guest_session_id = :g ORDER BY id"),
++        {"g": gs},
++    )).fetchall()
++    assert len(rows) == 2
++    assert all(r[0] is None and r[3] is None for r in rows)
++    assert rows[1][1]["kind"] == "trainer_event"
++    assert rows[1][1]["event_type"] == "trainer_step"
++    assert rows[1][1]["misconception"] == "input_prompt"
++    assert rows[1][2] is False
++
++
++async def test_guest_events_need_session(db, client, trainers_on):
++    cid = await _course(db)
++    _, slug = await _trainer(db, cid)
++    await db.commit()
++    body = {"context": "guest", "events": [STEP]}
++    assert (await _post(client, slug, body)).status_code == 400
++    assert (await _post(client, slug, body, cookies={"guest_session": "nope"})).status_code == 400
++    assert (await _post(client, slug, body, cookies={"guest_session": str(uuid.uuid4())})).status_code == 400
++
++
++async def test_embed_writes_only_anonymous_counters(db, client, trainers_on):
++    cid = await _course(db)
++    _, slug = await _trainer(db, cid)
++    await db.commit()
++    gs = await _guest_session(client)
++    body = {"context": "embed", "events": [
++        {"type": "embed_view", "parent_domain": "School-42.example.org"},
++        {"type": "trainer_start", "parent_domain": "school-42.example.org"},
++        {**STEP, "parent_domain": "school-42.example.org"},
++        {"type": "trainer_done", "stars": 9, "answer": "секрет", "parent_domain": "school-42.example.org"},
++    ]}
++    # Cookie гостя у встройки не читается: ничего не должно лечь в guest_attempt.
++    resp = await _post(client, slug, body, cookies={"guest_session": gs})
++    assert resp.status_code == 202, resp.text
++    assert resp.json() == {"accepted": 3}
++    rows = (await db.execute(
++        text("SELECT user_id, event_type, properties FROM product_event "
++             "WHERE properties->>'slug' = :s ORDER BY id"),
++        {"s": slug},
++    )).fetchall()
++    assert [r[1] for r in rows] == ["embed_view", "trainer_start", "trainer_done"]
++    for user_id, _type, props in rows:
++        assert user_id is None
++        assert props == {"slug": slug, "context": "embed", "parent_domain": "school-42.example.org"}
++    assert (await db.execute(
++        text("SELECT count(*) FROM guest_attempt WHERE guest_session_id = :g"), {"g": gs}
++    )).scalar_one() == 0
++
++
++async def test_unknown_misconception_rejected(db, client, trainers_on):
++    n = await _node(db)
++    resp = await _post(client, n["slug"], {"context": "student", "events": [{**STEP, "misconception": "loop_body"}]},
++                       headers=_bearer(n["token"]))
++    assert resp.status_code == 422, resp.text
++    assert resp.json()["payload"]["misconceptions"] == ["loop_body"]
++    count = (await db.execute(
++        text("SELECT count(*) FROM learning_events WHERE student_id = :s"), {"s": n["sid"]}
++    )).scalar_one()
++    assert count == 0
++
++
++@pytest.mark.parametrize(
++    "body",
++    [
++        {"context": "embed", "events": [{"type": "embed_view"}] * 201},
++        {"context": "embed", "events": []},
++        {"context": "student", "events": [{**STEP, "answer": "x" * 65}]},
++        {"context": "student", "events": [{"type": "trainer_start", "parent_domain": "a.ru"}]},
++        {"context": "embed", "events": [{"type": "embed_view", "parent_domain": "https://a.ru/x"}]},
++        {"context": "robot", "events": [{"type": "embed_view"}]},
++        {"context": "embed", "events": [{"type": "hack"}]},
++    ],
++    ids=["batch_201", "empty", "answer_65", "domain_not_embed", "domain_url", "bad_context", "bad_type"],
++)
++async def test_events_validation(db, client, trainers_on, body):
++    cid = await _course(db)
++    _, slug = await _trainer(db, cid)
++    await db.commit()
++    assert (await _post(client, slug, body)).status_code == 422
++
++
++async def test_batch_of_200_accepted(db, client, trainers_on):
++    cid = await _course(db)
++    _, slug = await _trainer(db, cid)
++    await db.commit()
++    resp = await _post(client, slug, {"context": "embed", "events": [{"type": "embed_view"}] * 200})
++    assert resp.status_code == 202, resp.text
++
++
++async def test_events_rate_limited(db, client, trainers_on, monkeypatch):
++    cid = await _course(db)
++    _, slug = await _trainer(db, cid)
++    await db.commit()
++
++    async def limited(*_a, **_kw):
++        return True
++
++    monkeypatch.setattr("app.api.v1.trainers.is_rate_limited", limited)
++    resp = await _post(client, slug, {"context": "embed", "events": [{"type": "embed_view"}]})
++    assert resp.status_code == 429
++
++
++# ── 5. trainer_suggestion ───────────────────────────────────────────────────
++
++
++async def _answer(client, n, option: str) -> dict:
++    h = _bearer(n["token"])
++    start = await client.post(
++        f"/api/v1/learning/tasks/{n['task']}/start-or-get-attempt",
++        json={"student_id": n["sid"], "root_course_id": n["cid"]}, headers=h,
++    )
++    assert start.status_code == 200, start.text
++    resp = await client.post(
++        f"/api/v1/attempts/{start.json()['attempt_id']}/answers",
++        json={"items": [{"task_id": n["task"], "answer": {"type": "SC", "response": {"selected_option_ids": [option]}}}]},
++        headers=h,
++    )
++    assert resp.status_code == 200, resp.text
++    return resp.json()
++
++
++async def test_suggestion_after_wrong_answer(db, client, trainers_on):
++    n = await _node(db)
++    await _complete(client, n, n["theory"])
++    wrong = await _answer(client, n, "a")
++    title = "Ты — интерпретатор"
++    assert wrong["results"][0]["trainer_suggestion"] == {"slug": n["slug"], "title": title}
++    nxt = await _next(client, n)
++    assert (nxt["type"], nxt["task_id"]) == ("task", n["task"])
++    assert nxt["trainer_suggestion"] == {"slug": n["slug"], "title": title}
++    right = await _answer(client, n, "b")
++    assert right["results"][0]["trainer_suggestion"] is None
++
++
++async def test_no_suggestion_when_switch_off(db, client, trainers_off):
++    n = await _node(db)
++    await _complete(client, n, n["theory"])
++    wrong = await _answer(client, n, "a")
++    assert wrong["results"][0]["trainer_suggestion"] is None
++    assert (await _next(client, n))["trainer_suggestion"] is None
++
++
++async def test_no_suggestion_without_trainer_in_node(db, client, trainers_on):
++    n = await _node(db, with_trainer=False)
++    await _complete(client, n, n["theory"])
++    wrong = await _answer(client, n, "a")
++    assert wrong["results"][0]["trainer_suggestion"] is None
++    assert (await _next(client, n))["trainer_suggestion"] is None
++
++
++# ── 6. находки ревью ────────────────────────────────────────────────────────
++
++
++async def test_slug_taken_by_other_scenario_conflicts(db, client):
++    """Второй тренажёр с тем же slug и другим сценарием подменил бы встройки — 409."""
++    cid = await _course(db)
++    _, slug = await _trainer(db, cid)
++    await db.commit()
++    other = _scenario("loop-machine")
++    other["slug"] = slug
++    resp = await client.post(
++        "/api/v1/materials/",
++        json={"course_id": cid, "title": "Другой", "type": "trainer", "content": {"slug": slug, "scenario": other}},
++        headers=_headers(),
++    )
++    assert resp.status_code == 409, resp.text
++    # Копия того же сценария в другом курсе разрешена.
++    same = _scenario()
++    same["slug"] = slug
++    cid2 = await _course(db)
++    await db.commit()
++    resp = await client.post(
++        "/api/v1/materials/",
++        json={"course_id": cid2, "title": "Копия", "type": "trainer", "content": {"slug": slug, "scenario": same}},
++        headers=_headers(),
++    )
++    assert resp.status_code in (200, 201), resp.text
++
++
++async def test_put_type_to_trainer_requires_content(db, client):
++    cid = await _course(db)
++    mid = await _material(db, cid)
++    await db.commit()
++    resp = await client.put(f"/api/v1/materials/{mid}", json={"type": "trainer"}, headers=_headers())
++    assert resp.status_code == 422, resp.text
++
++
++async def test_switch_off_list_pagination_consistent(db, client, trainers_off):
++    n = await _node(db)
++    await _trainer(db, n["cid"], position=3)
++    await db.commit()
++    h = _bearer(n["token"])
++    pages = [
++        (await client.get(f"/api/v1/courses/{n['cid']}/materials", params={"skip": k, "limit": 1}, headers=h)).json()
++        for k in range(2)
++    ]
++    assert [p["total"] for p in pages] == [1, 1]
++    assert [i["id"] for p in pages for i in p["items"]] == [n["theory"]]
++
++
++async def test_events_limited_per_writer(db, client, trainers_on, monkeypatch):
++    n = await _node(db)
++    seen = []
++
++    async def limited(_redis, key, **_kw):
++        seen.append(key)
++        return key.startswith("trainer_events_user:")
++
++    monkeypatch.setattr("app.api.v1.trainers.is_rate_limited", limited)
++    resp = await _post(client, n["slug"], {"context": "student", "events": [STEP]}, headers=_bearer(n["token"]))
++    assert resp.status_code == 429
++    assert f"trainer_events_user:{n['sid']}" in seen

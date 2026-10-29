@@ -57,6 +57,7 @@ from app.services.text_authorship_service import pick_text_for_review
 # эталона — там разбирается только соответствие критериям.
 from app.services import ai_check_policy
 from app.services import rubric_review_service
+from app.services import trainers_service
 from app.core import settings_store
 # tsk-301: единственная дверь прав подписки. Своей проверки здесь быть не должно —
 # правило живёт в одном месте на все точки принуждения (пробел П13).
@@ -1488,11 +1489,28 @@ async def submit_attempt_answers(
                     tr_id, exc_info=True,
                 )
 
+        # 2.4f tsk-1247: неверный ответ — предложить тренажёр узла задания.
+        # Soft-fail в точке сохранения: подсказка не должна ломать сдачу.
+        trainer_suggestion = None
+        if check_result.is_correct is False and trainers_service.trainers_enabled():
+            suggestion_task_id = task.id
+            try:
+                async with db.begin_nested():
+                    trainer_suggestion = await trainers_service.suggestion_for_course(
+                        db, task.course_id
+                    )
+            except Exception:
+                logger.warning(
+                    "tsk-1247: предложение тренажёра не посчитано: task=%s",
+                    suggestion_task_id, exc_info=True,
+                )
+
         # 2.5 Накопление для ответа
         results.append(
             AttemptAnswerResult(
                 task_id=task.id,
                 check_result=check_result,
+                trainer_suggestion=trainer_suggestion,
             )
         )
         total_score_delta += check_result.score

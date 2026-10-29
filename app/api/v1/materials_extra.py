@@ -34,6 +34,7 @@ from app.services.material_checkpoints_service import student_content
 from app.schemas.material_content import validate_material_content
 from app.services.courses_acl_service import assert_course_access
 from app.schemas.materials import (
+    TRAINER_REQUIREMENT_LEVEL,
     MaterialRead,
     MaterialReorderRequest,
     MaterialReorderResponse,
@@ -51,6 +52,7 @@ from app.schemas.materials import (
     MaterialsImportByCourseItem,
 )
 from app.services import material_files_storage
+from app.services import trainers_service
 from app.services.materials_service import MaterialsService
 from app.services.google_sheets_service import GoogleSheetsService
 from app.services.materials_sheets_parser_service import MaterialsSheetsParserService
@@ -141,7 +143,7 @@ async def materials_bulk_upsert(
     return result
 
 
-def _read_for(material: Any, *, privileged: bool) -> MaterialRead:
+def _read_for(material: Any, *, privileged: bool, content: Any = None) -> MaterialRead:
     """MaterialRead для вызывающего: ученику — без ответов контрольных точек (tsk-998).
 
     Привилегированный (сервисный ключ, teacher / methodist / admin) получает
@@ -154,6 +156,9 @@ def _read_for(material: Any, *, privileged: bool) -> MaterialRead:
     read = MaterialRead.model_validate(material)
     if privileged:
         return read
+    if content is not None:
+        # tsk-1247: развилка «Всё понятно?» снята (`trainers_service.student_visible`).
+        read = read.model_copy(update={"content": content})
     projected = student_content(read.content)
     if projected is read.content:
         return read
@@ -244,10 +249,22 @@ async def list_course_materials(
         order_by=order_by,
         skip=skip,
         limit=limit,
+        # tsk-1247: при выключенном TRAINERS_ENABLED тренажёров ученику нет —
+        # фильтр в SQL, чтобы пагинация и total не расходились.
+        exclude_types=(
+            None if privileged or trainers_service.trainers_enabled()
+            else [trainers_service.TRAINER_TYPE]
+        ),
     )
+    replaced: dict[int, Any] = {}
+    if not privileged:
+        items, replaced = await trainers_service.student_visible(db, items)
     logger.info("list_course_materials course_id=%s total=%s skip=%s limit=%s", course_id, total, skip, limit)
     return MaterialsListResponse(
-        items=[_read_for(m, privileged=bool(privileged)) for m in items],
+        items=[
+            _read_for(m, privileged=bool(privileged), content=replaced.get(m.id))
+            for m in items
+        ],
         total=total,
         skip=skip,
         limit=limit,
@@ -710,8 +727,14 @@ async def get_material_by_id(
             current_user.id, material_id,
         )
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Материал не найден")
+    replaced: dict[int, Any] = {}
+    if not privileged:
+        shown, replaced = await trainers_service.student_visible(db, [material])
+        if not shown:
+            # tsk-1247: тренажёр при выключенном рубильнике — как удалённый.
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Материал не найден")
     # tsk-998: ученику — без правильных ответов контрольных точек.
-    return _read_for(material, privileged=privileged)
+    return _read_for(material, privileged=privileged, content=replaced.get(material.id))
 
 
 # ---------------------------------------------------------------------------
@@ -787,6 +810,15 @@ async def patch_material_manual(
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
                 f"Некорректная структура content для типа '{material.type}': {e}",
             ) from e
+    if material.type == "trainer" and "requirement_level" in changed:
+        # tsk-1247: тренажёр не блокирует продвижение — уровень всегда recommended.
+        changed["requirement_level"] = TRAINER_REQUIREMENT_LEVEL
+    if material.type == "trainer" and changed.get("content") is not None:
+        conflict = await trainers_service.slug_conflict(
+            db, changed["content"], exclude_id=material.id
+        )
+        if conflict:
+            raise HTTPException(status.HTTP_409_CONFLICT, conflict)
 
     # Пометку ставим только на контентные поля: служебные (активность, порядок,
     # уровень) импорт и так не трогает без явной передачи (tsk-377/378/407),

@@ -21,6 +21,7 @@
 - [individual-courses.md](individual-courses.md) — индивидуальный курс ученику с замком на основные курсы (правило оператора, tsk-1245)
 - [task-audit.md](task-audit.md) — журнал `task_audit` (триггерный, `tasks.course_id`/`is_active`) — как расследовать «куда делось задание» (tsk-113/114)
 - [task-result-audit.md](task-result-audit.md) — журнал `task_result_audit` (триггерный, `task_results.score`/`is_correct`) — как проследить и откатить правку оценки (tsk-803)
+- [trainers.md](trainers.md) — интерактивные тренажёры: тип материала `trainer`, развилка «Всё понятно?», ручки `/trainers/*`, хранение событий, рубильник (tsk-1247)
 
 ## Specs (исполняемые ТЗ)
 

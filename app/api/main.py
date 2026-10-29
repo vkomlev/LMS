@@ -114,7 +114,8 @@ app.add_middleware(
     # кабинет физически не может прочитать `Retry-After` из ответа 503 и
     # отступить на указанную паузу. Заголовок сам по себе бесполезен, пока
     # он не объявлен здесь.
-    expose_headers=["Retry-After"],
+    # tsk-1247: `ETag` — версия сценария тренажёра (`GET /trainers/{slug}`).
+    expose_headers=["Retry-After", "ETag"],
 )
 
 # Request-ID для сквозной трассировки (Этап 4 tsk-004). Регистрируется
@@ -455,6 +456,9 @@ app.include_router(guest_funnel_router, prefix=API_PREFIX)  # tsk-1139
 # tsk-053 фаза 2: ЕГЭ-диагностика. Ветка /diagnostic/* с квизовой не пересекается.
 app.include_router(guest_diagnostic_router, prefix=API_PREFIX)
 app.include_router(auth_test_session_router, prefix=API_PREFIX)
+# tsk-1247: интерактивные тренажёры — публичные ручки за TRAINERS_ENABLED.
+from app.api.v1.trainers import router as trainers_router  # noqa: E402
+app.include_router(trainers_router, prefix=API_PREFIX)
 
 # Phase Y-6: methodist escalations
 from app.api.v1.methodist_escalations import router as methodist_escalations_router

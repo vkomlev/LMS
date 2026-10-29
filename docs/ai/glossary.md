@@ -49,6 +49,7 @@
 - **guest_session / guest_attempt** — анонимный пользователь; атрибуция при регистрации.
 - **audit_event** — append-only лог: login/logout/identity-change; immutable trigger.
 - **product_event** — funnel-аналитика; partitioned by month.
+- **Тренажёр (trainer)** — материал узла `type='trainer'` со сценарием `trainer-scenario/1` (движок в SPW); уровень `recommended`, развилка `content.checkpoint` у теории, рубильник `TRAINERS_ENABLED` — [trainers.md](trainers.md) (tsk-1247).
 - **Phase Y-1** — фаза проекта: 5 Alembic-миграций + auth-расширение LMS API. Исполнитель: `/executor-pro`. Tech-spec: [docs/specs/2026-04-27-tech-spec-Y1-auth-extension.md](../specs/2026-04-27-tech-spec-Y1-auth-extension.md).
 - **FernetService** — шифрование VK access_token (FERNET_MASTER_KEY в .env); `vk_access_token_enc BYTEA` в `identity_link`.
 

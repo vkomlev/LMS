@@ -12,11 +12,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.materials import Materials
 from app.repos.courses_repo import CoursesRepository
 from app.repos.materials_repo import MaterialsRepository
+from app.schemas.material_content import validate_material_content
 from app.schemas.materials import (
+    TRAINER_REQUIREMENT_LEVEL,
     MaterialsBulkUpsertItem,
     MaterialsBulkUpsertResponse,
     MaterialsBulkUpsertResultItem,
 )
+from app.services import trainers_service
 from app.services.base import BaseService
 
 logger_provenance = logging.getLogger(__name__)
@@ -83,6 +86,49 @@ class MaterialsService(BaseService[Materials]):
         super().__init__(repo or MaterialsRepository())
         self._courses_repo = CoursesRepository()
 
+    async def update(
+        self, db: AsyncSession, db_obj: Materials, obj_in: Dict[str, Any]
+    ) -> Materials:
+        """Обновить материал (generic CRUD PUT).
+
+        tsk-1247: у тренажёра содержимое проверяется схемой сценария и тогда,
+        когда `type` не передан (схема `MaterialUpdate` без типа content не
+        проверяет), а уровень обязательности всегда `recommended`.
+        """
+        effective_type = obj_in.get("type") or db_obj.type
+        if effective_type == "trainer":
+            if db_obj.type != "trainer" and obj_in.get("content") is None:
+                raise DomainError(
+                    "Смена типа на 'trainer' требует content {slug, scenario}", status_code=422,
+                )
+            if obj_in.get("content") is not None and "type" not in obj_in:
+                try:
+                    obj_in = {
+                        **obj_in,
+                        "content": validate_material_content("trainer", obj_in["content"]),
+                    }
+                except ValueError as exc:
+                    raise DomainError(
+                        f"Некорректная структура content для типа 'trainer': {exc}",
+                        status_code=422,
+                    ) from exc
+            obj_in = {**obj_in, "requirement_level": TRAINER_REQUIREMENT_LEVEL}
+            if obj_in.get("content") is not None:
+                conflict = await trainers_service.slug_conflict(
+                    db, obj_in["content"], exclude_id=db_obj.id
+                )
+                if conflict:
+                    raise DomainError(conflict, status_code=409)
+        return await super().update(db, db_obj, obj_in)
+
+    async def create(self, db: AsyncSession, obj_in: Dict[str, Any]) -> Materials:
+        """Создать материал; tsk-1247: slug тренажёра не занят другим сценарием (409)."""
+        if obj_in.get("type") == "trainer":
+            conflict = await trainers_service.slug_conflict(db, obj_in.get("content"))
+            if conflict:
+                raise DomainError(conflict, status_code=409)
+        return await super().create(db, obj_in)
+
     async def list_by_course(
         self,
         db: AsyncSession,
@@ -94,6 +140,7 @@ class MaterialsService(BaseService[Materials]):
         order_by: str = "order_position",
         skip: int = 0,
         limit: int = 100,
+        exclude_types: Optional[List[str]] = None,
     ) -> Tuple[List[Materials], int]:
         """Список материалов курса с фильтрацией и пагинацией. q — поиск по title/external_uid. Возвращает (items, total)."""
         course = await self._courses_repo.get(db, course_id)
@@ -108,6 +155,7 @@ class MaterialsService(BaseService[Materials]):
             order_by=order_by,
             skip=skip,
             limit=limit,
+            exclude_types=exclude_types,
         )
 
     async def search_materials(
@@ -427,6 +475,20 @@ class MaterialsService(BaseService[Materials]):
                     error_type="validation",
                 )
                 continue
+
+            if item.type == "trainer":
+                conflict = await trainers_service.slug_conflict(
+                    db, item.content, exclude_key=(item.course_id, item.external_uid)
+                )
+                if conflict:
+                    val_results[key] = MaterialsBulkUpsertResultItem(
+                        course_id=item.course_id,
+                        external_uid=item.external_uid,
+                        status="error",
+                        error=conflict,
+                        error_type="validation",
+                    )
+                    continue
 
             pending.append((key, item))
 
