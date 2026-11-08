@@ -1,0 +1,48 @@
+{
+  "scope": "prod",
+  "utc": "2026-11-08T14:40:52.607752+00:00",
+  "head": "652fc69323409743234415574ac0405e833b42d0",
+  "pid": "1471539",
+  "env": {
+    "LLM_TUTOR_MODELS": "z-ai/glm-5.3-flash",
+    "LLM_JUDGE_MODELS": "openai/gpt-6.1-terra,openai/gpt-6.1-sol",
+    "LLM_FEEDBACK_MODELS": "openai/gpt-6.1-terra",
+    "ANTHROPIC_DIRECT_ENABLED": "false"
+  },
+  "service": "active",
+  "credits": {
+    "total_credits": 4.84383535,
+    "total_usage": 65.51765291
+  },
+  "weekly_summary": {
+    "judge_ok": 2,
+    "judge_bad": 0,
+    "tutor_ok": 1,
+    "tutor_bad": 0,
+    "alerts": [],
+    "role_ok": 1,
+    "role_bad": 0,
+    "role_unknown": 0
+  },
+  "weekly_events": [
+    "2026-11-08 14:36:21,175 | INFO  | apscheduler.executors.default | Running job \"llm_chain_check_tick (trigger: interval[7 days, 0:00:00], next run at: 2026-11-15 14:36:21 UTC)\" (scheduled at 2026-11-08 14:36:21.174684+00:00)",
+    "2026-11-08 14:37:04,484 | INFO  | app.llm_chain_check | chain_check: судья openai/gpt-6.1-terra (1) годен — все образцы разобраны (2)",
+    "2026-11-08 14:37:41,326 | INFO  | app.llm_chain_check | chain_check: судья openai/gpt-6.1-sol (2) годен — все образцы разобраны (2)",
+    "2026-11-08 14:37:41,349 | INFO  | app.services.llm.client | LLM: пробую модель z-ai/glm-5.3-flash (1 из 1), назначение=chain_check",
+    "2026-11-08 14:37:45,690 | INFO  | app.services.llm.client | LLM: пробую модель z-ai/glm-5.3-flash (1 из 1), назначение=chain_check",
+    "2026-11-08 14:38:06,771 | INFO  | app.services.llm.client | LLM: пробую модель z-ai/glm-5.3-flash (1 из 1), назначение=chain_check",
+    "2026-11-08 14:38:29,907 | INFO  | app.services.llm.client | LLM: пробую модель z-ai/glm-5.3-flash (1 из 1), назначение=chain_check",
+    "2026-11-08 14:38:51,303 | INFO  | app.services.llm.client | LLM: пробую модель z-ai/glm-5.3-flash (1 из 1), назначение=chain_check",
+    "2026-11-08 14:39:15,579 | INFO  | app.services.llm.client | LLM: пробую модель z-ai/glm-5.3-flash (1 из 1), назначение=chain_check",
+    "2026-11-08 14:39:18,690 | INFO  | app.services.llm.client | LLM: пробую модель z-ai/glm-5.3-flash (1 из 1), назначение=chain_check",
+    "2026-11-08 14:39:22,577 | INFO  | app.services.llm.client | LLM: пробую модель z-ai/glm-5.3-flash (1 из 1), назначение=chain_check",
+    "2026-11-08 14:39:29,807 | INFO  | app.services.llm.client | LLM: пробую модель z-ai/glm-5.3-flash (1 из 1), назначение=chain_check",
+    "2026-11-08 14:39:32,935 | INFO  | app.llm_chain_check | chain_check: наставник z-ai/glm-5.3-flash держит роль — роль удержана на 2 образцах",
+    "2026-11-08 14:39:32,935 | INFO  | app.llm_chain_check | chain_check: проход завершён — {'judge_ok': 2, 'judge_bad': 0, 'tutor_ok': 1, 'tutor_bad': 0, 'alerts': [], 'role_ok': 1, 'role_bad': 0, 'role_unknown': 0}",
+    "2026-11-08 14:39:32,936 | INFO  | apscheduler.executors.default | Job \"llm_chain_check_tick (trigger: interval[7 days, 0:00:00], next run at: 2026-11-15 14:36:21 UTC)\" executed successfully"
+  ],
+  "http": {
+    "https://api.learn.victor-komlev.ru/health": 200,
+    "https://learn.victor-komlev.ru/": 200
+  }
+}
