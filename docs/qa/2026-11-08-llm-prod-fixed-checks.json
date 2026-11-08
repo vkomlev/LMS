@@ -1,0 +1,136 @@
+{
+  "scope": "prod",
+  "utc": "2026-11-08T14:32:29.027214+00:00",
+  "head": "652fc69323409743234415574ac0405e833b42d0",
+  "pid": "1471539",
+  "env": {
+    "LLM_TUTOR_MODELS": "z-ai/glm-5.3-flash",
+    "LLM_JUDGE_MODELS": "openai/gpt-6.1-terra,openai/gpt-6.1-sol",
+    "LLM_FEEDBACK_MODELS": "openai/gpt-6.1-terra",
+    "ANTHROPIC_DIRECT_ENABLED": "false"
+  },
+  "balance_before": {
+    "total_credits": 4.84641775,
+    "total_usage": 65.51507051
+  },
+  "checks": [
+    {
+      "axis": "weekly_tutor",
+      "ok": true,
+      "reason": "первый кусок за 4.4 c",
+      "kind": "ok"
+    },
+    {
+      "axis": "weekly_judge_terra",
+      "sample": 1,
+      "ok": true,
+      "reason": "16.3 c, балл получен",
+      "kind": "ok"
+    },
+    {
+      "axis": "weekly_judge_terra",
+      "sample": 2,
+      "ok": true,
+      "reason": "18.0 c, балл получен",
+      "kind": "ok"
+    }
+  ],
+  "requests": [
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "provider": {
+        "name": "auto",
+        "strategy": "stable"
+      },
+      "stream": true,
+      "max_tokens": 900,
+      "seed": null
+    },
+    {
+      "model": "openai/gpt-6.1-terra",
+      "provider": "provider-28",
+      "stream": false,
+      "max_tokens": 2500,
+      "seed": 42
+    },
+    {
+      "model": "openai/gpt-6.1-terra",
+      "provider": "provider-28",
+      "stream": false,
+      "max_tokens": 2500,
+      "seed": 42
+    }
+  ],
+  "responses": [
+    {
+      "text": "{\n  \"language\": \"Python\",\n  \"code_quality\": {\n    \"score\": 8,\n    \"notes\": [\n      \"Размеры 100 и 40, координаты окна и углы поворота заданы числами прямо в командах; именованные константы помогли бы понять их назначение.\",\n      \"Окно рисуется после крыши без сброса направления черепашки, поэтому оно окажется частично за пределами домика.\"\n    ]\n  },\n  \"ai_authorship\": {\n    \"verdict\": \"ambiguous\",\n    \"reasoning\": \"Комментарий «risuem okno» написан транслитом, но одного такого признака недостаточно для уверенного вывода об авторстве. В остальном код короткий и типичный для задания с черепашкой.\"\n  }\n}",
+      "model": "openai/gpt-6.1-terra",
+      "tokens_in": 951,
+      "tokens_out": 252,
+      "duration_ms": 16315,
+      "attempts": 1
+    },
+    {
+      "text": "{\n  \"language\": \"Python\",\n  \"code_quality\": {\n    \"score\": 8,\n    \"notes\": [\n      \"Имена `summa`, `kol` и текст приглашения `vvedi chislo` записаны транслитерацией, поэтому читаются менее понятно.\",\n      \"Можно использовать сокращённую запись `+=` вместо `summa = summa + n` и `kol = kol + 1`.\"\n    ]\n  },\n  \"ai_authorship\": {\n    \"verdict\": \"student_likely\",\n    \"reasoning\": \"Транслитерированные имена и приглашение `vvedi chislo`, а также простой прямолинейный стиль характерны для самостоятельного ученического решения.\"\n  }\n}",
+      "model": "openai/gpt-6.1-terra",
+      "tokens_in": 875,
+      "tokens_out": 311,
+      "duration_ms": 17960,
+      "attempts": 1
+    }
+  ],
+  "usage": [
+    {
+      "purpose": "chain_check",
+      "model": "z-ai/glm-5.3-flash",
+      "provider": "closerouter",
+      "outcome": "ok",
+      "tokens_in": 19,
+      "tokens_out": 119,
+      "duration_ms": 4365,
+      "student_id": null,
+      "meta": {
+        "chars": 5,
+        "first_ms": 4187,
+        "response_id": "202611082232299afbfb30b9ee4b93"
+      }
+    },
+    {
+      "purpose": "chain_check",
+      "model": "openai/gpt-6.1-terra",
+      "provider": "closerouter",
+      "outcome": "ok",
+      "tokens_in": 951,
+      "tokens_out": 252,
+      "duration_ms": 16315,
+      "student_id": null,
+      "meta": {
+        "attempt": 1,
+        "chain_pos": 1,
+        "chain_len": 1,
+        "response_id": "chatcmpl-1794148369568590636"
+      }
+    },
+    {
+      "purpose": "chain_check",
+      "model": "openai/gpt-6.1-terra",
+      "provider": "closerouter",
+      "outcome": "ok",
+      "tokens_in": 875,
+      "tokens_out": 311,
+      "duration_ms": 17960,
+      "student_id": null,
+      "meta": {
+        "attempt": 1,
+        "chain_pos": 1,
+        "chain_len": 1,
+        "response_id": "chatcmpl-1794148387540771717"
+      }
+    }
+  ],
+  "balance_after": {
+    "total_credits": 4.84632135,
+    "total_usage": 65.51516691
+  },
+  "passed": true
+}
