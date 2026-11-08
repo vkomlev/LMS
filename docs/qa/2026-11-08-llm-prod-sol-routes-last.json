@@ -1,0 +1,17 @@
+{
+  "scope": "prod",
+  "mode": "last bounded synthetic route comparison, service unchanged",
+  "model": "openai/gpt-6.1-sol",
+  "routes_confirmed": ["provider-27", "provider-40"],
+  "max_tokens": 2500,
+  "seed": 42,
+  "inputs": {"source": "llm_chain_check_cron_service.PROBE_WORKS", "revision": "36bda468dbadfff7390144a06b89493000259489"},
+  "balance_before": {"total_credits": 4.84641775, "total_usage": 65.51507051},
+  "checks": [
+    {"provider": "provider-27", "sample": 1, "ok": false, "error": "LLMUpstreamUnavailable", "status": 502, "duration_ms": 483, "reason": "upstream_connection_refused"},
+    {"provider": "provider-27", "sample": 2, "ok": false, "error": "LLMUpstreamUnavailable", "status": 503, "duration_ms": 88, "reason": "provider_temporarily_unavailable"},
+    {"provider": "provider-40", "sample": 1, "ok": false, "error": "LLMUpstreamUnavailable", "status": 503, "duration_ms": 455, "reason": "provider_unavailable, upstream_status=422"},
+    {"provider": "provider-40", "sample": 2, "ok": false, "error": "LLMUpstreamUnavailable", "status": 503, "duration_ms": 98, "reason": "provider_temporarily_unavailable"}
+  ],
+  "balance_after": {"total_credits": 4.84641775, "total_usage": 65.51507051}
+}

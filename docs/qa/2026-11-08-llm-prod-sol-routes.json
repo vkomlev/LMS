@@ -1,0 +1,152 @@
+{
+  "scope": "prod",
+  "mode": "isolated synthetic route comparison, service unchanged",
+  "model": "openai/gpt-6.1-sol",
+  "routes_confirmed": [
+    "provider-13",
+    "provider-53"
+  ],
+  "max_tokens": 2500,
+  "seed": 42,
+  "balance_before": {
+    "total_credits": 4.84776155,
+    "total_usage": 65.51372671
+  },
+  "checks": [
+    {
+      "provider": "provider-13",
+      "sample": 1,
+      "ok": false,
+      "error": "LLMTimeout"
+    },
+    {
+      "provider": "provider-13",
+      "sample": 2,
+      "ok": true,
+      "result": {
+        "text": " {\n  \"language\": \"Python\",\n  \"code_quality\": {\n    \"score\": 9,\n    \"notes\": [\n      \"Имена `kol` и `n` краткие и не полностью описывают смысл, хотя в контексте цикла понятны.\"\n    ]\n  },\n  \"ai_authorship\": {\n    \"verdict\": \"student_likely\",\n    \"reasoning\": \"Транслитерированные имена и приглашение `vvedi chislo` выглядят как естественный стиль начинающего ученика. Код простой и напрямую решает задачу.\"\n  }\n}",
+        "model": "openai/gpt-6.1-sol",
+        "tokens_in": 867,
+        "tokens_out": 391,
+        "duration_ms": 9986,
+        "attempts": 1
+      },
+      "parsed": {
+        "language": "Python",
+        "code_quality": {
+          "score": 9,
+          "notes": [
+            "Имена `kol` и `n` краткие и не полностью описывают смысл, хотя в контексте цикла понятны."
+          ]
+        },
+        "ai_authorship": {
+          "verdict": "student_likely",
+          "reasoning": "Транслитерированные имена и приглашение `vvedi chislo` выглядят как естественный стиль начинающего ученика. Код простой и напрямую решает задачу."
+        }
+      }
+    },
+    {
+      "provider": "provider-53",
+      "sample": 1,
+      "ok": false,
+      "error": "LLMTimeout"
+    },
+    {
+      "provider": "provider-53",
+      "sample": 2,
+      "ok": true,
+      "result": {
+        "text": "{\n  \"language\": \"Python\",\n  \"code_quality\": {\n    \"score\": 8,\n    \"notes\": [\n      \"Имена `summa` и `kol` понятны в контексте задачи, но `kol` менее очевидно, чем, например, `count` или `kolichestvo`.\",\n      \"В конструкциях `summa = summa + n` и `kol = kol + 1` можно использовать более краткую запись `+=`, хотя текущий вариант подходит для учебного уровня.\"\n    ]\n  },\n  \"ai_authorship\": {\n    \"verdict\": \"student_likely\",\n    \"reasoning\": \"Транслитерированные имена и текст приглашения (`summa`, `kol`, `vvedi chislo`) похожи на самостоятельный ученический стиль. Код простой и без характерных признаков генерации ИИ.\"\n  }\n}",
+        "model": "openai/gpt-6.1-sol",
+        "tokens_in": 1597,
+        "tokens_out": 284,
+        "duration_ms": 17578,
+        "attempts": 1
+      },
+      "parsed": {
+        "language": "Python",
+        "code_quality": {
+          "score": 8,
+          "notes": [
+            "Имена `summa` и `kol` понятны в контексте задачи, но `kol` менее очевидно, чем, например, `count` или `kolichestvo`.",
+            "В конструкциях `summa = summa + n` и `kol = kol + 1` можно использовать более краткую запись `+=`, хотя текущий вариант подходит для учебного уровня."
+          ]
+        },
+        "ai_authorship": {
+          "verdict": "student_likely",
+          "reasoning": "Транслитерированные имена и текст приглашения (`summa`, `kol`, `vvedi chislo`) похожи на самостоятельный ученический стиль. Код простой и без характерных признаков генерации ИИ."
+        }
+      }
+    }
+  ],
+  "usage": [
+    {
+      "purpose": "deployment_smoke",
+      "model": "openai/gpt-6.1-sol",
+      "provider": "closerouter",
+      "outcome": "LLMTimeout",
+      "tokens_in": 0,
+      "tokens_out": 0,
+      "duration_ms": 30111,
+      "student_id": null,
+      "meta": {
+        "message": "таймаут бюджета batch: ",
+        "attempt": 1,
+        "chain_pos": 1,
+        "chain_len": 1
+      }
+    },
+    {
+      "purpose": "deployment_smoke",
+      "model": "openai/gpt-6.1-sol",
+      "provider": "closerouter",
+      "outcome": "ok",
+      "tokens_in": 867,
+      "tokens_out": 391,
+      "duration_ms": 9986,
+      "student_id": null,
+      "meta": {
+        "attempt": 1,
+        "chain_pos": 1,
+        "chain_len": 1,
+        "response_id": "resp_ft_fe61e5e1fe7d22490c5693ba029b11b4"
+      }
+    },
+    {
+      "purpose": "deployment_smoke",
+      "model": "openai/gpt-6.1-sol",
+      "provider": "closerouter",
+      "outcome": "LLMTimeout",
+      "tokens_in": 0,
+      "tokens_out": 0,
+      "duration_ms": 30052,
+      "student_id": null,
+      "meta": {
+        "message": "таймаут бюджета batch: ",
+        "attempt": 1,
+        "chain_pos": 1,
+        "chain_len": 1
+      }
+    },
+    {
+      "purpose": "deployment_smoke",
+      "model": "openai/gpt-6.1-sol",
+      "provider": "closerouter",
+      "outcome": "ok",
+      "tokens_in": 1597,
+      "tokens_out": 284,
+      "duration_ms": 17578,
+      "student_id": null,
+      "meta": {
+        "attempt": 1,
+        "chain_pos": 1,
+        "chain_len": 1,
+        "response_id": "resp_081c70b26c3d0419016af0863a1c5887d18"
+      }
+    }
+  ],
+  "balance_after": {
+    "total_credits": 4.84641775,
+    "total_usage": 65.51507051
+  }
+}

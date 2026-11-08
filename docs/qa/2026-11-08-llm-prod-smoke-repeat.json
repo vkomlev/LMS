@@ -1,0 +1,108 @@
+{
+  "scope": "prod",
+  "balance_before": {
+    "total_credits": 4.84969342,
+    "total_usage": 65.51179484
+  },
+  "checks": [
+    {
+      "axis": "feedback_repeat",
+      "ok": false,
+      "draft": {
+        "feedback_draft": {
+          "error": "LLMIdentityMismatch"
+        }
+      }
+    },
+    {
+      "axis": "reserve_judge",
+      "ok": true,
+      "result": {
+        "text": " {\n  \"language\": \"Python\",\n  \"code_quality\": {\n    \"score\": 9,\n    \"notes\": [\n      \"Переменная `kol` сокращена; более понятное имя вроде `kolichestvo` облегчило бы чтение.\"\n    ]\n  },\n  \"ai_authorship\": {\n    \"verdict\": \"student_likely\",\n    \"reasoning\": \"Имена `summa` и `kol` и текст приглашения `vvedi chislo` используют транслитерацию. Код написан простым учебным способом без явных признаков формально причёсанной генерации.\"\n  }\n}",
+        "model": "openai/gpt-6.1-sol",
+        "tokens_in": 867,
+        "tokens_out": 309,
+        "duration_ms": 8126,
+        "attempts": 1
+      },
+      "parsed": {
+        "language": "Python",
+        "code_quality": {
+          "score": 9,
+          "notes": [
+            "Переменная `kol` сокращена; более понятное имя вроде `kolichestvo` облегчило бы чтение."
+          ]
+        },
+        "ai_authorship": {
+          "verdict": "student_likely",
+          "reasoning": "Имена `summa` и `kol` и текст приглашения `vvedi chislo` используют транслитерацию. Код написан простым учебным способом без явных признаков формально причёсанной генерации."
+        }
+      }
+    }
+  ],
+  "usage": [
+    {
+      "purpose": "feedback_draft",
+      "model": "openai/gpt-6.1-sol",
+      "provider": "closerouter",
+      "outcome": "LLMIdentityMismatch",
+      "tokens_in": 0,
+      "tokens_out": 0,
+      "duration_ms": 15981,
+      "student_id": null,
+      "meta": {
+        "message": "вход 6312 токенов при пороге 2258 (1517 символов запроса): под меткой openai/gpt-6.1-sol подмешана чужая инструкция",
+        "attempt": 1,
+        "chain_pos": 1,
+        "chain_len": 1
+      }
+    },
+    {
+      "purpose": "deployment_smoke",
+      "model": "openai/gpt-6.1-sol",
+      "provider": "closerouter",
+      "outcome": "ok",
+      "tokens_in": 867,
+      "tokens_out": 309,
+      "duration_ms": 8126,
+      "student_id": null,
+      "meta": {
+        "attempt": 1,
+        "chain_pos": 1,
+        "chain_len": 1,
+        "response_id": "resp_ft_7d497e9050e8eb04a929454ffb78cf58"
+      }
+    }
+  ],
+  "balance_after": {
+    "total_credits": 4.84939255,
+    "total_usage": 65.51209571
+  },
+  "passed": false,
+  "inputs": {
+    "feedback": {
+      "answer_text": "В цикле нужно указать начало, конец и шаг. Я выбрал начало, а конец пока не проверил.",
+      "rubric": {
+        "items": [
+          {
+            "title": "Указано назначение границ цикла",
+            "met": "yes",
+            "evidence": "начало, конец и шаг"
+          },
+          {
+            "title": "Объяснено исключение правой границы",
+            "met": "no"
+          }
+        ]
+      },
+      "task_stem": "Объясни, как выбрать границы цикла range.",
+      "solution_rules": null,
+      "student_id": null
+    },
+    "judge": {
+      "source": "PROBE_WORKS[1]",
+      "max_tokens": 2500,
+      "seed": null
+    }
+  }
+}

@@ -65,7 +65,10 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from app.core.config import Settings
 from app.core.cron_registry import register_interval_job
 from app.services.ai_tutor import role_gate
-from app.services.llm import Budget, LLMError, LLMMessage, complete, cooldown, providers, stream
+from app.services.llm import (
+    Budget, JUDGE_MAX_TOKENS, TUTOR_MAX_TOKENS, LLMError, LLMMessage,
+    complete, cooldown, providers, stream,
+)
 from app.services.llm.contracts import LLMCooldown, LLMTimeout
 
 # Разбор ответа берём ТОТ ЖЕ, что работает на бою. Своя копия проверки формата
@@ -186,6 +189,8 @@ async def probe_judge_model(model: str, work: tuple[str, str]) -> tuple[bool, st
             model=model,
             purpose=CHECK_PURPOSE,
             budget=Budget.BATCH,
+            max_tokens=JUDGE_MAX_TOKENS,
+            seed=42,
             response_format={"type": "json_object"},
         )
     except LLMCooldown:
@@ -234,14 +239,15 @@ async def probe_tutor_model(model: str) -> tuple[bool, str, str]:
             model=model,
             purpose=CHECK_PURPOSE,
             budget=Budget.INTERACTIVE,
-            max_tokens=32,
+            max_tokens=TUTOR_MAX_TOKENS,
         ):
             if chunk.delta and first_at is None:
                 first_at = time.monotonic() - started
             # Поток дочитываем ДО КОНЦА, хотя ответ нам уже не нужен. Выйти на
             # первом куске значит закрыть генератор до того, как он запишет
             # расход: проба стала бы невидимой на пульте — ровно там, где она и
-            # задумана как видимая. Ответ в 32 токена этого не стоит.
+            # задумана как видимая. Потолок тот же, что у боевого наставника:
+            # 32 токена могла целиком съесть скрытая цепочка рассуждений.
     except LLMCooldown:
         raise  # см. `probe_judge_model`: это про провайдера, а не про модель
     except LLMTimeout as exc:

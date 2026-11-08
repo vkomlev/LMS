@@ -224,6 +224,8 @@ _DEFAULT_TUTOR_MODELS = "z-ai/glm-5.3-flash"
 # другой час (model-routing, правила 1–2).
 # 2026-11-08 (tsk-1453): Terra — 6/6 по двум образцам ТОЛЬКО на provider-28;
 # Auto Stable у Terra добавлял инструкцию. Sol — проверенный резерв (3/3).
+# Поздний prod-контроль выявил у Sol отказы на первом образце; резерв пока
+# не подтверждён. См. docs/qa/2026-11-08-llm-prod-rollout.md.
 _DEFAULT_JUDGE_MODELS = "openai/gpt-6.1-terra,openai/gpt-6.1-sol"
 
 

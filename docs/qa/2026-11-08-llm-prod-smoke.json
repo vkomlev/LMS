@@ -1,0 +1,255 @@
+{
+  "scope": "prod",
+  "head": "36bda468dbadfff7390144a06b89493000259489",
+  "pid": "1469180",
+  "env": {
+    "LLM_TUTOR_MODELS": "z-ai/glm-5.3-flash",
+    "LLM_JUDGE_MODELS": "openai/gpt-6.1-terra,openai/gpt-6.1-sol",
+    "LLM_FEEDBACK_MODELS": "openai/gpt-6.1-sol",
+    "ANTHROPIC_DIRECT_ENABLED": "false"
+  },
+  "requests": [
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "provider": {
+        "name": "auto",
+        "strategy": "stable"
+      },
+      "stream": true
+    },
+    {
+      "model": "openai/gpt-6.1-terra",
+      "provider": "provider-28",
+      "stream": false
+    },
+    {
+      "model": "openai/gpt-6.1-terra",
+      "provider": "provider-28",
+      "stream": false
+    },
+    {
+      "model": "openai/gpt-6.1-sol",
+      "provider": {
+        "name": "auto",
+        "strategy": "stable"
+      },
+      "stream": false
+    }
+  ],
+  "usage": [
+    {
+      "purpose": "deployment_smoke",
+      "model": "z-ai/glm-5.3-flash",
+      "provider": "closerouter",
+      "outcome": "ok",
+      "tokens_in": 2003,
+      "tokens_out": 102,
+      "duration_ms": 5849,
+      "student_id": null,
+      "meta": {
+        "chars": 334,
+        "first_ms": 2647,
+        "response_id": "3dc474a5efd75ed2c97e2d8bd7f5a77c"
+      }
+    },
+    {
+      "purpose": "deployment_smoke",
+      "model": "openai/gpt-6.1-terra",
+      "provider": "closerouter",
+      "outcome": "ok",
+      "tokens_in": 951,
+      "tokens_out": 492,
+      "duration_ms": 25686,
+      "student_id": null,
+      "meta": {
+        "attempt": 1,
+        "chain_pos": 1,
+        "chain_len": 2,
+        "response_id": "chatcmpl-1794146921363580185"
+      }
+    },
+    {
+      "purpose": "deployment_smoke",
+      "model": "openai/gpt-6.1-terra",
+      "provider": "closerouter",
+      "outcome": "ok",
+      "tokens_in": 875,
+      "tokens_out": 248,
+      "duration_ms": 16118,
+      "student_id": null,
+      "meta": {
+        "attempt": 1,
+        "chain_pos": 1,
+        "chain_len": 2,
+        "response_id": "chatcmpl-1794146937496661432"
+      }
+    },
+    {
+      "purpose": "feedback_draft",
+      "model": "openai/gpt-6.1-sol",
+      "provider": "closerouter",
+      "outcome": "LLMTimeout",
+      "tokens_in": 0,
+      "tokens_out": 0,
+      "duration_ms": 30040,
+      "student_id": null,
+      "meta": {
+        "message": "таймаут бюджета batch: ",
+        "attempt": 1,
+        "chain_pos": 1,
+        "chain_len": 1
+      }
+    }
+  ],
+  "checks": [
+    {
+      "axis": "tutor",
+      "ok": true,
+      "first_visible_sec": 4.735136525705457,
+      "total_sec": 5.977382034994662,
+      "chunks": 40,
+      "guard_blocked": false,
+      "role_problems": [],
+      "raw": "Срез — это как отрезать кусок от колбасы: указываем, с какого места начинаем резать, а где место для начала — оно в записи [2:7]. Хорошая новость: правая граница сама «не попадает» в кусок, поэтому последний взятый символ будет с индексом 6.\n\nВопрос для проверки: сколько символов окажется в куске с индексами от 2 до 7, не включая 7?",
+      "shown": "Срез — это как отрезать кусок от колбасы: указываем, с какого места начинаем резать, а где место для начала — оно в записи [2:7]. Хорошая новость: правая граница сама «не попадает» в кусок, поэтому последний взятый символ будет с индексом 6.\n\nВопрос для проверки: сколько символов окажется в куске с индексами от 2 до 7, не включая 7?",
+      "done": {
+        "delta": "",
+        "done": true,
+        "truncated": false,
+        "model": "z-ai/glm-5.3-flash",
+        "tokens_in": 2003,
+        "tokens_out": 102,
+        "duration_ms": 5849,
+        "attempts": 1
+      }
+    },
+    {
+      "axis": "judge",
+      "sample": 1,
+      "ok": true,
+      "result": {
+        "text": "{\n  \"language\": \"Python\",\n  \"code_quality\": {\n    \"score\": 7,\n    \"notes\": [\n      \"Числа 100, 40 и координаты 30, 30 используются напрямую без названий.\",\n      \"Переменная i в циклах не используется.\",\n      \"Добавлено окно, хотя оно не требовалось в условии.\",\n      \"Крыша построена отдельными командами, но её траектория не образует корректную крышу над квадратом.\"\n    ]\n  },\n  \"ai_authorship\": {\n    \"verdict\": \"student_likely\",\n    \"reasoning\": \"Транслитерированный комментарий «risuem okno», простой ручной стиль и неиспользуемая переменная i характерны для ученического кода. Формальных докстрингов и избыточно сложных конструкций нет.\"\n  }\n}",
+        "model": "openai/gpt-6.1-terra",
+        "tokens_in": 951,
+        "tokens_out": 492,
+        "duration_ms": 25686,
+        "attempts": 1
+      },
+      "parsed": {
+        "language": "Python",
+        "code_quality": {
+          "score": 7,
+          "notes": [
+            "Числа 100, 40 и координаты 30, 30 используются напрямую без названий.",
+            "Переменная i в циклах не используется.",
+            "Добавлено окно, хотя оно не требовалось в условии.",
+            "Крыша построена отдельными командами, но её траектория не образует корректную крышу над квадратом."
+          ]
+        },
+        "ai_authorship": {
+          "verdict": "student_likely",
+          "reasoning": "Транслитерированный комментарий «risuem okno», простой ручной стиль и неиспользуемая переменная i характерны для ученического кода. Формальных докстрингов и избыточно сложных конструкций нет."
+        }
+      }
+    },
+    {
+      "axis": "judge",
+      "sample": 2,
+      "ok": true,
+      "result": {
+        "text": "{\n  \"language\": \"Python\",\n  \"code_quality\": {\n    \"score\": 8,\n    \"notes\": [\n      \"Имена `summa` и `kol` понятны, но транслитерация менее читаема, чем `summa`/`count` или русские названия.\",\n      \"Строка приглашения `vvedi chislo` также использует транслитерацию.\"\n    ]\n  },\n  \"ai_authorship\": {\n    \"verdict\": \"student_likely\",\n    \"reasoning\": \"Простой ручной стиль решения и транслитерированные имена (`summa`, `kol`, `vvedi chislo`) характерны для ученической работы. Признаков формального или избыточно вычищенного стиля ИИ нет.\"\n  }\n}",
+        "model": "openai/gpt-6.1-terra",
+        "tokens_in": 875,
+        "tokens_out": 248,
+        "duration_ms": 16118,
+        "attempts": 1
+      },
+      "parsed": {
+        "language": "Python",
+        "code_quality": {
+          "score": 8,
+          "notes": [
+            "Имена `summa` и `kol` понятны, но транслитерация менее читаема, чем `summa`/`count` или русские названия.",
+            "Строка приглашения `vvedi chislo` также использует транслитерацию."
+          ]
+        },
+        "ai_authorship": {
+          "verdict": "student_likely",
+          "reasoning": "Простой ручной стиль решения и транслитерированные имена (`summa`, `kol`, `vvedi chislo`) характерны для ученической работы. Признаков формального или избыточно вычищенного стиля ИИ нет."
+        }
+      }
+    },
+    {
+      "axis": "feedback",
+      "ok": false,
+      "draft": {
+        "feedback_draft": {
+          "error": "LLMTimeout"
+        }
+      }
+    }
+  ],
+  "tutor": [
+    "z-ai/glm-5.3-flash"
+  ],
+  "judge": [
+    "openai/gpt-6.1-terra",
+    "openai/gpt-6.1-sol"
+  ],
+  "feedback": [
+    "openai/gpt-6.1-sol"
+  ],
+  "balance_before": {
+    "total_credits": 4.8500825,
+    "total_usage": 65.51140576
+  },
+  "balance_after": {
+    "total_credits": 4.84990283,
+    "total_usage": 65.51158543
+  },
+  "passed": false,
+  "inputs": {
+    "feedback": {
+      "answer_text": "В цикле нужно указать начало, конец и шаг. Я выбрал начало, а конец пока не проверил.",
+      "rubric": {
+        "items": [
+          {
+            "title": "Указано назначение границ цикла",
+            "met": "yes",
+            "evidence": "начало, конец и шаг"
+          },
+          {
+            "title": "Объяснено исключение правой границы",
+            "met": "no"
+          }
+        ]
+      },
+      "task_stem": "Объясни, как выбрать границы цикла range.",
+      "solution_rules": null,
+      "student_id": null
+    },
+    "tutor": {
+      "view": {
+        "task_id": 0,
+        "stem": "Дана строка 3141592653589793238. Найди сумму цифр в срезе с индексами от 2 до 7, не включая 7.",
+        "task_type": "SA_COM",
+        "course_title": "Python. Срезы строк"
+      },
+      "mode": "concept",
+      "student_answer": null,
+      "user": "Не понимаю, как получить срез. Дай одну подсказку без кода и готового ответа.",
+      "guard_answers": [
+        "21"
+      ],
+      "system_builder": "role_gate.build_system_prompt",
+      "revision": "36bda468dbadfff7390144a06b89493000259489"
+    },
+    "judge": {
+      "source": "llm_chain_check_cron_service.PROBE_WORKS",
+      "max_tokens": 2500,
+      "seed": null,
+      "system": "code_review_service._SYSTEM_PROMPT",
+      "builder": "code_review_service._build_user_message"
+    }
+  }
+}

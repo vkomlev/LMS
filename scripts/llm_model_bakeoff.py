@@ -313,6 +313,7 @@ def judge_probe(model: str, system_prompt: str, user_msg: str, base: str, key: s
         "messages": [{"role": "system", "content": system_prompt},
                      {"role": "user", "content": user_msg}],
         "temperature": 0.0, "max_tokens": JUDGE_MAX_TOKENS_LIVE, "stream": False,
+        "seed": 42,
         "response_format": {"type": "json_object"},
     }
     route = providers.request_provider(model)

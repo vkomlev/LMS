@@ -10,7 +10,9 @@ import httpx
 import pytest
 
 from app.services.llm import client, cooldown, providers, usage
-from app.services.llm.contracts import LLMMessage, LLMRateLimited
+from app.services.llm.contracts import (
+    JUDGE_MAX_TOKENS, TUTOR_MAX_TOKENS, LLMMessage, LLMRateLimited,
+)
 
 TERRA = "openai/gpt-6.1-terra"
 SOL = "openai/gpt-6.1-sol"
@@ -165,6 +167,8 @@ def test_monthly_bakeoff_uses_same_routes(monkeypatch, judge, model, route):
     else:
         bakeoff.probe(model, "system", "https://provider.test", "test-key")
     assert sent[0]["provider"] == route
+    if judge:
+        assert sent[0]["seed"] == 42
 
 
 @pytest.mark.parametrize("axis", ["tutor", "judge"])
@@ -192,3 +196,41 @@ else:
     result = subprocess.run([sys.executable, "-I", "-B", "-c", script, str(path), axis],
                             capture_output=True, text=True, timeout=20)
     assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.asyncio
+async def test_weekly_judge_uses_live_cap_and_seed(monkeypatch):
+    from app.services import llm_chain_check_cron_service as check
+
+    sent = []
+
+    def handler(request):
+        sent.append(json.loads(request.content))
+        verdict = {"language": "Python", "code_quality": {"score": 8, "notes": []},
+                   "ai_authorship": {"verdict": "student_likely", "reasoning": "учебный код"}}
+        return reply(choices=[{"message": {"content": json.dumps(verdict)}}])
+
+    mount(monkeypatch, handler)
+    good, reason, kind = await check.probe_judge_model(TERRA, check.PROBE_WORKS[0])
+    assert good, reason
+    assert sent[0]["max_tokens"] == JUDGE_MAX_TOKENS
+    assert sent[0]["seed"] == 42
+    assert sent[0]["provider"] == "provider-28"
+
+
+@pytest.mark.asyncio
+async def test_weekly_tutor_uses_live_cap(monkeypatch):
+    from app.services import llm_chain_check_cron_service as check
+
+    sent = []
+
+    def handler(request):
+        sent.append(json.loads(request.content))
+        data = 'data: {"choices": [{"delta": {"content": "готов"}}]}\n\ndata: [DONE]\n\n'
+        return httpx.Response(200, text=data, headers={"Content-Type": "text/event-stream"})
+
+    mount(monkeypatch, handler)
+    good, reason, kind = await check.probe_tutor_model(GLM)
+    assert good, reason
+    assert sent[0]["max_tokens"] == TUTOR_MAX_TOKENS
+    assert sent[0]["provider"] == STABLE

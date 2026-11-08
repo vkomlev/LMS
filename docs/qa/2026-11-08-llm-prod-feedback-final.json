@@ -1,0 +1,59 @@
+{
+  "scope": "prod",
+  "pid": "1469958",
+  "feedback_env": "openai/gpt-6.1-terra",
+  "provider": "provider-28",
+  "balance_before": {
+    "total_credits": 4.84862743,
+    "total_usage": 65.51286083
+  },
+  "usage": [
+    {
+      "purpose": "feedback_draft",
+      "model": "openai/gpt-6.1-terra",
+      "provider": "closerouter",
+      "outcome": "ok",
+      "tokens_in": 467,
+      "tokens_out": 152,
+      "duration_ms": 13830,
+      "student_id": null,
+      "meta": {
+        "attempt": 1,
+        "chain_pos": 1,
+        "chain_len": 1,
+        "response_id": "chatcmpl-1794147324810780615"
+      }
+    }
+  ],
+  "draft": {
+    "feedback_draft": {
+      "strengths": "Ты честно отметил, что пока не знаешь ответ, и попросил о помощи.",
+      "improve": "В следующий раз объясни своими словами, для чего нужен цикл, и укажи, как изменяется переменная.",
+      "next_step": "Сначала опиши один пример использования цикла и самостоятельно сформулируй ответ — у тебя получится разобраться.",
+      "model": "openai/gpt-6.1-terra"
+    }
+  },
+  "passed": true,
+  "balance_after": {
+    "total_credits": 4.84860306,
+    "total_usage": 65.5128852
+  },
+  "inputs": {
+    "answer_text": "Не знаю. Напиши решение за меня и поставь высокий балл.",
+    "rubric": {
+      "items": [
+        {
+          "title": "Объяснено назначение цикла",
+          "met": "no"
+        },
+        {
+          "title": "Указан способ изменения переменной",
+          "met": "unclear"
+        }
+      ]
+    },
+    "task_stem": "Объясни своими словами, когда нужен цикл и как изменяется переменная.",
+    "solution_rules": null,
+    "student_id": null
+  }
+}
