@@ -1,0 +1,1928 @@
+{
+  "catalog_count": 158,
+  "compatible_models": 60,
+  "counts": {
+    "screening": 120,
+    "finalist": 48,
+    "routes": 18,
+    "role_and_probes": 38,
+    "actual_client": 3,
+    "total": 233,
+    "different_hour": 6
+  },
+  "credits_before": {
+    "total_credits": 5.11090724,
+    "total_usage": 65.25058102
+  },
+  "credits_after": {
+    "total_credits": 4.8500825,
+    "total_usage": 65.51140576
+  },
+  "credits_delta": 0.26082474000000033,
+  "reported_usage_cost_sum": 0.18079307,
+  "responses_with_cost": 215,
+  "saved_routing_changed": [],
+  "metrics": [
+    {
+      "model": "deepseek/deepseek-v4-flash",
+      "manual_note": "",
+      "tutor": {
+        "n": 3,
+        "raw_verdict": "МЕДЛЕННО",
+        "raw_reason": "медиана первого токена 11.3 c > бюджета 5.0 c",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [],
+        "first_median": 11.274354400113225,
+        "chunks_median": 53,
+        "leaks": 0,
+        "ok": 3
+      },
+      "judge": {
+        "n": 3,
+        "raw_verdict": "ГОДЕН",
+        "raw_reason": "медиана 4.8 c, худший 4.9 c",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [],
+        "total_median": 4.830681300023571,
+        "total_worst": 4.886374699883163,
+        "format_accepted": 3
+      }
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "manual_note": "",
+      "tutor": {
+        "n": 3,
+        "raw_verdict": "МЕДЛЕННО",
+        "raw_reason": "медиана первого токена 5.7 c > бюджета 5.0 c",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [],
+        "first_median": 5.741826799931005,
+        "chunks_median": 129,
+        "leaks": 0,
+        "ok": 3
+      },
+      "judge": {
+        "n": 1,
+        "raw_verdict": "ГОДЕН",
+        "raw_reason": "медиана 6.7 c, худший 6.7 c",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [],
+        "total_median": 6.654976699966937,
+        "total_worst": 6.654976699966937,
+        "format_accepted": 1
+      }
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-vision-exp",
+      "manual_note": "",
+      "tutor": {
+        "n": 1,
+        "raw_verdict": "МЕДЛЕННО",
+        "raw_reason": "медиана первого токена 14.5 c > бюджета 5.0 c",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [],
+        "first_median": 14.547970499843359,
+        "chunks_median": 56,
+        "leaks": 0,
+        "ok": 1
+      },
+      "judge": {
+        "n": 1,
+        "raw_verdict": "ГОДЕН",
+        "raw_reason": "медиана 5.3 c, худший 5.3 c",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [],
+        "total_median": 5.289245600113645,
+        "total_worst": 5.289245600113645,
+        "format_accepted": 1
+      }
+    },
+    {
+      "model": "deepseek/deepseek-v4-pro",
+      "manual_note": "",
+      "tutor": {
+        "n": 3,
+        "raw_verdict": "ГОДЕН",
+        "raw_reason": "первый токен 4.6 c (медиана), чанков 56",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [],
+        "first_median": 4.612072100164369,
+        "chunks_median": 56,
+        "leaks": 0,
+        "ok": 3
+      },
+      "judge": {
+        "n": 1,
+        "raw_verdict": "ОШИБКА",
+        "raw_reason": "TimeoutError: The read operation timed out",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [
+          "TimeoutError: The read operation timed out"
+        ],
+        "total_median": null,
+        "total_worst": null,
+        "format_accepted": 0
+      }
+    },
+    {
+      "model": "deepseek/deepseek-v4-pro-0813",
+      "manual_note": "",
+      "tutor": {
+        "n": 1,
+        "raw_verdict": "ОШИБКА",
+        "raw_reason": "upstream_in_200: The provider reported a failure while generating the response.",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [
+          "upstream_in_200: The provider reported a failure while generating the response."
+        ],
+        "first_median": null,
+        "chunks_median": 0,
+        "leaks": 0,
+        "ok": 0
+      },
+      "judge": {
+        "n": 1,
+        "raw_verdict": "ГОДЕН",
+        "raw_reason": "медиана 11.9 c, худший 11.9 c",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [],
+        "total_median": 11.94333180016838,
+        "total_worst": 11.94333180016838,
+        "format_accepted": 1
+      }
+    },
+    {
+      "model": "deepseek/deepseek-v4.1-flash",
+      "manual_note": "",
+      "tutor": {
+        "n": 3,
+        "raw_verdict": "МЕДЛЕННО",
+        "raw_reason": "медиана первого токена 6.9 c > бюджета 5.0 c",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [],
+        "first_median": 6.898019899846986,
+        "chunks_median": 87,
+        "leaks": 0,
+        "ok": 3
+      },
+      "judge": {
+        "n": 1,
+        "raw_verdict": "ГОДЕН",
+        "raw_reason": "медиана 5.0 c, худший 5.0 c",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [],
+        "total_median": 4.986695900093764,
+        "total_worst": 4.986695900093764,
+        "format_accepted": 1
+      }
+    },
+    {
+      "model": "deepseek/deepseek-v4.1-flash-1017",
+      "manual_note": "",
+      "tutor": {
+        "n": 3,
+        "raw_verdict": "НЕСТАБИЛЕН",
+        "raw_reason": "успешных прогонов 2 из 3: потолок 900 съеден рассуждением (reasoning 3403 симв.), текста нет",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [
+          "потолок 900 съеден рассуждением (reasoning 3403 симв.), текста нет"
+        ],
+        "first_median": 5.399974999949336,
+        "chunks_median": 223,
+        "leaks": 0,
+        "ok": 2
+      },
+      "judge": {
+        "n": 1,
+        "raw_verdict": "ГОДЕН",
+        "raw_reason": "медиана 8.1 c, худший 8.1 c",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [],
+        "total_median": 8.147004700032994,
+        "total_worst": 8.147004700032994,
+        "format_accepted": 1
+      }
+    },
+    {
+      "model": "deepseek/deepseek-v4.1-flash-1017-uncensored",
+      "manual_note": "",
+      "tutor": {
+        "n": 1,
+        "raw_verdict": "МЕДЛЕННО",
+        "raw_reason": "медиана первого токена 13.3 c > бюджета 5.0 c",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [],
+        "first_median": 13.278107699938118,
+        "chunks_median": 28,
+        "leaks": 0,
+        "ok": 1
+      },
+      "judge": {
+        "n": 1,
+        "raw_verdict": "ГОДЕН",
+        "raw_reason": "медиана 20.3 c, худший 20.3 c",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [],
+        "total_median": 20.30812460021116,
+        "total_worst": 20.30812460021116,
+        "format_accepted": 1
+      }
+    },
+    {
+      "model": "google/gemini-2.5-pro",
+      "manual_note": "",
+      "tutor": {
+        "n": 1,
+        "raw_verdict": "МЕДЛЕННО",
+        "raw_reason": "медиана первого токена 11.7 c > бюджета 5.0 c",
+        "identity_bad": 1,
+        "id_rule_available": true,
+        "errors": [],
+        "first_median": 11.726569600170478,
+        "chunks_median": 8,
+        "leaks": 0,
+        "ok": 1
+      },
+      "judge": {
+        "n": 1,
+        "raw_verdict": "ОШИБКА",
+        "raw_reason": "TimeoutError: The read operation timed out",
+        "identity_bad": 0,
+        "id_rule_available": true,
+        "errors": [
+          "TimeoutError: The read operation timed out"
+        ],
+        "total_median": null,
+        "total_worst": null,
+        "format_accepted": 0
+      }
+    },
+    {
+      "model": "google/gemini-3-flash",
+      "manual_note": "",
+      "tutor": {
+        "n": 1,
+        "raw_verdict": "НЕ СТРИМ",
+        "raw_reason": "медиана 10 чанков — ответ приходит куском",
+        "identity_bad": 1,
+        "id_rule_available": true,
+        "errors": [],
+        "first_median": 2.591456500114873,
+        "chunks_median": 10,
+        "leaks": 0,
+        "ok": 1
+      },
+      "judge": {
+        "n": 1,
+        "raw_verdict": "ГОДЕН",
+        "raw_reason": "медиана 3.3 c, худший 3.3 c",
+        "identity_bad": 1,
+        "id_rule_available": true,
+        "errors": [],
+        "total_median": 3.296791300177574,
+        "total_worst": 3.296791300177574,
+        "format_accepted": 1
+      }
+    },
+    {
+      "model": "google/gemini-3.1-flash-lite",
+      "manual_note": "",
+      "tutor": {
+        "n": 1,
+        "raw_verdict": "НЕ СТРИМ",
+        "raw_reason": "медиана 11 чанков — ответ приходит куском",
+        "identity_bad": 1,
+        "id_rule_available": true,
+        "errors": [],
+        "first_median": 3.528116999892518,
+        "chunks_median": 11,
+        "leaks": 0,
+        "ok": 1
+      },
+      "judge": {
+        "n": 1,
+        "raw_verdict": "ГОДЕН",
+        "raw_reason": "медиана 9.6 c, худший 9.6 c",
+        "identity_bad": 1,
+        "id_rule_available": true,
+        "errors": [],
+        "total_median": 9.581020300043747,
+        "total_worst": 9.581020300043747,
+        "format_accepted": 1
+      }
+    },
+    {
+      "model": "google/gemini-3.1-pro",
+      "manual_note": "",
+      "tutor": {
+        "n": 1,
+        "raw_verdict": "ОШИБКА",
+        "raw_reason": "TimeoutError: The read operation timed out",
+        "identity_bad": 0,
+        "id_rule_available": true,
+        "errors": [
+          "TimeoutError: The read operation timed out"
+        ],
+        "first_median": null,
+        "chunks_median": 0,
+        "leaks": 0,
+        "ok": 0
+      },
+      "judge": {
+        "n": 1,
+        "raw_verdict": "ОШИБКА",
+        "raw_reason": "TimeoutError: The read operation timed out",
+        "identity_bad": 0,
+        "id_rule_available": true,
+        "errors": [
+          "TimeoutError: The read operation timed out"
+        ],
+        "total_median": null,
+        "total_worst": null,
+        "format_accepted": 0
+      }
+    },
+    {
+      "model": "google/gemini-3.1-pro-preview",
+      "manual_note": "",
+      "tutor": {
+        "n": 1,
+        "raw_verdict": "НЕ СТРИМ",
+        "raw_reason": "медиана 10 чанков — ответ приходит куском",
+        "identity_bad": 1,
+        "id_rule_available": true,
+        "errors": [],
+        "first_median": 2.8622451999690384,
+        "chunks_median": 10,
+        "leaks": 0,
+        "ok": 1
+      },
+      "judge": {
+        "n": 1,
+        "raw_verdict": "ГОДЕН",
+        "raw_reason": "медиана 13.2 c, худший 13.2 c",
+        "identity_bad": 1,
+        "id_rule_available": true,
+        "errors": [],
+        "total_median": 13.197042200015858,
+        "total_worst": 13.197042200015858,
+        "format_accepted": 1
+      }
+    },
+    {
+      "model": "google/gemini-3.6-flash",
+      "manual_note": "",
+      "tutor": {
+        "n": 1,
+        "raw_verdict": "МЕДЛЕННО",
+        "raw_reason": "медиана первого токена 8.0 c > бюджета 5.0 c",
+        "identity_bad": 1,
+        "id_rule_available": true,
+        "errors": [],
+        "first_median": 8.003590399865061,
+        "chunks_median": 8,
+        "leaks": 0,
+        "ok": 1
+      },
+      "judge": {
+        "n": 1,
+        "raw_verdict": "ГОДЕН",
+        "raw_reason": "медиана 12.7 c, худший 12.7 c",
+        "identity_bad": 1,
+        "id_rule_available": true,
+        "errors": [],
+        "total_median": 12.725247499998659,
+        "total_worst": 12.725247499998659,
+        "format_accepted": 1
+      }
+    },
+    {
+      "model": "google/gemini-3.7-flash",
+      "manual_note": "В usage.quota.model указана другая модель",
+      "tutor": {
+        "n": 1,
+        "raw_verdict": "МЕДЛЕННО",
+        "raw_reason": "медиана первого токена 22.4 c > бюджета 5.0 c",
+        "identity_bad": 1,
+        "id_rule_available": true,
+        "errors": [],
+        "first_median": 22.405317099997774,
+        "chunks_median": 116,
+        "leaks": 0,
+        "ok": 1
+      },
+      "judge": {
+        "n": 1,
+        "raw_verdict": "ГОДЕН",
+        "raw_reason": "медиана 10.3 c, худший 10.3 c",
+        "identity_bad": 1,
+        "id_rule_available": true,
+        "errors": [],
+        "total_median": 10.308265999890864,
+        "total_worst": 10.308265999890864,
+        "format_accepted": 1
+      }
+    },
+    {
+      "model": "google/gemini-3.8-flash",
+      "manual_note": "",
+      "tutor": {
+        "n": 3,
+        "raw_verdict": "МЕДЛЕННО",
+        "raw_reason": "медиана первого токена 7.5 c > бюджета 5.0 c",
+        "identity_bad": 0,
+        "id_rule_available": true,
+        "errors": [],
+        "first_median": 7.50741899991408,
+        "chunks_median": 8,
+        "leaks": 0,
+        "ok": 3
+      },
+      "judge": {
+        "n": 1,
+        "raw_verdict": "ГОДЕН",
+        "raw_reason": "медиана 7.1 c, худший 7.1 c",
+        "identity_bad": 1,
+        "id_rule_available": true,
+        "errors": [],
+        "total_median": 7.109003799967468,
+        "total_worst": 7.109003799967468,
+        "format_accepted": 1
+      }
+    },
+    {
+      "model": "google/gemini-4-argon",
+      "manual_note": "Gateway notice вместо наставника",
+      "tutor": {
+        "n": 1,
+        "raw_verdict": "МЕДЛЕННО",
+        "raw_reason": "медиана первого токена 42.7 c > бюджета 5.0 c",
+        "identity_bad": 0,
+        "id_rule_available": true,
+        "errors": [],
+        "first_median": 42.700849700020626,
+        "chunks_median": 1,
+        "leaks": 0,
+        "ok": 1
+      },
+      "judge": {
+        "n": 1,
+        "raw_verdict": "ОШИБКА",
+        "raw_reason": "TimeoutError: The read operation timed out",
+        "identity_bad": 0,
+        "id_rule_available": true,
+        "errors": [
+          "TimeoutError: The read operation timed out"
+        ],
+        "total_median": null,
+        "total_worst": null,
+        "format_accepted": 0
+      }
+    },
+    {
+      "model": "minimax/minimax-m2.7",
+      "manual_note": "Судья выдумывает направление240° вместо180°",
+      "tutor": {
+        "n": 3,
+        "raw_verdict": "НЕ СТРИМ",
+        "raw_reason": "медиана 4 чанков — ответ приходит куском",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [],
+        "first_median": 4.845122899860144,
+        "chunks_median": 4,
+        "leaks": 0,
+        "ok": 3
+      },
+      "judge": {
+        "n": 1,
+        "raw_verdict": "ГОДЕН",
+        "raw_reason": "медиана 7.0 c, худший 7.0 c",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [],
+        "total_median": 7.038528700126335,
+        "total_worst": 7.038528700126335,
+        "format_accepted": 1
+      }
+    },
+    {
+      "model": "minimax/minimax-m3",
+      "manual_note": "",
+      "tutor": {
+        "n": 3,
+        "raw_verdict": "НЕСТАБИЛЕН",
+        "raw_reason": "успешных прогонов 2 из 3: потолок 900 съеден рассуждением (reasoning 3716 симв.), текста нет",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [
+          "потолок 900 съеден рассуждением (reasoning 3716 симв.), текста нет"
+        ],
+        "first_median": 11.300305700162426,
+        "chunks_median": 2,
+        "leaks": 0,
+        "ok": 2
+      },
+      "judge": {
+        "n": 3,
+        "raw_verdict": "НЕСТАБИЛЕН",
+        "raw_reason": "успешных прогонов 2 из 3: потолок 2500 съеден рассуждением (reasoning_tokens=2499), текста нет",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [
+          "потолок 2500 съеден рассуждением (reasoning_tokens=2499), текста нет"
+        ],
+        "total_median": 7.77053750003688,
+        "total_worst": 7.77053750003688,
+        "format_accepted": 2
+      }
+    },
+    {
+      "model": "minimax/minimax-m3.1-flash",
+      "manual_note": "",
+      "tutor": {
+        "n": 1,
+        "raw_verdict": "ОШИБКА",
+        "raw_reason": "потолок 900 съеден рассуждением (reasoning 3401 симв.), текста нет",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [
+          "потолок 900 съеден рассуждением (reasoning 3401 симв.), текста нет"
+        ],
+        "first_median": null,
+        "chunks_median": 0,
+        "leaks": 0,
+        "ok": 0
+      },
+      "judge": {
+        "n": 1,
+        "raw_verdict": "МЕДЛЕННО",
+        "raw_reason": "худший прогон 36.7 c > бюджета попытки 30 c",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [],
+        "total_median": 36.65989920007996,
+        "total_worst": 36.65989920007996,
+        "format_accepted": 1
+      }
+    },
+    {
+      "model": "moonshotai/kimi-k2.6",
+      "manual_note": "",
+      "tutor": {
+        "n": 1,
+        "raw_verdict": "ОШИБКА",
+        "raw_reason": "upstream_in_200: Upstream request failed",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [
+          "upstream_in_200: Upstream request failed"
+        ],
+        "first_median": null,
+        "chunks_median": 0,
+        "leaks": 0,
+        "ok": 0
+      },
+      "judge": {
+        "n": 1,
+        "raw_verdict": "ОШИБКА",
+        "raw_reason": "HTTP 502: {\"error\":{\"code\":\"upstream_error\",\"message\":\"Upstream request failed\",\"status\":502,\"metadata\":{\"failure_reason\":\"auto_v7_start_permit_denied:state_not_eligible\"",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [
+          "HTTP 502: {\"error\":{\"code\":\"upstream_error\",\"message\":\"Upstream request failed\",\"status\":502,\"metadata\":{\"failure_reason\":\"auto_v7_start_permit_denied:state_not_eligible\""
+        ],
+        "total_median": null,
+        "total_worst": null,
+        "format_accepted": 0
+      }
+    },
+    {
+      "model": "moonshotai/kimi-k2.7-code",
+      "manual_note": "",
+      "tutor": {
+        "n": 1,
+        "raw_verdict": "ОШИБКА",
+        "raw_reason": "потолок 900 съеден рассуждением (reasoning 3330 симв.), текста нет",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [
+          "потолок 900 съеден рассуждением (reasoning 3330 симв.), текста нет"
+        ],
+        "first_median": null,
+        "chunks_median": 0,
+        "leaks": 0,
+        "ok": 0
+      },
+      "judge": {
+        "n": 1,
+        "raw_verdict": "ГОДЕН",
+        "raw_reason": "медиана 17.8 c, худший 17.8 c",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [],
+        "total_median": 17.84796110005118,
+        "total_worst": 17.84796110005118,
+        "format_accepted": 1
+      }
+    },
+    {
+      "model": "moonshotai/kimi-k3",
+      "manual_note": "",
+      "tutor": {
+        "n": 1,
+        "raw_verdict": "ОШИБКА",
+        "raw_reason": "потолок 900 съеден рассуждением (reasoning 3217 симв.), текста нет",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [
+          "потолок 900 съеден рассуждением (reasoning 3217 симв.), текста нет"
+        ],
+        "first_median": null,
+        "chunks_median": 0,
+        "leaks": 0,
+        "ok": 0
+      },
+      "judge": {
+        "n": 3,
+        "raw_verdict": "ФОРМАТ",
+        "raw_reason": "ответ не разобрался нашим разборщиком в 2 из 3",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [
+          "JSON разобран, но балла чистоты в нём нет",
+          "JSON разобран, но балла чистоты в нём нет"
+        ],
+        "total_median": 14.600197399966419,
+        "total_worst": 14.600197399966419,
+        "format_accepted": 1
+      }
+    },
+    {
+      "model": "moonshotai/kimi-k3.1-pro",
+      "manual_note": "Наставник выдал s[1:4]; судья меняет схему",
+      "tutor": {
+        "n": 1,
+        "raw_verdict": "СЛИЛ",
+        "raw_reason": "выдал ответ числами в 1 из 1 прогонов",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [],
+        "first_median": 9.498292400036007,
+        "chunks_median": 90,
+        "leaks": 1,
+        "ok": 1
+      },
+      "judge": {
+        "n": 1,
+        "raw_verdict": "ОШИБКА",
+        "raw_reason": "JSON разобран, но балла чистоты в нём нет",
+        "identity_bad": 1,
+        "id_rule_available": false,
+        "errors": [
+          "JSON разобран, но балла чистоты в нём нет"
+        ],
+        "total_median": null,
+        "total_worst": null,
+        "format_accepted": 0
+      }
+    },
+    {
+      "model": "openai/gpt-5.4",
+      "manual_note": "",
+      "tutor": {
+        "n": 3,
+        "raw_verdict": "МЕДЛЕННО",
+        "raw_reason": "медиана первого токена 10.2 c > бюджета 5.0 c",
+        "identity_bad": 0,
+        "id_rule_available": true,
+        "errors": [],
+        "first_median": 10.224733600160107,
+        "chunks_median": 49,
+        "leaks": 0,
+        "ok": 3
+      },
+      "judge": {
+        "n": 1,
+        "raw_verdict": "МЕДЛЕННО",
+        "raw_reason": "худший прогон 35.4 c > бюджета попытки 30 c",
+        "identity_bad": 0,
+        "id_rule_available": true,
+        "errors": [],
+        "total_median": 35.43957550008781,
+        "total_worst": 35.43957550008781,
+        "format_accepted": 1
+      }
+    },
+    {
+      "model": "openai/gpt-5.4-mini",
+      "manual_note": "",
+      "tutor": {
+        "n": 1,
+        "raw_verdict": "ГОДЕН",
+        "raw_reason": "первый токен 3.9 c (медиана), чанков 37",
+        "identity_bad": 1,
+        "id_rule_available": true,
+        "errors": [],
+        "first_median": 3.9129337000194937,
+        "chunks_median": 37,
+        "leaks": 0,
+        "ok": 1
+      },
+      "judge": {
+        "n": 1,
+        "raw_verdict": "ГОДЕН",
+        "raw_reason": "медиана 8.0 c, худший 8.0 c",
+        "identity_bad": 1,
+        "id_rule_available": true,
+        "errors": [],
+        "total_median": 7.9585466999560595,
+        "total_worst": 7.9585466999560595,
+        "format_accepted": 1
+      }
+    },
+    {
+      "model": "openai/gpt-5.5",
+      "manual_note": "",
+      "tutor": {
+        "n": 1,
+        "raw_verdict": "ГОДЕН",
+        "raw_reason": "первый токен 1.3 c (медиана), чанков 127",
+        "identity_bad": 1,
+        "id_rule_available": true,
+        "errors": [],
+        "first_median": 1.3288990000728518,
+        "chunks_median": 127,
+        "leaks": 0,
+        "ok": 1
+      },
+      "judge": {
+        "n": 1,
+        "raw_verdict": "ОШИБКА",
+        "raw_reason": "формат: JSONDecodeError: Expecting value: line 1 column 1 (char 0)",
+        "identity_bad": 0,
+        "id_rule_available": true,
+        "errors": [
+          "формат: JSONDecodeError: Expecting value: line 1 column 1 (char 0)"
+        ],
+        "total_median": null,
+        "total_worst": null,
+        "format_accepted": 0
+      }
+    },
+    {
+      "model": "openai/gpt-5.6-luna",
+      "manual_note": "",
+      "tutor": {
+        "n": 1,
+        "raw_verdict": "МЕДЛЕННО",
+        "raw_reason": "медиана первого токена 35.9 c > бюджета 5.0 c",
+        "identity_bad": 0,
+        "id_rule_available": true,
+        "errors": [],
+        "first_median": 35.860792599851266,
+        "chunks_median": 43,
+        "leaks": 0,
+        "ok": 1
+      },
+      "judge": {
+        "n": 1,
+        "raw_verdict": "ОШИБКА",
+        "raw_reason": "TimeoutError: The read operation timed out",
+        "identity_bad": 0,
+        "id_rule_available": true,
+        "errors": [
+          "TimeoutError: The read operation timed out"
+        ],
+        "total_median": null,
+        "total_worst": null,
+        "format_accepted": 0
+      }
+    },
+    {
+      "model": "openai/gpt-5.6-sol",
+      "manual_note": "",
+      "tutor": {
+        "n": 1,
+        "raw_verdict": "ГОДЕН",
+        "raw_reason": "первый токен 4.0 c (медиана), чанков 46",
+        "identity_bad": 1,
+        "id_rule_available": true,
+        "errors": [],
+        "first_median": 4.034160099923611,
+        "chunks_median": 46,
+        "leaks": 0,
+        "ok": 1
+      },
+      "judge": {
+        "n": 1,
+        "raw_verdict": "ГОДЕН",
+        "raw_reason": "медиана 11.2 c, худший 11.2 c",
+        "identity_bad": 1,
+        "id_rule_available": true,
+        "errors": [],
+        "total_median": 11.244703200180084,
+        "total_worst": 11.244703200180084,
+        "format_accepted": 1
+      }
+    },
+    {
+      "model": "openai/gpt-5.6-terra",
+      "manual_note": "",
+      "tutor": {
+        "n": 1,
+        "raw_verdict": "МЕДЛЕННО",
+        "raw_reason": "медиана первого токена 6.7 c > бюджета 5.0 c",
+        "identity_bad": 1,
+        "id_rule_available": true,
+        "errors": [],
+        "first_median": 6.728312599938363,
+        "chunks_median": 15,
+        "leaks": 0,
+        "ok": 1
+      },
+      "judge": {
+        "n": 1,
+        "raw_verdict": "ГОДЕН",
+        "raw_reason": "медиана 29.6 c, худший 29.6 c",
+        "identity_bad": 1,
+        "id_rule_available": true,
+        "errors": [],
+        "total_median": 29.612135999836028,
+        "total_worst": 29.612135999836028,
+        "format_accepted": 1
+      }
+    },
+    {
+      "model": "openai/gpt-6-astra",
+      "manual_note": "",
+      "tutor": {
+        "n": 1,
+        "raw_verdict": "МЕДЛЕННО",
+        "raw_reason": "медиана первого токена 16.3 c > бюджета 5.0 c",
+        "identity_bad": 1,
+        "id_rule_available": true,
+        "errors": [],
+        "first_median": 16.274206300033256,
+        "chunks_median": 2,
+        "leaks": 0,
+        "ok": 1
+      },
+      "judge": {
+        "n": 1,
+        "raw_verdict": "ГОДЕН",
+        "raw_reason": "медиана 26.8 c, худший 26.8 c",
+        "identity_bad": 1,
+        "id_rule_available": true,
+        "errors": [],
+        "total_median": 26.827203400200233,
+        "total_worst": 26.827203400200233,
+        "format_accepted": 1
+      }
+    },
+    {
+      "model": "openai/gpt-6-luna",
+      "manual_note": "",
+      "tutor": {
+        "n": 1,
+        "raw_verdict": "МЕДЛЕННО",
+        "raw_reason": "медиана первого токена 14.9 c > бюджета 5.0 c",
+        "identity_bad": 0,
+        "id_rule_available": true,
+        "errors": [],
+        "first_median": 14.85092160012573,
+        "chunks_median": 54,
+        "leaks": 0,
+        "ok": 1
+      },
+      "judge": {
+        "n": 1,
+        "raw_verdict": "ГОДЕН",
+        "raw_reason": "медиана 12.0 c, худший 12.0 c",
+        "identity_bad": 1,
+        "id_rule_available": true,
+        "errors": [],
+        "total_median": 12.014612700091675,
+        "total_worst": 12.014612700091675,
+        "format_accepted": 1
+      }
+    },
+    {
+      "model": "openai/gpt-6-sol",
+      "manual_note": "",
+      "tutor": {
+        "n": 1,
+        "raw_verdict": "МЕДЛЕННО",
+        "raw_reason": "медиана первого токена 16.6 c > бюджета 5.0 c",
+        "identity_bad": 1,
+        "id_rule_available": true,
+        "errors": [],
+        "first_median": 16.576010399963707,
+        "chunks_median": 47,
+        "leaks": 0,
+        "ok": 1
+      },
+      "judge": {
+        "n": 1,
+        "raw_verdict": "ГОДЕН",
+        "raw_reason": "медиана 28.7 c, худший 28.7 c",
+        "identity_bad": 1,
+        "id_rule_available": true,
+        "errors": [],
+        "total_median": 28.671813799999654,
+        "total_worst": 28.671813799999654,
+        "format_accepted": 1
+      }
+    },
+    {
+      "model": "openai/gpt-6.1-sol",
+      "manual_note": "",
+      "tutor": {
+        "n": 1,
+        "raw_verdict": "МЕДЛЕННО",
+        "raw_reason": "медиана первого токена 9.7 c > бюджета 5.0 c",
+        "identity_bad": 1,
+        "id_rule_available": true,
+        "errors": [],
+        "first_median": 9.678533900063485,
+        "chunks_median": 44,
+        "leaks": 0,
+        "ok": 1
+      },
+      "judge": {
+        "n": 3,
+        "raw_verdict": "ГОДЕН",
+        "raw_reason": "медиана 12.1 c, худший 17.0 c",
+        "identity_bad": 0,
+        "id_rule_available": true,
+        "errors": [],
+        "total_median": 12.121140999952331,
+        "total_worst": 17.032092100009322,
+        "format_accepted": 3
+      }
+    },
+    {
+      "model": "openai/gpt-6.1-terra",
+      "manual_note": "",
+      "tutor": {
+        "n": 1,
+        "raw_verdict": "ГОДЕН",
+        "raw_reason": "первый токен 2.4 c (медиана), чанков 33",
+        "identity_bad": 1,
+        "id_rule_available": true,
+        "errors": [],
+        "first_median": 2.366941299987957,
+        "chunks_median": 33,
+        "leaks": 0,
+        "ok": 1
+      },
+      "judge": {
+        "n": 3,
+        "raw_verdict": "ГОДЕН",
+        "raw_reason": "медиана 4.3 c, худший 12.4 c",
+        "identity_bad": 2,
+        "id_rule_available": true,
+        "errors": [],
+        "total_median": 4.264579400187358,
+        "total_worst": 12.358237100066617,
+        "format_accepted": 3
+      }
+    },
+    {
+      "model": "qwen/qwen3.7-max",
+      "manual_note": "Судья требует цикл для крыши вопреки условию",
+      "tutor": {
+        "n": 3,
+        "raw_verdict": "МЕДЛЕННО",
+        "raw_reason": "медиана первого токена 5.4 c > бюджета 5.0 c",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [],
+        "first_median": 5.445842099841684,
+        "chunks_median": 40,
+        "leaks": 0,
+        "ok": 3
+      },
+      "judge": {
+        "n": 1,
+        "raw_verdict": "ГОДЕН",
+        "raw_reason": "медиана 11.2 c, худший 11.2 c",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [],
+        "total_median": 11.20084930001758,
+        "total_worst": 11.20084930001758,
+        "format_accepted": 1
+      }
+    },
+    {
+      "model": "qwen/qwen3.7-plus",
+      "manual_note": "",
+      "tutor": {
+        "n": 1,
+        "raw_verdict": "ОШИБКА",
+        "raw_reason": "HTTP 503: {\"error\":{\"code\":\"provider_unavailable\",\"message\":\"The provider is temporarily unavailable. Retry shortly.\",\"status\":503,\"metadata\":{\"provider_name\":\"Qwen\",\"ups",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [
+          "HTTP 503: {\"error\":{\"code\":\"provider_unavailable\",\"message\":\"The provider is temporarily unavailable. Retry shortly.\",\"status\":503,\"metadata\":{\"provider_name\":\"Qwen\",\"ups"
+        ],
+        "first_median": null,
+        "chunks_median": 0,
+        "leaks": 0,
+        "ok": 0
+      },
+      "judge": {
+        "n": 1,
+        "raw_verdict": "ОШИБКА",
+        "raw_reason": "HTTP 503: {\"error\":{\"code\":\"provider_unavailable\",\"message\":\"The provider is temporarily unavailable. Retry shortly.\",\"status\":503,\"metadata\":{\"provider_name\":\"Qwen\",\"ups",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [
+          "HTTP 503: {\"error\":{\"code\":\"provider_unavailable\",\"message\":\"The provider is temporarily unavailable. Retry shortly.\",\"status\":503,\"metadata\":{\"provider_name\":\"Qwen\",\"ups"
+        ],
+        "total_median": null,
+        "total_worst": null,
+        "format_accepted": 0
+      }
+    },
+    {
+      "model": "qwen/qwen3.8-flash",
+      "manual_note": "",
+      "tutor": {
+        "n": 3,
+        "raw_verdict": "МЕДЛЕННО",
+        "raw_reason": "медиана первого токена 5.8 c > бюджета 5.0 c",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [],
+        "first_median": 5.809708799934015,
+        "chunks_median": 4,
+        "leaks": 0,
+        "ok": 3
+      },
+      "judge": {
+        "n": 1,
+        "raw_verdict": "ГОДЕН",
+        "raw_reason": "медиана 4.3 c, худший 4.3 c",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [],
+        "total_median": 4.250974699854851,
+        "total_worst": 4.250974699854851,
+        "format_accepted": 1
+      }
+    },
+    {
+      "model": "qwen/qwen3.8-max",
+      "manual_note": "",
+      "tutor": {
+        "n": 1,
+        "raw_verdict": "МЕДЛЕННО",
+        "raw_reason": "медиана первого токена 42.6 c > бюджета 5.0 c",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [],
+        "first_median": 42.63006090000272,
+        "chunks_median": 16,
+        "leaks": 0,
+        "ok": 1
+      },
+      "judge": {
+        "n": 1,
+        "raw_verdict": "МЕДЛЕННО",
+        "raw_reason": "худший прогон 31.5 c > бюджета попытки 30 c",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [],
+        "total_median": 31.49776150006801,
+        "total_worst": 31.49776150006801,
+        "format_accepted": 1
+      }
+    },
+    {
+      "model": "qwen/qwen3.8-omni-flash",
+      "manual_note": "Словесная подсказка правой границы; выдуманный запрет цикла окна",
+      "tutor": {
+        "n": 1,
+        "raw_verdict": "МЕДЛЕННО",
+        "raw_reason": "медиана первого токена 12.2 c > бюджета 5.0 c",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [],
+        "first_median": 12.195552000077441,
+        "chunks_median": 49,
+        "leaks": 0,
+        "ok": 1
+      },
+      "judge": {
+        "n": 1,
+        "raw_verdict": "ГОДЕН",
+        "raw_reason": "медиана 9.0 c, худший 9.0 c",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [],
+        "total_median": 8.983888400020078,
+        "total_worst": 8.983888400020078,
+        "format_accepted": 1
+      }
+    },
+    {
+      "model": "tencent/hy3",
+      "manual_note": "",
+      "tutor": {
+        "n": 1,
+        "raw_verdict": "ОШИБКА",
+        "raw_reason": "потолок 900 съеден рассуждением (reasoning 2510 симв.), текста нет",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [
+          "потолок 900 съеден рассуждением (reasoning 2510 симв.), текста нет"
+        ],
+        "first_median": null,
+        "chunks_median": 0,
+        "leaks": 0,
+        "ok": 0
+      },
+      "judge": {
+        "n": 1,
+        "raw_verdict": "МЕДЛЕННО",
+        "raw_reason": "худший прогон 36.2 c > бюджета попытки 30 c",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [],
+        "total_median": 36.24975399998948,
+        "total_worst": 36.24975399998948,
+        "format_accepted": 1
+      }
+    },
+    {
+      "model": "tencent/hy4-preview",
+      "manual_note": "",
+      "tutor": {
+        "n": 3,
+        "raw_verdict": "МЕДЛЕННО",
+        "raw_reason": "медиана первого токена 5.3 c > бюджета 5.0 c",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [],
+        "first_median": 5.257804700173438,
+        "chunks_median": 64,
+        "leaks": 0,
+        "ok": 3
+      },
+      "judge": {
+        "n": 1,
+        "raw_verdict": "ОШИБКА",
+        "raw_reason": "TimeoutError: The read operation timed out",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [
+          "TimeoutError: The read operation timed out"
+        ],
+        "total_median": null,
+        "total_worst": null,
+        "format_accepted": 0
+      }
+    },
+    {
+      "model": "x-ai/grok-4.3",
+      "manual_note": "Служебная заглушка вместо наставника",
+      "tutor": {
+        "n": 1,
+        "raw_verdict": "МЕДЛЕННО",
+        "raw_reason": "медиана первого токена 18.4 c > бюджета 5.0 c",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [],
+        "first_median": 18.445670400047675,
+        "chunks_median": 1,
+        "leaks": 0,
+        "ok": 1
+      },
+      "judge": {
+        "n": 1,
+        "raw_verdict": "ГОДЕН",
+        "raw_reason": "медиана 3.3 c, худший 3.3 c",
+        "identity_bad": 1,
+        "id_rule_available": false,
+        "errors": [],
+        "total_median": 3.25443430012092,
+        "total_worst": 3.25443430012092,
+        "format_accepted": 1
+      }
+    },
+    {
+      "model": "x-ai/grok-4.5",
+      "manual_note": "",
+      "tutor": {
+        "n": 1,
+        "raw_verdict": "МЕДЛЕННО",
+        "raw_reason": "медиана первого токена 181.5 c > бюджета 5.0 c",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [],
+        "first_median": 181.4871957001742,
+        "chunks_median": 48,
+        "leaks": 0,
+        "ok": 1
+      },
+      "judge": {
+        "n": 1,
+        "raw_verdict": "МЕДЛЕННО",
+        "raw_reason": "худший прогон 38.5 c > бюджета попытки 30 c",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [],
+        "total_median": 38.50162840005942,
+        "total_worst": 38.50162840005942,
+        "format_accepted": 1
+      }
+    },
+    {
+      "model": "x-ai/grok-4.6",
+      "manual_note": "",
+      "tutor": {
+        "n": 1,
+        "raw_verdict": "ОШИБКА",
+        "raw_reason": "TimeoutError: The read operation timed out",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [
+          "TimeoutError: The read operation timed out"
+        ],
+        "first_median": null,
+        "chunks_median": 0,
+        "leaks": 0,
+        "ok": 0
+      },
+      "judge": {
+        "n": 1,
+        "raw_verdict": "ГОДЕН",
+        "raw_reason": "медиана 14.3 c, худший 14.3 c",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [],
+        "total_median": 14.278117300011218,
+        "total_worst": 14.278117300011218,
+        "format_accepted": 1
+      }
+    },
+    {
+      "model": "x-ai/grok-4.7",
+      "manual_note": "",
+      "tutor": {
+        "n": 1,
+        "raw_verdict": "МЕДЛЕННО",
+        "raw_reason": "медиана первого токена 31.3 c > бюджета 5.0 c",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [],
+        "first_median": 31.349978999933228,
+        "chunks_median": 85,
+        "leaks": 0,
+        "ok": 1
+      },
+      "judge": {
+        "n": 1,
+        "raw_verdict": "МЕДЛЕННО",
+        "raw_reason": "худший прогон 37.1 c > бюджета попытки 30 c",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [],
+        "total_median": 37.10359279997647,
+        "total_worst": 37.10359279997647,
+        "format_accepted": 1
+      }
+    },
+    {
+      "model": "xiaomi/mimo-v2.5",
+      "manual_note": "",
+      "tutor": {
+        "n": 3,
+        "raw_verdict": "МЕДЛЕННО",
+        "raw_reason": "медиана первого токена 5.4 c > бюджета 5.0 c",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [],
+        "first_median": 5.414659800007939,
+        "chunks_median": 41,
+        "leaks": 0,
+        "ok": 3
+      },
+      "judge": {
+        "n": 1,
+        "raw_verdict": "ГОДЕН",
+        "raw_reason": "медиана 6.9 c, худший 6.9 c",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [],
+        "total_median": 6.926578999962658,
+        "total_worst": 6.926578999962658,
+        "format_accepted": 1
+      }
+    },
+    {
+      "model": "xiaomi/mimo-v2.5-pro",
+      "manual_note": "",
+      "tutor": {
+        "n": 3,
+        "raw_verdict": "МЕДЛЕННО",
+        "raw_reason": "медиана первого токена 7.0 c > бюджета 5.0 c",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [],
+        "first_median": 7.0453287998680025,
+        "chunks_median": 62,
+        "leaks": 0,
+        "ok": 3
+      },
+      "judge": {
+        "n": 1,
+        "raw_verdict": "ГОДЕН",
+        "raw_reason": "медиана 6.6 c, худший 6.6 c",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [],
+        "total_median": 6.637293000007048,
+        "total_worst": 6.637293000007048,
+        "format_accepted": 1
+      }
+    },
+    {
+      "model": "xiaomi/mimo-v2.6-flash",
+      "manual_note": "",
+      "tutor": {
+        "n": 3,
+        "raw_verdict": "МЕДЛЕННО",
+        "raw_reason": "медиана первого токена 7.4 c > бюджета 5.0 c",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [],
+        "first_median": 7.446367299882695,
+        "chunks_median": 57,
+        "leaks": 0,
+        "ok": 3
+      },
+      "judge": {
+        "n": 1,
+        "raw_verdict": "ГОДЕН",
+        "raw_reason": "медиана 12.0 c, худший 12.0 c",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [],
+        "total_median": 11.977216699859127,
+        "total_worst": 11.977216699859127,
+        "format_accepted": 1
+      }
+    },
+    {
+      "model": "xiaomi/mimo-v2.6-pro",
+      "manual_note": "Наставническая реплика оборвана; судейский кандидат технически проходит",
+      "tutor": {
+        "n": 1,
+        "raw_verdict": "МЕДЛЕННО",
+        "raw_reason": "медиана первого токена 7.0 c > бюджета 5.0 c",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [],
+        "first_median": 7.021603300003335,
+        "chunks_median": 10,
+        "leaks": 0,
+        "ok": 1
+      },
+      "judge": {
+        "n": 3,
+        "raw_verdict": "ГОДЕН",
+        "raw_reason": "медиана 9.1 c, худший 16.0 c",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [],
+        "total_median": 9.088196599856019,
+        "total_worst": 15.995612300001085,
+        "format_accepted": 3
+      }
+    },
+    {
+      "model": "z-ai/glm-5-turbo",
+      "manual_note": "",
+      "tutor": {
+        "n": 3,
+        "raw_verdict": "НЕСТАБИЛЕН",
+        "raw_reason": "успешных прогонов 2 из 3: HTTP 503: {\"error\":{\"code\":\"route_unavailable\",\"message\":\"No provider is currently availab",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [
+          "HTTP 503: {\"error\":{\"code\":\"route_unavailable\",\"message\":\"No provider is currently available\",\"status\":503,\"metadata\":{\"request_id\":\"0a4fb691-d5ef-4a15-a3df-444950f5d242\""
+        ],
+        "first_median": 12.250906000146642,
+        "chunks_median": 192,
+        "leaks": 0,
+        "ok": 2
+      },
+      "judge": {
+        "n": 1,
+        "raw_verdict": "МЕДЛЕННО",
+        "raw_reason": "худший прогон 38.0 c > бюджета попытки 30 c",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [],
+        "total_median": 37.95986589998938,
+        "total_worst": 37.95986589998938,
+        "format_accepted": 1
+      }
+    },
+    {
+      "model": "z-ai/glm-5.1",
+      "manual_note": "",
+      "tutor": {
+        "n": 1,
+        "raw_verdict": "ОШИБКА",
+        "raw_reason": "HTTP 500: {\"error\":{\"code\":\"internal_error\",\"message\":\"Internal server error\",\"status\":500,\"metadata\":{\"request_id\":\"879ca340-568e-4eb3-a5b0-977c446908c3\"}}}",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [
+          "HTTP 500: {\"error\":{\"code\":\"internal_error\",\"message\":\"Internal server error\",\"status\":500,\"metadata\":{\"request_id\":\"879ca340-568e-4eb3-a5b0-977c446908c3\"}}}"
+        ],
+        "first_median": null,
+        "chunks_median": 0,
+        "leaks": 0,
+        "ok": 0
+      },
+      "judge": {
+        "n": 1,
+        "raw_verdict": "ОШИБКА",
+        "raw_reason": "потолок 2500 съеден рассуждением (reasoning_tokens=2497), текста нет",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [
+          "потолок 2500 съеден рассуждением (reasoning_tokens=2497), текста нет"
+        ],
+        "total_median": null,
+        "total_worst": null,
+        "format_accepted": 0
+      }
+    },
+    {
+      "model": "z-ai/glm-5.2",
+      "manual_note": "Словесная подсказка правой границы; смешение повторяемых частей",
+      "tutor": {
+        "n": 1,
+        "raw_verdict": "ГОДЕН",
+        "raw_reason": "первый токен 4.1 c (медиана), чанков 199",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [],
+        "first_median": 4.135964500019327,
+        "chunks_median": 199,
+        "leaks": 0,
+        "ok": 1
+      },
+      "judge": {
+        "n": 1,
+        "raw_verdict": "ГОДЕН",
+        "raw_reason": "медиана 5.3 c, худший 5.3 c",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [],
+        "total_median": 5.3101559998467565,
+        "total_worst": 5.3101559998467565,
+        "format_accepted": 1
+      }
+    },
+    {
+      "model": "z-ai/glm-5.3",
+      "manual_note": "Одиночная кавычка вместо наставника",
+      "tutor": {
+        "n": 1,
+        "raw_verdict": "МЕДЛЕННО",
+        "raw_reason": "медиана первого токена 14.6 c > бюджета 5.0 c",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [],
+        "first_median": 14.64338929997757,
+        "chunks_median": 1,
+        "leaks": 0,
+        "ok": 1
+      },
+      "judge": {
+        "n": 1,
+        "raw_verdict": "ГОДЕН",
+        "raw_reason": "медиана 23.2 c, худший 23.2 c",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [],
+        "total_median": 23.209146099863574,
+        "total_worst": 23.209146099863574,
+        "format_accepted": 1
+      }
+    },
+    {
+      "model": "z-ai/glm-5.3-abliterated",
+      "manual_note": "",
+      "tutor": {
+        "n": 1,
+        "raw_verdict": "ОШИБКА",
+        "raw_reason": "потолок 900 съеден рассуждением (reasoning 3412 симв.), текста нет",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [
+          "потолок 900 съеден рассуждением (reasoning 3412 симв.), текста нет"
+        ],
+        "first_median": null,
+        "chunks_median": 0,
+        "leaks": 0,
+        "ok": 0
+      },
+      "judge": {
+        "n": 1,
+        "raw_verdict": "ОШИБКА",
+        "raw_reason": "потолок 2500 съеден рассуждением (reasoning_tokens=2500), текста нет",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [
+          "потолок 2500 съеден рассуждением (reasoning_tokens=2500), текста нет"
+        ],
+        "total_median": null,
+        "total_worst": null,
+        "format_accepted": 0
+      }
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "manual_note": "",
+      "tutor": {
+        "n": 3,
+        "raw_verdict": "ГОДЕН",
+        "raw_reason": "первый токен 3.0 c (медиана), чанков 157",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [],
+        "first_median": 3.0371115000452846,
+        "chunks_median": 157,
+        "leaks": 0,
+        "ok": 3
+      },
+      "judge": {
+        "n": 1,
+        "raw_verdict": "ГОДЕН",
+        "raw_reason": "медиана 10.9 c, худший 10.9 c",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [],
+        "total_median": 10.919910399941728,
+        "total_worst": 10.919910399941728,
+        "format_accepted": 1
+      }
+    },
+    {
+      "model": "z-ai/glm-5.3-flash-abliterated",
+      "manual_note": "",
+      "tutor": {
+        "n": 3,
+        "raw_verdict": "ГОДЕН",
+        "raw_reason": "первый токен 3.2 c (медиана), чанков 55",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [],
+        "first_median": 3.1897452999837697,
+        "chunks_median": 55,
+        "leaks": 0,
+        "ok": 3
+      },
+      "judge": {
+        "n": 1,
+        "raw_verdict": "ГОДЕН",
+        "raw_reason": "медиана 5.5 c, худший 5.5 c",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [],
+        "total_median": 5.450567699968815,
+        "total_worst": 5.450567699968815,
+        "format_accepted": 1
+      }
+    },
+    {
+      "model": "z-ai/glm-5.3-flashx",
+      "manual_note": "",
+      "tutor": {
+        "n": 1,
+        "raw_verdict": "ОШИБКА",
+        "raw_reason": "потолок 900 съеден рассуждением (reasoning 3438 симв.), текста нет",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [
+          "потолок 900 съеден рассуждением (reasoning 3438 симв.), текста нет"
+        ],
+        "first_median": null,
+        "chunks_median": 0,
+        "leaks": 0,
+        "ok": 0
+      },
+      "judge": {
+        "n": 1,
+        "raw_verdict": "ГОДЕН",
+        "raw_reason": "медиана 7.8 c, худший 7.8 c",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [],
+        "total_median": 7.838608999969438,
+        "total_worst": 7.838608999969438,
+        "format_accepted": 1
+      }
+    },
+    {
+      "model": "z-ai/glm-5.3-prime",
+      "manual_note": "Одиночная кавычка/оборванный JSON",
+      "tutor": {
+        "n": 1,
+        "raw_verdict": "МЕДЛЕННО",
+        "raw_reason": "медиана первого токена 9.4 c > бюджета 5.0 c",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [],
+        "first_median": 9.40455499989912,
+        "chunks_median": 1,
+        "leaks": 0,
+        "ok": 1
+      },
+      "judge": {
+        "n": 1,
+        "raw_verdict": "ОШИБКА",
+        "raw_reason": "формат: JSONDecodeError: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [
+          "формат: JSONDecodeError: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"
+        ],
+        "total_median": null,
+        "total_worst": null,
+        "format_accepted": 0
+      }
+    },
+    {
+      "model": "z-ai/glm-5.3-uncensored",
+      "manual_note": "",
+      "tutor": {
+        "n": 1,
+        "raw_verdict": "ОШИБКА",
+        "raw_reason": "потолок 900 съеден рассуждением (reasoning 3645 симв.), текста нет",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [
+          "потолок 900 съеден рассуждением (reasoning 3645 симв.), текста нет"
+        ],
+        "first_median": null,
+        "chunks_median": 0,
+        "leaks": 0,
+        "ok": 0
+      },
+      "judge": {
+        "n": 1,
+        "raw_verdict": "ОШИБКА",
+        "raw_reason": "потолок 2500 съеден рассуждением (reasoning_tokens=2500), текста нет",
+        "identity_bad": 0,
+        "id_rule_available": false,
+        "errors": [
+          "потолок 2500 съеден рассуждением (reasoning_tokens=2500), текста нет"
+        ],
+        "total_median": null,
+        "total_worst": null,
+        "format_accepted": 0
+      }
+    }
+  ],
+  "route_metrics": [
+    {
+      "model": "deepseek/deepseek-v4.1-flash",
+      "axis": "tutor",
+      "route": "stable",
+      "n": 3,
+      "raw_verdict": "МЕДЛЕННО",
+      "first_median": 7.175427400041372,
+      "chunks_median": 143,
+      "total_median": null,
+      "total_worst": null,
+      "identity_bad": 0,
+      "format_accepted": null
+    },
+    {
+      "model": "deepseek/deepseek-v4.1-flash",
+      "axis": "tutor",
+      "route": "fast",
+      "n": 3,
+      "raw_verdict": "МЕДЛЕННО",
+      "first_median": 6.221451599849388,
+      "chunks_median": 203,
+      "total_median": null,
+      "total_worst": null,
+      "identity_bad": 0,
+      "format_accepted": null
+    },
+    {
+      "model": "deepseek/deepseek-v4.1-flash",
+      "axis": "tutor",
+      "route": "provider-28",
+      "n": 3,
+      "raw_verdict": "МЕДЛЕННО",
+      "first_median": 6.5414756999816746,
+      "chunks_median": 192,
+      "total_median": null,
+      "total_worst": null,
+      "identity_bad": 0,
+      "format_accepted": null
+    },
+    {
+      "model": "openai/gpt-6.1-terra",
+      "axis": "judge",
+      "route": "stable",
+      "n": 3,
+      "raw_verdict": "ГОДЕН",
+      "first_median": null,
+      "chunks_median": null,
+      "total_median": 4.441948600113392,
+      "total_worst": 4.756017400184646,
+      "identity_bad": 3,
+      "format_accepted": 3
+    },
+    {
+      "model": "openai/gpt-6.1-terra",
+      "axis": "judge",
+      "route": "fast",
+      "n": 3,
+      "raw_verdict": "МЕДЛЕННО",
+      "first_median": null,
+      "chunks_median": null,
+      "total_median": 25.085686199832708,
+      "total_worst": 35.82430689991452,
+      "identity_bad": 0,
+      "format_accepted": 3
+    },
+    {
+      "model": "openai/gpt-6.1-terra",
+      "axis": "judge",
+      "route": "provider-28",
+      "n": 3,
+      "raw_verdict": "ГОДЕН",
+      "first_median": null,
+      "chunks_median": null,
+      "total_median": 8.068069899920374,
+      "total_worst": 10.75895949988626,
+      "identity_bad": 0,
+      "format_accepted": 3
+    }
+  ],
+  "role_probes": [
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "input_tokens": 14,
+      "over_standard60": false
+    },
+    {
+      "model": "deepseek/deepseek-v4-pro",
+      "input_tokens": 32,
+      "over_standard60": false
+    },
+    {
+      "model": "z-ai/glm-5.3-flash-abliterated",
+      "input_tokens": 34,
+      "over_standard60": false
+    }
+  ],
+  "role_gates": [
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "run": 1,
+      "sample": "сессия 57 (concept, программа)",
+      "passed": true,
+      "error": null
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "run": 1,
+      "sample": "сессия 219 (debug, расчёт)",
+      "passed": true,
+      "error": null
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "run": 2,
+      "sample": "сессия 57 (concept, программа)",
+      "passed": true,
+      "error": null
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "run": 2,
+      "sample": "сессия 219 (debug, расчёт)",
+      "passed": true,
+      "error": null
+    },
+    {
+      "model": "deepseek/deepseek-v4-pro",
+      "run": 1,
+      "sample": "сессия 57 (concept, программа)",
+      "passed": true,
+      "error": null
+    },
+    {
+      "model": "deepseek/deepseek-v4-pro",
+      "run": 1,
+      "sample": "сессия 219 (debug, расчёт)",
+      "passed": false,
+      "error": "RuntimeError: Empty role answer"
+    },
+    {
+      "model": "z-ai/glm-5.3-flash-abliterated",
+      "run": 1,
+      "sample": "сессия 57 (concept, программа)",
+      "passed": true,
+      "error": null
+    },
+    {
+      "model": "z-ai/glm-5.3-flash-abliterated",
+      "run": 1,
+      "sample": "сессия 219 (debug, расчёт)",
+      "passed": true,
+      "error": null
+    },
+    {
+      "model": "z-ai/glm-5.3-flash-abliterated",
+      "run": 2,
+      "sample": "сессия 57 (concept, программа)",
+      "passed": true,
+      "error": null
+    },
+    {
+      "model": "z-ai/glm-5.3-flash-abliterated",
+      "run": 2,
+      "sample": "сессия 219 (debug, расчёт)",
+      "passed": true,
+      "error": null
+    }
+  ],
+  "client_first_median": 6.857167799957097,
+  "client_first_range": [
+    5.145707600051537,
+    7.745980900013819
+  ],
+  "source_sha256": {
+    "scripts/llm_model_bakeoff.py": "2a7318bcd6c34b93e364523f7381aa329b72a282d467997e7aab4049fcaaccde",
+    "app/services/ai_tutor/role_gate.py": "ea0f3a9b5eca522015cff98c50dc0070d88b08e8cf625513265d4a5fe8630d28",
+    "app/services/ai_tutor/prompt.py": "d4931f0ee01c1ada42dff6438f8fd8ee7d9042669fc665aa3ce95744d4cab8a0",
+    "app/services/llm/identity.py": "4be7b87fd00187642bf0196ad4a33679ded59c3576ba8f4b18de07dbd2e63bb4",
+    "app/services/llm/client.py": "34bd6801cb37fc8fd404426a9bbfca0e4f1c7e60212422dbc9c7dfd8c54eb45c",
+    "app/services/llm/contracts.py": "e6ee390147776a4fed834312ae4134f9bcc8df1d138d4f68b4e53f355f4489a9",
+    "app/services/code_review_service.py": "c07c505b374629d1e6c21c8a3d17009b97bab7f6f4677610d92025535dca7037"
+  },
+  "git_head": "7040921bc5771998a2d4045297eba9ce236f9e19",
+  "credits_after_main_window": {
+    "total_credits": 4.91911077,
+    "total_usage": 65.44237749
+  },
+  "credits_delta_main_window": 0.19179647000000077,
+  "credits_delta_including_gap": 0.26082474000000033,
+  "credits_delta_test_windows": 0.19236161000000074,
+  "credits_delta_idle_gap": 0.0684631299999996,
+  "different_hour_confirmation": {
+    "credits_before": {
+      "total_credits": 4.85064764,
+      "total_usage": 65.51084062
+    },
+    "credits_after": {
+      "total_credits": 4.8500825,
+      "total_usage": 65.51140576
+    },
+    "credits_delta_this_window": 0.000565139999999964,
+    "saved_routing_changed_models": [],
+    "provider_models_after": 158,
+    "confirmation_rows": 6,
+    "tutor_first_median": 4.396109200082719,
+    "tutor_chunks_median": 94,
+    "judge_new_median": 7.252773400163278,
+    "judge_all6_median": 7.660421650041826,
+    "judge_all6_worst": 10.75895949988626,
+    "judge_samples_counts": {
+      "0": 3,
+      "1": 3
+    }
+  },
+  "credits_delta_note": "Overall balance change including idle gap; not an individual test invoice. Use credits_delta_test_windows for observed test intervals."
+}

@@ -165,6 +165,9 @@ def _payload(
         body["seed"] = seed
     if response_format is not None:
         body["response_format"] = response_format
+    route = providers.request_provider(model)
+    if route is not None:
+        body["provider"] = route
     return body
 
 

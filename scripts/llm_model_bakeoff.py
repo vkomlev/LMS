@@ -163,6 +163,9 @@ def _sse_error(obj: dict) -> str | None:
 
 def probe(model: str, system_prompt: str, base: str, key: str) -> dict:
     """Один кандидат: качество ответа + латентность стриминга за один вызов."""
+    _load_app_env()
+    from app.services.llm import providers
+
     res: dict = {"model": model, "leak": None, "chunks": 0, "first": None,
                  "total": None, "text": "", "error": None, "ascii_scheme": None}
     cap = _tutor_max_tokens()
@@ -172,6 +175,9 @@ def probe(model: str, system_prompt: str, base: str, key: str) -> dict:
                      {"role": "user", "content": STUDENT_TURN}],
         "temperature": 0.6, "max_tokens": cap, "stream": True,
     }
+    route = providers.request_provider(model)
+    if route is not None:
+        payload["provider"] = route
     finish_reason: str | None = None
     reasoning_chars = 0
     t0 = time.monotonic()
@@ -297,6 +303,9 @@ def judge_probe(model: str, system_prompt: str, user_msg: str, base: str, key: s
     увидеть, что модель отвечает за 90 c, а не записать её в «таймаут» своей же
     меркой.
     """
+    _load_app_env()
+    from app.services.llm import providers
+
     res: dict = {"model": model, "total": None, "tokens_in": 0, "tokens_out": 0,
                  "format_ok": False, "text": "", "error": None}
     payload = {
@@ -306,6 +315,9 @@ def judge_probe(model: str, system_prompt: str, user_msg: str, base: str, key: s
         "temperature": 0.0, "max_tokens": JUDGE_MAX_TOKENS_LIVE, "stream": False,
         "response_format": {"type": "json_object"},
     }
+    route = providers.request_provider(model)
+    if route is not None:
+        payload["provider"] = route
     t0 = time.monotonic()
     try:
         with _post(base, key, "/v1/chat/completions", payload, timeout=180) as r:
