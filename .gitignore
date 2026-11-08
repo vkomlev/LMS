@@ -59,6 +59,7 @@ docs/*
 secrets/*
 !secrets/.gitkeep
 .mcp.json
+.kimi-code/mcp.json
 # Игнорируем все JSON файлы с credentials (но не конфигурационные)
 *.credentials.json
 *service-account*.json

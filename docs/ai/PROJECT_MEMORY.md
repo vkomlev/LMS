@@ -55,7 +55,7 @@ PYTHONIOENCODING=utf-8 PYTHONPATH=. .venv/Scripts/python.exe <скрипт/мо�
 
 ### Доступ к БД (dev / прод) — не собирать DATABASE_URL вручную
 
-- **MCP-серверы уже настроены** в `.mcp.json`: `learn_public_db` (dev, read-only), `learn_prod_db` (прод, read-only), `content_backbone_db`, `content_backbone_prod_db` — использовать их ПЕРВЫМ делом для чтения, а не пересобирать строку подключения из хоста/пароля.
+- **MCP-серверы уже настроены** в `.mcp.json`: `learn_public_db` (dev, read-only), `learn_prod_db` (прод, read-only), `content_backbone_db`, `content_backbone_prod_db` — использовать их ПЕРВЫМ делом для чтения, а не пересобирать строку подключения из хоста/пароля. Для Kimi Code те же 4 сервера продублированы в проектном `.kimi-code/mcp.json` (файл в `.gitignore`; при первом открытии проекта в Kimi требует trust). Терминальный доступ к прод без MCP: `scripts/prod_db_read.py "<SELECT>"` (read-only, без гейта) и `scripts/prod_db.py --write "<DML>"` (только с `DBCHECK_OK=1` после протокола /db-check; оба скрипта берут DSN из `.mcp.json`, секрет не дублируется).
 - Локальный `scripts/connect_db.py` подключается к **dev**-БД из `.env` (`load_dotenv` + `app/db/session`) — быстрый smoke, что БД жива и какие `course_uid` доступны.
 - **На прод** формула DSN — только в `docs/ai/operator-runbook.md` (Шаг 3, `DATABASE_URL`); реального пароля нигде в репозитории нет и быть не должно. Любая операция с прод-БД (в т.ч. read вне MCP, любой write/миграция) — через `/db-check`, хук `~/.claude/hooks/db_write_gate.py` блокирует запись без `DBCHECK_OK=1` после реального прохождения `/db-check`.
 - Alembic: `alembic current` / `alembic heads` / `alembic upgrade head` / `alembic downgrade -1` — с тем же префиксом выше.
