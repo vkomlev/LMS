@@ -12,12 +12,15 @@ defect-registry.md) — см. комментарии `# DEFECT` на месте.
 from __future__ import annotations
 
 import logging
+import secrets
+from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_async_db, get_current_user, CurrentUser
+from app.core.config import Settings
 from app.models.courses import Courses
 from app.models.users import Users
 from app.schemas.poligon import (
@@ -26,17 +29,37 @@ from app.schemas.poligon import (
     CheckoutResponse,
     EnrollRequest,
     EnrollResponse,
+    PoligonLoginRequest,
+    PoligonLoginResponse,
     PoligonRegisterRequest,
     PoligonRegisterResponse,
     PromoApplyRequest,
     PromoApplyResponse,
 )
+from app.services import audit_service
+from app.services.auth import session_service
+from app.services.auth.cookie import set_session_cookie
 from app.services.auth.role_assign_service import ensure_student_role
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/poligon", tags=["poligon"])
+_settings = Settings()
+
+_LOGIN_SESSION_TTL_SECONDS = 3600  # как у issue-session: blast-radius ограничен
+
+
+def _validate_service_key_constant_time(provided: str | None) -> bool:
+    """Constant-time compare X-API-Key против ВСЕХ valid_api_keys."""
+    if not provided:
+        return False
+    found = False
+    for valid in _settings.valid_api_keys:
+        if secrets.compare_digest(provided, valid):
+            found = True
+            # NB: не break — выполняем все compare_digest для constant-time
+    return found
 
 
 @router.post(
@@ -108,6 +131,107 @@ async def register_student(
     return PoligonRegisterResponse(
         user_id=user_id,
         message="Регистрация прошла успешно. Теперь войдите на странице входа.",
+    )
+
+
+@router.post(
+    "/login-by-email",
+    response_model=PoligonLoginResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Вход ученика полигона по email без письма (только ветка poligon)",
+    responses={
+        200: {"description": "Cookie-сессия выдана"},
+        401: {"description": "Invalid X-API-Key"},
+        403: {"description": "Аккаунт не является учеником полигона"},
+        404: {"description": "Пользователь с таким email не найден"},
+    },
+)
+async def login_by_email(
+    body: PoligonLoginRequest,
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_async_db),
+    x_api_key: str | None = Header(None, alias="X-API-Key"),
+) -> PoligonLoginResponse:
+    """Вход по email для самозарегистрированных учеников полигона (tsk-1469).
+
+    Песочница без реальной почты: подтверждение владения email не выполняется
+    (это осознанный dev-вход уровня «полигон», как выбор персоны). Защита от
+    чужих аккаунтов — трёхслойная:
+      1. X-API-Key (constant-time) — ключ знает только серверный прокси SPW,
+         прямые анонимные вызовы к LMS отсекаются;
+      2. пользователь обязан существовать в БД СВОЕГО tier'а (полигон живёт
+         на отдельных БД poligon_dev/test/stage, боевых аккаунтов там нет);
+      3. у пользователя обязана быть роль student — её получают и посевные
+         персоны (scripts/poligon_seed.py), и зарегистрированные через
+         /poligon/register (tsk-1468). Боевой аккаунт без student-роли
+         отсекается даже при ошибочном подключении к боевой БД.
+    Сессия выдаётся по образцу /auth/test/issue-session: TTL=3600,
+    HttpOnly-cookie через set_session_cookie, audit без значения cookie.
+    """
+    if not _validate_service_key_constant_time(x_api_key):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid X-API-Key")
+
+    email = body.email.strip().lower()
+    user = (
+        await db.execute(select(Users).where(Users.email == email))
+    ).scalar_one_or_none()
+    if user is None:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            "Пользователь с таким email не найден. Сначала зарегистрируйтесь.",
+        )
+
+    student_role = (
+        await db.execute(
+            text(
+                "SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id "
+                "WHERE ur.user_id = :uid AND r.name = 'student'"
+            ),
+            {"uid": user.id},
+        )
+    ).first()
+    if student_role is None:
+        logger.info("poligon login-by-email: user %s без student-роли — отказ", user.id)
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Этот аккаунт не является учеником полигона.",
+        )
+
+    ip = request.client.host if request.client else None
+    access_token, _refresh_token, session = await session_service.create_session(
+        db, user_id=user.id, ua_fingerprint=request.headers.get("user-agent"),
+    )
+    custom_expires = datetime.now(timezone.utc) + timedelta(
+        seconds=_LOGIN_SESSION_TTL_SECONDS
+    )
+    session.expires_at = custom_expires
+    await db.flush()
+
+    await audit_service.log_event(
+        db,
+        audit_service.AUTH_TEST_SESSION_ISSUED,
+        user_id=user.id,
+        ip=ip,
+        details={
+            "session_id": str(session.id),
+            "ttl_seconds": _LOGIN_SESSION_TTL_SECONDS,
+            "channel": "poligon_email_login",
+        },
+    )
+    await db.commit()
+
+    set_session_cookie(
+        response, access_token,
+        max_age=_LOGIN_SESSION_TTL_SECONDS,
+        secure=_settings.cookie_secure,
+    )
+    logger.info("poligon login-by-email: сессия выдана user_id=%s (ip=%s)", user.id, ip)
+
+    return PoligonLoginResponse(
+        user_id=user.id,
+        full_name=user.full_name or "",
+        message="Вход выполнен.",
     )
 
 

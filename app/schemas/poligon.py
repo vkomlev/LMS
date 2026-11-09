@@ -20,6 +20,16 @@ class PoligonRegisterResponse(BaseModel):
     message: str
 
 
+class PoligonLoginRequest(BaseModel):
+    email: EmailStr
+
+
+class PoligonLoginResponse(BaseModel):
+    user_id: int
+    full_name: str
+    message: str
+
+
 class CatalogCourseOut(BaseModel):
     id: int
     course_uid: str

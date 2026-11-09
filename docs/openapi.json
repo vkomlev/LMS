@@ -19137,6 +19137,75 @@
         }
       }
     },
+    "/api/v1/poligon/login-by-email": {
+      "post": {
+        "tags": [
+          "poligon"
+        ],
+        "summary": "Вход ученика полигона по email без письма (только ветка poligon)",
+        "description": "Вход по email для самозарегистрированных учеников полигона (tsk-1469).\n\nПесочница без реальной почты: подтверждение владения email не выполняется\n(это осознанный dev-вход уровня «полигон», как выбор персоны). Защита от\nчужих аккаунтов — трёхслойная:\n  1. X-API-Key (constant-time) — ключ знает только серверный прокси SPW,\n     прямые анонимные вызовы к LMS отсекаются;\n  2. пользователь обязан существовать в БД СВОЕГО tier'а (полигон живёт\n     на отдельных БД poligon_dev/test/stage, боевых аккаунтов там нет);\n  3. у пользователя обязана быть роль student — её получают и посевные\n     персоны (scripts/poligon_seed.py), и зарегистрированные через\n     /poligon/register (tsk-1468). Боевой аккаунт без student-роли\n     отсекается даже при ошибочном подключении к боевой БД.\nСессия выдаётся по образцу /auth/test/issue-session: TTL=3600,\nHttpOnly-cookie через set_session_cookie, audit без значения cookie.",
+        "operationId": "login_by_email_api_v1_poligon_login_by_email_post",
+        "parameters": [
+          {
+            "name": "X-API-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PoligonLoginRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Cookie-сессия выдана",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PoligonLoginResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid X-API-Key"
+          },
+          "403": {
+            "description": "Аккаунт не является учеником полигона"
+          },
+          "404": {
+            "description": "Пользователь с таким email не найден"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/poligon/catalog": {
       "get": {
         "tags": [
@@ -26940,6 +27009,43 @@
         ],
         "title": "PendingReviewListResponse",
         "description": "Ответ списка очереди проверки преподавателя."
+      },
+      "PoligonLoginRequest": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email",
+            "title": "Email"
+          }
+        },
+        "type": "object",
+        "required": [
+          "email"
+        ],
+        "title": "PoligonLoginRequest"
+      },
+      "PoligonLoginResponse": {
+        "properties": {
+          "user_id": {
+            "type": "integer",
+            "title": "User Id"
+          },
+          "full_name": {
+            "type": "string",
+            "title": "Full Name"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "user_id",
+          "full_name",
+          "message"
+        ],
+        "title": "PoligonLoginResponse"
       },
       "PoligonRegisterRequest": {
         "properties": {
