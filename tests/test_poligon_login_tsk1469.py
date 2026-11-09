@@ -149,3 +149,45 @@ async def test_login_without_student_role_403(db, client):
         assert cnt == 0
     finally:
         await _cleanup(db, [uid])
+
+
+@pytest.mark.asyncio
+async def test_login_non_ascii_api_key_401_not_500(db, client):
+    """Байты 0x80–0xFF в заголовке (Starlette декодирует их latin-1) не дают 500."""
+    resp = await client.post(
+        "/api/v1/poligon/login-by-email",
+        json={"email": _email()},
+        headers={"X-API-Key": b"\xc3\xa9-key"},
+    )
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_login_user_with_extra_role_403(db, client):
+    """student + teacher: привилегированный аккаунт не входит по email."""
+    uid, email = await _make_user(db, with_student_role=True)
+    try:
+        teacher_role_id = (
+            await db.execute(text("SELECT id FROM roles WHERE name = 'teacher'"))
+        ).scalar_one()
+        await db.execute(
+            text("INSERT INTO user_roles (user_id, role_id) VALUES (:u, :r)"),
+            {"u": uid, "r": teacher_role_id},
+        )
+        await db.commit()
+
+        resp = await client.post(
+            "/api/v1/poligon/login-by-email",
+            json={"email": email},
+            headers={"X-API-Key": _api_key()},
+        )
+        assert resp.status_code == 403
+
+        cnt = (
+            await db.execute(
+                text("SELECT COUNT(*) FROM user_session WHERE user_id = :u"), {"u": uid}
+            )
+        ).scalar()
+        assert cnt == 0
+    finally:
+        await _cleanup(db, [uid])

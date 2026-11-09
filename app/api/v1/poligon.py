@@ -51,12 +51,18 @@ _LOGIN_SESSION_TTL_SECONDS = 3600  # как у issue-session: blast-radius ог�
 
 
 def _validate_service_key_constant_time(provided: str | None) -> bool:
-    """Constant-time compare X-API-Key против ВСЕХ valid_api_keys."""
+    """Constant-time compare X-API-Key против ВСЕХ valid_api_keys.
+
+    Сравниваем байты, не str: secrets.compare_digest с не-ASCII str бросает
+    TypeError → анонимный запрос с бинарным заголовком превратился бы в 500
+    вместо 401 (находка внешнего ревью tsk-1469).
+    """
     if not provided:
         return False
+    provided_bytes = provided.encode("utf-8", errors="ignore")
     found = False
     for valid in _settings.valid_api_keys:
-        if secrets.compare_digest(provided, valid):
+        if secrets.compare_digest(provided_bytes, valid.encode("utf-8")):
             found = True
             # NB: не break — выполняем все compare_digest для constant-time
     return found
@@ -161,11 +167,13 @@ async def login_by_email(
       1. X-API-Key (constant-time) — ключ знает только серверный прокси SPW,
          прямые анонимные вызовы к LMS отсекаются;
       2. пользователь обязан существовать в БД СВОЕГО tier'а (полигон живёт
-         на отдельных БД poligon_dev/test/stage, боевых аккаунтов там нет);
-      3. у пользователя обязана быть роль student — её получают и посевные
-         персоны (scripts/poligon_seed.py), и зарегистрированные через
-         /poligon/register (tsk-1468). Боевой аккаунт без student-роли
-         отсекается даже при ошибочном подключении к боевой БД.
+         на отдельных БД poligon_dev/test/stage, боевых аккаунтов там нет) —
+         это ОСНОВНАЯ защита от входа под боевым аккаунтом;
+      3. у пользователя обязана быть роль student и НЕ должно быть других
+         ролей (teacher/methodist/admin) — её получают и посевные ученики
+         (scripts/poligon_seed.py), и зарегистрированные через
+         /poligon/register (tsk-1468). Слой 3 — defense-in-depth на случай
+         ошибочного подключения к чужой БД, он НЕ заменяет слой 2.
     Сессия выдаётся по образцу /auth/test/issue-session: TTL=3600,
     HttpOnly-cookie через set_session_cookie, audit без значения cookie.
     """
@@ -182,17 +190,20 @@ async def login_by_email(
             "Пользователь с таким email не найден. Сначала зарегистрируйтесь.",
         )
 
-    student_role = (
+    role_rows = (
         await db.execute(
             text(
-                "SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id "
-                "WHERE ur.user_id = :uid AND r.name = 'student'"
+                "SELECT r.name FROM user_roles ur JOIN roles r ON r.id = ur.role_id "
+                "WHERE ur.user_id = :uid"
             ),
             {"uid": user.id},
         )
-    ).first()
-    if student_role is None:
-        logger.info("poligon login-by-email: user %s без student-роли — отказ", user.id)
+    ).scalars().all()
+    if role_rows != ["student"]:
+        logger.info(
+            "poligon login-by-email: user %s роли=%s — отказ (не ученик полигона)",
+            user.id, role_rows,
+        )
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
             "Этот аккаунт не является учеником полигона.",
