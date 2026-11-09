@@ -1,4 +1,4 @@
-"""Polygon-only эндпоинты: каталог/промокод/checkout/enroll (tsk-182).
+"""Polygon-only эндпоинты: регистрация/каталог/промокод/checkout/enroll (tsk-182 + tsk-1468).
 
 Ветка `poligon` ТОЛЬКО. В `app/api/main.py` этой ветки:
     from app.api.v1.poligon import router as poligon_router
@@ -19,19 +19,96 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_async_db, get_current_user, CurrentUser
 from app.models.courses import Courses
+from app.models.users import Users
 from app.schemas.poligon import (
     CatalogCourseOut,
     CheckoutRequest,
     CheckoutResponse,
     EnrollRequest,
     EnrollResponse,
+    PoligonRegisterRequest,
+    PoligonRegisterResponse,
     PromoApplyRequest,
     PromoApplyResponse,
 )
+from app.services.auth.role_assign_service import ensure_student_role
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/poligon", tags=["poligon"])
+
+
+@router.post(
+    "/register",
+    response_model=PoligonRegisterResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Регистрация ученика учебного полигона (только ветка poligon)",
+    responses={
+        409: {"description": "Email уже зарегистрирован"},
+        422: {"description": "Невалидные имя/email"},
+    },
+)
+async def register_student(
+    body: PoligonRegisterRequest,
+    db: AsyncSession = Depends(get_async_db),
+) -> PoligonRegisterResponse:
+    """Создать ученика полигона: имя + email (tsk-1468).
+
+    Модель создания — по образцу scripts/poligon_seed.py: INSERT в users,
+    student-роль через ensure_student_role, identity_link 'email'.
+    Повторный email → 409 с понятным сообщением (двойная защита: явный SELECT
+    до INSERT + перехват IntegrityError от partial unique index на users.email
+    при гонке). 500 здесь недопустимы — форма регистрации публичная.
+    """
+    email = body.email.strip().lower()
+    full_name = body.full_name.strip()
+    if not full_name:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Имя не может быть пустым")
+
+    existing = (
+        await db.execute(select(Users.id).where(Users.email == email))
+    ).scalar_one_or_none()
+    if existing is not None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Этот email уже зарегистрирован. Войдите через страницу входа.",
+        )
+
+    try:
+        user_id = (
+            await db.execute(
+                text(
+                    "INSERT INTO users (email, full_name) VALUES (:email, :name) "
+                    "RETURNING id"
+                ),
+                {"email": email, "name": full_name},
+            )
+        ).scalar_one()
+        await db.execute(
+            text(
+                "INSERT INTO identity_link (user_id, kind, value) "
+                "VALUES (:uid, 'email', :value)"
+            ),
+            {"uid": user_id, "value": email},
+        )
+        await ensure_student_role(
+            db, user_id,
+            channel="poligon_register", origin="auto_registration",
+        )
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        logger.info("poligon register: email conflict (race): %s", email)
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Этот email уже зарегистрирован. Войдите через страницу входа.",
+        ) from None
+
+    return PoligonRegisterResponse(
+        user_id=user_id,
+        message="Регистрация прошла успешно. Теперь войдите на странице входа.",
+    )
 
 
 @router.get("/catalog", response_model=list[CatalogCourseOut])

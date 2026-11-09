@@ -19099,6 +19099,44 @@
         }
       }
     },
+    "/api/v1/poligon/register": {
+      "post": {
+        "tags": [
+          "poligon"
+        ],
+        "summary": "Регистрация ученика учебного полигона (только ветка poligon)",
+        "description": "Создать ученика полигона: имя + email (tsk-1468).\n\nМодель создания — по образцу scripts/poligon_seed.py: INSERT в users,\nstudent-роль через ensure_student_role, identity_link 'email'.\nПовторный email → 409 с понятным сообщением (двойная защита: явный SELECT\nдо INSERT + перехват IntegrityError от partial unique index на users.email\nпри гонке). 500 здесь недопустимы — форма регистрации публичная.",
+        "operationId": "register_student_api_v1_poligon_register_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PoligonRegisterRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PoligonRegisterResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Email уже зарегистрирован"
+          },
+          "422": {
+            "description": "Невалидные имя/email"
+          }
+        }
+      }
+    },
     "/api/v1/poligon/catalog": {
       "get": {
         "tags": [
@@ -26902,6 +26940,45 @@
         ],
         "title": "PendingReviewListResponse",
         "description": "Ответ списка очереди проверки преподавателя."
+      },
+      "PoligonRegisterRequest": {
+        "properties": {
+          "full_name": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Full Name"
+          },
+          "email": {
+            "type": "string",
+            "format": "email",
+            "title": "Email"
+          }
+        },
+        "type": "object",
+        "required": [
+          "full_name",
+          "email"
+        ],
+        "title": "PoligonRegisterRequest"
+      },
+      "PoligonRegisterResponse": {
+        "properties": {
+          "user_id": {
+            "type": "integer",
+            "title": "User Id"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "user_id",
+          "message"
+        ],
+        "title": "PoligonRegisterResponse"
       },
       "ProgressBulkResponse": {
         "properties": {

@@ -7,7 +7,17 @@ max_length=11 в PromoApplyRequest — НАМЕРЕННЫЙ дефект кла�
 """
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field
+
+
+class PoligonRegisterRequest(BaseModel):
+    full_name: str = Field(..., min_length=1, max_length=200)
+    email: EmailStr
+
+
+class PoligonRegisterResponse(BaseModel):
+    user_id: int
+    message: str
 
 
 class CatalogCourseOut(BaseModel):
