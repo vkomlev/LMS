@@ -48,10 +48,20 @@ main() {
       echo "ОШИБКА: .env.${tier} не найден — первичная настройка не завершена (см. README.md)." >&2
       exit 1
     fi
-    local db_url
+    # Settings() на старте alembic требует DATABASE_URL и VALID_API_KEYS
+    # (см. app/core/config.py). Берём ОБА из того же .env.<tier>, что читает
+    # systemd-сервис tier'а (EnvironmentFile). Целиком source'ить .env.<tier>
+    # нельзя: формат EnvironmentFile допускает неэкранированные пробелы в
+    # значениях (INPUT_LINK_LABEL=Входные данные) — bash source на них упадёт.
+    local db_url api_keys
     db_url=$(grep '^DATABASE_URL=' ".env.${tier}" | cut -d= -f2-)
+    api_keys=$(grep '^VALID_API_KEYS=' ".env.${tier}" | cut -d= -f2-)
+    if [[ -z "$api_keys" ]]; then
+      echo "ОШИБКА: VALID_API_KEYS не задан в .env.${tier} — alembic не стартует." >&2
+      exit 1
+    fi
     echo "-- tier=${tier} --"
-    DATABASE_URL="$db_url" alembic upgrade head
+    DATABASE_URL="$db_url" VALID_API_KEYS="$api_keys" alembic upgrade head
   done
   deactivate
 
