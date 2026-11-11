@@ -134,6 +134,18 @@ class Courses(Base):
             "никогда. Ставит методист: из данных этот порядок не выводится"
         ),
     )
+    strict_progression: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default=text("false"),
+        comment=(
+            "tsk-1500: жёсткая последовательность подкурсов — next-item не "
+            "отдаёт элементы следующего подкурса, пока в предыдущих есть "
+            "нерешённые обязательные задания (накопительно). Включает "
+            "методист на корневом курсе; ручные исключения учеников — "
+            "progression_overrides"
+        ),
+    )
 
     # Родители курса (многие-ко-многим через course_parents)
     parent_courses: Mapped[List["Courses"]] = relationship(

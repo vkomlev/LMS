@@ -1473,9 +1473,23 @@ class LearningEngineService:
                 # первый незавершённый с начала этого корня.
                 position = None
 
+            # tsk-1500: жёсткая последовательность — префикс обхода до позиции
+            # (накопительно, в порядке шагов). В prior узел попадает, только
+            # когда обход полностью прошёл его шаги: текущий узел меняется — и
+            # прежний уходит в prior. Свой узел в prior не бывает.
+            prior_nodes: List[int] = []
+            for prev_cid, _prev_kind in steps[:start_index]:
+                if prev_cid not in absorbed_here and prev_cid not in prior_nodes:
+                    prior_nodes.append(prev_cid)
+            gate_cache: dict = {}
+            current_node: Optional[int] = None
             for offset, (cid, step_kind) in enumerate(steps[start_index:]):
                 if cid in absorbed_here:
                     continue
+                if cid != current_node:
+                    if current_node is not None and current_node not in prior_nodes:
+                        prior_nodes.append(current_node)
+                    current_node = cid
                 material_ids: Optional[List[int]] = None
                 task_ids: Optional[List[int]] = None
 
@@ -1519,6 +1533,11 @@ class LearningEngineService:
                         root_course_id=current_root_id,
                     )
                     if mat is not None:
+                        gated = await self._strict_progression_block(
+                            db, student_id, current_root_id, cid, prior_nodes, gate_cache,
+                        )
+                        if gated is not None:
+                            return gated
                         logger.info("resolve_next_item: student_id=%s next=material course_id=%s material_id=%s", student_id, cid, mat)
                         return NextItemResult(type="material", course_id=cid, root_course_id=current_root_id, material_id=mat, reason="Следующий материал")
                     continue
@@ -1539,6 +1558,11 @@ class LearningEngineService:
                         reason="Исчерпан лимит попыток",
                     )
                 if task_id is not None:
+                    gated = await self._strict_progression_block(
+                        db, student_id, current_root_id, cid, prior_nodes, gate_cache,
+                    )
+                    if gated is not None:
+                        return gated
                     logger.info("resolve_next_item: student_id=%s next=task course_id=%s task_id=%s", student_id, cid, task_id)
                     return NextItemResult(type="task", course_id=cid, root_course_id=current_root_id, task_id=task_id, reason="Следующее задание")
 
@@ -1591,9 +1615,23 @@ class LearningEngineService:
         # tsk-1403: материалы узла нужны и хвосту, если у узла есть материалы
         # «после подразделов» — тоже один раз на узел за вызов.
         material_rows_cache: dict[int, tuple] = {}
+        # tsk-1500: жёсткая последовательность — префикс обхода до позиции
+        # (накопительно, в порядке шагов). Пустой префикс = первый узел,
+        # гейт для него бессмысленен.
+        prior_nodes: List[int] = []
+        for prev_cid, _prev_seg in steps[:start_index]:
+            if prev_cid not in absorbed_here and prev_cid not in prior_nodes:
+                prior_nodes.append(prev_cid)
+        gate_cache: dict = {}
+        current_node: Optional[int] = None
         for offset, (cid, segment) in enumerate(steps[start_index:]):
             if cid in absorbed_here:
                 continue
+            # tsk-1500: узел полностью позади — прежний текущий уходит в prior.
+            if cid != current_node:
+                if current_node is not None and current_node not in prior_nodes:
+                    prior_nodes.append(current_node)
+                current_node = cid
             entries = await self._effective_segment(
                 db, cid, segment, student_id, root_course_id=root_id,
                 task_rows_cache=task_rows_cache,
@@ -1606,8 +1644,68 @@ class LearningEngineService:
                 db, student_id, cid, entries, root_course_id=root_id
             )
             if found is not None:
+                blocked = await self._strict_progression_block(
+                    db, student_id, root_id, cid, prior_nodes, cache=gate_cache,
+                )
+                if blocked is not None:
+                    return blocked
                 return found
         return None
+
+    async def _strict_progression_block(
+        self,
+        db: AsyncSession,
+        student_id: int,
+        root_id: int,
+        target_node_id: int,
+        prior_nodes: List[int],
+        cache: dict,
+    ) -> Optional[NextItemResult]:
+        """Гейт жёсткой последовательности подкурсов (tsk-1500).
+
+        Настройка на корне + нет ручной разблокировки + в предыдущих узлах
+        есть нерешённые обязательные задания → blocked_dependency с первым
+        таким узлом. Экран ученика для blocked_dependency есть с tsk-231:
+        название и uid раздела едут в dependency_course_title/uid.
+        """
+        from app.services import progression_gate_service
+
+        # Свой узел (шаг внутри него уже проходили) или пустой префикс —
+        # гейт бессмысленен. Условие внутри хелпера, чтобы оба пути обхода
+        # звали его без предварительных проверок.
+        if not prior_nodes or target_node_id in prior_nodes:
+            return None
+        if root_id not in cache:
+            cache[root_id] = await progression_gate_service.strict_progression_enabled(
+                db, root_id
+            )
+        if not cache[root_id]:
+            return None
+        if await progression_gate_service.has_override(db, root_id, student_id):
+            return None
+        locked = await progression_gate_service.first_locked_node(
+            db, student_id, prior_nodes
+        )
+        if locked is None:
+            return None
+        row = await db.execute(
+            text("SELECT title, course_uid FROM courses WHERE id = :id"),
+            {"id": locked},
+        )
+        locked_title, locked_uid = row.one()
+        logger.info(
+            "strict_progression: student_id=%s root=%s цель=%s держит узел=%s",
+            student_id, root_id, target_node_id, locked,
+        )
+        return NextItemResult(
+            type="blocked_dependency",
+            course_id=target_node_id,
+            root_course_id=root_id,
+            reason="Сначала решите обязательные задания предыдущего раздела",
+            dependency_course_id=locked,
+            dependency_course_title=locked_title,
+            dependency_course_uid=locked_uid,
+        )
 
     async def _effective_segment(
         self,

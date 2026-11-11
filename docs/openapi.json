@@ -50612,6 +50612,314 @@
         }
       }
     },
+    "/api/v1/methodist/courses/{course_id}/progression-overrides": {
+      "get": {
+        "tags": [
+          "methodist_progression"
+        ],
+        "summary": "Ученики в обходе жёсткой последовательности курса",
+        "operationId": "list_overrides_api_v1_methodist_courses__course_id__progression_overrides_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "course_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Course Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/OverrideRead"
+                  },
+                  "title": "Response List Overrides Api V1 Methodist Courses  Course Id  Progression Overrides Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "methodist_progression"
+        ],
+        "summary": "Отпустить ученика вперёд в обход жёсткой последовательности",
+        "operationId": "add_override_api_v1_methodist_courses__course_id__progression_overrides_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "course_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Course Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OverrideCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OverrideRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/methodist/courses/{course_id}/progression-overrides/{user_id}": {
+      "delete": {
+        "tags": [
+          "methodist_progression"
+        ],
+        "summary": "Вернуть ученика под правило жёсткой последовательности",
+        "operationId": "remove_override_api_v1_methodist_courses__course_id__progression_overrides__user_id__delete",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "course_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Course Id"
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "User Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/public/leads": {
       "post": {
         "tags": [
@@ -59660,6 +59968,16 @@
             "type": "boolean",
             "title": "Is Required"
           },
+          "strict_progression": {
+            "type": "boolean",
+            "title": "Strict Progression",
+            "description": "tsk-1500: жёсткая последовательность подкурсов — next-item не отдаёт элементы следующего подкурса, пока в предыдущих есть нерешённые обязательные задания. Смысл на корневом курсе",
+            "default": false,
+            "examples": [
+              false,
+              true
+            ]
+          },
           "course_uid": {
             "anyOf": [
               {
@@ -59888,6 +60206,16 @@
             "type": "boolean",
             "title": "Is Required"
           },
+          "strict_progression": {
+            "type": "boolean",
+            "title": "Strict Progression",
+            "description": "tsk-1500: жёсткая последовательность подкурсов — next-item не отдаёт элементы следующего подкурса, пока в предыдущих есть нерешённые обязательные задания. Смысл на корневом курсе",
+            "default": false,
+            "examples": [
+              false,
+              true
+            ]
+          },
           "course_uid": {
             "anyOf": [
               {
@@ -59987,6 +60315,23 @@
             ],
             "title": "Description",
             "description": "Описание курса"
+          },
+          "strict_progression": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Strict Progression",
+            "description": "tsk-1500: жёсткая последовательность подкурсов — next-item не отдаёт элементы следующего подкурса, пока в предыдущих есть нерешённые обязательные задания (накопительно). Смысл имеет на корневом курсе; null = не менять",
+            "examples": [
+              null,
+              true,
+              false
+            ]
           },
           "parent_course_ids": {
             "anyOf": [
@@ -60230,6 +60575,16 @@
           "is_required": {
             "type": "boolean",
             "title": "Is Required"
+          },
+          "strict_progression": {
+            "type": "boolean",
+            "title": "Strict Progression",
+            "description": "tsk-1500: жёсткая последовательность подкурсов — next-item не отдаёт элементы следующего подкурса, пока в предыдущих есть нерешённые обязательные задания. Смысл на корневом курсе",
+            "default": false,
+            "examples": [
+              false,
+              true
+            ]
           },
           "course_uid": {
             "anyOf": [
@@ -73536,6 +73891,62 @@
         ],
         "title": "OralHelpRequestCreateResponse",
         "description": "Результат записи устной просьбы."
+      },
+      "OverrideCreate": {
+        "properties": {
+          "user_id": {
+            "type": "integer",
+            "title": "User Id",
+            "description": "ID ученика"
+          }
+        },
+        "type": "object",
+        "required": [
+          "user_id"
+        ],
+        "title": "OverrideCreate"
+      },
+      "OverrideRead": {
+        "properties": {
+          "user_id": {
+            "type": "integer",
+            "title": "User Id"
+          },
+          "full_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Full Name"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "user_id",
+          "created_at"
+        ],
+        "title": "OverrideRead",
+        "description": "Ученик в обходе правила курса."
       },
       "PageMeta": {
         "properties": {

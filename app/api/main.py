@@ -576,6 +576,10 @@ app.include_router(methodist_breaks_router, prefix=API_PREFIX)
 from app.api.v1.methodist_attention_summary import router as methodist_attention_summary_router
 app.include_router(methodist_attention_summary_router, prefix=API_PREFIX)
 
+# tsk-1500: ручные разблокировки жёсткой последовательности подкурсов
+from app.api.v1.methodist_progression import router as methodist_progression_router
+app.include_router(methodist_progression_router, prefix=API_PREFIX)
+
 # tsk-929: форма захвата заявки на продающих лендингах сайта — перед переходом
 # в Telegram, а не вместо него. Публичный контур без гостевой сессии, защита —
 # rate-limit по IP + honeypot.

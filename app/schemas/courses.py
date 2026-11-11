@@ -92,6 +92,16 @@ class CourseUpdate(BaseModel):
     title: Optional[str] = Field(None, description="Название курса", examples=["Python: продвинутый уровень"])
     access_level: Optional[AccessLevel] = Field(None, description="Тип доступа/проверки", examples=["manual_check"])
     description: Optional[str] = Field(None, description="Описание курса")
+    strict_progression: Optional[bool] = Field(
+        None,
+        description=(
+            "tsk-1500: жёсткая последовательность подкурсов — next-item не отдаёт "
+            "элементы следующего подкурса, пока в предыдущих есть нерешённые "
+            "обязательные задания (накопительно). Смысл имеет на корневом курсе; "
+            "null = не менять"
+        ),
+        examples=[None, True, False],
+    )
     parent_course_ids: Optional[List[int]] = Field(
         None,
         description="Список ID родительских курсов. null = не изменять, [] = сделать корневым. Для указания order_number используйте parent_courses.",
@@ -151,6 +161,15 @@ class CourseRead(BaseModel):
     )
     created_at: datetime
     is_required: bool
+    strict_progression: bool = Field(
+        default=False,
+        description=(
+            "tsk-1500: жёсткая последовательность подкурсов — next-item не "
+            "отдаёт элементы следующего подкурса, пока в предыдущих есть "
+            "нерешённые обязательные задания. Смысл на корневом курсе"
+        ),
+        examples=[False, True],
+    )
     course_uid: str | None = Field(
         None,
         description="Внешний код курса (для импорта/интеграций), например 'COURSE-PY-01'. Может быть null для старых курсов.",
