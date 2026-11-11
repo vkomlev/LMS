@@ -1,0 +1,171 @@
+diff --git a/.env.example b/.env.example
+index 9ef688f..129e26f 100644
+--- a/.env.example
++++ b/.env.example
+@@ -207,13 +207,13 @@ CLAUDE_API_KEY=
+ # Обоснование выбора и стенд: docs/specs/2026-08-06-contract-llm-client.md §6a
+ # Стенд 2026-11-08 (tsk-1453), состав согласован оператором.
+ # Канон цепочек — app/services/llm/providers.py; пустое значение берёт канон.
+-# Наставник: GLM Flash, судья: Terra -> Sol. Anthropic исключён.
+-# Sol прошла последний штатный прогон; ранние отказы сохранены в отчёте.
+-# Клиент явно задаёт Auto Stable для GLM/Sol и provider-28 для Terra.
++# Наставник: GLM Flash, судья: Terra -> Luna. Anthropic исключён.
++# Sol подменена (14k входных токенов на «Привет», tsk-1489) — выведена.
++# Клиент явно задаёт Auto Stable для GLM/Terra/Sol.
+ # Маршрут действует только на запрос LMS, настройки аккаунта не меняются.
+ LLM_TUTOR_MODELS=
+-LLM_JUDGE_MODELS=
+-# Подготовка отзывов: Terra / provider-28; Sol не прошла эту роль на prod.
++LLM_JUDGE_MODELS=openai/gpt-6.1-terra,openai/gpt-5.6-luna
++# Подготовка отзывов: Terra / Auto Stable; Sol не прошла эту роль на prod.
+ # При отказе модели карточка использует штатный текст из рубрики.
+ LLM_FEEDBACK_MODELS=openai/gpt-6.1-terra
+ # Ротация (tsk-671): сколько секунд модель считается «только что отказавшей»
+diff --git a/app/services/llm/providers.py b/app/services/llm/providers.py
+index 9e3f8f9..73badc1 100644
+--- a/app/services/llm/providers.py
++++ b/app/services/llm/providers.py
+@@ -226,7 +226,14 @@ _DEFAULT_TUTOR_MODELS = "z-ai/glm-5.3-flash"
+ # Auto Stable у Terra добавлял инструкцию. Sol — проверенный резерв (3/3).
+ # Поздний prod-контроль выявил у Sol отказы на первом образце; резерв пока
+ # не подтверждён. См. docs/qa/2026-11-08-llm-prod-rollout.md.
+-_DEFAULT_JUDGE_MODELS = "openai/gpt-6.1-terra,openai/gpt-6.1-sol"
++# 2026-11-11 (tsk-1489): закрепление Terra за provider-28 СНЯТО — провайдер
++# умер (39× LLMUpstreamUnavailable в прогоне черновиков, проба 3×503), а
++# Auto Stable у Terra теперь чистая (29–42 входных токена на «Привет», id
++# `chatcmpl-<цифры>`). Sol подменена (14k входных токенов) — заменена на luna,
++# проверенный резерв (формат 3/3, стенд 09–10.01, чистая проба 11.11).
++# Канон цепочки судьи (дефолт ниже и прод-.env): terra,luna. Luna маршрутом
++# не закреплена — идёт дефолтным авто роутера.
++_DEFAULT_JUDGE_MODELS = "openai/gpt-6.1-terra,openai/gpt-5.6-luna"
+ 
+ 
+ def request_provider(model: str) -> str | dict | None:
+@@ -236,9 +243,7 @@ def request_provider(model: str) -> str | dict | None:
+     Auto выбирает поставщика заданной модели, а не саму модель. Новый словарь
+     на каждый вызов исключает перенос изменения маршрута между запросами.
+     """
+-    if model == "openai/gpt-6.1-terra":
+-        return "provider-28"
+-    if model in ("z-ai/glm-5.3-flash", "openai/gpt-6.1-sol"):
++    if model in ("z-ai/glm-5.3-flash", "openai/gpt-6.1-terra", "openai/gpt-6.1-sol"):
+         return {"name": "auto", "strategy": "stable"}
+     return None
+ 
+diff --git a/scripts/tsk1489_probe_sol.py b/scripts/tsk1489_probe_sol.py
+index eb3e56c..62f314b 100644
+--- a/scripts/tsk1489_probe_sol.py
++++ b/scripts/tsk1489_probe_sol.py
+@@ -49,5 +49,5 @@ def probe(model: str, provider) -> None:
+ 
+ if __name__ == "__main__":
+     for m in sys.argv[1:] or ["openai/gpt-6.1-sol", "openai/gpt-6.1-terra"]:
+-        provider = {"name": "auto", "strategy": "stable"} if m == "openai/gpt-6.1-sol" else ("provider-28" if m == "openai/gpt-6.1-terra" else None)
++        provider = {"name": "auto", "strategy": "stable"} if m in ("openai/gpt-6.1-sol", "openai/gpt-6.1-terra") else None
+         probe(m, provider)
+diff --git a/tests/test_tsk1453_model_routes.py b/tests/test_tsk1453_model_routes.py
+index d674abc..fa82eb7 100644
+--- a/tests/test_tsk1453_model_routes.py
++++ b/tests/test_tsk1453_model_routes.py
+@@ -16,6 +16,7 @@ from app.services.llm.contracts import (
+ 
+ TERRA = "openai/gpt-6.1-terra"
+ SOL = "openai/gpt-6.1-sol"
++LUNA = "openai/gpt-5.6-luna"
+ GLM = "z-ai/glm-5.3-flash"
+ STABLE = {"name": "auto", "strategy": "stable"}
+ MESSAGES = [LLMMessage(role="user", content="Дай одну подсказку про цикл.")]
+@@ -25,7 +26,7 @@ MESSAGES = [LLMMessage(role="user", content="Дай одну подсказку
+ def isolated(monkeypatch):
+     monkeypatch.setenv("CLOSEROUTER_API_KEY", "test-key")
+     monkeypatch.setenv("CLOSEROUTER_BASE_URL", "https://provider.test")
+-    monkeypatch.setenv("LLM_JUDGE_MODELS", f"{TERRA},{SOL}")
++    monkeypatch.setenv("LLM_JUDGE_MODELS", f"{TERRA},{LUNA}")
+     monkeypatch.setenv("LLM_TUTOR_MODELS", GLM)
+     cooldown.reset()
+ 
+@@ -58,7 +59,7 @@ def reply(**changes):
+ 
+ 
+ @pytest.mark.parametrize("model, route", [
+-    (TERRA, "provider-28"), (SOL, STABLE), (GLM, STABLE),
++    (TERRA, STABLE), (SOL, STABLE), (GLM, STABLE),
+     ("openai/gpt-6.1-terra-other", None),
+     ("anthropic-direct/claude-haiku-5-5", None), ("unknown/model", None),
+ ])
+@@ -73,13 +74,13 @@ def test_approved_default_chains(monkeypatch):
+     for name in ("LLM_TUTOR_MODELS", "LLM_JUDGE_MODELS", "LLM_FEEDBACK_MODELS"):
+         monkeypatch.delenv(name, raising=False)
+     assert providers.tutor_models() == [GLM]
+-    assert providers.judge_models() == [TERRA, SOL]
++    assert providers.judge_models() == [TERRA, LUNA]
+     assert not any("anthropic" in m for m in providers.feedback_models())
+ 
+ 
+ @pytest.mark.asyncio
+ @pytest.mark.parametrize("failure", ["503", "timeout", "identity"])
+-async def test_judge_fallback_does_not_inherit_terra_pin(monkeypatch, failure):
++async def test_judge_fallback_stays_on_stable_routes(monkeypatch, failure):
+     sent = []
+ 
+     def handler(request):
+@@ -95,14 +96,14 @@ async def test_judge_fallback_does_not_inherit_terra_pin(monkeypatch, failure):
+ 
+     mount(monkeypatch, handler)
+     result = await client.complete(MESSAGES, purpose="code_review")
+-    assert result.model == SOL
+-    assert [(b["model"], b["provider"]) for b in sent] == [
+-        (TERRA, "provider-28"), (SOL, STABLE),
++    assert result.model == LUNA
++    assert [(b["model"], b.get("provider")) for b in sent] == [
++        (TERRA, STABLE), (LUNA, None),
+     ]
+ 
+ 
+ @pytest.mark.asyncio
+-async def test_explicit_terra_uses_pin(monkeypatch):
++async def test_explicit_terra_uses_stable_route(monkeypatch):
+     sent = []
+ 
+     def handler(request):
+@@ -112,7 +113,7 @@ async def test_explicit_terra_uses_pin(monkeypatch):
+     mount(monkeypatch, handler)
+     result = await client.complete(MESSAGES, purpose="code_review", model=TERRA)
+     assert result.model == TERRA
+-    assert sent[0]["provider"] == "provider-28"
++    assert sent[0]["provider"] == STABLE
+ 
+ 
+ @pytest.mark.asyncio
+@@ -144,11 +145,11 @@ async def test_429_preserves_provider_cooldown(monkeypatch):
+     with pytest.raises(LLMRateLimited):
+         await client.complete(MESSAGES, purpose="code_review")
+     assert len(sent) == 1
+-    assert sent[0]["provider"] == "provider-28"
++    assert sent[0]["provider"] == STABLE
+ 
+ 
+ @pytest.mark.parametrize("judge, model, route", [
+-    (True, TERRA, "provider-28"), (True, SOL, STABLE), (False, GLM, STABLE),
++    (True, TERRA, STABLE), (True, SOL, STABLE), (False, GLM, STABLE),
+ ])
+ def test_monthly_bakeoff_uses_same_routes(monkeypatch, judge, model, route):
+     from scripts import llm_model_bakeoff as bakeoff
+@@ -187,7 +188,7 @@ def post(base, key, path, payload, timeout):
+ stand._post = post
+ if sys.argv[2] == 'judge':
+     stand.judge_probe('openai/gpt-6.1-terra', 'system', 'user', 'https://invalid.invalid', 'test-key')
+-    assert sent[0]['provider'] == 'provider-28'
++    assert sent[0]['provider'] == {'name': 'auto', 'strategy': 'stable'}
+ else:
+     stand.probe('z-ai/glm-5.3-flash', 'system', 'https://invalid.invalid', 'test-key')
+     assert sent[0]['provider'] == {'name': 'auto', 'strategy': 'stable'}
+@@ -215,7 +216,7 @@ async def test_weekly_judge_uses_live_cap_and_seed(monkeypatch):
+     assert good, reason
+     assert sent[0]["max_tokens"] == JUDGE_MAX_TOKENS
+     assert sent[0]["seed"] == 42
+-    assert sent[0]["provider"] == "provider-28"
++    assert sent[0]["provider"] == STABLE
+ 
+ 
+ @pytest.mark.asyncio
