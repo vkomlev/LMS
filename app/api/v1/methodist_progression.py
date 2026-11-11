@@ -58,6 +58,58 @@ class OverrideCreate(BaseModel):
     user_id: int = Field(..., description="ID ученика")
 
 
+class StrictProgressionPatch(BaseModel):
+    """Тогл жёсткой последовательности на корневом курсе."""
+
+    value: bool = Field(..., description="true — включить, false — выключить")
+
+
+class StrictProgressionRead(BaseModel):
+    id: int
+    strict_progression: bool
+
+
+@router.patch(
+    "/courses/{course_id}/strict-progression",
+    response_model=StrictProgressionRead,
+    summary="Включить/выключить жёсткую последовательность подкурсов",
+)
+async def set_strict_progression(
+    course_id: int,
+    body: StrictProgressionPatch,
+    current_user: CurrentUser = Depends(_GATE),
+    db: AsyncSession = Depends(get_bare_db),
+) -> StrictProgressionRead:
+    """Правка настройки из кабинета методиста.
+
+    Отдельный эндпоинт, а не PATCH /courses/{id}: тот — legacy-ручка под
+    сервисный ключ (импорт), cookie-сессию методиста не принимает — тогл из
+    кабинета упирался в 403 (поймано живой проверкой, tsk-1500).
+    """
+    row = await db.execute(
+        text(
+            "UPDATE courses SET strict_progression = :v WHERE id = :id "
+            "RETURNING id, strict_progression"
+        ),
+        {"v": body.value, "id": course_id},
+    )
+    updated = row.fetchone()
+    if updated is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Курс не найден")
+    await log_event(
+        db,
+        "strict_progression_changed",
+        user_id=None if current_user.is_service else current_user.id,
+        details={"course_id": course_id, "value": body.value},
+    )
+    await db.commit()
+    logger.info(
+        "strict_progression: курс %s = %s (кто: %s)",
+        course_id, body.value, current_user.id,
+    )
+    return StrictProgressionRead(id=int(updated[0]), strict_progression=bool(updated[1]))
+
+
 async def _require_course(db: AsyncSession, course_id: int) -> None:
     """Курс существует и является корневым (настройка живёт на корне)."""
     row = await db.execute(text("SELECT EXISTS (SELECT 1 FROM courses WHERE id = :id)"), {"id": course_id})

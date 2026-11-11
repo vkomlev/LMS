@@ -50612,6 +50612,115 @@
         }
       }
     },
+    "/api/v1/methodist/courses/{course_id}/strict-progression": {
+      "patch": {
+        "tags": [
+          "methodist_progression"
+        ],
+        "summary": "Включить/выключить жёсткую последовательность подкурсов",
+        "description": "Правка настройки из кабинета методиста.\n\nОтдельный эндпоинт, а не PATCH /courses/{id}: тот — legacy-ручка под\nсервисный ключ (импорт), cookie-сессию методиста не принимает — тогл из\nкабинета упирался в 403 (поймано живой проверкой, tsk-1500).",
+        "operationId": "set_strict_progression_api_v1_methodist_courses__course_id__strict_progression_patch",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "course_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Course Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StrictProgressionPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StrictProgressionRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/methodist/courses/{course_id}/progression-overrides": {
       "get": {
         "tags": [
@@ -82079,6 +82188,39 @@
           "today_active"
         ],
         "title": "StreakRead"
+      },
+      "StrictProgressionPatch": {
+        "properties": {
+          "value": {
+            "type": "boolean",
+            "title": "Value",
+            "description": "true — включить, false — выключить"
+          }
+        },
+        "type": "object",
+        "required": [
+          "value"
+        ],
+        "title": "StrictProgressionPatch",
+        "description": "Тогл жёсткой последовательности на корневом курсе."
+      },
+      "StrictProgressionRead": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "strict_progression": {
+            "type": "boolean",
+            "title": "Strict Progression"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "strict_progression"
+        ],
+        "title": "StrictProgressionRead"
       },
       "StudentAchievementNextRead": {
         "properties": {
