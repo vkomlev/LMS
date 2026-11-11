@@ -49,5 +49,5 @@ def probe(model: str, provider) -> None:
 
 if __name__ == "__main__":
     for m in sys.argv[1:] or ["openai/gpt-6.1-sol", "openai/gpt-6.1-terra"]:
-        provider = {"name": "auto", "strategy": "stable"} if m == "openai/gpt-6.1-sol" else ("provider-28" if m == "openai/gpt-6.1-terra" else None)
+        provider = {"name": "auto", "strategy": "stable"} if m in ("openai/gpt-6.1-sol", "openai/gpt-6.1-terra") else None
         probe(m, provider)

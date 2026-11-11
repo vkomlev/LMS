@@ -226,7 +226,14 @@ _DEFAULT_TUTOR_MODELS = "z-ai/glm-5.3-flash"
 # Auto Stable у Terra добавлял инструкцию. Sol — проверенный резерв (3/3).
 # Поздний prod-контроль выявил у Sol отказы на первом образце; резерв пока
 # не подтверждён. См. docs/qa/2026-11-08-llm-prod-rollout.md.
-_DEFAULT_JUDGE_MODELS = "openai/gpt-6.1-terra,openai/gpt-6.1-sol"
+# 2026-11-11 (tsk-1489): закрепление Terra за provider-28 СНЯТО — провайдер
+# умер (39× LLMUpstreamUnavailable в прогоне черновиков, проба 3×503), а
+# Auto Stable у Terra теперь чистая (29–42 входных токена на «Привет», id
+# `chatcmpl-<цифры>`). Sol подменена (14k входных токенов) — заменена на luna,
+# проверенный резерв (формат 3/3, стенд 09–10.01, чистая проба 11.11).
+# Канон цепочки судьи (дефолт ниже и прод-.env): terra,luna. Luna маршрутом
+# не закреплена — идёт дефолтным авто роутера.
+_DEFAULT_JUDGE_MODELS = "openai/gpt-6.1-terra,openai/gpt-5.6-luna"
 
 
 def request_provider(model: str) -> str | dict | None:
@@ -236,9 +243,7 @@ def request_provider(model: str) -> str | dict | None:
     Auto выбирает поставщика заданной модели, а не саму модель. Новый словарь
     на каждый вызов исключает перенос изменения маршрута между запросами.
     """
-    if model == "openai/gpt-6.1-terra":
-        return "provider-28"
-    if model in ("z-ai/glm-5.3-flash", "openai/gpt-6.1-sol"):
+    if model in ("z-ai/glm-5.3-flash", "openai/gpt-6.1-terra", "openai/gpt-6.1-sol"):
         return {"name": "auto", "strategy": "stable"}
     return None
 

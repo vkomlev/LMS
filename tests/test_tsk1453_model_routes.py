@@ -16,6 +16,7 @@ from app.services.llm.contracts import (
 
 TERRA = "openai/gpt-6.1-terra"
 SOL = "openai/gpt-6.1-sol"
+LUNA = "openai/gpt-5.6-luna"
 GLM = "z-ai/glm-5.3-flash"
 STABLE = {"name": "auto", "strategy": "stable"}
 MESSAGES = [LLMMessage(role="user", content="Дай одну подсказку про цикл.")]
@@ -25,7 +26,7 @@ MESSAGES = [LLMMessage(role="user", content="Дай одну подсказку 
 def isolated(monkeypatch):
     monkeypatch.setenv("CLOSEROUTER_API_KEY", "test-key")
     monkeypatch.setenv("CLOSEROUTER_BASE_URL", "https://provider.test")
-    monkeypatch.setenv("LLM_JUDGE_MODELS", f"{TERRA},{SOL}")
+    monkeypatch.setenv("LLM_JUDGE_MODELS", f"{TERRA},{LUNA}")
     monkeypatch.setenv("LLM_TUTOR_MODELS", GLM)
     cooldown.reset()
 
@@ -58,7 +59,7 @@ def reply(**changes):
 
 
 @pytest.mark.parametrize("model, route", [
-    (TERRA, "provider-28"), (SOL, STABLE), (GLM, STABLE),
+    (TERRA, STABLE), (SOL, STABLE), (GLM, STABLE),
     ("openai/gpt-6.1-terra-other", None),
     ("anthropic-direct/claude-haiku-5-5", None), ("unknown/model", None),
 ])
@@ -73,13 +74,13 @@ def test_approved_default_chains(monkeypatch):
     for name in ("LLM_TUTOR_MODELS", "LLM_JUDGE_MODELS", "LLM_FEEDBACK_MODELS"):
         monkeypatch.delenv(name, raising=False)
     assert providers.tutor_models() == [GLM]
-    assert providers.judge_models() == [TERRA, SOL]
+    assert providers.judge_models() == [TERRA, LUNA]
     assert not any("anthropic" in m for m in providers.feedback_models())
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure", ["503", "timeout", "identity"])
-async def test_judge_fallback_does_not_inherit_terra_pin(monkeypatch, failure):
+async def test_judge_fallback_stays_on_stable_routes(monkeypatch, failure):
     sent = []
 
     def handler(request):
@@ -95,14 +96,14 @@ async def test_judge_fallback_does_not_inherit_terra_pin(monkeypatch, failure):
 
     mount(monkeypatch, handler)
     result = await client.complete(MESSAGES, purpose="code_review")
-    assert result.model == SOL
-    assert [(b["model"], b["provider"]) for b in sent] == [
-        (TERRA, "provider-28"), (SOL, STABLE),
+    assert result.model == LUNA
+    assert [(b["model"], b.get("provider")) for b in sent] == [
+        (TERRA, STABLE), (LUNA, None),
     ]
 
 
 @pytest.mark.asyncio
-async def test_explicit_terra_uses_pin(monkeypatch):
+async def test_explicit_terra_uses_stable_route(monkeypatch):
     sent = []
 
     def handler(request):
@@ -112,7 +113,7 @@ async def test_explicit_terra_uses_pin(monkeypatch):
     mount(monkeypatch, handler)
     result = await client.complete(MESSAGES, purpose="code_review", model=TERRA)
     assert result.model == TERRA
-    assert sent[0]["provider"] == "provider-28"
+    assert sent[0]["provider"] == STABLE
 
 
 @pytest.mark.asyncio
@@ -144,11 +145,11 @@ async def test_429_preserves_provider_cooldown(monkeypatch):
     with pytest.raises(LLMRateLimited):
         await client.complete(MESSAGES, purpose="code_review")
     assert len(sent) == 1
-    assert sent[0]["provider"] == "provider-28"
+    assert sent[0]["provider"] == STABLE
 
 
 @pytest.mark.parametrize("judge, model, route", [
-    (True, TERRA, "provider-28"), (True, SOL, STABLE), (False, GLM, STABLE),
+    (True, TERRA, STABLE), (True, SOL, STABLE), (False, GLM, STABLE),
 ])
 def test_monthly_bakeoff_uses_same_routes(monkeypatch, judge, model, route):
     from scripts import llm_model_bakeoff as bakeoff
@@ -187,7 +188,7 @@ def post(base, key, path, payload, timeout):
 stand._post = post
 if sys.argv[2] == 'judge':
     stand.judge_probe('openai/gpt-6.1-terra', 'system', 'user', 'https://invalid.invalid', 'test-key')
-    assert sent[0]['provider'] == 'provider-28'
+    assert sent[0]['provider'] == {'name': 'auto', 'strategy': 'stable'}
 else:
     stand.probe('z-ai/glm-5.3-flash', 'system', 'https://invalid.invalid', 'test-key')
     assert sent[0]['provider'] == {'name': 'auto', 'strategy': 'stable'}
@@ -215,7 +216,7 @@ async def test_weekly_judge_uses_live_cap_and_seed(monkeypatch):
     assert good, reason
     assert sent[0]["max_tokens"] == JUDGE_MAX_TOKENS
     assert sent[0]["seed"] == 42
-    assert sent[0]["provider"] == "provider-28"
+    assert sent[0]["provider"] == STABLE
 
 
 @pytest.mark.asyncio
