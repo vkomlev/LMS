@@ -103,13 +103,16 @@ async def add_override(
     )
     if user.scalar() is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Пользователь не найден")
+    # created_by — NULL для сервисного ключа: у него нет строки в users (id=0),
+    # FK упал бы (пойман живым прогоном на пилоте, tsk-1500).
+    created_by = None if current_user.is_service else current_user.id
     await db.execute(
         text(
             "INSERT INTO progression_overrides (root_course_id, user_id, created_by) "
             "VALUES (:root, :user, :by) "
             "ON CONFLICT (root_course_id, user_id) DO NOTHING"
         ),
-        {"root": course_id, "user": body.user_id, "by": current_user.id},
+        {"root": course_id, "user": body.user_id, "by": created_by},
     )
     await log_event(
         db,
