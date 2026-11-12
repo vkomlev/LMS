@@ -217,6 +217,12 @@ async def link_student(db: AsyncSession, *, lead_id: int, student_id: int) -> bo
     """Привязать лида к учётке ученика. Идемпотентно: повторная привязка — не ошибка.
 
     Годность учётки проверяет вызывающий через `is_linkable_student`.
+
+    tsk-1407: конверсия заявки → ученик — точка, где метка источника из
+    `leads.attribution` (бот записи с лендинга, форма сайта) становится
+    источником регистрации: копируем её в пустое `users.signup_attribution`
+    (первое касание не перезаписывается) и закрываем гостевую сессию заявки
+    за этим учеником, чтобы воронка сайта видела связку.
     """
     res = await db.execute(
         text(
@@ -225,6 +231,48 @@ async def link_student(db: AsyncSession, *, lead_id: int, student_id: int) -> bo
         ),
         {"id": lead_id, "student_id": student_id},
     )
+    if res.rowcount:
+        await db.execute(
+            text(
+                """
+                UPDATE users
+                   SET signup_attribution = (
+                         SELECT CASE
+                                  WHEN l.guest_session_id IS NOT NULL
+                                  THEN l.attribution || jsonb_build_object(
+                                       'guest_session_id', l.guest_session_id::text)
+                                  ELSE l.attribution
+                                END
+                           FROM leads l
+                          WHERE l.id = :lead_id
+                            AND l.attribution IS NOT NULL
+                       )
+                 WHERE id = :student_id
+                   AND signup_attribution IS NULL
+                   AND EXISTS (
+                         SELECT 1 FROM leads l2
+                          WHERE l2.id = :lead_id AND l2.attribution IS NOT NULL
+                       )
+                """
+            ),
+            {"lead_id": lead_id, "student_id": student_id},
+        )
+        await db.execute(
+            text(
+                """
+                UPDATE guest_session
+                   SET attributed_user_id = :student_id
+                 WHERE id = (
+                         SELECT l.guest_session_id::uuid
+                           FROM leads l
+                          WHERE l.id = :lead_id
+                            AND l.guest_session_id IS NOT NULL
+                       )
+                   AND attributed_user_id IS NULL
+                """
+            ),
+            {"lead_id": lead_id, "student_id": student_id},
+        )
     await db.commit()
     return res.rowcount > 0
 
