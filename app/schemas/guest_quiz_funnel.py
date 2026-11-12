@@ -18,6 +18,13 @@ class QuizFunnelRow(BaseModel):
     title: str
     total_questions: int = Field(..., description="Сколько активных вопросов в квизе")
     started: int = Field(..., description="Гостевых сессий, ответивших хотя бы на один вопрос")
+    started_pages: int = Field(
+        ...,
+        description=(
+            "Сырые старты страницы квиза (tsk-765): считаются при загрузке, до "
+            "первого ответа, включая ботов. Для человеческой воронки смотри started"
+        ),
+    )
     completed: int = Field(..., description="Из них прошли квиз до конца")
     leads: int = Field(..., description="Заявок с контактом, оставленных по этому квизу")
     lead_rate: Optional[float] = Field(

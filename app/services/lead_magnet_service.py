@@ -104,8 +104,10 @@ async def get_funnel(db: AsyncSession) -> List[Dict[str, Any]]:
     Признак не по типу задания: у диагностики тип обычный (`SA`), и по типу её было бы
     не отличить от демо-курса с задачами.
 
-    «Начали» и «прошли» считаются по гостевым сессиям, а не по ответам: человек,
-    поменявший ответ, — по-прежнему один человек.
+    «Начали» и «прошли» считаются по гостевым сессиям с ответами, а не по
+    загрузкам страницы: человек, поменявший ответ, — по-прежнему один человек,
+    а бот, открывший страницу без единого ответа, в эти числа не попадает.
+    Сырые старты страницы (включая ботов) отдельно — в `started_pages`.
     """
     rows = (
         await db.execute(
@@ -144,6 +146,17 @@ async def get_funnel(db: AsyncSession) -> List[Dict[str, Any]]:
                     JOIN magnet_task mt ON mt.course_id = m.id
                     JOIN guest_attempt ga ON ga.task_id = mt.id
                     GROUP BY m.id, ga.guest_session_id
+                ),
+                -- tsk-765: сырые старты страницы квиза (quiz_funnel_progress)
+                -- пишутся при загрузке, до первого ответа — в них попадают
+                -- боты, обходящие ссылки лендингов. Отдельное поле, чтобы
+                -- загрязнение было видно, а started/completed (по ответам)
+                -- продолжали считать людей.
+                page_starts AS (
+                    SELECT qfp.course_id,
+                           count(DISTINCT qfp.guest_session_id) AS n
+                    FROM quiz_funnel_progress qfp
+                    GROUP BY qfp.course_id
                 )
                 SELECT m.course_uid,
                        m.title,
@@ -151,10 +164,12 @@ async def get_funnel(db: AsyncSession) -> List[Dict[str, Any]]:
                        count(p.guest_session_id) AS started,
                        count(p.guest_session_id)
                          FILTER (WHERE p.answered >= m.total_questions) AS completed,
-                       (SELECT count(*) FROM leads l WHERE l.quiz_course_id = m.id) AS leads
+                       (SELECT count(*) FROM leads l WHERE l.quiz_course_id = m.id) AS leads,
+                       coalesce(ps.n, 0) AS started_pages
                 FROM magnet m
                 LEFT JOIN progress p ON p.course_id = m.id
-                GROUP BY m.id, m.course_uid, m.title, m.total_questions
+                LEFT JOIN page_starts ps ON ps.course_id = m.id
+                GROUP BY m.id, m.course_uid, m.title, m.total_questions, ps.n
                 ORDER BY m.course_uid
                 """
             )
@@ -162,7 +177,7 @@ async def get_funnel(db: AsyncSession) -> List[Dict[str, Any]]:
     ).fetchall()
 
     funnel: List[Dict[str, Any]] = []
-    for course_uid, title, total_questions, started, completed, leads in rows:
+    for course_uid, title, total_questions, started, completed, leads, started_pages in rows:
         funnel.append(
             {
                 "course_uid": course_uid,
@@ -172,6 +187,7 @@ async def get_funnel(db: AsyncSession) -> List[Dict[str, Any]]:
                 "completed": int(completed),
                 "leads": int(leads),
                 "lead_rate": round(leads / completed, 4) if completed else None,
+                "started_pages": int(started_pages),
             }
         )
     return funnel

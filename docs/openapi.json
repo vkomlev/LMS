@@ -77393,6 +77393,11 @@
             "title": "Started",
             "description": "Гостевых сессий, ответивших хотя бы на один вопрос"
           },
+          "started_pages": {
+            "type": "integer",
+            "title": "Started Pages",
+            "description": "Сырые старты страницы квиза (tsk-765): считаются при загрузке, до первого ответа, включая ботов. Для человеческой воронки смотри started"
+          },
           "completed": {
             "type": "integer",
             "title": "Completed",
@@ -77421,6 +77426,7 @@
           "title",
           "total_questions",
           "started",
+          "started_pages",
           "completed",
           "leads"
         ],
