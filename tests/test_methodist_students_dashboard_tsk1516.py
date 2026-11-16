@@ -394,6 +394,64 @@ async def test_endpoint_ok_for_methodist(client, db):
 
 
 @pytest.mark.asyncio
+async def test_student_only_in_previous_period_is_visible(db):
+    """Ученик с активностью ТОЛЬКО в прошлом периоде (упал до нуля) — виден
+    в дашборде, иначе самый важный случай для вердикта falling терялся."""
+    teacher_id, _ = await _new_user(db, role="teacher", name="a1516n")
+    student_id, _ = await _new_user(db, role="student", name="a1516n")
+    now = datetime.now(UTC)
+
+    await _create_occurrence_with_participant(
+        db, student_id=student_id, teacher_id=teacher_id,
+        scheduled_at=now - timedelta(days=9), status="completed",
+    )
+
+    from_d, to_d = _period_dates(now)
+    data = await svc.get_students_dashboard(db, from_date=from_d, to_date=to_d)
+    row = next((r for r in data["students"] if r["student_id"] == student_id), None)
+    assert row is not None
+    assert row["attendance"]["rate"] is None
+    assert row["attendance"]["prev_rate"] == 1.0
+
+
+@pytest.mark.asyncio
+async def test_homework_result_before_issuance_not_counted(db):
+    """Верное решение, сданное ДО выдачи ДЗ, «в срок» не засчитывается."""
+    teacher_id, _ = await _new_user(db, role="teacher", name="a1516o")
+    student_id, _ = await _new_user(db, role="student", name="a1516o")
+    now = datetime.now(UTC)
+    course_id = await _new_course(db, "tsk1516 ДЗ раньше выдачи")
+    task_id = await _new_task(db, course_id=course_id, uid="a1516o1")
+
+    await _insert_homework(
+        db, student_id=student_id, task_id=task_id,
+        issued_at=now - timedelta(days=2), due_at=now - timedelta(hours=6),
+    )
+    await _insert_task_result(
+        db, student_id=student_id, task_id=task_id, course_id=course_id,
+        is_correct=True, submitted_at=now - timedelta(days=5),
+    )
+
+    from_d, to_d = _period_dates(now)
+    data = await svc.get_students_dashboard(db, from_date=from_d, to_date=to_d)
+    row = next(r for r in data["students"] if r["student_id"] == student_id)
+    assert row["homework"]["assigned"] == 1
+    assert row["homework"]["done_on_time"] == 0
+    assert row["homework"]["on_time_rate"] == 0.0
+
+
+@pytest.mark.asyncio
+async def test_period_longer_than_366_days_rejected(client, db):
+    _methodist_id, token = await _new_user(db, role="methodist", name="a1516p")
+    resp = await client.get(
+        "/api/v1/methodist/students-dashboard",
+        params={"from": "2024-01-01", "to": "2026-11-16"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
 async def test_endpoint_rejects_bad_date(client, db):
     _methodist_id, token = await _new_user(db, role="methodist", name="a1516m")
     resp = await client.get(

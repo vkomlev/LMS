@@ -26542,7 +26542,7 @@
                 "schema": {
                   "anyOf": [
                     {
-                      "$ref": "#/components/schemas/HomeworkRead"
+                      "$ref": "#/components/schemas/app__schemas__homework__HomeworkRead"
                     },
                     {
                       "type": "null"
@@ -26650,7 +26650,7 @@
                 "schema": {
                   "anyOf": [
                     {
-                      "$ref": "#/components/schemas/HomeworkRead"
+                      "$ref": "#/components/schemas/app__schemas__homework__HomeworkRead"
                     },
                     {
                       "type": "null"
@@ -26764,7 +26764,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HomeworkRead"
+                  "$ref": "#/components/schemas/app__schemas__homework__HomeworkRead"
                 }
               }
             }
@@ -56963,6 +56963,46 @@
         ],
         "title": "AttendanceActionRequest"
       },
+      "AttendanceRead": {
+        "properties": {
+          "planned": {
+            "type": "integer",
+            "title": "Planned"
+          },
+          "attended": {
+            "type": "integer",
+            "title": "Attended"
+          },
+          "rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rate"
+          },
+          "prev_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prev Rate"
+          }
+        },
+        "type": "object",
+        "required": [
+          "planned",
+          "attended"
+        ],
+        "title": "AttendanceRead"
+      },
       "AttentionSummaryRead": {
         "properties": {
           "window_days": {
@@ -62741,6 +62781,66 @@
         "title": "DifficultyLevelUpdate",
         "description": "Схема частичного обновления уровня сложности.\nВсе поля опциональны."
       },
+      "DifficultyRead": {
+        "properties": {
+          "help_requests": {
+            "type": "integer",
+            "title": "Help Requests"
+          },
+          "help_requests_prev": {
+            "type": "integer",
+            "title": "Help Requests Prev"
+          },
+          "hint_opens": {
+            "type": "integer",
+            "title": "Hint Opens"
+          },
+          "hint_opens_prev": {
+            "type": "integer",
+            "title": "Hint Opens Prev"
+          },
+          "solved": {
+            "type": "integer",
+            "title": "Solved"
+          },
+          "solved_first_try": {
+            "type": "integer",
+            "title": "Solved First Try"
+          },
+          "first_try_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Try Rate"
+          },
+          "first_try_rate_prev": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Try Rate Prev"
+          }
+        },
+        "type": "object",
+        "required": [
+          "help_requests",
+          "help_requests_prev",
+          "hint_opens",
+          "hint_opens_prev",
+          "solved",
+          "solved_first_try"
+        ],
+        "title": "DifficultyRead"
+      },
       "DraftResponse": {
         "properties": {
           "task_id": {
@@ -65427,6 +65527,78 @@
         ],
         "title": "GraduationSlot",
         "description": "Активная привязка к слоту, которую снимет перевод."
+      },
+      "GroupAverageRead": {
+        "properties": {
+          "attendance_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attendance Rate"
+          },
+          "first_try_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Try Rate"
+          },
+          "on_time_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "On Time Rate"
+          },
+          "solved_per_week": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Solved Per Week"
+          },
+          "help_requests": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Help Requests"
+          },
+          "hint_opens": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hint Opens"
+          }
+        },
+        "type": "object",
+        "title": "GroupAverageRead"
       },
       "GuestAttemptCreateRequest": {
         "properties": {
@@ -68396,159 +68568,6 @@
         ],
         "title": "HomeworkItemRead",
         "description": "Один элемент выдачи с отметкой выполнения."
-      },
-      "HomeworkRead": {
-        "properties": {
-          "id": {
-            "type": "integer",
-            "title": "Id"
-          },
-          "student_id": {
-            "type": "integer",
-            "title": "Student Id"
-          },
-          "issued_at": {
-            "type": "string",
-            "format": "date-time",
-            "title": "Issued At"
-          },
-          "due_at": {
-            "type": "string",
-            "format": "date-time",
-            "title": "Due At",
-            "description": "Срок — обычно начало следующего занятия"
-          },
-          "source": {
-            "type": "string",
-            "enum": [
-              "auto",
-              "teacher"
-            ],
-            "title": "Source"
-          },
-          "issued_by": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Issued By"
-          },
-          "occurrence_id": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Occurrence Id"
-          },
-          "planned_volume": {
-            "type": "integer",
-            "title": "Planned Volume",
-            "description": "Сколько элементов было задано — снимок, не пересчитывается. С tsk-867 это число ФАКТИЧЕСКИ выданных пунктов: состав набирается до бюджета времени, а штучный лимит остался ограждением и почти всегда срабатывает позже. Расчётный лимит — в `volume_details.requested_volume`"
-          },
-          "planned_minutes": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Planned Minutes",
-            "description": "Во сколько минут работы оценён состав в момент выдачи (tsk-867). Оценка, а не обещание: вес задания — медиана времени «открыл → ответил» без чтения теории и без повторных попыток, вес теории пока прокси. Поэтому на экране число подписано «≈». null — выдача сделана до перехода на бюджет времени либо вес не измерен"
-          },
-          "volume_details": {
-            "anyOf": [
-              {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Volume Details",
-            "description": "Из чего сложилась норма: цель класса, факт, качество, недель до экзамена. Нужен, чтобы объяснить человеку конкретное число"
-          },
-          "note": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Note"
-          },
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/HomeworkItemRead"
-            },
-            "type": "array",
-            "title": "Items"
-          },
-          "total": {
-            "type": "integer",
-            "title": "Total",
-            "description": "Обязательных пунктов (tier=required)"
-          },
-          "done": {
-            "type": "integer",
-            "title": "Done"
-          },
-          "extra_total": {
-            "type": "integer",
-            "title": "Extra Total",
-            "description": "tsk-1006: желательных пунктов «чтобы нагнать норму»",
-            "default": 0
-          },
-          "extra_done": {
-            "type": "integer",
-            "title": "Extra Done",
-            "description": "tsk-1006: из них закрыто",
-            "default": 0
-          },
-          "orphaned_done": {
-            "type": "integer",
-            "title": "Orphaned Done",
-            "description": "tsk-1193: обязательных заданий из прошлых выдач, решённых после их отмены и не вошедших в эту (tsk-968). В `total`/`done` не входят — подпись «N из M · ещё K решено из прошлых выдач»",
-            "default": 0
-          },
-          "on_lesson": {
-            "type": "integer",
-            "title": "On Lesson",
-            "description": "tsk-1041: обязательных пунктов, решённых только на уроке — в `done` не входят",
-            "default": 0
-          },
-          "is_overdue": {
-            "type": "boolean",
-            "title": "Is Overdue",
-            "description": "Срок прошёл, а сделано не всё. Ничего не блокирует — решение оператора 01.09: невыполненное ДЗ это показатель, а не долг"
-          }
-        },
-        "type": "object",
-        "required": [
-          "id",
-          "student_id",
-          "issued_at",
-          "due_at",
-          "source",
-          "planned_volume",
-          "total",
-          "done",
-          "is_overdue"
-        ],
-        "title": "HomeworkRead",
-        "description": "Действующая домашняя работа ученика."
       },
       "HomeworkVolumeRead": {
         "properties": {
@@ -74186,6 +74205,61 @@
         ],
         "title": "OverrideRead",
         "description": "Ученик в обходе правила курса."
+      },
+      "PaceRead": {
+        "properties": {
+          "avg_task_seconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg Task Seconds"
+          },
+          "solved_per_week": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Solved Per Week"
+          },
+          "solved_per_week_prev": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Solved Per Week Prev"
+          },
+          "verdict": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "falling",
+                  "on_track",
+                  "accelerating"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verdict"
+          }
+        },
+        "type": "object",
+        "title": "PaceRead"
       },
       "PageMeta": {
         "properties": {
@@ -83360,6 +83434,46 @@
         ],
         "title": "StudentDashboardRead"
       },
+      "StudentDashboardRowRead": {
+        "properties": {
+          "student_id": {
+            "type": "integer",
+            "title": "Student Id"
+          },
+          "full_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Full Name"
+          },
+          "attendance": {
+            "$ref": "#/components/schemas/AttendanceRead"
+          },
+          "difficulty": {
+            "$ref": "#/components/schemas/DifficultyRead"
+          },
+          "pace": {
+            "$ref": "#/components/schemas/PaceRead"
+          },
+          "homework": {
+            "$ref": "#/components/schemas/app__api__v1__methodist_students_dashboard__HomeworkRead"
+          }
+        },
+        "type": "object",
+        "required": [
+          "student_id",
+          "attendance",
+          "difficulty",
+          "pace",
+          "homework"
+        ],
+        "title": "StudentDashboardRowRead"
+      },
       "StudentGroupPricing": {
         "properties": {
           "group_id": {
@@ -84198,16 +84312,13 @@
           },
           "students": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/components/schemas/StudentDashboardRowRead"
             },
             "type": "array",
             "title": "Students"
           },
           "group_average": {
-            "additionalProperties": true,
-            "type": "object",
-            "title": "Group Average"
+            "$ref": "#/components/schemas/GroupAverageRead"
           }
         },
         "type": "object",
@@ -92857,6 +92968,46 @@
         ],
         "title": "UnreadCountResponse"
       },
+      "app__api__v1__methodist_students_dashboard__HomeworkRead": {
+        "properties": {
+          "assigned": {
+            "type": "integer",
+            "title": "Assigned"
+          },
+          "done_on_time": {
+            "type": "integer",
+            "title": "Done On Time"
+          },
+          "on_time_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "On Time Rate"
+          },
+          "on_time_rate_prev": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "On Time Rate Prev"
+          }
+        },
+        "type": "object",
+        "required": [
+          "assigned",
+          "done_on_time"
+        ],
+        "title": "HomeworkRead"
+      },
       "app__schemas__courses__GoogleSheetsImportError": {
         "properties": {
           "row_index": {
@@ -93053,6 +93204,159 @@
             "updated": 2
           }
         ]
+      },
+      "app__schemas__homework__HomeworkRead": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "student_id": {
+            "type": "integer",
+            "title": "Student Id"
+          },
+          "issued_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Issued At"
+          },
+          "due_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Due At",
+            "description": "Срок — обычно начало следующего занятия"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "teacher"
+            ],
+            "title": "Source"
+          },
+          "issued_by": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Issued By"
+          },
+          "occurrence_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Occurrence Id"
+          },
+          "planned_volume": {
+            "type": "integer",
+            "title": "Planned Volume",
+            "description": "Сколько элементов было задано — снимок, не пересчитывается. С tsk-867 это число ФАКТИЧЕСКИ выданных пунктов: состав набирается до бюджета времени, а штучный лимит остался ограждением и почти всегда срабатывает позже. Расчётный лимит — в `volume_details.requested_volume`"
+          },
+          "planned_minutes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planned Minutes",
+            "description": "Во сколько минут работы оценён состав в момент выдачи (tsk-867). Оценка, а не обещание: вес задания — медиана времени «открыл → ответил» без чтения теории и без повторных попыток, вес теории пока прокси. Поэтому на экране число подписано «≈». null — выдача сделана до перехода на бюджет времени либо вес не измерен"
+          },
+          "volume_details": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Volume Details",
+            "description": "Из чего сложилась норма: цель класса, факт, качество, недель до экзамена. Нужен, чтобы объяснить человеку конкретное число"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/HomeworkItemRead"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "Обязательных пунктов (tier=required)"
+          },
+          "done": {
+            "type": "integer",
+            "title": "Done"
+          },
+          "extra_total": {
+            "type": "integer",
+            "title": "Extra Total",
+            "description": "tsk-1006: желательных пунктов «чтобы нагнать норму»",
+            "default": 0
+          },
+          "extra_done": {
+            "type": "integer",
+            "title": "Extra Done",
+            "description": "tsk-1006: из них закрыто",
+            "default": 0
+          },
+          "orphaned_done": {
+            "type": "integer",
+            "title": "Orphaned Done",
+            "description": "tsk-1193: обязательных заданий из прошлых выдач, решённых после их отмены и не вошедших в эту (tsk-968). В `total`/`done` не входят — подпись «N из M · ещё K решено из прошлых выдач»",
+            "default": 0
+          },
+          "on_lesson": {
+            "type": "integer",
+            "title": "On Lesson",
+            "description": "tsk-1041: обязательных пунктов, решённых только на уроке — в `done` не входят",
+            "default": 0
+          },
+          "is_overdue": {
+            "type": "boolean",
+            "title": "Is Overdue",
+            "description": "Срок прошёл, а сделано не всё. Ничего не блокирует — решение оператора 01.09: невыполненное ДЗ это показатель, а не долг"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "student_id",
+          "issued_at",
+          "due_at",
+          "source",
+          "planned_volume",
+          "total",
+          "done",
+          "is_overdue"
+        ],
+        "title": "HomeworkRead",
+        "description": "Действующая домашняя работа ученика."
       },
       "app__schemas__me_notifications__MarkReadResponse": {
         "properties": {

@@ -38,6 +38,8 @@ def _msk_bounds(
     if d_to < d_from:
         raise ValueError("to must be >= from")
     days = (d_to - d_from).days + 1
+    if days > 366:
+        raise ValueError("period must be at most 366 days")
     cur_from = datetime.combine(d_from, datetime.min.time(), tzinfo=MSK)
     cur_to = datetime.combine(d_to, datetime.min.time(), tzinfo=MSK) + timedelta(days=1)
     prev_to = cur_from
@@ -105,6 +107,7 @@ _HOMEWORK_SQL = text("""
                      WHERE r.user_id = a.student_id
                        AND r.task_id = i.task_id
                        AND r.is_correct IS TRUE
+                       AND r.submitted_at >= a.issued_at
                        AND r.submitted_at <= a.due_at
                  )
            ) AS done_on_time
@@ -161,7 +164,17 @@ async def get_students_dashboard(
     hw_c = await _period_rows(db, _HOMEWORK_SQL, cur)
     hw_p = await _period_rows(db, _HOMEWORK_SQL, prev)
 
-    student_ids = set(att_c) | set(tasks_c) | set(help_c) | set(hints_c) | set(hw_c)
+    # Группа — ученики с активностью за текущий ИЛИ прошлый период: иначе
+    # резко упавший «до нуля» ученик (самый важный случай для вердикта
+    # falling) выпадал бы из дашборда вместе со сравнением.
+    student_ids = (
+        set(att_c) | set(att_p)
+        | set(tasks_c) | set(tasks_p)
+        | set(help_c) | set(help_p)
+        | set(hints_c) | set(hints_p)
+        | set(hw_c) | set(hw_p)
+        | set(time_c)
+    )
     if student_id is not None:
         student_ids = {sid for sid in student_ids if sid == student_id}
 

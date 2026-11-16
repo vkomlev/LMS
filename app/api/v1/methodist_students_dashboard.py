@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import re
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
@@ -25,6 +25,56 @@ _METHODIST_GATE = require_role("methodist", "admin")
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
+class AttendanceRead(BaseModel):
+    planned: int
+    attended: int
+    rate: Optional[float] = None
+    prev_rate: Optional[float] = None
+
+
+class DifficultyRead(BaseModel):
+    help_requests: int
+    help_requests_prev: int
+    hint_opens: int
+    hint_opens_prev: int
+    solved: int
+    solved_first_try: int
+    first_try_rate: Optional[float] = None
+    first_try_rate_prev: Optional[float] = None
+
+
+class PaceRead(BaseModel):
+    avg_task_seconds: Optional[float] = None
+    solved_per_week: Optional[float] = None
+    solved_per_week_prev: Optional[float] = None
+    verdict: Optional[Literal["falling", "on_track", "accelerating"]] = None
+
+
+class HomeworkRead(BaseModel):
+    assigned: int
+    done_on_time: int
+    on_time_rate: Optional[float] = None
+    on_time_rate_prev: Optional[float] = None
+
+
+class StudentDashboardRowRead(BaseModel):
+    student_id: int
+    full_name: Optional[str] = None
+    attendance: AttendanceRead
+    difficulty: DifficultyRead
+    pace: PaceRead
+    homework: HomeworkRead
+
+
+class GroupAverageRead(BaseModel):
+    attendance_rate: Optional[float] = None
+    first_try_rate: Optional[float] = None
+    on_time_rate: Optional[float] = None
+    solved_per_week: Optional[float] = None
+    help_requests: Optional[float] = None
+    hint_opens: Optional[float] = None
+
+
 class StudentsDashboardRead(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -32,8 +82,8 @@ class StudentsDashboardRead(BaseModel):
     to: str
     prev_from: str
     prev_to: str
-    students: list[dict]
-    group_average: dict
+    students: list[StudentDashboardRowRead]
+    group_average: GroupAverageRead
 
 
 @router.get("/students-dashboard", response_model=StudentsDashboardRead)
