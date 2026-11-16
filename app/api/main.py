@@ -580,6 +580,10 @@ app.include_router(methodist_attention_summary_router, prefix=API_PREFIX)
 from app.api.v1.methodist_progression import router as methodist_progression_router
 app.include_router(methodist_progression_router, prefix=API_PREFIX)
 
+# tsk-1516: дашборд методиста по ученикам (посещаемость/трудности/скорость/ДЗ)
+from app.api.v1.methodist_students_dashboard import router as methodist_students_dashboard_router
+app.include_router(methodist_students_dashboard_router, prefix=API_PREFIX)
+
 # tsk-929: форма захвата заявки на продающих лендингах сайта — перед переходом
 # в Telegram, а не вместо него. Публичный контур без гостевой сессии, защита —
 # rate-limit по IP + honeypot.

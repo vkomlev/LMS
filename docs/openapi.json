@@ -51029,6 +51029,136 @@
         }
       }
     },
+    "/api/v1/methodist/students-dashboard": {
+      "get": {
+        "tags": [
+          "methodist_students_dashboard"
+        ],
+        "summary": "Get Students Dashboard",
+        "description": "Посещаемость, доля трудностей, скорость и дисциплина ДЗ по ученикам.",
+        "operationId": "get_students_dashboard_api_v1_methodist_students_dashboard_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Начало периода, YYYY-MM-DD (МСК)",
+              "title": "From"
+            },
+            "description": "Начало периода, YYYY-MM-DD (МСК)"
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Конец периода включительно, YYYY-MM-DD (МСК)",
+              "title": "To"
+            },
+            "description": "Конец периода включительно, YYYY-MM-DD (МСК)"
+          },
+          {
+            "name": "student_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Один ученик (опционально)",
+              "title": "Student Id"
+            },
+            "description": "Один ученик (опционально)"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudentsDashboardRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/public/leads": {
       "post": {
         "tags": [
@@ -84047,6 +84177,49 @@
         ],
         "title": "StudentSubscriptionState",
         "description": "Тариф ученика: действующий и вся история.\n\nИстория отдаётся целиком: вопрос персонала звучит как «почему у него такой\nтариф», и ответ на него — предыдущая строка с причиной и автором."
+      },
+      "StudentsDashboardRead": {
+        "properties": {
+          "from": {
+            "type": "string",
+            "title": "From"
+          },
+          "to": {
+            "type": "string",
+            "title": "To"
+          },
+          "prev_from": {
+            "type": "string",
+            "title": "Prev From"
+          },
+          "prev_to": {
+            "type": "string",
+            "title": "Prev To"
+          },
+          "students": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Students"
+          },
+          "group_average": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Group Average"
+          }
+        },
+        "type": "object",
+        "required": [
+          "from",
+          "to",
+          "prev_from",
+          "prev_to",
+          "students",
+          "group_average"
+        ],
+        "title": "StudentsDashboardRead"
       },
       "SubscriptionChangeRequest": {
         "properties": {
