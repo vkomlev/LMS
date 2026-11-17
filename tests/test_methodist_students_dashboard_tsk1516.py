@@ -118,7 +118,7 @@ async def _insert_retry_result(
 
 
 @pytest.mark.asyncio
-async def test_attendance_formula_counts_completed_only(db):
+async def test_attendance_formula_completed_and_no_show(db):
     teacher_id, _ = await _new_user(db, role="teacher", name="a1516a")
     student_id, _ = await _new_user(db, role="student", name="a1516a")
     now = datetime.now(UTC)
@@ -438,6 +438,105 @@ async def test_homework_result_before_issuance_not_counted(db):
     assert row["homework"]["assigned"] == 1
     assert row["homework"]["done_on_time"] == 0
     assert row["homework"]["on_time_rate"] == 0.0
+
+
+@pytest.mark.asyncio
+async def test_attendance_confirmed_counts_as_attended(db):
+    """tsk-1533: платформа фиксирует явку статусом 'confirmed' — он входит
+    и в числитель, и в знаменатель."""
+    teacher_id, _ = await _new_user(db, role="teacher", name="a1533a")
+    student_id, _ = await _new_user(db, role="student", name="a1533a")
+    now = datetime.now(UTC)
+
+    await _create_occurrence_with_participant(
+        db, student_id=student_id, teacher_id=teacher_id,
+        scheduled_at=now - timedelta(days=1), status="confirmed",
+    )
+    await _create_occurrence_with_participant(
+        db, student_id=student_id, teacher_id=teacher_id,
+        scheduled_at=now - timedelta(days=2), status="confirmed",
+    )
+    await _create_occurrence_with_participant(
+        db, student_id=student_id, teacher_id=teacher_id,
+        scheduled_at=now - timedelta(days=3), status="no_show",
+    )
+
+    from_d, to_d = _period_dates(now)
+    data = await svc.get_students_dashboard(db, from_date=from_d, to_date=to_d)
+    row = next(r for r in data["students"] if r["student_id"] == student_id)
+    assert row["attendance"]["planned"] == 3
+    assert row["attendance"]["attended"] == 2
+    assert row["attendance"]["rate"] == round(2 / 3, 4)
+
+
+@pytest.mark.asyncio
+async def test_attendance_rescheduled_not_in_denominator(db):
+    """tsk-1533: 'rescheduled' (перенос) исключён из planned — перенесённое
+    занятие ≠ пропуск. Ученик с одним переносом не появляется в дашборде."""
+    teacher_id, _ = await _new_user(db, role="teacher", name="a1533b")
+    student_id, _ = await _new_user(db, role="student", name="a1533b")
+    now = datetime.now(UTC)
+
+    await _create_occurrence_with_participant(
+        db, student_id=student_id, teacher_id=teacher_id,
+        scheduled_at=now - timedelta(days=1), status="rescheduled",
+    )
+
+    from_d, to_d = _period_dates(now)
+    data = await svc.get_students_dashboard(db, from_date=from_d, to_date=to_d)
+    row = next((r for r in data["students"] if r["student_id"] == student_id), None)
+    assert row is None
+
+
+@pytest.mark.asyncio
+async def test_last_activity_is_max_of_sources(db):
+    """tsk-1533: last_activity_at = max(submitted_at решений, created_at
+    обращений, окончание учебных сессий) по ученику, без привязки к периоду."""
+    teacher_id, _ = await _new_user(db, role="teacher", name="a1533c")
+    student_id, _ = await _new_user(db, role="student", name="a1533c")
+    now = datetime.now(UTC)
+    course_id = await _new_course(db, "tsk1533 активность")
+    task_id = await _new_task(db, course_id=course_id, uid="a1533c1")
+
+    result_at = now - timedelta(days=2)
+    await _insert_task_result(
+        db, student_id=student_id, task_id=task_id, course_id=course_id,
+        is_correct=True, submitted_at=result_at,
+    )
+    help_at = now - timedelta(hours=5)
+    await _insert_help_request(
+        db, student_id=student_id, task_id=task_id, course_id=course_id,
+        teacher_id=teacher_id, created_at=help_at,
+    )
+    session_at = now - timedelta(days=1)
+    await _insert_task_session(
+        db, student_id=student_id, task_id=task_id,
+        seconds=300, at=session_at,
+    )
+
+    from_d, to_d = _period_dates(now)
+    data = await svc.get_students_dashboard(db, from_date=from_d, to_date=to_d)
+    row = next(r for r in data["students"] if r["student_id"] == student_id)
+    # Максимум — обращение 5 часов назад.
+    assert row["last_activity_at"] == help_at.isoformat()
+
+
+@pytest.mark.asyncio
+async def test_last_activity_none_without_any_activity(db):
+    """Ученик с занятием, но без решений/обращений/сессий — null."""
+    teacher_id, _ = await _new_user(db, role="teacher", name="a1533d")
+    student_id, _ = await _new_user(db, role="student", name="a1533d")
+    now = datetime.now(UTC)
+
+    await _create_occurrence_with_participant(
+        db, student_id=student_id, teacher_id=teacher_id,
+        scheduled_at=now - timedelta(days=1), status="confirmed",
+    )
+
+    from_d, to_d = _period_dates(now)
+    data = await svc.get_students_dashboard(db, from_date=from_d, to_date=to_d)
+    row = next(r for r in data["students"] if r["student_id"] == student_id)
+    assert row["last_activity_at"] is None
 
 
 @pytest.mark.asyncio

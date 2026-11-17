@@ -47,15 +47,40 @@ def _msk_bounds(
     return cur_from, cur_to, prev_from, prev_to
 
 
+# Формула посещаемости (tsk-1533, решение зафиксировано в задаче): платформа
+# фиксирует явку статусом 'confirmed' ('completed' — редкий ручной вариант,
+# считаем тоже посещением). Знаменатель — confirmed+completed+no_show;
+# 'scheduled' (будущие, tsk-1516) и 'rescheduled' (перенесённое ≠ пропуск,
+# tsk-1533) в знаменатель НЕ входят.
 _ATTENDANCE_SQL = text("""
     SELECT p.student_id,
            COUNT(*) AS planned,
-           COUNT(*) FILTER (WHERE p.status = 'completed') AS attended
+           COUNT(*) FILTER (WHERE p.status IN ('confirmed', 'completed')) AS attended
     FROM lesson_occurrence_participant p
     JOIN lesson_occurrence o ON o.id = p.occurrence_id
     WHERE o.scheduled_at >= :from_ts AND o.scheduled_at < :to_ts
-      AND p.status IN ('confirmed', 'completed', 'no_show', 'rescheduled')
+      AND p.status IN ('confirmed', 'completed', 'no_show')
     GROUP BY p.student_id
+""")
+
+# Последняя активность на платформе (tsk-1533) — без привязки к периоду:
+# max(submitted_at решений, created_at обращений, окончание учебных сессий).
+_LAST_ACTIVITY_SQL = text("""
+    SELECT student_id, MAX(at) AS last_activity_at
+    FROM (
+        SELECT user_id AS student_id, MAX(submitted_at) AS at
+        FROM task_results
+        GROUP BY user_id
+        UNION ALL
+        SELECT student_id, MAX(created_at)
+        FROM help_requests
+        GROUP BY student_id
+        UNION ALL
+        SELECT student_id, MAX(COALESCE(ended_at, started_at))
+        FROM learning_time_session
+        GROUP BY student_id
+    ) sources
+    GROUP BY student_id
 """)
 
 _TASKS_SQL = text("""
@@ -164,6 +189,8 @@ async def get_students_dashboard(
     hw_c = await _period_rows(db, _HOMEWORK_SQL, cur)
     hw_p = await _period_rows(db, _HOMEWORK_SQL, prev)
 
+    last_activity = await _period_rows(db, _LAST_ACTIVITY_SQL, {})
+
     # Группа — ученики с активностью за текущий ИЛИ прошлый период: иначе
     # резко упавший «до нуля» ученик (самый важный случай для вердикта
     # falling) выпадал бы из дашборда вместе со сравнением.
@@ -226,6 +253,12 @@ async def get_students_dashboard(
         return {
             "student_id": sid,
             "full_name": names.get(sid),
+            "last_activity_at": (
+                la.last_activity_at.isoformat()
+                if (la := last_activity.get(sid)) is not None
+                and la.last_activity_at is not None
+                else None
+            ),
             "attendance": {
                 "planned": int(a_c.planned) if a_c else 0,
                 "attended": int(a_c.attended) if a_c else 0,
