@@ -51087,6 +51087,18 @@
             "description": "Один ученик (опционально)"
           },
           {
+            "name": "exclude_graduates_test",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Скрыть учеников с активной подпиской «Выпускник»/«Test» (tsk-1535)",
+              "default": true,
+              "title": "Exclude Graduates Test"
+            },
+            "description": "Скрыть учеников с активной подпиской «Выпускник»/«Test» (tsk-1535)"
+          },
+          {
             "name": "token",
             "in": "query",
             "required": false,

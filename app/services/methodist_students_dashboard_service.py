@@ -170,9 +170,25 @@ async def _period_rows(db: AsyncSession, sql: Any, params: dict) -> dict[int, An
     return {int(r.student_id): r for r in rows}
 
 
+# tsk-1535: планы, которые методист прячет галочкой «убрать выпускников и
+# тариф Тест» — subscription_plan.id 1 «Test» и 9 «Выпускник».
+# Исключение — АКТИВНАЯ подписка (ends_on IS NULL): ушедший из школы
+# «Выпускник» с закончившейся подпиской не считается.
+_EXCLUDED_PLAN_IDS = (1, 9)
+
+_EXCLUDED_PLANS_SQL = text("""
+    SELECT s.student_id
+    FROM student_subscription s
+    WHERE s.ends_on IS NULL
+      AND s.plan_id = ANY(:plan_ids)
+      AND s.student_id = ANY(:ids)
+""")
+
+
 async def get_students_dashboard(
     db: AsyncSession, *, from_date: str, to_date: str,
     student_id: Optional[int] = None,
+    exclude_graduates_test: bool = True,
 ) -> dict[str, Any]:
     """Агрегаты по ученикам за период + прошлый период + среднее по группе."""
     cur_from, cur_to, prev_from, prev_to = _msk_bounds(from_date, to_date)
@@ -204,6 +220,17 @@ async def get_students_dashboard(
     )
     if student_id is not None:
         student_ids = {sid for sid in student_ids if sid == student_id}
+
+    # tsk-1535: активные подписи на «Выпускник»/«Test» исключаются по
+    # умолчанию; с exclude_graduates_test=False дашборд показывает всех.
+    if exclude_graduates_test and student_ids:
+        rows = (
+            await db.execute(
+                _EXCLUDED_PLANS_SQL,
+                {"plan_ids": list(_EXCLUDED_PLAN_IDS), "ids": list(student_ids)},
+            )
+        ).fetchall()
+        student_ids -= {int(r.student_id) for r in rows}
 
     last_activity = (
         await _period_rows(db, _LAST_ACTIVITY_SQL, {"ids": list(student_ids)})

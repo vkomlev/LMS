@@ -94,6 +94,10 @@ async def get_students_dashboard(
     from_: str = Query(..., alias="from", description="Начало периода, YYYY-MM-DD (МСК)"),
     to: str = Query(..., description="Конец периода включительно, YYYY-MM-DD (МСК)"),
     student_id: Optional[int] = Query(default=None, description="Один ученик (опционально)"),
+    exclude_graduates_test: bool = Query(
+        default=True,
+        description="Скрыть учеников с активной подпиской «Выпускник»/«Test» (tsk-1535)",
+    ),
     db: AsyncSession = Depends(get_async_db),
     current_user=Depends(_METHODIST_GATE),
 ) -> StudentsDashboardRead:
@@ -104,6 +108,7 @@ async def get_students_dashboard(
     try:
         data = await svc.get_students_dashboard(
             db, from_date=from_, to_date=to, student_id=student_id,
+            exclude_graduates_test=exclude_graduates_test,
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
