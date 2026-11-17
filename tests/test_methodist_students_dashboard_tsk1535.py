@@ -92,6 +92,38 @@ async def test_included_when_exclude_flag_false(db):
 
 
 @pytest.mark.asyncio
+async def test_endpoint_exclude_flag_parsing(client, db):
+    """API: exclude_graduates_test=false возвращает выпускника, default — нет."""
+    from tests.test_methodist_students_dashboard_tsk1516 import _new_user as _mk_user
+
+    await _ensure_plan(db, plan_id=9, code="graduate")
+    _methodist_id, token = await _mk_user(db, role="methodist", name="a1535m")
+    grad_id = await _active_student_with_solved_task(db, tag="a1535api")
+    await _insert_subscription(db, student_id=grad_id, plan_id=9, ends_on=None)
+
+    now = datetime.now(UTC)
+    from_d, to_d = _period_dates(now)
+    headers = {"Authorization": f"Bearer {token}"}
+    base = {"from": from_d, "to": to_d}
+
+    resp_default = await client.get(
+        "/api/v1/methodist/students-dashboard", params=base, headers=headers,
+    )
+    assert resp_default.status_code == 200, resp_default.text
+    ids_default = {r["student_id"] for r in resp_default.json()["students"]}
+    assert grad_id not in ids_default
+
+    resp_false = await client.get(
+        "/api/v1/methodist/students-dashboard",
+        params={**base, "exclude_graduates_test": "false"},
+        headers=headers,
+    )
+    assert resp_false.status_code == 200, resp_false.text
+    ids_false = {r["student_id"] for r in resp_false.json()["students"]}
+    assert grad_id in ids_false
+
+
+@pytest.mark.asyncio
 async def test_expired_subscription_not_excluded(db):
     """Подписка завершилась (ends_on NOT NULL) — ученик виден при галочке."""
     await _ensure_plan(db, plan_id=9, code="graduate")
