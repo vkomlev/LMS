@@ -76679,6 +76679,57 @@
         "title": "PricingHint",
         "description": "tsk-1124 Ф6: какой тариф подсказывает группа расписания. Только чтение —\nсменить тариф методист может в оплате ученика, сам сервер деньги не двигает."
       },
+      "ProgramRead": {
+        "properties": {
+          "kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
+          },
+          "deadline": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deadline"
+          },
+          "on_track": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "On Track"
+          },
+          "computed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Computed At"
+          }
+        },
+        "type": "object",
+        "title": "ProgramRead",
+        "description": "tsk-1536: вердикт «успевает ли к экзамену» из материализованного кэша.\n\nБлок есть только у учеников программ подготовки ЕГЭ/ОГЭ. ``on_track``\nNULL — темп измерить не по чему; весь блок NULL-полей — фоновый расчёт\nещё не дошёл до этого ученика («нет данных» на экране). Ученик вне\nпрограмм получает ``program = None`` (на экране «—»)."
+      },
       "ProgressBulkResponse": {
         "properties": {
           "student_id": {
@@ -83485,6 +83536,16 @@
           },
           "homework": {
             "$ref": "#/components/schemas/app__api__v1__methodist_students_dashboard__HomeworkRead"
+          },
+          "program": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProgramRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",

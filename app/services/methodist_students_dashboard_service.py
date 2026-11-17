@@ -191,6 +191,76 @@ _EXCLUDED_PLANS_SQL = text("""
       AND s.student_id = ANY(:ids)
 """)
 
+# tsk-1536: «успевает ли к экзамену» — дашборд ЧИТАЕТ готовые вердикты из
+# methodist_readiness_cache (пишет фоновый тик methodist_readiness_cron_service).
+# Расчёт tsk-815 (~8–12 с на ученика на прод-данных) в запросе запрещён —
+# два инцидента 504 (17.11). Здесь только два дешёвых SELECT: кто записан на
+# программные курсы (user_courses по индексу) и сами вердикты (по PK кэша).
+_PROGRAM_ENROLLMENT_SQL = text("""
+    SELECT user_id AS student_id
+    FROM user_courses
+    WHERE user_id = ANY(:ids) AND is_active = true
+      AND course_id = ANY(:program_ids)
+""")
+
+_READINESS_SQL = text("""
+    SELECT student_id, kind, deadline, on_track, computed_at
+    FROM methodist_readiness_cache
+    WHERE student_id = ANY(:ids)
+""")
+
+
+async def _readiness_by_student(
+    db: AsyncSession, student_ids: set[int],
+) -> dict[int, dict]:
+    """Блок «успевает ли к экзамену»: программные ученики → вердикт из кэша.
+
+    Возвращает только учеников, записанных на программу подготовки:
+    * строка кэша есть — готовый вердикт (on_track NULL — «нет данных»);
+    * строки нет — ``{"kind": None, "deadline": None, "on_track": None,
+      "computed_at": None}``: расчёт ещё не дошёл до этого ученика, фронт
+      показывает «нет данных (расчёт ещё не прошёл)», а не «—».
+    Ученик вне программ — в словаре отсутствует, на экране «—».
+    """
+    from app.services import homework_volume_service
+
+    if not student_ids:
+        return {}
+    oge_ids, ege_ids = homework_volume_service.program_course_ids()
+    program_ids = set(oge_ids) | set(ege_ids)
+    if not program_ids:
+        return {}
+
+    rows = (
+        await db.execute(
+            _PROGRAM_ENROLLMENT_SQL,
+            {"ids": list(student_ids), "program_ids": list(program_ids)},
+        )
+    ).fetchall()
+    on_program = {int(r.student_id) for r in rows}
+    if not on_program:
+        return {}
+
+    cached = {
+        int(r.student_id): {
+            "kind": r.kind,
+            "deadline": r.deadline.isoformat() if r.deadline else None,
+            "on_track": r.on_track,
+            "computed_at": (
+                r.computed_at.isoformat() if r.computed_at else None
+            ),
+        }
+        for r in (
+            await db.execute(
+                _READINESS_SQL, {"ids": list(on_program)},
+            )
+        ).fetchall()
+    }
+    pending = {
+        "kind": None, "deadline": None, "on_track": None, "computed_at": None,
+    }
+    return {sid: cached.get(sid) or pending for sid in on_program}
+
 
 async def get_students_dashboard(
     db: AsyncSession, *, from_date: str, to_date: str,
@@ -254,6 +324,10 @@ async def get_students_dashboard(
             )
         ).fetchall()
         names = {int(r.id): r.full_name for r in rows}
+
+    # tsk-1536: вердикты «успевает к экзамену» из материализованного кэша —
+    # только чтение, расчёта в запросе нет.
+    readiness = await _readiness_by_student(db, student_ids)
 
     weeks = max((cur_to - cur_from).total_seconds() / (7 * 86400), 1 / 7)
 
@@ -329,6 +403,9 @@ async def get_students_dashboard(
                 "on_time_rate": hw_rate,
                 "on_time_rate_prev": hw_rate_prev,
             },
+            # tsk-1536: None — ученик вне программ подготовки («—» на экране);
+            # словарь с on_track/computed_at = None — «расчёт ещё не прошёл».
+            "program": readiness.get(sid),
         }
 
     students = [_row(sid) for sid in sorted(student_ids)]

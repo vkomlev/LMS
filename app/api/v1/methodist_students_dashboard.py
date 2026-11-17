@@ -57,6 +57,21 @@ class HomeworkRead(BaseModel):
     on_time_rate_prev: Optional[float] = None
 
 
+class ProgramRead(BaseModel):
+    """tsk-1536: вердикт «успевает ли к экзамену» из материализованного кэша.
+
+    Блок есть только у учеников программ подготовки ЕГЭ/ОГЭ. ``on_track``
+    NULL — темп измерить не по чему; весь блок NULL-полей — фоновый расчёт
+    ещё не дошёл до этого ученика («нет данных» на экране). Ученик вне
+    программ получает ``program = None`` (на экране «—»).
+    """
+
+    kind: Optional[str] = None
+    deadline: Optional[str] = None
+    on_track: Optional[bool] = None
+    computed_at: Optional[str] = None
+
+
 class StudentDashboardRowRead(BaseModel):
     student_id: int
     full_name: Optional[str] = None
@@ -67,6 +82,8 @@ class StudentDashboardRowRead(BaseModel):
     difficulty: DifficultyRead
     pace: PaceRead
     homework: HomeworkRead
+    # tsk-1536: None — ученик вне программ подготовки.
+    program: Optional[ProgramRead] = None
 
 
 class GroupAverageRead(BaseModel):

@@ -66,3 +66,4 @@ import app.models.lesson_absence_followup  # «про пропуск уже сп
 
 import app.models.task_review_schedule  # расписание повторов заданий (tsk-992)
 import app.models.final_check_runs  # итоговый срез после курса (tsk-994)
+import app.models.methodist_readiness_cache  # вердикт «успевает к экзамену» (tsk-1536)

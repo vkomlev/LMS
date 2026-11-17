@@ -727,6 +727,22 @@ SETTINGS: Tuple[SettingDef, ...] = (
         ),
     ),
     SettingDef(
+        key="methodist_readiness_cron_enabled",
+        group=GROUP_SENSORS,
+        title="Считать «успевает к экзамену» для дашборда методиста",
+        description=(
+            "Фоновый пересчёт вердикта по программам подготовки ЕГЭ/ОГЭ "
+            "(расчёт tsk-815). Пишет таблицу, которую дашборд только читает."
+        ),
+        kind="bool",
+        default=True,
+        env_var="METHODIST_READINESS_CRON_ENABLED",
+        warning=(
+            "Выключено — колонка «К экзамену» в дашборде методиста перестанет "
+            "обновляться и покажет «нет данных (расчёт ещё не прошёл)»."
+        ),
+    ),
+    SettingDef(
         key="homework_auto_issue_enabled",
         group=GROUP_LESSONS,
         title="Выдавать домашнюю работу автоматически после занятия",
