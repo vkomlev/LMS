@@ -33,14 +33,14 @@ _PACE_FALLING = 0.8
 _PACE_ACCELERATING = 1.2
 
 # tsk-1536: кэш вердиктов «успевает ли к экзамену» в памяти процесса. Расчёт
-# тяжёлый (~0.5 с на ученика, tsk-815): при ~100 программных учениках первый
-# прогон дашборда идёт секунды, без кэша каждое обновление страницы методистом
-# повторяло бы всю работу. Вердикт меняется медленно (недельный темп), 20 минут
-# расхождения — внутри погрешности самой метрики. Ключ — (student_id, дата):
-# вердикт считается «на сегодня», после полуночи кэш вчерашнего дня не
-# используется. Протухшие записи отдаём как есть и пересчитываем в фоне,
-# чтобы первый запрос после истечения TTL не ждал ~60 с пересчёта всей
-# программной cohortы.
+# тяжёлый: на прод-данных один compute (tsk-815) занимает ~10 с, при ~100
+# программных учениках НИКАКОЙ параллелизм не укладывается в таймаут шлюза
+# (проверено 17.11: 8 воркеров всё равно > 60 с). Поэтому запрос дашборда
+# расчёт не запускает вовсе: он отдаёт вердикт из кэша (свежий или протухший)
+# и ставит недостающие ключи в очередь фонового пересчёта. Вердикт меняется
+# медленно (недельный темп), 20 минут расхождения — внутри погрешности самой
+# метрики. Ключ — (student_id, дата): вердикт считается «на сегодня», после
+# полуночи кэш вчерашнего дня не используется.
 _PROGRAM_PACE_CACHE_TTL_SEC = 20 * 60
 _program_pace_cache: dict[
     tuple[int, str], tuple[float, Optional[dict[str, Any]]],
@@ -353,11 +353,14 @@ async def _program_pace_by_student(
     now = datetime.now(MSK)
     day = now.date().isoformat()
 
-    # Кэш: свежие записи — из памяти; протухшие — отдаём как есть и в фоне
-    # пересчитываем (прод); холодные (записи нет) — считаем inline. В тестах
-    # bind — Connection одной откатываемой транзакции (conftest tsk-333):
-    # параллельные сессии и фоновые задачи там невозможны, протухшие
-    # пересчитываем inline поверх той же сессии `db`.
+    # Кэш-only (прод, bind=Engine): запрос никогда не ждёт расчёт. Свежие
+    # записи — из памяти; протухшие — тоже отдаём (вердикт меняется за дни,
+    # расхождение ≤ TTL) и ставим в очередь фонового пересчёта; холодных
+    # (записи нет) пока не показываем, фоновая задача их досчитает — колонка
+    # заполнится через ~пару минут после рестарта и дальше держится тёплой.
+    # В тестах bind — Connection одной откатываемой транзакции (conftest
+    # tsk-333): фоновые задачи там невозможны, всё считаем inline поверх той
+    # же сессии `db` — поэтому в тестах колонка заполнена с первого прогона.
     now_ts = time_module.monotonic()
     verdicts: dict[int, Optional[dict[str, Any]]] = {}
     cold: set[int] = set()
@@ -373,53 +376,33 @@ async def _program_pace_by_student(
 
     bind = db.get_bind()
     engine_bind = isinstance(bind, AsyncEngine)
-    inline = cold | (set() if engine_bind else stale)
 
-    if inline:
-        if engine_bind:
-            from sqlalchemy.ext.asyncio import async_sessionmaker
-
-            factory = async_sessionmaker(bind=bind, expire_on_commit=False)
-            semaphore = asyncio.Semaphore(8)
-
-            async def _one_session(
-                sid: int,
-            ) -> tuple[int, Optional[dict[str, Any]]]:
-                async with semaphore:
-                    async with factory() as session:
-                        return await _compute_program_pace(
-                            session, sid, now,
-                        )
-
-            results = await asyncio.gather(
-                *[_one_session(sid) for sid in inline],
-            )
-        else:
-            results = [
-                await _compute_program_pace(db, sid, now)
-                for sid in sorted(inline)
-            ]
-        ts = time_module.monotonic()
-        for sid, payload in results:
-            _program_pace_cache[(sid, day)] = (ts, payload)
-            verdicts[sid] = payload
-
-    if engine_bind and stale:
-        to_refresh = [
-            sid for sid in sorted(stale)
-            if (sid, day) not in _program_pace_refreshing
-        ]
+    if engine_bind:
         for sid in stale:
-            # Протухшее значение всё ещё лучше пустой колонки: вердикт
-            # меняется за дни, а расхождение — не больше TTL.
+            # Протухшее значение всё ещё лучше пустой колонки.
             verdicts[sid] = _program_pace_cache[(sid, day)][1]
+        to_refresh = sorted(
+            (cold | stale) - {sid for sid, d in _program_pace_refreshing
+                              if d == day}
+        )
+        for sid in to_refresh:
+            _program_pace_refreshing.add((sid, day))
         if to_refresh:
-            for sid in to_refresh:
-                _program_pace_refreshing.add((sid, day))
             task = asyncio.create_task(
                 _refresh_program_pace(bind, to_refresh, day),
             )
             _program_pace_refresh_tasks.add(task)
+        return {sid: v for sid, v in verdicts.items() if v is not None}
+
+    # Тестовый путь (bind=Connection): последовательный inline-расчёт.
+    results = [
+        await _compute_program_pace(db, sid, now)
+        for sid in sorted(cold | stale)
+    ]
+    ts = time_module.monotonic()
+    for sid, payload in results:
+        _program_pace_cache[(sid, day)] = (ts, payload)
+        verdicts[sid] = payload
 
     return {sid: v for sid, v in verdicts.items() if v is not None}
 
