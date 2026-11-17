@@ -125,6 +125,13 @@ _TIME_SQL = text("""
     GROUP BY student_id
 """)
 
+# tsk-1537: авто-архив недельного ДЗ отменяет назначение ровно в срок
+# (cancelled_at = due_at); старый фильтр `cancelled_at IS NULL` стирал всю
+# историю авто-выдач (дашборд показывал 0/0). Правило: назначение считается,
+# если оно активно ИЛИ отменено не раньше срока (отмена = конец жизненного
+# цикла, а не досрочная ревокация). Досрочно отменённые (перепланирование)
+# не считаются. Разведка по базе: 75% cancelled — жизненный цикл, 25% —
+# досрочные ревокации.
 _HOMEWORK_SQL = text("""
     SELECT a.student_id,
            COUNT(i.id) AS assigned,
@@ -142,7 +149,7 @@ _HOMEWORK_SQL = text("""
     JOIN homework_item i ON i.homework_id = a.id
                           AND i.kind = 'task'
                           AND i.tier = 'required'
-    WHERE a.cancelled_at IS NULL
+    WHERE (a.cancelled_at IS NULL OR a.cancelled_at >= a.due_at)
       AND a.issued_at >= :from_ts AND a.issued_at < :to_ts
     GROUP BY a.student_id
 """)

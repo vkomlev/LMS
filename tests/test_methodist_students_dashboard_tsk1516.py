@@ -67,6 +67,7 @@ async def _insert_task_session(
 
 async def _insert_homework(
     db, *, student_id: int, task_id: int, issued_at: datetime, due_at: datetime,
+    cancelled_at: datetime | None = None,
 ) -> int:
     hw_id = (
         await db.execute(
@@ -77,6 +78,11 @@ async def _insert_homework(
             {"s": student_id, "i": issued_at, "d": due_at},
         )
     ).scalar()
+    if cancelled_at is not None:
+        await db.execute(
+            text("UPDATE homework_assignment SET cancelled_at = :c WHERE id = :h"),
+            {"c": cancelled_at, "h": hw_id},
+        )
     await db.execute(
         text(
             "INSERT INTO homework_item (homework_id, kind, task_id, position, tier) "
@@ -289,6 +295,50 @@ async def test_homework_on_time_rate(db):
     await _insert_task_result(
         db, student_id=student_id, task_id=t_late, course_id=course_id,
         is_correct=True, submitted_at=now - timedelta(hours=1),
+    )
+
+    from_d, to_d = _period_dates(now)
+    data = await svc.get_students_dashboard(db, from_date=from_d, to_date=to_d)
+    row = next(r for r in data["students"] if r["student_id"] == student_id)
+    assert row["homework"]["assigned"] == 2
+    assert row["homework"]["done_on_time"] == 1
+    assert row["homework"]["on_time_rate"] == 0.5
+
+
+@pytest.mark.asyncio
+async def test_homework_lifecycle_cancelled_counts_early_cancelled_not(db):
+    """tsk-1537: авто-архив недельного ДЗ отменяет назначение ровно в срок
+    (cancelled_at = due_at) — такая выдача считается (полный жизненный цикл).
+    Досрочная отмена (cancelled_at < due_at, истинная ревокация/перепланировка)
+    не считается."""
+    teacher_id, _ = await _new_user(db, role="teacher", name="a1537a")
+    student_id, _ = await _new_user(db, role="student", name="a1537a")
+    now = datetime.now(UTC)
+    course_id = await _new_course(db, "tsk1537 архив ДЗ")
+    t_archived = await _new_task(db, course_id=course_id, uid="a1537a1")
+    t_active = await _new_task(db, course_id=course_id, uid="a1537a2")
+    t_early = await _new_task(db, course_id=course_id, uid="a1537a3")
+
+    # Авто-архив: отмена ровно в срок — выдача была и прожила срок.
+    await _insert_homework(
+        db, student_id=student_id, task_id=t_archived,
+        issued_at=now - timedelta(days=6), due_at=now - timedelta(days=1),
+        cancelled_at=now - timedelta(days=1),
+    )
+    await _insert_task_result(
+        db, student_id=student_id, task_id=t_archived, course_id=course_id,
+        is_correct=True, submitted_at=now - timedelta(days=2),
+    )
+    # Активное назначение.
+    await _insert_homework(
+        db, student_id=student_id, task_id=t_active,
+        issued_at=now - timedelta(days=2), due_at=now + timedelta(days=1),
+    )
+    # Досрочная ревокация — не должна попасть в статистику.
+    await _insert_homework(
+        db, student_id=student_id, task_id=t_early,
+        issued_at=now - timedelta(days=5), due_at=now + timedelta(days=2),
+        cancelled_at=now - timedelta(days=4),
     )
 
     from_d, to_d = _period_dates(now)
