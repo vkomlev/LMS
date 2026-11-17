@@ -540,6 +540,37 @@ async def test_last_activity_none_without_any_activity(db):
 
 
 @pytest.mark.asyncio
+async def test_endpoint_returns_last_activity_at(client, db):
+    """tsk-1533: поле last_activity_at доезжает до ответа API — без явного
+    поля в Pydantic-схеме response_model оно молча отрезалось (extra=ignore)."""
+    teacher_id, _ = await _new_user(db, role="teacher", name="a1533e")
+    student_id, _ = await _new_user(db, role="student", name="a1533e")
+    now = datetime.now(UTC)
+    await _create_occurrence_with_participant(
+        db, student_id=student_id, teacher_id=teacher_id,
+        scheduled_at=now - timedelta(days=1), status="confirmed",
+    )
+    course_id = await _new_course(db, "tsk1533 api-activity")
+    task_id = await _new_task(db, course_id=course_id, uid="a1533e1")
+    await _insert_task_result(
+        db, student_id=student_id, task_id=task_id, course_id=course_id,
+        is_correct=True, submitted_at=now - timedelta(hours=3),
+    )
+
+    _methodist_id, token = await _new_user(db, role="methodist", name="a1533f")
+    from_d, to_d = _period_dates(now)
+    resp = await client.get(
+        "/api/v1/methodist/students-dashboard",
+        params={"from": from_d, "to": to_d},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200, resp.text
+    row = next(r for r in resp.json()["students"] if r["student_id"] == student_id)
+    assert row["last_activity_at"] is not None
+    assert row["last_activity_at"].startswith((now - timedelta(hours=4)).isoformat()[:10])
+
+
+@pytest.mark.asyncio
 async def test_period_longer_than_366_days_rejected(client, db):
     _methodist_id, token = await _new_user(db, role="methodist", name="a1516p")
     resp = await client.get(

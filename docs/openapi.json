@@ -83451,6 +83451,17 @@
             ],
             "title": "Full Name"
           },
+          "last_activity_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Activity At"
+          },
           "attendance": {
             "$ref": "#/components/schemas/AttendanceRead"
           },

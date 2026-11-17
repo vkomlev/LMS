@@ -60,6 +60,9 @@ class HomeworkRead(BaseModel):
 class StudentDashboardRowRead(BaseModel):
     student_id: int
     full_name: Optional[str] = None
+    # tsk-1533: без explicit-поля Pydantic-схема ответа молча отрезала бы
+    # last_activity_at от сервиса (extra=ignore по умолчанию).
+    last_activity_at: Optional[str] = None
     attendance: AttendanceRead
     difficulty: DifficultyRead
     pace: PaceRead
