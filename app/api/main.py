@@ -845,6 +845,33 @@ async def _stop_lesson_idle_scheduler() -> None:
         logger.exception("tsk-591: не удалось остановить тик простоя на занятии")
 
 
+# tsk-1536: материализованный вердикт «успевает к экзамену» для дашборда
+# методиста. Расчёт живёт только в этом тике (два инцидента 504 от in-request
+# и фонового прогрева внутри запроса). Тот же multi-worker-safe паттерн,
+# отдельный lock-ключ.
+from app.services import methodist_readiness_cron_service as _readiness_cron
+
+
+@app.on_event("startup")
+async def _start_methodist_readiness_scheduler() -> None:
+    try:
+        _readiness_cron.start_scheduler()
+    except Exception:
+        logger.exception(
+            "tsk-1536: не удалось запустить пересчёт readiness методиста"
+        )
+
+
+@app.on_event("shutdown")
+async def _stop_methodist_readiness_scheduler() -> None:
+    try:
+        _readiness_cron.stop_scheduler()
+    except Exception:
+        logger.exception(
+            "tsk-1536: не удалось остановить пересчёт readiness методиста"
+        )
+
+
 # tsk-032: фиксация вех удержания (`user_achievements`). Сама недельная серия
 # считается на лету при чтении и от тика НЕ зависит — тик только проставляет
 # earned_at выполненным вехам. Тот же multi-worker-safe паттерн, отдельный ключ.

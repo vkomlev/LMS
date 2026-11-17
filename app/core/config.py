@@ -857,6 +857,24 @@ class Settings:
         self.presence_stale_seconds: int = int(
             os.getenv("PRESENCE_STALE_SECONDS", "420")
         )
+        # tsk-1536: материализованный вердикт «успевает к экзамену» для
+        # дашборда методиста (см. app/services/methodist_readiness_cron_service.py).
+        # Расчёт тяжёлый (~8–12 с на ученика на прод-данных) — он живёт только
+        # в этом тике, дашборд читает готовую таблицу. Интервал 2 ч: вердикт
+        # меняется за дни, а полный прогон ~100 учеников ложится на 5 тиков
+        # по refresh_per_tick.
+        self.methodist_readiness_cron_interval_min: int = int(
+            os.getenv("METHODIST_READINESS_CRON_INTERVAL_MIN", "120")
+        )
+        self.methodist_readiness_cron_startup_delay_min: float = float(
+            os.getenv("METHODIST_READINESS_CRON_STARTUP_DELAY_MIN", "2")
+        )
+        # Сколько учеников пересчитывать за один тик: ~10 с на ученика ⇒
+        # 20 ≈ 3–4 минуты работы БД на тик — без просадки пула (инциденты
+        # 17.11: параллельный полный прогон исчерпывал QueuePool).
+        self.methodist_readiness_refresh_per_tick: int = int(
+            os.getenv("METHODIST_READINESS_REFRESH_PER_TICK", "20")
+        )
 
         # Кураторские еженедельные отчёты (см.
         # app/services/curator_report_cron_service.py). Интервал самого тика
