@@ -65,20 +65,22 @@ _ATTENDANCE_SQL = text("""
 
 # Последняя активность на платформе (tsk-1533) — без привязки к периоду:
 # max(submitted_at решений, created_at обращений, окончание учебных сессий).
+# Фильтр по списку студентов дашборда: иначе запрос сканирует всю историю
+# трёх таблиц (находка P3 ревью tsk-1533).
 _LAST_ACTIVITY_SQL = text("""
     SELECT student_id, MAX(at) AS last_activity_at
     FROM (
-        SELECT user_id AS student_id, MAX(submitted_at) AS at
+        SELECT user_id AS student_id, submitted_at AS at
         FROM task_results
-        GROUP BY user_id
+        WHERE user_id = ANY(:ids)
         UNION ALL
-        SELECT student_id, MAX(created_at)
+        SELECT student_id, created_at
         FROM help_requests
-        GROUP BY student_id
+        WHERE student_id = ANY(:ids)
         UNION ALL
-        SELECT student_id, MAX(COALESCE(ended_at, started_at))
+        SELECT student_id, COALESCE(ended_at, started_at)
         FROM learning_time_session
-        GROUP BY student_id
+        WHERE student_id = ANY(:ids)
     ) sources
     GROUP BY student_id
 """)
@@ -189,8 +191,6 @@ async def get_students_dashboard(
     hw_c = await _period_rows(db, _HOMEWORK_SQL, cur)
     hw_p = await _period_rows(db, _HOMEWORK_SQL, prev)
 
-    last_activity = await _period_rows(db, _LAST_ACTIVITY_SQL, {})
-
     # Группа — ученики с активностью за текущий ИЛИ прошлый период: иначе
     # резко упавший «до нуля» ученик (самый важный случай для вердикта
     # falling) выпадал бы из дашборда вместе со сравнением.
@@ -204,6 +204,12 @@ async def get_students_dashboard(
     )
     if student_id is not None:
         student_ids = {sid for sid in student_ids if sid == student_id}
+
+    last_activity = (
+        await _period_rows(db, _LAST_ACTIVITY_SQL, {"ids": list(student_ids)})
+        if student_ids
+        else {}
+    )
 
     names: dict[int, Optional[str]] = {}
     if student_ids:
