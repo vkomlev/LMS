@@ -14,18 +14,50 @@
 """
 from __future__ import annotations
 
+import asyncio
+import logging
+import time as time_module
 from datetime import datetime, timedelta
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 MSK = ZoneInfo("Europe/Moscow")
+
+logger = logging.getLogger(__name__)
 
 # Вердикт темпа: пороги относительно прошлого периода.
 _PACE_FALLING = 0.8
 _PACE_ACCELERATING = 1.2
+
+# tsk-1536: кэш вердиктов «успевает ли к экзамену» в памяти процесса. Расчёт
+# тяжёлый (~0.5 с на ученика, tsk-815): при ~100 программных учениках первый
+# прогон дашборда идёт секунды, без кэша каждое обновление страницы методистом
+# повторяло бы всю работу. Вердикт меняется медленно (недельный темп), 20 минут
+# расхождения — внутри погрешности самой метрики. Ключ — (student_id, дата):
+# вердикт считается «на сегодня», после полуночи кэш вчерашнего дня не
+# используется. Протухшие записи отдаём как есть и пересчитываем в фоне,
+# чтобы первый запрос после истечения TTL не ждал ~60 с пересчёта всей
+# программной cohortы.
+_PROGRAM_PACE_CACHE_TTL_SEC = 20 * 60
+_program_pace_cache: dict[
+    tuple[int, str], tuple[float, Optional[dict[str, Any]]],
+] = {}
+# Ключи, по которым фоновый пересчёт уже запущен (не плодим задачи).
+_program_pace_refreshing: set[tuple[int, str]] = set()
+# Держим ссылки на фоновые задачи, чтобы их не собрал GC.
+_program_pace_refresh_tasks: set[asyncio.Task] = set()
+
+
+def _clear_program_pace_cache() -> None:
+    """Сброс кэша вердиктов (тесты)."""
+    _program_pace_cache.clear()
+    _program_pace_refreshing.clear()
+    for task in _program_pace_refresh_tasks:
+        task.cancel()
+    _program_pace_refresh_tasks.clear()
 
 
 def _msk_bounds(
@@ -191,6 +223,206 @@ _EXCLUDED_PLANS_SQL = text("""
       AND s.student_id = ANY(:ids)
 """)
 
+# tsk-1536: «успевает ли к экзамену» — программные курсы учеников одним
+# запросом, чтобы не гонять per-student расчёт по всему дашборду: считается
+# он только для записанных на программу ЕГЭ/ОГЭ, а таких обычно меньшинство.
+_PROGRAM_ENROLLMENT_SQL = text("""
+    SELECT user_id AS student_id, course_id
+    FROM user_courses
+    WHERE user_id = ANY(:ids) AND is_active = true
+""")
+
+# Разрыв «нужно минус делает» в минутах, ниже которого человек считается
+# идущим по плану. Тот же порог, что в сводке преподавателя
+# (SPW components/teacher/student-verdict.ts, PACE_GAP_MINUTES_THRESHOLD):
+# разница в паре минут внутри погрешности веса, а выглядит как замечание.
+_ON_TRACK_GAP_MINUTES = 10
+
+
+def _program_on_track(plan: Any) -> Optional[bool]:
+    """Успевает ли к сроку — правило сводки преподавателя, не своё.
+
+    Минутная шкала (когда вес измерен) с порогом `_ON_TRACK_GAP_MINUTES`;
+    штучная — запасная, без порога: там разрыв целочисленный и «не дотягивает
+    1» уже значимо. Данных нет (нет и штучной пары) — None, «нет данных».
+    """
+    if (
+        plan.target_minutes_per_week is not None
+        and plan.fact_minutes_per_week is not None
+    ):
+        return (
+            plan.target_minutes_per_week - plan.fact_minutes_per_week
+            < _ON_TRACK_GAP_MINUTES
+        )
+    if plan.target_per_week is not None and plan.fact_per_week is not None:
+        return plan.fact_per_week >= plan.target_per_week
+    return None
+
+
+async def _compute_program_pace(
+    session: AsyncSession, sid: int, now: datetime,
+) -> tuple[int, Optional[dict[str, Any]]]:
+    # Колонка необязательная: ошибка расчёта по одному ученику не
+    # должна ронять весь дашборд — у него просто не будет вердикта.
+    from app.services import homework_volume_service
+
+    try:
+        plan = await homework_volume_service.compute(
+            session, student_id=sid, now=now,
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "students-dashboard: не посчитался on_track для %s", sid,
+            exc_info=True,
+        )
+        return sid, None
+    if plan.program_kind is None or plan.program_deadline is None:
+        return sid, None
+    return sid, {
+        "kind": plan.program_kind,
+        "deadline": plan.program_deadline.isoformat(),
+        "on_track": _program_on_track(plan),
+    }
+
+
+async def _refresh_program_pace(
+    bind: AsyncEngine, sids: list[int], day: str,
+) -> None:
+    """Фоновый пересчёт протухших вердиктов (прод, bind — движок).
+
+    Каждому ученику — своя сессия: общая AsyncSession к одному соединению
+    конкурентно не работает (поэтому gather по общей сессии не лечил 504).
+    """
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    factory = async_sessionmaker(bind=bind, expire_on_commit=False)
+    semaphore = asyncio.Semaphore(8)
+    now = datetime.now(MSK)
+    try:
+        async def _one(sid: int) -> tuple[int, Optional[dict[str, Any]]]:
+            async with semaphore:
+                async with factory() as session:
+                    return await _compute_program_pace(session, sid, now)
+
+        results = await asyncio.gather(*[_one(sid) for sid in sids])
+        ts = time_module.monotonic()
+        for sid, payload in results:
+            _program_pace_cache[(sid, day)] = (ts, payload)
+    except asyncio.CancelledError:  # noqa: BLE001
+        raise
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "students-dashboard: фоновый пересчёт on_track не удался",
+            exc_info=True,
+        )
+    finally:
+        for sid in sids:
+            _program_pace_refreshing.discard((sid, day))
+        _program_pace_refresh_tasks.discard(asyncio.current_task())  # type: ignore[arg-type]
+
+
+async def _program_pace_by_student(
+    db: AsyncSession, student_ids: set[int],
+) -> dict[int, dict[str, Any]]:
+    """Блок «успевает ли к экзамену» для учеников на программных курсах.
+
+    Расчёт — тот же, что в дашборде ученика (tsk-815): план объёма
+    `homework_volume_service.compute`, а не параллельная формула. `None`
+    целиком — ученик не записан ни на одну программу подготовки.
+    """
+    from app.services import homework_volume_service
+
+    oge_ids, ege_ids = homework_volume_service.program_course_ids()
+    program_ids = set(oge_ids) | set(ege_ids)
+    if not student_ids or not program_ids:
+        return {}
+
+    rows = (
+        await db.execute(
+            _PROGRAM_ENROLLMENT_SQL, {"ids": list(student_ids)},
+        )
+    ).fetchall()
+    on_program = {
+        int(r.student_id)
+        for r in rows
+        if int(r.course_id) in program_ids
+    }
+    if not on_program:
+        return {}
+
+    now = datetime.now(MSK)
+    day = now.date().isoformat()
+
+    # Кэш: свежие записи — из памяти; протухшие — отдаём как есть и в фоне
+    # пересчитываем (прод); холодные (записи нет) — считаем inline. В тестах
+    # bind — Connection одной откатываемой транзакции (conftest tsk-333):
+    # параллельные сессии и фоновые задачи там невозможны, протухшие
+    # пересчитываем inline поверх той же сессии `db`.
+    now_ts = time_module.monotonic()
+    verdicts: dict[int, Optional[dict[str, Any]]] = {}
+    cold: set[int] = set()
+    stale: set[int] = set()
+    for sid in on_program:
+        cached = _program_pace_cache.get((sid, day))
+        if cached is None:
+            cold.add(sid)
+        elif cached[0] >= now_ts - _PROGRAM_PACE_CACHE_TTL_SEC:
+            verdicts[sid] = cached[1]
+        else:
+            stale.add(sid)
+
+    bind = db.get_bind()
+    engine_bind = isinstance(bind, AsyncEngine)
+    inline = cold | (set() if engine_bind else stale)
+
+    if inline:
+        if engine_bind:
+            from sqlalchemy.ext.asyncio import async_sessionmaker
+
+            factory = async_sessionmaker(bind=bind, expire_on_commit=False)
+            semaphore = asyncio.Semaphore(8)
+
+            async def _one_session(
+                sid: int,
+            ) -> tuple[int, Optional[dict[str, Any]]]:
+                async with semaphore:
+                    async with factory() as session:
+                        return await _compute_program_pace(
+                            session, sid, now,
+                        )
+
+            results = await asyncio.gather(
+                *[_one_session(sid) for sid in inline],
+            )
+        else:
+            results = [
+                await _compute_program_pace(db, sid, now)
+                for sid in sorted(inline)
+            ]
+        ts = time_module.monotonic()
+        for sid, payload in results:
+            _program_pace_cache[(sid, day)] = (ts, payload)
+            verdicts[sid] = payload
+
+    if engine_bind and stale:
+        to_refresh = [
+            sid for sid in sorted(stale)
+            if (sid, day) not in _program_pace_refreshing
+        ]
+        for sid in stale:
+            # Протухшее значение всё ещё лучше пустой колонки: вердикт
+            # меняется за дни, а расхождение — не больше TTL.
+            verdicts[sid] = _program_pace_cache[(sid, day)][1]
+        if to_refresh:
+            for sid in to_refresh:
+                _program_pace_refreshing.add((sid, day))
+            task = asyncio.create_task(
+                _refresh_program_pace(bind, to_refresh, day),
+            )
+            _program_pace_refresh_tasks.add(task)
+
+    return {sid: v for sid, v in verdicts.items() if v is not None}
+
 
 async def get_students_dashboard(
     db: AsyncSession, *, from_date: str, to_date: str,
@@ -254,6 +486,10 @@ async def get_students_dashboard(
             )
         ).fetchall()
         names = {int(r.id): r.full_name for r in rows}
+
+    # tsk-1536: вердикт «успевает/не успевает к экзамену» для учеников
+    # программ подготовки (ЕГЭ/ОГЭ). Прочим ученикам поле остаётся None.
+    program_pace = await _program_pace_by_student(db, student_ids)
 
     weeks = max((cur_to - cur_from).total_seconds() / (7 * 86400), 1 / 7)
 
@@ -329,6 +565,8 @@ async def get_students_dashboard(
                 "on_time_rate": hw_rate,
                 "on_time_rate_prev": hw_rate_prev,
             },
+            # tsk-1536: None — ученик не на программе подготовки с дедлайном.
+            "program": program_pace.get(sid),
         }
 
     students = [_row(sid) for sid in sorted(student_ids)]
