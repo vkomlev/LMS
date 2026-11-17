@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import text
@@ -25,6 +26,49 @@ from tests.test_tsk741_homework import (
 )
 
 UTC = timezone.utc
+
+
+@pytest.mark.parametrize(
+    ("target_min", "fact_min", "expected"),
+    [
+        (100, 91, True),   # разрыв 9 минут — внутри порога: идёт по плану
+        (100, 90, False),  # ровно 10 минут — уже «отстаёт» (порог строгий, <)
+        (100, 89, False),  # разрыв 11 минут — отстаёт
+    ],
+)
+def test_program_on_track_minutes_threshold(target_min, fact_min, expected):
+    """Порог 10 минут — как в сводке преподавателя (student-verdict.ts)."""
+    plan = SimpleNamespace(
+        target_minutes_per_week=target_min,
+        fact_minutes_per_week=fact_min,
+        target_per_week=None,
+        fact_per_week=None,
+    )
+    assert svc._program_on_track(plan) is expected
+
+
+def test_program_on_track_piecewise_fallback():
+    """Минут нет (вес не измерен) — штучная шкала: факт >= нормы."""
+    plan = SimpleNamespace(
+        target_minutes_per_week=None,
+        fact_minutes_per_week=None,
+        target_per_week=10,
+        fact_per_week=9,
+    )
+    assert svc._program_on_track(plan) is False
+    plan.fact_per_week = 10
+    assert svc._program_on_track(plan) is True
+
+
+def test_program_on_track_no_data():
+    """Ни минутной, ни штучной пары — «нет данных»."""
+    plan = SimpleNamespace(
+        target_minutes_per_week=None,
+        fact_minutes_per_week=None,
+        target_per_week=None,
+        fact_per_week=None,
+    )
+    assert svc._program_on_track(plan) is None
 
 
 async def _program_student_with_recent_pace(
@@ -97,7 +141,9 @@ async def test_program_student_with_pace_is_on_track(db, monkeypatch):
 async def test_student_outside_program_gets_no_block(db, monkeypatch):
     """Ученик вне программ подготовки: поле program = None (на экране «—»)."""
     student_id = await _active_student_with_solved_task(db, tag="a1536none")
-    # Настройки программ не подменяем: пустые списки курсов — программы нет.
+    # Явно пустые списки программных курсов: тест не должен зависеть от
+    # настроек тестового окружения.
+    monkeypatch.setattr(settings_store, "get_str", lambda key: "")
 
     from_d, to_d = _period_dates(datetime.now(UTC))
     data = await svc.get_students_dashboard(db, from_date=from_d, to_date=to_d)

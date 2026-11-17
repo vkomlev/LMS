@@ -585,6 +585,20 @@ SELECT (SELECT count(*) FROM course_tasks) AS tasks_total,
 """
 
 
+def program_course_ids() -> tuple[list[int], list[int]]:
+    """Настроенные программные курсы: (ОГЭ, ЕГЭ). Пустые списки — программ нет.
+
+    Публичная обёртка над настройками `homework_program_{oge,ege}_courses`:
+    внешним потребителям (не только `compute`) нужен тот же разбор строки
+    «88,112», и дублировать `_course_ids` у себя нельзя.
+    """
+    from app.core import settings_store
+
+    oge = _course_ids(settings_store.get_str("homework_program_oge_courses"))
+    ege = _course_ids(settings_store.get_str("homework_program_ege_courses"))
+    return oge, ege
+
+
 async def program_for_student(
     db: AsyncSession, *, student_id: int, grade: Optional[int], today: date
 ) -> Optional[dict[str, Any]]:

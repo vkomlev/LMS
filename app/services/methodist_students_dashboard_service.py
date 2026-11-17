@@ -14,14 +14,19 @@
 """
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
+
+import logging
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 MSK = ZoneInfo("Europe/Moscow")
+
+logger = logging.getLogger(__name__)
 
 # Вердикт темпа: пороги относительно прошлого периода.
 _PACE_FALLING = 0.8
@@ -215,7 +220,7 @@ def _program_on_track(plan: Any) -> Optional[bool]:
             plan.target_minutes_per_week - plan.fact_minutes_per_week
             < _ON_TRACK_GAP_MINUTES
         )
-    if plan.target_per_week is not None:
+    if plan.target_per_week is not None and plan.fact_per_week is not None:
         return plan.fact_per_week >= plan.target_per_week
     return None
 
@@ -229,15 +234,9 @@ async def _program_pace_by_student(
     `homework_volume_service.compute`, а не параллельная формула. `None`
     целиком — ученик не записан ни на одну программу подготовки.
     """
-    from app.core import settings_store
     from app.services import homework_volume_service
 
-    oge_ids = homework_volume_service._course_ids(  # noqa: SLF001
-        settings_store.get_str("homework_program_oge_courses")
-    )
-    ege_ids = homework_volume_service._course_ids(  # noqa: SLF001
-        settings_store.get_str("homework_program_ege_courses")
-    )
+    oge_ids, ege_ids = homework_volume_service.program_course_ids()
     program_ids = set(oge_ids) | set(ege_ids)
     if not student_ids or not program_ids:
         return {}
@@ -256,19 +255,37 @@ async def _program_pace_by_student(
         return {}
 
     now = datetime.now(MSK)
-    result: dict[int, dict[str, Any]] = {}
-    for sid in on_program:
-        plan = await homework_volume_service.compute(
-            db, student_id=sid, now=now,
-        )
+
+    async def _one(sid: int) -> tuple[int, Optional[dict[str, Any]]]:
+        # Колонка необязательная: ошибка расчёта по одному ученику не
+        # должна ронять весь дашборд — у него просто не будет вердикта.
+        # Расчёты идут ПАРАЛЛЕЛЬНО (ревью tsk-1536): последовательный await
+        # давал N+1 — при ~100 учениках программ дашборд блокировался бы
+        # на суммарную латентность всех compute.
+        try:
+            plan = await homework_volume_service.compute(
+                db, student_id=sid, now=now,
+            )
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "students-dashboard: не посчитался on_track для %s", sid,
+                exc_info=True,
+            )
+            return sid, None
         if plan.program_kind is None or plan.program_deadline is None:
-            continue
-        result[sid] = {
+            return sid, None
+        return sid, {
             "kind": plan.program_kind,
             "deadline": plan.program_deadline.isoformat(),
             "on_track": _program_on_track(plan),
         }
-    return result
+
+    results = await asyncio.gather(*[_one(sid) for sid in on_program])
+    return {
+        sid: payload
+        for sid, payload in results
+        if payload is not None
+    }
 
 
 async def get_students_dashboard(
