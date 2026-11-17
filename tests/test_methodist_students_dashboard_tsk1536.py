@@ -28,14 +28,6 @@ from tests.test_tsk741_homework import (
 UTC = timezone.utc
 
 
-@pytest.fixture(autouse=True)
-def _clear_program_pace_cache():
-    """Кэш вердиктов живёт между тестами в памяти процесса — сбрасываем."""
-    svc._clear_program_pace_cache()
-    yield
-    svc._clear_program_pace_cache()
-
-
 @pytest.mark.parametrize(
     ("target_min", "fact_min", "expected"),
     [
@@ -180,61 +172,3 @@ async def test_endpoint_returns_program_block(client, db, monkeypatch):
     row = _row(resp.json(), student_id)
     assert row["program"]["kind"] == "ege"
     assert row["program"]["on_track"] is False
-
-
-@pytest.mark.asyncio
-async def test_on_track_is_cached_within_ttl(db, monkeypatch):
-    """Повторный прогон дашборда не пересчитывает вердикт (кэш, tsk-1536).
-
-    Инцидент 17.11: без кэша ~100 программных учеников × ~0.5 с расчёта
-    давали 504 на шлюзе. Считаем вызовы compute: второй прогон — 0 новых.
-    """
-    from app.services import homework_volume_service
-
-    student_id = await _program_student_with_recent_pace(
-        db, monkeypatch, done_recent=1,
-    )
-    calls = {"n": 0}
-    real_compute = homework_volume_service.compute
-
-    async def _counting_compute(session, *, student_id, now=None):
-        calls["n"] += 1
-        return await real_compute(session, student_id=student_id, now=now)
-
-    monkeypatch.setattr(
-        homework_volume_service, "compute", _counting_compute,
-    )
-
-    from_d, to_d = _period_dates(datetime.now(UTC))
-    await svc.get_students_dashboard(db, from_date=from_d, to_date=to_d)
-    assert calls["n"] == 1
-    # Кэш свежий (TTL 20 мин): вердикт из памяти, расчёт не дёргаем.
-    data = await svc.get_students_dashboard(db, from_date=from_d, to_date=to_d)
-    assert calls["n"] == 1
-    assert _row(data, student_id)["program"]["on_track"] is False
-
-
-@pytest.mark.asyncio
-async def test_on_track_cache_expires_with_ttl(db, monkeypatch):
-    """TTL = 20 минут: после истечения вердикт пересчитывается."""
-    from app.services import homework_volume_service
-
-    student_id = await _program_student_with_recent_pace(
-        db, monkeypatch, done_recent=1,
-    )
-    calls = {"n": 0}
-    real_compute = homework_volume_service.compute
-
-    async def _counting_compute(session, *, student_id, now=None):
-        calls["n"] += 1
-        return await real_compute(session, student_id=student_id, now=now)
-
-    monkeypatch.setattr(
-        homework_volume_service, "compute", _counting_compute,
-    )
-    monkeypatch.setattr(svc, "_PROGRAM_PACE_CACHE_TTL_SEC", 0)
-
-    from_d, to_d = _period_dates(datetime.now(UTC))
-    await svc.get_students_dashboard(db, from_date=from_d, to_date=to_d)
-    await svc.get_students_dashboard(db, from_date=from_d, to_date=to_d)
-    assert calls["n"] == 2

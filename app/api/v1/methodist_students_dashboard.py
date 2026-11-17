@@ -57,18 +57,6 @@ class HomeworkRead(BaseModel):
     on_time_rate_prev: Optional[float] = None
 
 
-class ProgramPaceRead(BaseModel):
-    """tsk-1536: успевает ли ученик к экзамену (расчёт tsk-815).
-
-    Тот же расчёт и порог, что в сводке преподавателя на занятии
-    (student-verdict.ts): null в `on_track` — данных о темпе пока нет.
-    """
-
-    kind: Literal["oge", "ege"]
-    deadline: str
-    on_track: Optional[bool] = None
-
-
 class StudentDashboardRowRead(BaseModel):
     student_id: int
     full_name: Optional[str] = None
@@ -79,8 +67,6 @@ class StudentDashboardRowRead(BaseModel):
     difficulty: DifficultyRead
     pace: PaceRead
     homework: HomeworkRead
-    # tsk-1536: None — ученик не записан на программу подготовки с дедлайном.
-    program: Optional[ProgramPaceRead] = None
 
 
 class GroupAverageRead(BaseModel):

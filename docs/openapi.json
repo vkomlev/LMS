@@ -76679,40 +76679,6 @@
         "title": "PricingHint",
         "description": "tsk-1124 Ф6: какой тариф подсказывает группа расписания. Только чтение —\nсменить тариф методист может в оплате ученика, сам сервер деньги не двигает."
       },
-      "ProgramPaceRead": {
-        "properties": {
-          "kind": {
-            "type": "string",
-            "enum": [
-              "oge",
-              "ege"
-            ],
-            "title": "Kind"
-          },
-          "deadline": {
-            "type": "string",
-            "title": "Deadline"
-          },
-          "on_track": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "On Track"
-          }
-        },
-        "type": "object",
-        "required": [
-          "kind",
-          "deadline"
-        ],
-        "title": "ProgramPaceRead",
-        "description": "tsk-1536: успевает ли ученик к экзамену (расчёт tsk-815).\n\nТот же расчёт и порог, что в сводке преподавателя на занятии\n(student-verdict.ts): null в `on_track` — данных о темпе пока нет."
-      },
       "ProgressBulkResponse": {
         "properties": {
           "student_id": {
@@ -83519,16 +83485,6 @@
           },
           "homework": {
             "$ref": "#/components/schemas/app__api__v1__methodist_students_dashboard__HomeworkRead"
-          },
-          "program": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/ProgramPaceRead"
-              },
-              {
-                "type": "null"
-              }
-            ]
           }
         },
         "type": "object",
