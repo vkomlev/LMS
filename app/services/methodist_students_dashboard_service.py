@@ -184,6 +184,92 @@ _EXCLUDED_PLANS_SQL = text("""
       AND s.student_id = ANY(:ids)
 """)
 
+# tsk-1536: «успевает ли к экзамену» — программные курсы учеников одним
+# запросом, чтобы не гонять per-student расчёт по всему дашборду: считается
+# он только для записанных на программу ЕГЭ/ОГЭ, а таких обычно меньшинство.
+_PROGRAM_ENROLLMENT_SQL = text("""
+    SELECT user_id AS student_id, course_id
+    FROM user_courses
+    WHERE user_id = ANY(:ids) AND is_active = true
+""")
+
+# Разрыв «нужно минус делает» в минутах, ниже которого человек считается
+# идущим по плану. Тот же порог, что в сводке преподавателя
+# (SPW components/teacher/student-verdict.ts, PACE_GAP_MINUTES_THRESHOLD):
+# разница в паре минут внутри погрешности веса, а выглядит как замечание.
+_ON_TRACK_GAP_MINUTES = 10
+
+
+def _program_on_track(plan: Any) -> Optional[bool]:
+    """Успевает ли к сроку — правило сводки преподавателя, не своё.
+
+    Минутная шкала (когда вес измерен) с порогом `_ON_TRACK_GAP_MINUTES`;
+    штучная — запасная, без порога: там разрыв целочисленный и «не дотягивает
+    1» уже значимо. Данных нет (нет и штучной пары) — None, «нет данных».
+    """
+    if (
+        plan.target_minutes_per_week is not None
+        and plan.fact_minutes_per_week is not None
+    ):
+        return (
+            plan.target_minutes_per_week - plan.fact_minutes_per_week
+            < _ON_TRACK_GAP_MINUTES
+        )
+    if plan.target_per_week is not None:
+        return plan.fact_per_week >= plan.target_per_week
+    return None
+
+
+async def _program_pace_by_student(
+    db: AsyncSession, student_ids: set[int],
+) -> dict[int, dict[str, Any]]:
+    """Блок «успевает ли к экзамену» для учеников на программных курсах.
+
+    Расчёт — тот же, что в дашборде ученика (tsk-815): план объёма
+    `homework_volume_service.compute`, а не параллельная формула. `None`
+    целиком — ученик не записан ни на одну программу подготовки.
+    """
+    from app.core import settings_store
+    from app.services import homework_volume_service
+
+    oge_ids = homework_volume_service._course_ids(  # noqa: SLF001
+        settings_store.get_str("homework_program_oge_courses")
+    )
+    ege_ids = homework_volume_service._course_ids(  # noqa: SLF001
+        settings_store.get_str("homework_program_ege_courses")
+    )
+    program_ids = set(oge_ids) | set(ege_ids)
+    if not student_ids or not program_ids:
+        return {}
+
+    rows = (
+        await db.execute(
+            _PROGRAM_ENROLLMENT_SQL, {"ids": list(student_ids)},
+        )
+    ).fetchall()
+    on_program = {
+        int(r.student_id)
+        for r in rows
+        if int(r.course_id) in program_ids
+    }
+    if not on_program:
+        return {}
+
+    now = datetime.now(MSK)
+    result: dict[int, dict[str, Any]] = {}
+    for sid in on_program:
+        plan = await homework_volume_service.compute(
+            db, student_id=sid, now=now,
+        )
+        if plan.program_kind is None or plan.program_deadline is None:
+            continue
+        result[sid] = {
+            "kind": plan.program_kind,
+            "deadline": plan.program_deadline.isoformat(),
+            "on_track": _program_on_track(plan),
+        }
+    return result
+
 
 async def get_students_dashboard(
     db: AsyncSession, *, from_date: str, to_date: str,
@@ -247,6 +333,10 @@ async def get_students_dashboard(
             )
         ).fetchall()
         names = {int(r.id): r.full_name for r in rows}
+
+    # tsk-1536: вердикт «успевает/не успевает к экзамену» для учеников
+    # программ подготовки (ЕГЭ/ОГЭ). Прочим ученикам поле остаётся None.
+    program_pace = await _program_pace_by_student(db, student_ids)
 
     weeks = max((cur_to - cur_from).total_seconds() / (7 * 86400), 1 / 7)
 
@@ -322,6 +412,8 @@ async def get_students_dashboard(
                 "on_time_rate": hw_rate,
                 "on_time_rate_prev": hw_rate_prev,
             },
+            # tsk-1536: None — ученик не на программе подготовки с дедлайном.
+            "program": program_pace.get(sid),
         }
 
     students = [_row(sid) for sid in sorted(student_ids)]
