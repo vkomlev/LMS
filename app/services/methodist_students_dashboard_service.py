@@ -50,11 +50,6 @@ _program_pace_refreshing: set[tuple[int, str]] = set()
 # Держим ссылки на фоновые задачи, чтобы их не собрал GC.
 _program_pace_refresh_tasks: set[asyncio.Task] = set()
 
-# Сколько учеников считаем одновременно: пул БД — 10 соединений, и по
-# опыту 17.11 семафор 8 на ~100 учеников × ~10 с задушил пул — обычные
-# запросы учеников стали по 3–5 с. Два воркера оставляют пул свободным.
-_REFRESH_CONCURRENCY = 2
-
 
 def _clear_program_pace_cache() -> None:
     """Сброс кэша вердиктов (тесты)."""
@@ -301,7 +296,7 @@ async def _refresh_program_pace(
     from sqlalchemy.ext.asyncio import async_sessionmaker
 
     factory = async_sessionmaker(bind=bind, expire_on_commit=False)
-    semaphore = asyncio.Semaphore(_REFRESH_CONCURRENCY)
+    semaphore = asyncio.Semaphore(8)
     now = datetime.now(MSK)
     try:
         async def _one(sid: int) -> tuple[int, Optional[dict[str, Any]]]:
