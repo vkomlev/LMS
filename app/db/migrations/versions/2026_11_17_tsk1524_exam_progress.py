@@ -1,7 +1,7 @@
 """Карта прогресса ЕГЭ/ОГЭ: варианты и initial flow (tsk-1524).
 
 Revision ID: tsk1524_exam_progress
-Revises: tsk1500_strict_progression
+Revises: tsk1536_methodist_readiness
 """
 from typing import Sequence, Union
 
@@ -10,7 +10,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 revision: str = "tsk1524_exam_progress"
-down_revision: Union[str, None] = "tsk1500_strict_progression"
+down_revision: Union[str, None] = "tsk1536_methodist_readiness"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
