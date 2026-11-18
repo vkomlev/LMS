@@ -34559,6 +34559,1337 @@
         }
       }
     },
+    "/api/v1/exam-progress/variants/publish": {
+      "post": {
+        "tags": [
+          "exam-progress"
+        ],
+        "summary": "Publish Variant",
+        "operationId": "publish_variant_api_v1_exam_progress_variants_publish_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExamVariantPublish"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExamVariantPublishResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/exam-progress/me/runs/start": {
+      "post": {
+        "tags": [
+          "exam-progress"
+        ],
+        "summary": "Start Run",
+        "operationId": "start_run_api_v1_exam_progress_me_runs_start_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartRunRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExamRunRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/exam-progress/me/runs/{run_id}": {
+      "get": {
+        "tags": [
+          "exam-progress"
+        ],
+        "summary": "Get Run",
+        "operationId": "get_run_api_v1_exam_progress_me_runs__run_id__get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Run Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExamRunRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/exam-progress/me/runs/{run_id}/pause": {
+      "post": {
+        "tags": [
+          "exam-progress"
+        ],
+        "summary": "Pause",
+        "operationId": "pause_api_v1_exam_progress_me_runs__run_id__pause_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Run Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExamRunRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/exam-progress/me/runs/{run_id}/resume": {
+      "post": {
+        "tags": [
+          "exam-progress"
+        ],
+        "summary": "Resume",
+        "operationId": "resume_api_v1_exam_progress_me_runs__run_id__resume_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Run Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExamRunRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/exam-progress/me/runs/{run_id}/heartbeat": {
+      "post": {
+        "tags": [
+          "exam-progress"
+        ],
+        "summary": "Heartbeat",
+        "operationId": "heartbeat_api_v1_exam_progress_me_runs__run_id__heartbeat_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Run Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExamRunRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/exam-progress/me/runs/{run_id}/items/{item_id}/answer": {
+      "post": {
+        "tags": [
+          "exam-progress"
+        ],
+        "summary": "Answer",
+        "operationId": "answer_api_v1_exam_progress_me_runs__run_id__items__item_id__answer_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Run Id"
+            }
+          },
+          {
+            "name": "item_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Item Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExamAnswerRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExamAnswerAccepted"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/exam-progress/me/runs/{run_id}/items/{item_id}/skip": {
+      "post": {
+        "tags": [
+          "exam-progress"
+        ],
+        "summary": "Skip",
+        "operationId": "skip_api_v1_exam_progress_me_runs__run_id__items__item_id__skip_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Run Id"
+            }
+          },
+          {
+            "name": "item_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Item Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SkipItemRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExamAnswerAccepted"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/exam-progress/me/runs/{run_id}/finish-initial": {
+      "post": {
+        "tags": [
+          "exam-progress"
+        ],
+        "summary": "Finish Initial",
+        "operationId": "finish_initial_api_v1_exam_progress_me_runs__run_id__finish_initial_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Run Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExamRunRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/exam-progress/me/runs/{run_id}/finish-review": {
+      "post": {
+        "tags": [
+          "exam-progress"
+        ],
+        "summary": "Finish Review",
+        "operationId": "finish_review_api_v1_exam_progress_me_runs__run_id__finish_review_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Run Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExamRunRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/exam-progress/me/map": {
+      "get": {
+        "tags": [
+          "exam-progress"
+        ],
+        "summary": "Get Map",
+        "operationId": "get_map_api_v1_exam_progress_me_map_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "root_course_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Root Course Id"
+            }
+          },
+          {
+            "name": "exam_kind",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Exam Kind"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExamMapRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/exam-progress/me/variants": {
+      "get": {
+        "tags": [
+          "exam-progress"
+        ],
+        "summary": "List Variants",
+        "operationId": "list_variants_api_v1_exam_progress_me_variants_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "root_course_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Root Course Id"
+            }
+          },
+          {
+            "name": "exam_kind",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Exam Kind"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ExamVariantRead"
+                  },
+                  "title": "Response List Variants Api V1 Exam Progress Me Variants Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/exam-progress/teacher/review-queue": {
+      "get": {
+        "tags": [
+          "exam-progress"
+        ],
+        "summary": "Review Queue",
+        "operationId": "review_queue_api_v1_exam_progress_teacher_review_queue_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ExamReviewQueueItem"
+                  },
+                  "title": "Response Review Queue Api V1 Exam Progress Teacher Review Queue Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/methodist/escalations/pending": {
       "get": {
         "tags": [
@@ -63287,6 +64618,742 @@
         "title": "EscalationReadResponse",
         "description": "Ответ POST /escalations/{id}/read (tsk-1338)."
       },
+      "ExamAnswerAccepted": {
+        "properties": {
+          "accepted": {
+            "type": "boolean",
+            "title": "Accepted"
+          },
+          "run_id": {
+            "type": "integer",
+            "title": "Run Id"
+          },
+          "item_id": {
+            "type": "integer",
+            "title": "Item Id"
+          },
+          "correct": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correct"
+          },
+          "resolution": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "rno",
+                  "late"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolution"
+          }
+        },
+        "type": "object",
+        "required": [
+          "accepted",
+          "run_id",
+          "item_id"
+        ],
+        "title": "ExamAnswerAccepted"
+      },
+      "ExamAnswerRequest": {
+        "properties": {
+          "phase": {
+            "type": "string",
+            "enum": [
+              "initial",
+              "review",
+              "late"
+            ],
+            "title": "Phase"
+          },
+          "client_request_id": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 8,
+            "title": "Client Request Id"
+          },
+          "answer": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Answer"
+          },
+          "reflection_reason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "missing_rule",
+                  "algorithm_error",
+                  "calculation_error",
+                  "misread_condition",
+                  "carelessness",
+                  "time_shortage",
+                  "other"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reflection Reason"
+          },
+          "reflection_comment": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reflection Comment"
+          }
+        },
+        "type": "object",
+        "required": [
+          "phase",
+          "client_request_id",
+          "answer"
+        ],
+        "title": "ExamAnswerRequest"
+      },
+      "ExamMapCell": {
+        "properties": {
+          "run_id": {
+            "type": "integer",
+            "title": "Run Id"
+          },
+          "exam_number": {
+            "type": "integer",
+            "title": "Exam Number"
+          },
+          "color": {
+            "type": "string",
+            "enum": [
+              "green",
+              "yellow",
+              "red",
+              "orange"
+            ],
+            "title": "Color"
+          },
+          "review_state": {
+            "type": "string",
+            "enum": [
+              "not_started",
+              "in_progress",
+              "resolved",
+              "late_resolved"
+            ],
+            "title": "Review State"
+          }
+        },
+        "type": "object",
+        "required": [
+          "run_id",
+          "exam_number",
+          "color",
+          "review_state"
+        ],
+        "title": "ExamMapCell"
+      },
+      "ExamMapColumn": {
+        "properties": {
+          "run_id": {
+            "type": "integer",
+            "title": "Run Id"
+          },
+          "variant_id": {
+            "type": "integer",
+            "title": "Variant Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "sequence": {
+            "type": "integer",
+            "title": "Sequence"
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Started At"
+          },
+          "active_seconds": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Active Seconds"
+          },
+          "primary_score": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Primary Score"
+          },
+          "result_label": {
+            "type": "string",
+            "title": "Result Label"
+          },
+          "cells": {
+            "items": {
+              "$ref": "#/components/schemas/ExamMapCell"
+            },
+            "type": "array",
+            "title": "Cells"
+          }
+        },
+        "type": "object",
+        "required": [
+          "run_id",
+          "variant_id",
+          "title",
+          "sequence",
+          "started_at",
+          "active_seconds",
+          "primary_score",
+          "result_label",
+          "cells"
+        ],
+        "title": "ExamMapColumn"
+      },
+      "ExamMapRead": {
+        "properties": {
+          "exam_kind": {
+            "type": "string",
+            "enum": [
+              "ege",
+              "oge"
+            ],
+            "title": "Exam Kind"
+          },
+          "exam_numbers": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Exam Numbers"
+          },
+          "columns": {
+            "items": {
+              "$ref": "#/components/schemas/ExamMapColumn"
+            },
+            "type": "array",
+            "title": "Columns"
+          }
+        },
+        "type": "object",
+        "required": [
+          "exam_kind",
+          "exam_numbers",
+          "columns"
+        ],
+        "title": "ExamMapRead"
+      },
+      "ExamReviewQueueItem": {
+        "properties": {
+          "task_id": {
+            "type": "integer",
+            "title": "Task Id"
+          },
+          "exam_kind": {
+            "type": "string",
+            "enum": [
+              "ege",
+              "oge"
+            ],
+            "title": "Exam Kind"
+          },
+          "exam_number": {
+            "type": "integer",
+            "title": "Exam Number"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "student_count": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Student Count"
+          },
+          "red_count": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Red Count"
+          },
+          "students": {
+            "items": {
+              "$ref": "#/components/schemas/ExamReviewQueueStudent"
+            },
+            "type": "array",
+            "title": "Students"
+          }
+        },
+        "type": "object",
+        "required": [
+          "task_id",
+          "exam_kind",
+          "exam_number",
+          "title",
+          "student_count",
+          "red_count",
+          "students"
+        ],
+        "title": "ExamReviewQueueItem"
+      },
+      "ExamReviewQueueStudent": {
+        "properties": {
+          "student_id": {
+            "type": "integer",
+            "title": "Student Id"
+          },
+          "full_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Full Name"
+          },
+          "run_id": {
+            "type": "integer",
+            "title": "Run Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "student_id",
+          "full_name",
+          "run_id"
+        ],
+        "title": "ExamReviewQueueStudent"
+      },
+      "ExamRunItemRead": {
+        "properties": {
+          "item_id": {
+            "type": "integer",
+            "title": "Item Id"
+          },
+          "exam_number": {
+            "type": "integer",
+            "title": "Exam Number"
+          },
+          "task_id": {
+            "type": "integer",
+            "title": "Task Id"
+          },
+          "initial_outcome": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "correct",
+                  "wrong",
+                  "blank"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Initial Outcome"
+          },
+          "initial_score": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Initial Score"
+          },
+          "review_attempt_count": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Review Attempt Count"
+          },
+          "color": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "green",
+                  "yellow",
+                  "red",
+                  "orange"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Color"
+          },
+          "review_state": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "not_started",
+                  "in_progress",
+                  "resolved",
+                  "late_resolved"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review State"
+          },
+          "has_video_review": {
+            "type": "boolean",
+            "title": "Has Video Review"
+          },
+          "available_phase": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "initial",
+                  "review",
+                  "late"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Available Phase"
+          },
+          "is_skipped": {
+            "type": "boolean",
+            "title": "Is Skipped",
+            "default": false
+          },
+          "content": {
+            "$ref": "#/components/schemas/TaskContent"
+          }
+        },
+        "type": "object",
+        "required": [
+          "item_id",
+          "exam_number",
+          "task_id",
+          "initial_outcome",
+          "initial_score",
+          "review_attempt_count",
+          "color",
+          "review_state",
+          "has_video_review",
+          "available_phase",
+          "content"
+        ],
+        "title": "ExamRunItemRead"
+      },
+      "ExamRunRead": {
+        "properties": {
+          "run_id": {
+            "type": "integer",
+            "title": "Run Id"
+          },
+          "variant_id": {
+            "type": "integer",
+            "title": "Variant Id"
+          },
+          "root_course_id": {
+            "type": "integer",
+            "title": "Root Course Id"
+          },
+          "exam_kind": {
+            "type": "string",
+            "enum": [
+              "ege",
+              "oge"
+            ],
+            "title": "Exam Kind"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "in_progress",
+              "paused",
+              "review",
+              "completed"
+            ],
+            "title": "Status"
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Started At"
+          },
+          "active_seconds": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Active Seconds"
+          },
+          "initial_finished_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Initial Finished At"
+          },
+          "review_finished_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Finished At"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ExamRunItemRead"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "run_id",
+          "variant_id",
+          "root_course_id",
+          "exam_kind",
+          "status",
+          "started_at",
+          "active_seconds",
+          "initial_finished_at",
+          "review_finished_at",
+          "items"
+        ],
+        "title": "ExamRunRead"
+      },
+      "ExamScaleVersion": {
+        "properties": {
+          "version": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Version"
+          },
+          "source_url": {
+            "type": "string",
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Source Url"
+          },
+          "primary_max": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Primary Max"
+          },
+          "primary_to_result": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "minProperties": 1,
+            "title": "Primary To Result"
+          }
+        },
+        "type": "object",
+        "required": [
+          "version",
+          "source_url",
+          "primary_max",
+          "primary_to_result"
+        ],
+        "title": "ExamScaleVersion"
+      },
+      "ExamVariantItemWrite": {
+        "properties": {
+          "position": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Position"
+          },
+          "exam_number": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Exam Number"
+          },
+          "task_external_uid": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Task External Uid"
+          },
+          "primary_score": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Primary Score"
+          }
+        },
+        "type": "object",
+        "required": [
+          "position",
+          "exam_number",
+          "task_external_uid",
+          "primary_score"
+        ],
+        "title": "ExamVariantItemWrite"
+      },
+      "ExamVariantPublish": {
+        "properties": {
+          "external_uid": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "External Uid"
+          },
+          "exam_kind": {
+            "type": "string",
+            "enum": [
+              "ege",
+              "oge"
+            ],
+            "title": "Exam Kind"
+          },
+          "root_course_uid": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Root Course Uid"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Title"
+          },
+          "sequence": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Sequence"
+          },
+          "published_version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Published Version"
+          },
+          "scale": {
+            "$ref": "#/components/schemas/ExamScaleVersion"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ExamVariantItemWrite"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "external_uid",
+          "exam_kind",
+          "root_course_uid",
+          "title",
+          "sequence",
+          "published_version",
+          "scale",
+          "items"
+        ],
+        "title": "ExamVariantPublish"
+      },
+      "ExamVariantPublishResponse": {
+        "properties": {
+          "variant_id": {
+            "type": "integer",
+            "title": "Variant Id"
+          },
+          "published_version": {
+            "type": "integer",
+            "title": "Published Version"
+          },
+          "created": {
+            "type": "boolean",
+            "title": "Created"
+          }
+        },
+        "type": "object",
+        "required": [
+          "variant_id",
+          "published_version",
+          "created"
+        ],
+        "title": "ExamVariantPublishResponse"
+      },
+      "ExamVariantRead": {
+        "properties": {
+          "variant_id": {
+            "type": "integer",
+            "title": "Variant Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "sequence": {
+            "type": "integer",
+            "title": "Sequence"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "can_start": {
+            "type": "boolean",
+            "title": "Can Start"
+          }
+        },
+        "type": "object",
+        "required": [
+          "variant_id",
+          "title",
+          "sequence",
+          "run_id",
+          "can_start"
+        ],
+        "title": "ExamVariantRead"
+      },
       "ExtendAccessRequest": {
         "properties": {
           "student_id": {
@@ -81753,6 +83820,21 @@
         "title": "SiteFunnelRow",
         "description": "Строка воронки сайта по ветке квиза-воронки (tsk-1139).\n\nКаждый шаг — число гостевых сессий ветки, дошедших до него. Ветка — где\nчеловек закончил (родитель выпускника, ушедший в ЕГЭ, считается в ege);\nroot — не выбрал «для кого». Выборки малые: читать числами, не процентами."
       },
+      "SkipItemRequest": {
+        "properties": {
+          "client_request_id": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 8,
+            "title": "Client Request Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "client_request_id"
+        ],
+        "title": "SkipItemRequest"
+      },
       "SlotParticipantRead": {
         "properties": {
           "id": {
@@ -82430,6 +84512,19 @@
           "source_system"
         ],
         "title": "StartOrGetAttemptResponse"
+      },
+      "StartRunRequest": {
+        "properties": {
+          "variant_id": {
+            "type": "integer",
+            "title": "Variant Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "variant_id"
+        ],
+        "title": "StartRunRequest"
       },
       "StreakRead": {
         "properties": {

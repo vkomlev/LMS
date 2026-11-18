@@ -721,6 +721,15 @@ class Settings:
         self.help_reflection_enabled: bool = os.getenv(
             "HELP_REFLECTION_ENABLED", "false"
         ).lower() in ("true", "1", "yes")
+        # tsk-1524: карта прогресса ЕГЭ/ОГЭ; API скрыт до завершения backend.
+        self.exam_progress_enabled: bool = os.getenv(
+            "EXAM_PROGRESS_ENABLED", "false"
+        ).lower() in ("true", "1", "yes")
+        self.exam_progress_student_ids: frozenset[int] = frozenset(
+            int(value.strip())
+            for value in os.getenv("EXAM_PROGRESS_STUDENT_IDS", "").split(",")
+            if value.strip()
+        )
         # tsk-998 (П9): контрольные точки «проверь себя» внутри материала.
         # Выключено по умолчанию: при false ученику материал отдаётся без
         # `checkpoints`, а ответ на точку — 409 `checkpoints_disabled`.

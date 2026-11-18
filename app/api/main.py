@@ -459,6 +459,9 @@ app.include_router(auth_test_session_router, prefix=API_PREFIX)
 # tsk-1247: интерактивные тренажёры — публичные ручки за TRAINERS_ENABLED.
 from app.api.v1.trainers import router as trainers_router  # noqa: E402
 app.include_router(trainers_router, prefix=API_PREFIX)
+# tsk-1524: карта прогресса ЕГЭ/ОГЭ за EXAM_PROGRESS_ENABLED.
+from app.api.v1.exam_progress import router as exam_progress_router  # noqa: E402
+app.include_router(exam_progress_router, prefix=API_PREFIX)
 
 # Phase Y-6: methodist escalations
 from app.api.v1.methodist_escalations import router as methodist_escalations_router

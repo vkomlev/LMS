@@ -120,7 +120,7 @@ FINAL_CHECK_SOURCE = "final_check"
 #: Сдачи ученика вне учебного пути (tsk-992, tsk-994): ЕДИНЫЙ список для
 #: `learning_path_results_filter` / `learning_path_results_clause`. Новое
 #: «послекурсовое» значение добавляется сюда — и попадает во все расчёты разом.
-NON_LEARNING_PATH_SOURCES: tuple[str, ...] = (RETRIEVAL_SOURCE, FINAL_CHECK_SOURCE)
+NON_LEARNING_PATH_SOURCES: tuple[str, ...] = (RETRIEVAL_SOURCE, FINAL_CHECK_SOURCE, "exam_initial", "exam_review")
 
 
 def own_activity_results_filter(alias: str = "tr") -> str:
