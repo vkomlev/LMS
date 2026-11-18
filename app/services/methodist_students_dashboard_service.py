@@ -78,9 +78,11 @@ _LAST_ACTIVITY_SQL = text("""
         FROM help_requests
         WHERE student_id = ANY(:ids)
         UNION ALL
-        SELECT student_id, COALESCE(ended_at, started_at)
+        SELECT student_id, ended_at
         FROM learning_time_session
         WHERE student_id = ANY(:ids)
+          AND ended_at IS NOT NULL
+          AND ended_at > started_at
     ) sources
     GROUP BY student_id
 """)
