@@ -12,7 +12,7 @@ import os
 from dataclasses import dataclass
 from typing import Optional
 
-from app.services.llm import anthropic_direct
+from app.services.llm import anthropic_direct, kimi_direct
 
 logger = logging.getLogger(__name__)
 
@@ -309,9 +309,10 @@ def resolve_provider() -> ProviderConfig:
 def resolve_for(model: str) -> ProviderConfig:
     """Подключение для конкретной метки модели (tsk-1259).
 
-    `anthropic-direct/*` — прямой Messages API, остальное — CloseRouter. Прямой
-    провайдер без рубильника `ANTHROPIC_DIRECT_ENABLED` считается непригодным
-    (`api_key=None`), даже если ключ лежит в окружении.
+    `anthropic-direct/*` — прямой Messages API, `kimi-direct/*` — прямой
+    OpenAI-совместимый API Kimi (tsk-1376), остальное — CloseRouter. Прямой
+    провайдер без своего рубильника считается непригодным (`api_key=None`),
+    даже если ключ лежит в окружении.
     """
     if anthropic_direct.is_direct(model):
         key = anthropic_direct.api_key() if anthropic_direct.enabled() else None
@@ -319,20 +320,29 @@ def resolve_for(model: str) -> ProviderConfig:
             base_url=anthropic_direct.base_url(), api_key=key,
             name=anthropic_direct.PROVIDER_NAME,
         )
+    if kimi_direct.is_direct(model):
+        key = kimi_direct.api_key() if kimi_direct.enabled() else None
+        return ProviderConfig(
+            base_url=kimi_direct.base_url(), api_key=key,
+            name=kimi_direct.PROVIDER_NAME,
+        )
     return resolve_provider()
 
 
 def _chain(env_name: str, default: str) -> list[str]:
     raw = _env_first(env_name) or default
     models = [m.strip() for m in raw.split(",") if m.strip()]
-    if not anthropic_direct.enabled():
-        dropped = [m for m in models if anthropic_direct.is_direct(m)]
-        if dropped:
-            logger.warning(
-                "LLM: %s в %s пропущены — прямой провайдер выключен "
-                "(ANTHROPIC_DIRECT_ENABLED)", ", ".join(dropped), env_name,
-            )
-            models = [m for m in models if not anthropic_direct.is_direct(m)]
+    # Прямые провайдеры независимы: выключенный anthropic-direct НЕ должен
+    # дропать kimi-direct из цепочки и наоборот (tsk-1376).
+    dropped = [m for m in models
+               if (anthropic_direct.is_direct(m) and not anthropic_direct.enabled())
+               or (kimi_direct.is_direct(m) and not kimi_direct.enabled())]
+    if dropped:
+        logger.warning(
+            "LLM: %s в %s пропущены — прямой провайдер выключен "
+            "(ANTHROPIC_DIRECT_ENABLED / KIMI_DIRECT_ENABLED)", ", ".join(dropped), env_name,
+        )
+        models = [m for m in models if m not in dropped]
     return models
 
 

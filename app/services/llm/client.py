@@ -14,7 +14,7 @@ from typing import AsyncIterator, Iterable, Optional, Sequence
 
 import httpx
 
-from app.services.llm import anthropic_direct, cooldown, providers, usage
+from app.services.llm import anthropic_direct, cooldown, kimi_direct, providers, usage
 from app.services.llm.identity import OpeningSniffer, check_input_tokens, check_response_id
 from app.services.llm.contracts import (
     Budget,
@@ -226,12 +226,15 @@ def _ready_chain(chain: list[str]) -> list[tuple[str, providers.ProviderConfig]]
         cfg = providers.resolve_for(candidate)
         left = cooldown.remaining(cfg.name)
         if not cfg.usable:
-            err: LLMError = LLMConfigError(
-                "ключ провайдера не задан (CLOSEROUTER_API_KEY / CB_CLAUDE_API_KEY)"
-                if cfg.name == providers.PROVIDER_NAME else
-                "прямой API Anthropic выключен или без ключа "
-                "(ANTHROPIC_DIRECT_ENABLED / CLAUDE_API_KEY)"
-            )
+            if cfg.name == providers.PROVIDER_NAME:
+                reason = "ключ провайдера не задан (CLOSEROUTER_API_KEY / CB_CLAUDE_API_KEY)"
+            elif cfg.name == anthropic_direct.PROVIDER_NAME:
+                reason = ("прямой API Anthropic выключен или без ключа "
+                          "(ANTHROPIC_DIRECT_ENABLED / CLAUDE_API_KEY)")
+            else:
+                reason = ("прямой API Kimi выключен или без ключа "
+                          "(KIMI_DIRECT_ENABLED / KIMI_API_KEY)")
+            err: LLMError = LLMConfigError(reason)
         elif left > 0:
             err = LLMCooldown(f"провайдер остывает ещё {left:.0f} c после 429 ({cfg.name})")
         else:
@@ -259,8 +262,14 @@ def _body(
     if cfg.name == anthropic_direct.PROVIDER_NAME:
         return anthropic_direct.payload(messages, model=model, max_tokens=max_tokens,
                                         stream=stream)
-    return _payload(messages, model=model, temperature=temperature, max_tokens=max_tokens,
+    body = _payload(messages, model=model, temperature=temperature, max_tokens=max_tokens,
                     stream=stream, seed=seed, response_format=response_format)
+    if cfg.name == kimi_direct.PROVIDER_NAME:
+        # Модели подписки рассуждающие (дефолт effort max) — наставнику критичен
+        # первый кусок, поэтому effort прижимаем (kimi_direct.extra_body).
+        body["model"] = kimi_direct.bare_model(model)
+        body.update(kimi_direct.extra_body())
+    return body
 
 
 def _headers(cfg: providers.ProviderConfig) -> dict[str, str]:
