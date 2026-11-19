@@ -617,7 +617,11 @@ async def test_endpoint_returns_last_activity_at(client, db):
     assert resp.status_code == 200, resp.text
     row = next(r for r in resp.json()["students"] if r["student_id"] == student_id)
     assert row["last_activity_at"] is not None
-    assert row["last_activity_at"].startswith((now - timedelta(hours=4)).isoformat()[:10])
+    # Детерминированная проверка (tsk-1547, пакет фиксов): сравниваем с точным
+    # submitted_at вставленного решения, а не со скользящим «now-4h» — иначе
+    # на границе суток now-3h и now-4h попадают в разные даты и тест падает,
+    # хотя сервис работает правильно. Обе стороны — UTC (колонки timestamptz).
+    assert row["last_activity_at"] == (now - timedelta(hours=3)).isoformat()
 
 
 @pytest.mark.asyncio
