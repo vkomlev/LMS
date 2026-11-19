@@ -64,6 +64,11 @@ STUDENT_COURSE_SELF_ENROLLED = "student.course.self_enrolled"
 # для ученика, у которого никогда не было ни ВК, ни рабочей почты.
 ADMIN_STUDENT_CREATED_MANUALLY = "admin.student.created_manually"
 
+# tsk-1547: штатная вычитка черновика подсказки сервисным ключом capability
+# (HINT_REVIEW_API_KEY). user_id=NULL — вызов не от человека; сервисный
+# идентификатор в details.service, маркер дублируется в note черновика.
+HINT_DRAFT_REVIEWED = "hint.draft.reviewed"
+
 
 async def log_event(
     db: AsyncSession,
