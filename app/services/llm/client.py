@@ -267,7 +267,11 @@ def _body(
     if cfg.name == kimi_direct.PROVIDER_NAME:
         # Модели подписки рассуждающие (дефолт effort max) — наставнику критичен
         # первый кусок, поэтому effort прижимаем (kimi_direct.extra_body).
+        # temperature платформа фиксирует в 1: при 0.6/0.0 отвечает 400
+        # «invalid temperature: only 1 is allowed for this model» (живой отлов,
+        # проверка 19.11) — перезаписываем после _payload.
         body["model"] = kimi_direct.bare_model(model)
+        body["temperature"] = 1
         body.update(kimi_direct.extra_body())
     return body
 

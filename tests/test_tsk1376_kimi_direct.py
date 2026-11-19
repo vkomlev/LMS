@@ -127,6 +127,7 @@ async def test_stream_request_shape_and_parse(monkeypatch):
     assert body["model"] == "kimi-for-coding"
     assert body["messages"][0] == {"role": "system", "content": "Ты наставник."}
     assert body["reasoning_effort"] == "low"
+    assert body["temperature"] == 1  # платформа фиксирует temperature=1 (400 иначе)
     assert body["stream"] is True
 
     text = "".join(c.delta for c in chunks if not c.done)
