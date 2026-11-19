@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.auth.current_user import CurrentUser
-from app.auth.service_api_key import is_valid_service_key
+from app.auth.service_api_key import is_hint_review_key, is_valid_service_key
 from app.core.config import Settings
 from app.db.audit_context import set_audit_actor
 from app.db.session import get_async_db
@@ -127,6 +127,13 @@ async def get_current_user(
 
     # Service key (X-API-Key header или legacy ?api_key=)
     for svc_key in [x_api_key, api_key]:
+        if not svc_key:
+            continue
+        # tsk-1547: capability-ключ штатной вычитки черновиков подсказок.
+        # Проверяется ПЕРВЫМ: если он заодно валиден как обычный сервисный,
+        # вычитку всё равно даём, а не падаем на общий гейт «только человек».
+        if is_hint_review_key(svc_key):
+            return CurrentUser(id=0, is_service=True, service_hint_review=True)
         if is_valid_service_key(svc_key):
             return CurrentUser(id=0, is_service=True)
 

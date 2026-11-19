@@ -388,8 +388,9 @@ async def store(
         )
         if pending is not None:
             pending.source_reply_ids = sorted(set(pending.source_reply_ids) | set(source_reply_ids))
-            # Правку человека («Сохранить правку» ставит reviewed_by) модель не затирает.
-            if status == "draft" and pending.reviewed_by is None:
+            # Правку человека («Сохранить правку» ставит reviewed_by) модель не затирает;
+            # svc-правку (tsk-1547) защищает маркер в note — reviewed_by у неё NULL.
+            if status == "draft" and pending.reviewed_by is None and not (pending.note or "").startswith("[svc:"):
                 pending.text = clean
                 pending.model = model
                 pending.note = note
@@ -420,8 +421,16 @@ async def review(
     reviewer_id: int,
     action: str,
     text_: Optional[str] = None,
+    service_label: Optional[str] = None,
 ) -> tuple[TaskHintDrafts, list[str]]:
     """Правка, подтверждение или отклонение черновика человеком.
+
+    `service_label` (tsk-1547) — вызов сервисным ключом с capability
+    вычитки: `reviewer_id` должен быть 0 (несуществующий пользователь),
+    `reviewed_by` НЕ заполняется (FK на users — записать туда сервис
+    нельзя), в `note` ставится маркер `[<service_label>]`, а сам факт
+    вычитки уходит в audit_event. Так svc-правку нельзя спутать с
+    человеческой, а повторная генерация её не затирает.
 
     `approve` дописывает текст в КОНЕЦ `hints_text` под блокировкой строки
     задания: существующие подсказки не трогаются, повтор того же текста не
@@ -478,8 +487,29 @@ async def review(
     elif action != "save":
         raise HintDraftError("действие должно быть save, approve или reject")
     # И при «save»: по reviewed_by `store` узнаёт ручную правку и не затирает её.
-    draft.reviewed_by = reviewer_id
+    # tsk-1547: svc-правка помечена маркером в note — reviewed_by при ней NULL
+    # (FK на users), поэтому защита от перезатирания опирается на маркер.
+    if service_label is not None:
+        draft.reviewed_by = None
+        marker = f"[{service_label}]"
+        draft.note = f"{marker} {draft.note}".strip() if draft.note else marker
+    else:
+        draft.reviewed_by = reviewer_id
     draft.reviewed_at = now
+    if service_label is not None:
+        from app.services import audit_service
+
+        await audit_service.log_event(
+            db,
+            audit_service.HINT_DRAFT_REVIEWED,
+            user_id=None,
+            details={
+                "draft_id": draft.id,
+                "task_id": draft.task_id,
+                "action": action,
+                "service": service_label,
+            },
+        )
     await db.commit()
     await db.refresh(draft)
     logger.info(

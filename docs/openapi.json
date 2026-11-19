@@ -11786,7 +11786,7 @@
           "tasks"
         ],
         "summary": "Правка, подтверждение или отклонение черновика (tsk-1220)",
-        "description": "Только человек: черновик модели подтверждает тот, кто его прочитал.",
+        "description": "Подтверждает прочитавший; сервисно — только выделенный ключ вычитки.\n\ntsk-1547: сервисный ключ с capability `service_hint_review`\n(HINT_REVIEW_API_KEY) штатно вычитывает: reviewed_by не заполняется\n(это FK на людей), в note ставится маркер `[svc:hint-review]`, след —\nв audit_event. Остальные сервисные ключи по-прежнему 403.",
         "operationId": "hint_review_api_v1_tasks_hint_drafts__draft_id__review_post",
         "security": [
           {

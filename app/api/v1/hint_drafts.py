@@ -9,8 +9,9 @@
    вычитка человеком; подтверждённое дописывается в `hints_text`.
 
 Роль — methodist/admin: в карточке очереди лежит эталонный ответ и переписка
-преподавателя с учеником. Подтвердить и отклонить может только человек,
-сервисный ключ — нет (как в tsk-590).
+преподавателя с учеником. Подтвердить и отклонить может человек; сервисно —
+только выделенный ключ вычитки (tsk-1547, capability service_hint_review),
+с маркером в note и следом в audit_event (как tsk-590, но штатно).
 """
 from __future__ import annotations
 
@@ -195,16 +196,25 @@ async def hint_review(
     db: AsyncSession = Depends(get_async_db),
     current_user: CurrentUser = Depends(_METHODIST_GATE),
 ) -> HintReviewResponse:
-    """Только человек: черновик модели подтверждает тот, кто его прочитал."""
+    """Подтверждает прочитавший; сервисно — только выделенный ключ вычитки.
+
+    tsk-1547: сервисный ключ с capability `service_hint_review`
+    (HINT_REVIEW_API_KEY) штатно вычитывает: reviewed_by не заполняется
+    (это FK на людей), в note ставится маркер `[svc:hint-review]`, след —
+    в audit_event. Остальные сервисные ключи по-прежнему 403.
+    """
+    service_label: str | None = None
     if current_user.is_service:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="вычитать подсказку может только человек: сервисный ключ вычиткой не является",
-        )
+        if not current_user.service_hint_review:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="вычитать подсказку может только человек: сервисный ключ вычиткой не является",
+            )
+        service_label = "svc:hint-review"
     try:
         draft, hints = await svc.review(
             db, draft_id=draft_id, reviewer_id=current_user.id,
-            action=payload.action, text_=payload.text,
+            action=payload.action, text_=payload.text, service_label=service_label,
         )
     except svc.HintDraftError as exc:
         code = status.HTTP_404_NOT_FOUND if "не найден" in str(exc) else status.HTTP_409_CONFLICT

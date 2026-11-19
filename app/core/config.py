@@ -26,6 +26,12 @@ class Settings:
         if not self.valid_api_keys:
             raise RuntimeError("VALID_API_KEYS must contain at least one key")
 
+        # tsk-1547: отдельный секретный ключ capability «штатная вычитка
+        # черновиков подсказок сервисным агентом» (оператор 18.11 разрешил
+        # субагентам вычитку tsk-1220). Пусто — capability выключена, и
+        # review-эндпоинт по-прежнему отклоняет любой сервисный ключ.
+        self.hint_review_api_key: str = os.getenv("HINT_REVIEW_API_KEY", "")
+
         # ✅ Messages attachments settings (из env + дефолты)
         # tsk-593: с настроенным S3 это уже не «где лежит файл», а запасной путь
         # для файлов, загруженных до переезда, и режим разработки без S3.
