@@ -253,3 +253,33 @@ async def test_dual_key_capability_wins_no_generic_service(db, client, dual_key)
         headers=dual_key, json={"action": "approve"},
     )
     assert resp.status_code == 200
+
+
+@pytest.mark.parametrize("swap", [False, True])
+async def test_two_distinct_keys_union_of_rights(db, client, hint_review_key, swap):
+    """Два РАЗНЫХ ключа одновременно: объединение прав, порядок не влияет.
+
+    Находка ревью (P1): раньше первый распознанный ключ возвращался сразу и
+    capability-ключ мог затенить обычный сервисный. Теперь агрегация:
+    hint-ключ даёт review, обычный — общий сервисный доступ; обе проверки
+    должны пройти независимо от того, в каком источнике какой ключ.
+    """
+    plain = next(iter(_settings.valid_api_keys))
+    hint = hint_review_key["X-API-Key"]
+    x_key, q_key = (plain, hint) if swap else (hint, plain)
+    headers = {"X-API-Key": x_key}
+    import urllib.parse
+    url = "/api/v1/tasks/hint-drafts/queue?" + urllib.parse.urlencode({"api_key": q_key})
+    # queue: общий сервисный ключ в паре → 200 (его право), порядок не важен
+    resp = await client.get(url, headers=headers)
+    assert resp.status_code == 200
+    # review: capability есть в паре → 200
+    task_id = await _task(db)
+    draft_id = await _draft(db, task_id)
+    resp = await client.post(
+        f"/api/v1/tasks/hint-drafts/{draft_id}/review",
+        headers=headers,
+        params={"api_key": q_key},
+        json={"action": "approve"},
+    )
+    assert resp.status_code == 200

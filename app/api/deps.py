@@ -125,26 +125,27 @@ async def get_current_user(
                         email=user.email,
                     )
 
-    # Service key (X-API-Key header или legacy ?api_key=)
-    for svc_key in [x_api_key, api_key]:
-        if not svc_key:
-            continue
-        # tsk-1547: capability-ключ штатной вычитки черновиков подсказок.
-        # Проверяется ПЕРВЫМ: если он заодно валиден как обычный сервисный,
-        # вычитку всё равно даём, а не падаем на общий гейт «только человек».
-        if is_hint_review_key(svc_key):
-            # tsk-1547 (ревью-финализация): capability-ключ НЕ становится
-            # полноценным сервисным ключом. is_service=True — это пропуск на
-            # десятки эндпоинтов (attempts, learning, curator и т.д.), а право
-            # вычитки подсказок не должно молча означать эти права. Поэтому
-            # is_service=False ВСЕГДА — даже если ключ заодно валиден как
-            # обычный сервисный: capability побеждает, общий доступ не даём.
-            # require_authenticated и общие сервисные гейты такой ключ
-            # отсечёт, а review-эндпоинт пускает по флагу service_hint_review
-            # явно.
-            return CurrentUser(id=0, is_service=False, service_hint_review=True)
-        if is_valid_service_key(svc_key):
-            return CurrentUser(id=0, is_service=True)
+    # Service key (X-API-Key header или legacy ?api_key=).
+    # Права агрегируются по ОБОИМ источникам до возврата: результат не зависит
+    # от порядка заголовков (находка ревью, P1). Capability-ключ НЕ делает
+    # is_service=True — is_service это пропуск на десятки эндпоинтов (attempts,
+    # learning, curator), а право вычитки подсказок его не даёт. require_authenticated
+    # и общие сервисные гейты capability-ключ отсечёт, review-эндпоинт пускает
+    # по флагу service_hint_review явно. is_service=True выставляется только
+    # если какой-то из переданных ключей валиден как обычный сервисный.
+    svc_keys = [k for k in [x_api_key, api_key] if k]
+    hint_ok = any(is_hint_review_key(k) for k in svc_keys)
+    # Общие сервисные права даёт только ключ, который валиден как обычный
+    # сервисный, но НЕ совпал с capability: для совпадающего ключа capability
+    # побеждает (общий доступ не выдаётся), а ключ, просто валидный как
+    # сервисный, свои права сохраняет. Порядок источников не влияет.
+    service_ok = any(is_valid_service_key(k) and not is_hint_review_key(k) for k in svc_keys)
+    if hint_ok or service_ok:
+        return CurrentUser(
+            id=0,
+            is_service=service_ok,
+            service_hint_review=hint_ok,
+        )
 
     raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Not authenticated")
 
