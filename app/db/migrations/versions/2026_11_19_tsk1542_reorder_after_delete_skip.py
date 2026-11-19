@@ -34,10 +34,17 @@ def upgrade() -> None:
             -- Если у удаленной записи был order_number, сдвигаем остальные влево
             IF OLD.order_number IS NOT NULL THEN
                 PERFORM set_config('app.skip_course_parent_order_trigger', 'true', true);
-                UPDATE course_parents
-                SET order_number = order_number - 1
-                WHERE parent_course_id = OLD.parent_course_id
-                  AND order_number > OLD.order_number;
+                -- Флаг гасим и на пути ошибки: иначе при обработке исключения
+                -- вне функции флаг остался бы 'true' до конца транзакции.
+                BEGIN
+                    UPDATE course_parents
+                    SET order_number = order_number - 1
+                    WHERE parent_course_id = OLD.parent_course_id
+                      AND order_number > OLD.order_number;
+                EXCEPTION WHEN OTHERS THEN
+                    PERFORM set_config('app.skip_course_parent_order_trigger', 'false', true);
+                    RAISE;
+                END;
                 PERFORM set_config('app.skip_course_parent_order_trigger', 'false', true);
             END IF;
 

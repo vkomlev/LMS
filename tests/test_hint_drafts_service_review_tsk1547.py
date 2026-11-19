@@ -221,3 +221,14 @@ async def test_human_review_unchanged(db, client):
     prov = await db.scalar(text("SELECT content_provenance FROM tasks WHERE id=:t"), {"t": task_id})
     assert prov["edited_by"] == mid
     assert await _audit_events(db, draft_id) == []
+
+
+async def test_capability_key_is_not_generic_service(db, client, hint_review_key):
+    """P1-фикс (ревью): capability-ключ не получает общие сервисные права.
+
+    Раньше он возвращал CurrentUser(is_service=True) — пропуск на десятки
+    эндпоинтов, где is_service — bypass. Теперь is_service=False: очередь
+    (гейт require_role, для сервисных ключей — bypass) он не открывает.
+    """
+    resp = await client.get("/api/v1/tasks/hint-drafts/queue", headers=hint_review_key)
+    assert resp.status_code == 403

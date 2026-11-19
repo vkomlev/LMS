@@ -1,6 +1,8 @@
 """Dependency для service-level API key (legacy ?api_key= query param и X-API-Key header)."""
 from __future__ import annotations
 
+import hmac
+
 from app.core.config import Settings
 
 _settings: Settings | None = None
@@ -31,4 +33,5 @@ def is_hint_review_key(key: str | None) -> bool:
     if not key:
         return False
     hint_key = _get_settings().hint_review_api_key
-    return bool(hint_key) and key == hint_key
+    # constant-time сравнение: это секрет, тайминг-леак нежелателен.
+    return bool(hint_key) and hmac.compare_digest(key, hint_key)

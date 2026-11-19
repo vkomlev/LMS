@@ -23,7 +23,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_async_db, require_role
+from app.api.deps import get_async_db, get_current_user, require_role
 from app.auth.current_user import CurrentUser
 from app.services import hint_drafts_service as svc
 
@@ -194,23 +194,33 @@ async def hint_review(
     draft_id: int = Path(..., ge=1),
     payload: HintReviewRequest = Body(...),
     db: AsyncSession = Depends(get_async_db),
-    current_user: CurrentUser = Depends(_METHODIST_GATE),
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> HintReviewResponse:
     """Подтверждает прочитавший; сервисно — только выделенный ключ вычитки.
 
     tsk-1547: сервисный ключ с capability `service_hint_review`
     (HINT_REVIEW_API_KEY) штатно вычитывает: reviewed_by не заполняется
     (это FK на людей), в note ставится маркер `[svc:hint-review]`, след —
-    в audit_event. Остальные сервисные ключи по-прежнему 403.
+    в audit_event. Ключ намеренно НЕ is_service (см. deps.py) — гейт здесь
+    свой: capability-ключ пускаем только на вычитку, общие сервисные ключи
+    и здесь 403, человеку нужна роль methodist/admin.
     """
     service_label: str | None = None
-    if current_user.is_service:
-        if not current_user.service_hint_review:
+    if current_user.service_hint_review:
+        service_label = "svc:hint-review"
+    elif current_user.is_service:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="вычитать подсказку может только человек: сервисный ключ вычиткой не является",
+        )
+    else:
+        from app.services import roles_service  # noqa: PLC0415
+        roles = set(await roles_service.get_user_role_names(db, current_user.id))
+        if roles.isdisjoint({"methodist", "admin"}):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="вычитать подсказку может только человек: сервисный ключ вычиткой не является",
+                detail="Недостаточно прав: требуется роль admin или methodist",
             )
-        service_label = "svc:hint-review"
     try:
         draft, hints = await svc.review(
             db, draft_id=draft_id, reviewer_id=current_user.id,

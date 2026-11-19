@@ -621,7 +621,9 @@ async def test_endpoint_returns_last_activity_at(client, db):
     # submitted_at вставленного решения, а не со скользящим «now-4h» — иначе
     # на границе суток now-3h и now-4h попадают в разные даты и тест падает,
     # хотя сервис работает правильно. Обе стороны — UTC (колонки timestamptz).
-    assert row["last_activity_at"] == (now - timedelta(hours=3)).isoformat()
+    # Парсим ответ, а не сравниваем строки: сериализатор может отдавать
+    # микросекунды/смещение в ином формате — смысл проверки в моменте времени.
+    assert datetime.fromisoformat(row["last_activity_at"]) == now - timedelta(hours=3)
 
 
 @pytest.mark.asyncio

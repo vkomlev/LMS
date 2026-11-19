@@ -133,7 +133,16 @@ async def get_current_user(
         # Проверяется ПЕРВЫМ: если он заодно валиден как обычный сервисный,
         # вычитку всё равно даём, а не падаем на общий гейт «только человек».
         if is_hint_review_key(svc_key):
-            return CurrentUser(id=0, is_service=True, service_hint_review=True)
+            # tsk-1547 (ревью-финализация): capability-ключ НЕ становится
+            # полноценным сервисным ключом. is_service=True — это пропуск на
+            # десятки эндпоинтов (attempts, learning, curator и т.д.), а право
+            # вычитки подсказок не должно молча означать эти права. Поэтому
+            # is_service=False: require_authenticated и общие сервисные гейты
+            # такой ключ отсечёт, а review-эндпоинт пускает по флагу
+            # service_hint_review явно.
+            if is_valid_service_key(svc_key):
+                return CurrentUser(id=0, is_service=True, service_hint_review=True)
+            return CurrentUser(id=0, is_service=False, service_hint_review=True)
         if is_valid_service_key(svc_key):
             return CurrentUser(id=0, is_service=True)
 

@@ -17,7 +17,6 @@ modified by an operation triggered by the current command» → 500).
 """
 from __future__ import annotations
 
-import random
 import uuid
 
 import pytest
@@ -34,7 +33,7 @@ _settings = Settings()
 
 async def _user_with_session(db, role: str) -> tuple[int, str]:
     u = Users(
-        email=f"t1542-{role}-{random.randint(10**8, 10**10)}@example.com",
+        email=f"t1542-{role}-{uuid.uuid4().hex[:12]}@example.com",
         password_hash=None,
         full_name=f"t1542-{role}",
         tg_id=None,
@@ -56,7 +55,7 @@ async def _user_with_session(db, role: str) -> tuple[int, str]:
 
 async def _course(db, tag: str) -> int:
     c = Courses(
-        title=f"{tag}-{random.randint(10**8, 10**10)}",
+        title=f"{tag}-{uuid.uuid4().hex[:12]}",
         access_level="self_guided",
         course_uid=f"lms:test:t1542:{tag}:{uuid.uuid4().hex[:12]}",
     )
