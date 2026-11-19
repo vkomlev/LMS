@@ -232,3 +232,24 @@ async def test_capability_key_is_not_generic_service(db, client, hint_review_key
     """
     resp = await client.get("/api/v1/tasks/hint-drafts/queue", headers=hint_review_key)
     assert resp.status_code == 403
+
+
+@pytest.fixture
+def dual_key(monkeypatch):
+    """Ключ совпадает И с HINT_REVIEW_API_KEY, И с VALID_API_KEYS."""
+    key = next(iter(_settings.valid_api_keys))
+    monkeypatch.setattr(service_api_key._get_settings(), "hint_review_api_key", key)
+    return {"X-API-Key": key}
+
+
+async def test_dual_key_capability_wins_no_generic_service(db, client, dual_key):
+    """Совпадающий ключ: capability-права есть, общих сервисных прав нет."""
+    resp = await client.get("/api/v1/tasks/hint-drafts/queue", headers=dual_key)
+    assert resp.status_code == 403
+    task_id = await _task(db)
+    draft_id = await _draft(db, task_id)
+    resp = await client.post(
+        f"/api/v1/tasks/hint-drafts/{draft_id}/review",
+        headers=dual_key, json={"action": "approve"},
+    )
+    assert resp.status_code == 200
